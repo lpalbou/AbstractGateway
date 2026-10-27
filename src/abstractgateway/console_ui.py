@@ -2637,7 +2637,7 @@ CONSOLE_UI_JS = r"""
         await new Promise((r) => setTimeout(r, 1500));
       }
       netStore.restarting = false;
-      netStore.notice = { tone: "warn", text: "The gateway has not answered on this address yet.", hint: next.reconnect_url ? `If the port changed, open ${next.reconnect_url}/console.` : "Check the gateway window or the menu bar icon." };
+      netStore.notice = { tone: "warn", text: "The gateway has not answered on this address yet.", hint: next.reconnect_url ? `If the port changed, open ${next.reconnect_url}/console.` : "Check the gateway window or its icon (menu bar on macOS, notification area on Windows)." };
       netRender();
     }
     async function netAction(action) {

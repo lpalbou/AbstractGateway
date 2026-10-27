@@ -9,23 +9,24 @@ renders.
 
 ## What Install does, engine by engine
 
-| Engine | macOS (Apple silicon) | Linux | Admin rights? |
-|---|---|---|---|
-| **Ollama** | Downloads the signed `Ollama-darwin.zip` from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team `3MU9H2V9Y9`), places `Ollama.app` in `/Applications` when your account can write it (an admin account can, with no password) or else in `~/Applications`, then starts it and waits until `http://127.0.0.1:11434/api/version` answers | Ollama's official installer (`curl -fsSL https://ollama.com/install.sh \| sh`) | macOS: no. Linux: yes (the installer writes `/usr/local` and a systemd service) |
-| **LM Studio** | Downloads the signed disk image from lmstudio.ai, checks the signature (team `D65G88RHWN`), copies `LM Studio.app` to `/Applications` or `~/Applications`, opens it once and starts its local server (`lms server start`) | LM Studio's official installer: the headless daemon and the `lms` CLI under `~/.lmstudio` | no |
-| **MLX** | `abstractcore[apple]` at the installed AbstractCore version (MLX as prebuilt wheels) into the gateway's own Python | not supported | no |
-| **llama.cpp** | `abstractcore[apple]`, with its llama.cpp taken from upstream's prebuilt Metal wheel (`llama-cpp-python` 0.3.28); no compiler | `abstractcore[gpu]` with the prebuilt CPU wheel (0.3.35) | no |
-| **vLLM** | not supported (the row says why; no Install button) | Linux with an NVIDIA GPU: `abstractcore[gpu]` into the gateway's Python | no |
-| **Hugging Face** | `abstractcore[apple]` at the installed AbstractCore version (several GB) | `abstractcore[gpu]` | no |
+| Engine | macOS (Apple silicon) | Linux | Windows (x86_64) | Admin rights? |
+|---|---|---|---|---|
+| **Ollama** | Downloads the signed `Ollama-darwin.zip` from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team `3MU9H2V9Y9`), places `Ollama.app` in `/Applications` when your account can write it (an admin account can, with no password) or else in `~/Applications`, then starts it and waits until `http://127.0.0.1:11434/api/version` answers | Ollama's official installer (`curl -fsSL https://ollama.com/install.sh \| sh`) | `winget install Ollama.Ollama` (per-user) | macOS: no. Linux: yes (the installer writes `/usr/local` and a systemd service). Windows: no |
+| **LM Studio** | Downloads the signed disk image from lmstudio.ai, checks the signature (team `D65G88RHWN`), copies `LM Studio.app` to `/Applications` or `~/Applications`, opens it once and starts its local server (`lms server start`) | LM Studio's official installer: the headless daemon and the `lms` CLI under `~/.lmstudio` | LM Studio's official PowerShell installer (the `lms` CLI under `~/.lmstudio`) | no |
+| **MLX** | `abstractcore[apple]` at the installed AbstractCore version (MLX as prebuilt wheels) into the gateway's own Python | not supported | not supported | no |
+| **llama.cpp** | `abstractcore[apple]`, with its llama.cpp taken from upstream's prebuilt Metal wheel (`llama-cpp-python` 0.3.28); no compiler | `abstractcore[gpu]` with the prebuilt CPU wheel (0.3.35) | comes with the AbstractFramework installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build; the row's Install shows that installer's command | no |
+| **vLLM** | not supported (the row says why; no Install button) | Linux with an NVIDIA GPU: `abstractcore[gpu]` into the gateway's Python | not supported natively (no Windows build): run vLLM in WSL2 or on a Linux machine and point the gateway at that server | no |
+| **Hugging Face** | `abstractcore[apple]` at the installed AbstractCore version (several GB) | `abstractcore[gpu]` | `abstractcore[gpu]` at the installed AbstractCore version, with `--torch-backend=auto` so uv takes PyTorch's CUDA build | no |
 
 Python engines only ever arrive with one of AbstractCore's install settings (`abstractcore[apple]`
-on Apple silicon, `abstractcore[gpu]` on Linux), never as a bare package, so each one installs the
-whole setting (several GB). An Intel Mac, a Python under Rosetta, and Windows have no such setting:
+on Apple silicon, `abstractcore[gpu]` on Linux and Windows x86_64), never as a bare package, so each
+one installs the whole setting (several GB). An Intel Mac, a Python under Rosetta, and Windows on ARM
+have no such setting:
 their llama.cpp and Hugging Face rows say the engine is not available on this machine with the
 install settings and offer no Install button; use Ollama, LM Studio or a remote provider there.
 
-On Windows (experimental), Ollama and LM Studio installs use the vendor commands AbstractCore
-plans (winget, the vendor PowerShell installers).
+On Windows, Ollama and LM Studio installs use the vendor commands AbstractCore plans (winget, the
+vendor PowerShell installers).
 
 Everything the gateway's own Python receives is installed with the gateway's
 `abstract*` packages pinned to the versions it runs, so an engine install can

@@ -1130,6 +1130,10 @@ def service_status(
                 value = None
         if value:
             installed, unit_path = True, windows_run_display()
+        elif not installed:
+            # Nothing registered: name where `service install` registers (the Run value),
+            # not the legacy Startup shortcut, which is only reported when one is there.
+            unit_path = windows_run_display()
     rec = read_service_record(data_dir)
     out: Dict[str, Any] = {
         "schema": SERVICE_SCHEMA,

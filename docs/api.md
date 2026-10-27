@@ -1128,6 +1128,50 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Search conversations
+
+`GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
+by keyword: what was asked, what was answered, and the artifacts of each turn
+(generated images, recordings, videos and music by their generation prompt,
+attachments by their file name). Words and parts of words match, case and
+accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
+outputs and intermediate thinking are not indexed.
+
+| Query parameter | Meaning |
+|---|---|
+| `q` | the words to find (1–200 characters, every word required) |
+| `limit` | sessions per answer, 1–50 (default 20) |
+| `archived` | `true` searches archived conversations only; default `false` leaves them out, like `GET /runs?root_only=true` |
+| `session_kind` | as in `GET /runs` (default `chat,discussion`, the kinds indexed; automation sessions are not) |
+| `kind` | `conversation` (default), `docs` or `all`, the session purpose as in `GET /runs` |
+
+The answer is `{query, items, count, fuzzy, kinds, indexing}`. One item per
+session, best first: `{session_id, run_id, prompt, snippet, highlights,
+matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
+artifact}`; `run_id` is the turn that matched best, `snippet` is the text
+around the first match with `highlights` as `[start, length]` pairs, and
+`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
+name, prompt}` and its bytes are at
+`GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
+`fuzzy` on the answer says whether the index has SQLite's `trigram`
+tokenizer (without it, whole words with prefixes match); `fuzzy` on an item
+marks a hit found by the fuzzy pass. `indexing` is `{complete,
+pending_sessions, turns, errors}`: the index catches up on every call within
+a short time budget, and `complete: false` means older conversations are
+still being read (a first search on a large plane), never a silent partial
+list.
+
+The index is one SQLite file per runtime plane, `conversation_search.sqlite3`
+in that plane's data folder, next to the plane's stores: an account can only
+ever search its own conversations, exactly like `GET /runs`. The file is
+disposable: delete it and the next search rebuilds it, and a schema change
+rebuilds it on its own.
+
+```bash
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/sessions/search?q=survival%20curve&limit=10"
+```
+
 ## Triggers
 
 A trigger **connection** is one account's instance of a trigger source: a webhook endpoint
@@ -1546,7 +1590,14 @@ Assistant clients use `GET /api/gateway/discovery/tools` and the established
 `auto_approve_tools` and `require_approval_tools` lists in
 `input_data._runtime.tool_policy`. Omitted restrictions inherit defaults;
 explicit empty allowed-tool lists disable every tool. No additional capability
-probe is required for this contract.
+probe is required for this contract. `GET /api/gateway/tool-policy/capabilities` answers
+`{supported, modes: [off, auto, approve], runtime_floor}` and
+`GET /api/gateway/automations/defaults` answers `{growing_max_tokens}` (the
+history window a growing-context automation keeps).
+`GET /api/gateway/runs/{run_id}/message-stats` gives one of the caller's runs its
+`{wall_time_seconds, input_tokens, output_tokens, tool_calls}`, read from the
+run's ledger (completed effects only; a count the ledger does not carry is
+`null`).
 
 Entity clients discover visit-scoped controls with
 `GET /api/gateway/entities/{name}/session-tools` (`visit_routes: true` advertises
@@ -1569,6 +1620,18 @@ support still support the established Assistant tool-control contract.
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  
 See: [maintenance.md](./maintenance.md).
+
+### AbstractNote (optional)
+
+When the `abstractnote` Python package is installed in the gateway's environment, the gateway
+mounts its note read API under `/api/gateway/note/` (`GET /api/gateway/note/status`,
+`/notes`, `/search`, `/entities/{id}`, `/graph`, `/timeline`, …). Every route resolves the
+caller's own notebook (`abstractnote/` under the user's data plane) from the signed-in principal, with the
+same bearer token or app session as every other `/api/gateway` route; an id from another
+notebook is simply not found (404). The routes, their parameters and answers are documented by
+AbstractNote itself (its `docs/api.md`, "Note read API"). Without the package the prefix answers
+404 like any unknown path. The same install binds the note tools to each user's notebook and
+loads the `abstractnote` workflows: see [apps.md](./apps.md) (the Note app).
 
 ## Discovery endpoints (optional)
 
@@ -1824,12 +1887,16 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/music/generate`
 - `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
+- `GET /api/gateway/voice/languages`, `GET /api/gateway/voice/clones`, `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility`
+- `POST /api/gateway/voice/clones`, `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}`, `POST /api/gateway/voice/design` (administrators)
 - `GET /api/gateway/audio/speech/models`
 - `GET /api/gateway/audio/transcriptions/models`
 - `GET /api/gateway/audio/music/providers`
 - `GET /api/gateway/audio/music/models`
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
+
+`/vision/provider_models` lists AbstractVision's backends and, for `text_to_image` and `image_to_image`, the enabled `openai` / `openai-compatible` endpoint profiles that serve the task (`provider` = `endpoint:<id>`, described in `endpoint_providers`; a profile whose endpoint could not be read is named in `endpoint_provider_errors`). A profile qualifies with a known OpenAI image model (`gpt-image-*`, `dall-e-*`; only those models are listed) or by declaring the task in its `capabilities` (all its models). `?provider=endpoint:<id>` returns that profile's image models and also reads the endpoint's own catalog through the profile's connection: a model the endpoint says serves the task is listed (whatever its name), a model it says does not is left out, and a model it says nothing about is decided by its name as above; the profile's `allowed_models` bound the result. An endpoint that does not exist or is disabled answers 404.
 
 `/voice/defaults` is the one answer to "which engines speak and listen by default":
 
@@ -1840,6 +1907,32 @@ Current direct Gateway endpoints:
 ```
 
 A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). A configured speech-input route can carry AbstractCore's served `hint` `{code, sentence, route}`: on Apple silicon, a `faster-whisper` route runs on the processor, and the hint says that `mlx-whisper` runs the same model on the Apple GPU (`route` is what applying the recommendation writes; nothing changes by itself). The sentence names where to act and carries no timings. Apps show `hint.sentence` verbatim next to the engine line; the console's defaults grid shows the same sentence from the `input.voice` row's `route_hint`. `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
+
+### Voice library
+
+The voices the gateway can speak with, through AbstractRuntime's voice library facade (in the
+gateway's process, or on the AbstractCore server it is configured with):
+
+| Route | What it does |
+|---|---|
+| `GET /voice/languages?kind=&provider=` | `{"languages": {kind: {provider: {provider, languages, open, declared}}}}` for `tts`, `stt` and `cloning`; read without loading a model (`open`: a remote engine that decides its own languages) |
+| `GET /voice/clones?provider=&model=&language=` | `{"voices": [...], "count": n}`: cloned voices, designed (`tags.designed`) and built-in (`tags.builtin`) ones included; `language` keeps the voices that can speak it, native speakers first |
+| `GET /voice/clones/{voice_id}` | one voice's record (`voice_id`, `name`, `engine`, `reference_text`, `meta`); 404 for an unknown id |
+| `POST /voice/clones` (multipart) | a voice from a recording: `file` (up to 25 MB), optional `name`, `reference_text`, `provider` (the cloning engine, e.g. `qwen3-tts`, `omnivoice`), `model`; answers the stored record with its `voice_id` |
+| `PATCH /voice/clones/{voice_id}` | `{name?, reference_text?}`: both checked before either is applied; built-in voices are read-only (422) |
+| `DELETE /voice/clones/{voice_id}` | deletes the voice and its reference audio; built-in voices are read-only (422) |
+| `POST /voice/design` | `{description, name?, language?, text?}`: a voice from a written description (Qwen3-TTS VoiceDesign, cloned with Qwen3-TTS Base), stored as a cloned voice; needs `abstractvoice[qwen3-tts]` and `abstractvoice[stt]` where the voice capability runs (501 otherwise) |
+| `GET /voice/compatibility` | the capability catalog: per kind, provider, model and surface, whether a feature (`speed`, `one_shot`, `design`…) is `native`, `emulated`, `conditional` or `unsupported` |
+
+Cloned voices are one store per machine user, shared by every account of the gateway, so
+creating, changing, designing and deleting a voice is an administrator's act (403 otherwise);
+every signed-in account reads them. A voice is used for speech with `voice=<voice_id>` (and the
+voice's `provider`). `GET /voice/voices?language=fr` filters the voice catalog the same way.
+
+Speech options on `/voice/tts`: `speed` (a multiplier; engines without a native control
+time-stretch the audio, see `/voice/compatibility`) and `one_shot: true` (the whole text as one
+take with one voice, never segmented; refused beyond the engine's limit, e.g. 1000 characters on
+Qwen3-TTS). `/voice/tts/stream` refuses `one_shot` (422): a stream delivers the take in pieces.
 
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises

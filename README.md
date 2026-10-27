@@ -75,10 +75,13 @@ Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenA
 ### Browser apps, network access and the tray
 
 ```bash
-abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Assistant
+abstractgateway apps install observer --launch   # Flow, Code, Observer, Continuum, Entity, Note, Assistant
 abstractgateway apps open observer               # a one-time signed-in link
 abstractgateway network set lan                  # let your local network reach the gateway
 abstractgateway network restart                  # apply it now
+abstractgateway console                          # the terminal console, signed in
+abstractgateway update --check                   # what the newest AbstractFramework release changes
+abstractgateway update                           # ... and install it (installer installs)
 ```
 
 The gateway installs Node.js when needed, installs the browser apps from npm,
@@ -143,7 +146,8 @@ sandbox, network access); **Setup** at the bottom reruns the setup guide. An
 administrator sees every account; anyone else sees their own account and the
 entities they created. The same
 configuration surfaces exist in a terminal through the `abstractgateway-console`
-Rust app (`cargo install abstractgateway-console`). See
+Rust app (the installer builds it; by hand, `cargo install abstractgateway-console`);
+`abstractgateway console` opens it signed in. See
 [docs/console.md](docs/console.md).
 
 Each user can connect their own mailbox (Accounts → **Email** on their own row in the web

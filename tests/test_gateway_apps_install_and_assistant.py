@@ -445,7 +445,7 @@ def test_launch_bundle_script_running_and_the_same_machine_rule(amgr, monkeypatc
     state["procs"] = [(99, [state["script"]])]
     n = len(spawned)
     out = m.launch_desktop("assistant", same_machine=True)
-    assert len(spawned) == n and out["already_running"] and "menu bar" in out["message"]
+    assert len(spawned) == n and out["already_running"] and am._tray_area() in out["message"]
     # Running from the bundle: `open -a` brings it forward.
     state["files"] = {BUNDLE}
     state["procs"] = [(98, [f"{BUNDLE}/Contents/MacOS/AbstractAssistant"])]
@@ -600,3 +600,22 @@ def test_console_card_pins() -> None:
     assert "desk.other_running.sentence" in card and "data-app-desktop-other" in card
     act = CONSOLE_UI_JS[CONSOLE_UI_JS.index("async function appAction(action, id, button) {"):CONSOLE_UI_JS.index("async function appTuiAction(action, id) {")]
     assert "{ launch: true }" not in act and "/launch`" in act
+
+
+def test_on_windows_the_assistant_starts_with_pythonw_not_its_console_launcher(tmp_path: Path) -> None:
+    # A detached `abstractassistant.exe` (a console launcher) opens a console window
+    # next to the app; pythonw.exe runs the same entry point without one.
+    script = str(tmp_path / "venv" / "bin" / "abstractassistant.exe")
+    pythonw = str(Path("/venv/bin/python").with_name("pythonw.exe"))
+    pkg = types.SimpleNamespace(origin="/site/abstractassistant/__init__.py")
+    got = desk.detect_assistant(_probes(tmp_path, files=[script, pythonw], spec=pkg, platform="win32"))
+    assert got["source"] == "python" and got["launch"][0] == pythonw
+    assert "from abstractassistant.cli import main" in got["launch"][2]
+    assert desk.is_assistant_argv(got["launch"])  # its running process is still recognized
+    assert ("script", [script]) in got["launches"]  # the launcher stays a fallback
+    # Without a pythonw.exe next to the Python, nothing changes.
+    plain = desk.detect_assistant(_probes(tmp_path, files=[script], spec=pkg, platform="win32"))
+    assert plain["launch"] == [script]
+    # Other systems are unchanged.
+    mac = desk.detect_assistant(_probes(tmp_path, files=[str(tmp_path / "venv" / "bin" / "abstractassistant"), pythonw], spec=pkg))
+    assert mac["source"] == "script"

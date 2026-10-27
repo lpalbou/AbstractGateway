@@ -2,7 +2,7 @@
 
 The 0.7.0 end-to-end proof on a Mac: an automation on `email.received@1` whose filter matched
 its own title, set to "Email me the result", re-triggered itself: the result notice
-(`[AbstractFramework] <title>: result`) went from the user's account to the user's inbox with
+(`[AbstractFramework] <title> finished`) went from the user's account to the user's inbox with
 no marker and the watcher admitted it (5 occurrences in 4 minutes).
 
 Here, on the real gateway app (runner on, AbstractCore's hermetic IMAP/SMTP servers): exactly
@@ -88,7 +88,7 @@ def test_the_result_notice_never_triggers_its_automation(live: TestClient, imap,
         "title": TITLE,
         "target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {"prompt": "triage", "notify": True}},
         # The filter matches the automation's own title, so it also matches the notice's
-        # subject "[AbstractFramework] <title>: result": the exact 0.7.0 shape.
+        # subject "[AbstractFramework] <title> finished".
         "trigger": {"source_id": "email.received", "source_version": 1,
                     "config": {"uses_model": False, "filter": {"subject_contains": TITLE}}},
         "notify": {"channels": ["console", "email"]},
@@ -110,7 +110,7 @@ def test_the_result_notice_never_triggers_its_automation(live: TestClient, imap,
     assert NotificationOutbox(plane).deliver()["sent"] == 1
     [sent] = smtp.messages
     notice = email.message_from_bytes(sent["data"], policy=email.policy.default)
-    assert str(notice["Subject"]) == f"[AbstractFramework] {TITLE}: result"
+    assert str(notice["Subject"]) == f"[AbstractFramework] {TITLE} finished"
     assert notice["Auto-Submitted"] == "auto-generated"
     # The marker header is long enough to be folded onto its own line; Python < 3.12's parser
     # keeps the fold's leading space in the value (AbstractCore's reader strips it).

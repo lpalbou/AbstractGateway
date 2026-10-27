@@ -21,8 +21,8 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 6
-- Proposed: 44
+- Planned: 8
+- Proposed: 41
 - Completed: 24
 - Deprecated: 1
 - Recurrent: 0
@@ -104,6 +104,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | --- | --- |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
+| [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
+| [0942_personal_voices_per_account.md](planned/0942_personal_voices_per_account.md) | Personal voice stores per account (clone, design, rename, delete your own), voices an administrator deploys for everyone, an AI's voice in its profile (0938). Needs AbstractVoice 0065. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |

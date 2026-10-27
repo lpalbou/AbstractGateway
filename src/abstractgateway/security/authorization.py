@@ -91,6 +91,16 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # The gateway-wide Push forwarder address (routes/push.py; read and write: admins). Each
     # person's devices live at /api/gateway/me/push/devices, self-only by construction.
     GatewayRoutePolicy(resource="push", reason_code="admin_required", exact=("/api/gateway/push/settings",)),
+    # The voice library's CHANGES (routes/voice_library.py): cloned voices are one store per machine
+    # user, shared by every account, so creating, renaming, deleting or designing one is an
+    # administrator's act. Reads (languages, the list, one voice, the capability catalog) stay open.
+    GatewayRoutePolicy(
+        resource="voice_library",
+        reason_code="admin_required",
+        prefixes=("/api/gateway/voice/clones",),
+        exact=("/api/gateway/voice/design",),
+        methods=("POST", "PATCH", "PUT", "DELETE"),
+    ),
     # Host/model MUTATIONS are operator surfaces; the READ side (which models
     # are resident, how much memory is left — /models/loaded, /host/state,
     # /host/metrics/*, /models/context_estimate) is visibility every

@@ -360,9 +360,20 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/turn"),
     ("POST", "/api/gateway/entities/{name}/chat/{chat_id}/close"),
     ("POST", "/api/gateway/entities/{name}/visit/open"),
+    # Deprecated alias of visit/open kept for Assistant clients that opened a
+    # visit with per-tool choices through it (routes/session_tools.py): the same
+    # visitor-scoped open, the same entity guards, bound to its caller.
+    ("POST", "/api/gateway/entities/{name}/sessions"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/turn"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/close"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/tick"),
+    # Per-tool choices of a managed visit (routes/session_tools.py): each route
+    # loads the visit and refuses a caller who is not its owner (require_owner),
+    # the choices only narrow the home's grants, and the decision answers the
+    # visit's own pending approval wait. `end` is the deprecated alias of close.
+    ("PUT", "/api/gateway/entities/{name}/visit/{run_id}/tool-policy"),
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/decision"),
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/end"),
     ("POST", "/api/gateway/entities/meets/open"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/relay"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/close"),
@@ -527,7 +538,7 @@ def test_every_write_route_has_an_explicit_authorization_decision() -> None:
             # routers' guard, matrix in test_r16w6_entity_settings_authz.py); everything else is admin.
             if requirement.required_role == "admin_or_creator":
                 assert path.startswith("/api/gateway/entities/{name}/") and path.rsplit("/", 1)[-1] in {
-                    "substrate", "voice", "tool-policy", "prompt", "skills",
+                    "substrate", "voice", "appearance", "tool-policy", "prompt", "skills",
                 }, f"{method} {path}: admin_or_creator is for an entity's settings only"
             else:
                 assert requirement.required_role == "admin"

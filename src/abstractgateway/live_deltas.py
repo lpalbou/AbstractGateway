@@ -98,6 +98,12 @@ _role_lock = threading.Lock()
 # 0.9.0: automation.unarchive (an archived automation comes back paused with its history).
 # 0.9.1: streamed speech is never a run wait; close_interrupted_voice_stream for legacy waits.
 # 0.10.0: schedule@2 calendar rules (daily/weekly/monthly in the owner's time zone) and set_occurrence/registry pins.
+# 0.10.3: image/video specs on an endpoint connection (`endpoint:<id>`) run in process.
+# 0.10.4: a media spec keeps its `endpoint:<id>` provider (the LLM_CALL handler no longer rewrites it)
+#         and the pooled client's media host carries the endpoint-profile resolver.
+# 0.10.6: `abstractruntime.conversation_search` (GET /sessions/search), named automation tool policies
+#         (`policy.tool_policy`), streamed read-aloud recordings tagged under the `voice/` artifact space.
+# 0.12.0: the run index and store change tokens, `origin_for` (run origin), the event inbox streams.
 ABSTRACTRUNTIME_FLOOR = "0.12.0"
 
 

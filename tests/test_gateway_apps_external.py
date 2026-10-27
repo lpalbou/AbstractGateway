@@ -49,10 +49,10 @@ def test_each_app_page_is_recognised_by_its_title_and_nothing_else_is() -> None:
 
 
 def test_one_port_table_is_the_stack_map_for_launch_probe_and_tray() -> None:
-    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005}
+    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005, "note": 3006}
     assert dict(am.STACK_PORTS) == expected
     assert {a.id: a.default_port for a in am.APPS} == expected
-    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow"]  # stack order
+    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow", "note"]  # stack order
     from abstractgateway.tray import apps as tray_apps
 
     assert {w[0]: w[4] for w in tray_apps.WEB_APPS} == expected

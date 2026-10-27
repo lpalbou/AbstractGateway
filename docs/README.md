@@ -45,7 +45,7 @@ Related repos:
 | [push.md](./push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the Push forwarder setting and the `--push-relay` flag, alerts that choose their channels, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
 | [openai-api.md](./openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
 | [console.md](./console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, My email (mailboxes, notifications, watch and iPhone devices, the push forwarder), Workflows and Triggers (well-known feeds, Handled by); responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
-| [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
+| [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity, Note), Code's terminal app and the desktop Assistant |
 | [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
 | [tray.md](./tray.md) | the desktop tray icon: sessions, automation and approval notifications, apps, models, pause, start at login, network, restart and update |

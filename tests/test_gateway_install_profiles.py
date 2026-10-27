@@ -48,7 +48,7 @@ def test_base_install_is_remote_light_server() -> None:
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
     assert "abstractcore>=2.26.0" in deps
-    assert "abstractvoice>=0.15.0" in deps
+    assert "abstractvoice>=0.15.1" in deps
     assert "abstractagent>=0.3.19" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps

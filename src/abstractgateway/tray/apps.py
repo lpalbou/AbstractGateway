@@ -4,7 +4,7 @@ machine, and how to open them.
 Detection is by PRESENCE only — no app is ever imported (the gateway must not
 depend on its apps; an import would also run their code in the tray):
 
-- the five browser apps (Observer, Flow, Code, Continuum, Entity): the
+- the six browser apps (Observer, Flow, Code, Continuum, Entity, Note): the
   gateway-managed install first (`GET /api/gateway/apps`: install,
   launch, one-time signed-in handover), else a GLOBAL install the gateway
   does not manage — the app's own command on PATH (`abstractobserver`,

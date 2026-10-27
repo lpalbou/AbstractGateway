@@ -845,6 +845,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from .stdio_safety import safe_stdio
+
+    safe_stdio()
     # Same data dir as `serve` would use from here (env, ./runtime in a
     # checkout, else the per-OS user data dir), exported for this process.
     from .host_paths import apply_data_dir_default

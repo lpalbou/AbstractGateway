@@ -73,7 +73,7 @@ dependencies = [
   # but that is three hops; the direct import gets a direct floor.
   # 0.14.0: streamed speech starts sooner (a short first segment) for the gateway's
   # /voice/tts/stream, and stream metrics report the execution device.
-  "abstractvoice>=0.15.0",
+  "abstractvoice>=0.15.1",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
   # calls it never makes. 0.3.17: entity visit react turns send the runtime's

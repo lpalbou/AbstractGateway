@@ -900,14 +900,26 @@ The terminal console does what the web console does, through the same gateway
 routes, with the same admin rules and confirmations. Use it over SSH on a
 headless server, where it also runs the first-run setup guide.
 
-Install it from crates.io (Rust 1.87 or newer):
+The AbstractFramework installer builds it into the folder that holds
+`abstractgateway`. By hand, install it from crates.io (Rust 1.87 or newer):
 
 ```bash
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway with its URL and your token. The admin token
-is printed by `abstractgateway serve` when it starts:
+The quickest way to open it is through the gateway's own command, which finds
+the console (next to `abstractgateway`, then on PATH), the gateway's address
+and your token (`--url` / `--token`, else `ABSTRACTGATEWAY_URL` /
+`ABSTRACTGATEWAY_AUTH_TOKEN`, else the gateway running for this data folder and
+its admin token) and hands the terminal over to it:
+
+```bash
+abstractgateway console                      # same as: abstractgateway --console
+abstractgateway console --url http://10.0.0.5:8080 --token <token>
+```
+
+Or connect it yourself with its URL and your token. The admin token is printed
+by `abstractgateway serve` when it starts:
 
 ```bash
 abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>

@@ -99,19 +99,37 @@ LMSTUDIO_LINUX_SCRIPT = "curl -fsSL https://lmstudio.ai/install.sh | bash"
 LMSTUDIO_DEFAULT_URL = "http://127.0.0.1:1234"
 
 _USER_AGENT = "abstractgateway-engine-installer"
+#: The Windows one-line installer (AbstractFramework); it brings llama.cpp's prebuilt build.
+WINDOWS_INSTALLER_COMMAND = 'powershell -ExecutionPolicy ByPass -c "irm https://abstractframework.ai/install.ps1 | iex"'
 
 # --- Python engines arrive ONLY with an AbstractCore install setting ---------------------
 # Operator ruling (2026-09-29): users are only ever advised to install `abstractcore`,
 # `abstractcore[apple]` (Apple silicon) or `abstractcore[gpu]` (GPU machines), never a bare
 # engine package. MLX, llama.cpp, Hugging Face and vLLM rows therefore install this host's
-# setting; a host with no setting (an Intel Mac, Windows, Rosetta) is told plainly that the
-# engine is not available there. The sentence mirrors
-# `abstractcore.utils.install_settings.not_available_here` (AbstractCore > 2.19.0); it is
-# spelled here so the gateway keeps working on the released 2.19.0 floor.
+# setting; a host with no setting (an Intel Mac, Windows on ARM, a Rosetta Python) is told
+# plainly that the engine is not available there. `host_setting` and the sentence mirror
+# `abstractcore.utils.install_settings` (the gateway does not import AbstractCore directly,
+# and keeps working on older AbstractCore floors); tests/test_gateway_engines_install.py
+# compares both with AbstractCore's so they cannot drift.
+def host_setting(os_id: Optional[str], arch: Optional[str]) -> Optional[str]:
+    """``apple`` (macOS arm64), ``gpu`` (Linux, Windows x86_64) or None."""
+
+    os_key = str(os_id or "").strip().lower()
+    arch_key = str(arch or "").strip().lower()
+    if os_key == "darwin":
+        return "apple" if arch_key in {"arm64", "aarch64"} else None
+    if os_key == "linux":
+        return "gpu"
+    if os_key in {"windows", "win32"}:
+        return "gpu" if arch_key in {"x86_64", "amd64", "x64"} else None
+    return None
+
+
 def _not_available_here(what: str) -> str:
     return (
         f"{what} is not available on this machine with AbstractCore's install settings "
-        "(light: every remote provider; apple: Apple silicon; gpu: Linux with an NVIDIA or AMD GPU); "
+        "(light: every remote provider; apple: Apple silicon; gpu: NVIDIA or AMD on Linux, NVIDIA on "
+        "Windows x86_64); "
         "use a remote provider or a local server such as Ollama or LM Studio"
     )
 
@@ -124,7 +142,7 @@ _SETTING_ENGINE_WHAT = {
 ENGINE_TEXT: Dict[str, Dict[str, str]] = {
     "ollama": {
         "name": "Ollama",
-        "description": "A local model server with its own model library. Runs in the menu bar and starts at login.",
+        "description": "A local model server with its own model library. Runs in the background (menu bar on macOS, notification area on Windows) and starts at login.",
         "download_url": "https://ollama.com/download",
         "docs_url": "https://docs.ollama.com",
     },
@@ -142,7 +160,7 @@ ENGINE_TEXT: Dict[str, Dict[str, str]] = {
     },
     "llamacpp": {
         "name": "llama.cpp",
-        "description": "Runs GGUF model files inside the gateway (Metal on Apple Silicon, CPU elsewhere).",
+        "description": "Runs GGUF model files inside the gateway: Metal on Apple Silicon, the installer's CUDA, Vulkan or CPU build on Windows, CPU on Linux.",
         "download_url": "https://github.com/abetlen/llama-cpp-python",
         "docs_url": "https://llama-cpp-python.readthedocs.io",
     },
@@ -905,6 +923,8 @@ class EngineInstaller:
                 return True, None
             if h.os_id == "darwin":
                 return False, "vLLM does not run on macOS. Use MLX, llama.cpp, Ollama or LM Studio here, or point the gateway at a vLLM server on a Linux machine with an NVIDIA GPU."
+            if h.os_id == "windows":
+                return False, "vLLM has no native Windows build. Run vLLM in WSL2 or on a Linux machine with an NVIDIA GPU and point the gateway at that server; on this computer, llama.cpp, Hugging Face, Ollama and LM Studio run local models."
             return False, "vLLM needs Linux with an NVIDIA GPU (CUDA). Point the gateway at a remote vLLM server instead."
         if eid == "ollama":
             if h.os_id == "darwin" and h.macos_version and h.macos_version < (14, 0):
@@ -922,14 +942,24 @@ class EngineInstaller:
 
     def local_setting(self) -> Optional[str]:
         """This host's AbstractCore local-engine setting: ``apple`` (native Apple silicon),
-        ``gpu`` (Linux) or None (Intel Mac, a Rosetta Python, Windows)."""
+        ``gpu`` (Linux, Windows x86_64) or None (Intel Mac, a Rosetta Python, Windows on ARM).
+
+        `host_setting` (AbstractCore's table) decides; the gateway adds only what it alone
+        knows: a Python running under Rosetta is not a native Apple silicon Python."""
 
         h = self.host
-        if h.os_id == "darwin":
-            return "apple" if h.arch == "arm64" and not h.translated else None
-        if h.os_id == "linux":
-            return "gpu"
-        return None
+        if h.os_id == "darwin" and h.translated:
+            return None
+        return host_setting(h.os_id, h.arch)
+
+    def _torch_backend_args(self) -> List[str]:
+        """``--torch-backend=auto`` for a uv install on Windows: PyPI's Windows PyTorch is the CPU
+        build, and uv then takes PyTorch's CUDA build for the NVIDIA driver it finds (pip has no
+        such option; it gets PyPI's build)."""
+
+        if self.host.os_id == "windows" and self.pip_prefix()[1:3] == ["pip", "install"]:
+            return ["--torch-backend=auto"]
+        return []
 
     def _core_version(self) -> Optional[str]:
         """The AbstractCore version installed in the gateway's Python (kept as it is)."""
@@ -1020,7 +1050,17 @@ class EngineInstaller:
         if not supported:
             return InstallPlan(eid, False, "unsupported", notes=reason or "not supported on this machine")
         h = self.host
-        if h.os_id == "windows":
+        # Windows: the vendor commands AbstractCore plans, except Hugging Face, which installs
+        # this gateway's AbstractCore gpu setting at its installed version (below).
+        if h.os_id == "windows" and eid == "llamacpp":
+            # PyPI has only llama-cpp-python's source build; the AbstractFramework installer
+            # (install.ps1) adds the prebuilt CUDA / Vulkan / CPU build that loads on this machine.
+            return InstallPlan(eid, False, "wheel", target=self.python,
+                               notes=("The in-process llama.cpp engine (GGUF models) comes with the AbstractFramework installer "
+                                      "on Windows: run it again (it keeps your settings and data) to add llama.cpp's prebuilt "
+                                      "GPU build that matches this computer's NVIDIA driver, or its Vulkan or CPU build."),
+                               command_preview=[WINDOWS_INSTALLER_COMMAND], steps=["run the AbstractFramework installer again"])
+        if h.os_id == "windows" and eid != "huggingface":
             argv = self.legacy_argv(eid) if self.legacy_argv else []
             return InstallPlan(eid, bool(argv), "script" if eid in SERVER_ENGINES else "wheel", notes="Windows: runs the vendor command AbstractCore plans (unchanged).", command_preview=argv, steps=["run the vendor command"])
         if eid == "llamacpp":
@@ -1055,7 +1095,7 @@ class EngineInstaller:
             setting = self.local_setting()
             return InstallPlan(eid, True, "wheel", target=self.python,
                                notes=f"Installs AbstractCore's {setting} setting (every local engine for this machine, including transformers, torch and huggingface_hub) into the gateway's Python; several GB, no admin.",
-                               command_preview=[*self.pip_prefix(), self._core_spec(setting or "gpu", "<installed>")], steps=["install", "check that it loads"])
+                               command_preview=[*self.pip_prefix(), self._core_spec(setting or "gpu", "<installed>"), *self._torch_backend_args()], steps=["install", "check that it loads"])
         if eid == "vllm":
             return InstallPlan(eid, True, "wheel", target=self.python,
                                notes="Installs AbstractCore's gpu setting (every local engine for GPU machines, including vLLM: PyTorch + CUDA wheels, several GB) into the gateway's Python; no admin.",
@@ -1123,7 +1163,7 @@ class EngineInstaller:
         supported, reason = self.support(eid)
         if not supported:
             raise InstallFailed(reason or "not supported on this machine", code="unsupported")
-        if self.host.os_id == "windows":
+        if self.host.os_id == "windows" and eid != "huggingface":
             return self._install_legacy(eid, ctx)
         probe = _ALREADY_PROBES.get(eid)
         if probe and not ctx.job.force:
@@ -1253,7 +1293,7 @@ class EngineInstaller:
             raise InstallFailed(_not_available_here(_SETTING_ENGINE_WHAT["huggingface"]), code="unsupported")
         spec = self._core_spec(setting, self._core_version())
         ctx.state("downloading", f"Installing AbstractCore's {setting} setting: transformers and PyTorch (several GB)", percent=5)
-        rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._abstract_pins(ctx)], lo=5, hi=90)
+        rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._torch_backend_args(), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("The Hugging Face stack could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import transformers; print(json.dumps({'version': m.version('transformers')}))", "transformers")

@@ -227,6 +227,7 @@ def test_policy_rows_cover_the_live_mutation_route_table() -> None:
 _CREATOR_SETTINGS_ROUTES = {
     ("PUT", "/api/gateway/entities/{name}/substrate"),
     ("PUT", "/api/gateway/entities/{name}/voice"),
+    ("PUT", "/api/gateway/entities/{name}/appearance"),
     ("PUT", "/api/gateway/entities/{name}/tool-policy"),
     ("PUT", "/api/gateway/entities/{name}/prompt"),
     ("PUT", "/api/gateway/entities/{name}/skills"),

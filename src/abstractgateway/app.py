@@ -280,6 +280,11 @@ from .abstractnote_seam import note_router  # noqa: E402
 _note_router = note_router()
 if _note_router is not None:
     app.include_router(_note_router, prefix="/api/gateway")
+# The voice library (languages, cloned voices, cloning, voice design, the capability catalog);
+# literal /gateway/voice/... paths, mounted before the main router.
+from .routes.voice_library import router as voice_library_router  # noqa: E402
+
+app.include_router(voice_library_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 

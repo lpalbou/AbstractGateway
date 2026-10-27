@@ -43,8 +43,12 @@ recorded here (`sent_messages`, with every other automatic send through the acco
 occurrences, sign-in codes). The mail watcher never admits the account's own marked mail nor a
 recorded Message-ID, so a notice can never trigger an automation (the 0.7.0 self-trigger loop).
 
-Templates are fixed (text + minimal HTML). The only model-authored text is an automation's
-own `notify` title/body, labelled as such. No approve/deny links (D8).
+Templates are fixed: one branded layout (inline styles, no remote resources) for every kind,
+with a plain-text twin carrying the same facts and links. The only model-authored text is an
+automation's own `notify` title/body, labelled as such. No approve/deny links (D8): the buttons
+open the run's page in the console (and the session in AbstractCode when that app is installed).
+An approval notice is queued once per WAIT (`wait_identity`): re-issuing the same approval at
+the same node sends nothing new.
 """
 
 from __future__ import annotations
@@ -248,6 +252,318 @@ def _console_link(origin: str = "") -> str:
     return recorded
 
 
+def _gateway_base(origin: str = "") -> str:
+    """The safe public origin for links in an email (`_console_link` without its `/console`)."""
+
+    link = _console_link(origin)
+    if not link:
+        return ""
+    parsed = urlsplit(link)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def run_console_path(run_id: str) -> str:
+    """The gateway page of ONE run: `/apps/observer/#run/<id>` — the link the console's activity
+    rows, `GET /host/runs` and the tray carry ("Open in Observer"). Signed out, the apps proxy
+    sends the page through the console sign-in and back to that run."""
+
+    from ..account_activity import observer_path_for
+
+    return observer_path_for(run_id) or ""
+
+
+def session_code_path(session_id: str) -> str:
+    """The AbstractCode page of a session: `/apps/code/#session=<id>` (abstractcode
+    web/src/workspace/app.tsx reads `session` from the hash)."""
+
+    from urllib.parse import quote
+
+    from ..app_proxy import APPS_PREFIX
+
+    return f"{APPS_PREFIX}/code/#session={quote(str(session_id), safe='')}"
+
+
+def _code_app_installed() -> bool:
+    try:
+        from ..apps_manager import AppsManager
+        from ..users import gateway_data_dir_from_env
+
+        return bool(AppsManager(gateway_data_dir_from_env()).installed_version("code"))
+    except Exception:  # noqa: BLE001 - no apps state: no AbstractCode button
+        return False
+
+
+def recipient_time_zone(plane: EmailPlane) -> str:
+    """The recipient's IANA zone: the account's saved `time_zone`, else this host's zone."""
+
+    try:
+        from ..account_preferences import stored_time_zone
+        from ..users import gateway_data_dir_from_env
+
+        zone = stored_time_zone(gateway_data_dir_from_env(), tenant_id=plane.tenant_id, user_id=plane.user_id)
+        if zone:
+            return str(zone)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ..automation_schedule import host_time_zone
+
+        return str(host_time_zone() or "UTC")
+    except Exception:  # noqa: BLE001
+        return "UTC"
+
+
+def when_sentence(iso: str, time_zone: str = "") -> str:
+    """`2026-10-18 14:05 UTC · 16:05 Europe/Paris` (the recipient's zone when it is not UTC)."""
+
+    raw = str(iso or "").strip()
+    if not raw:
+        return ""
+    try:
+        at = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=datetime.timezone.utc)
+    utc = at.astimezone(datetime.timezone.utc)
+    out = f"{utc:%Y-%m-%d %H:%M} UTC"
+    zone = str(time_zone or "").strip()
+    if zone and zone != "UTC":
+        try:
+            from zoneinfo import ZoneInfo
+
+            local = at.astimezone(ZoneInfo(zone))
+            if local.date() == utc.date():
+                out += f" · {local:%H:%M} {zone}"
+            else:
+                out += f" · {local:%Y-%m-%d %H:%M} {zone}"
+        except Exception:  # noqa: BLE001 - an unknown zone: UTC alone
+            pass
+    return out
+
+
+# Plain-language labels of the shipped tools; any other tool reads as its name with spaces.
+TOOL_LABELS = {
+    "fetch_url": "Fetch a web page",
+    "web_search": "Search the web",
+    "browser_probe": "Open a page in the browser",
+    "execute_command": "Run a command",
+    "send_email": "Send an email",
+    "read_file": "Read a file",
+    "write_file": "Write a file",
+    "edit_file": "Edit a file",
+    "list_files": "List files",
+    "search_files": "Search files",
+    "skim": "Skim a document",
+}
+
+
+def tool_label(name: Any) -> str:
+    raw = str(name or "").strip()
+    if not raw:
+        return "a tool"
+    label = TOOL_LABELS.get(raw)
+    if label:
+        return label
+    words = raw.replace("_", " ").replace("-", " ").strip()
+    return words[:1].upper() + words[1:] if words else "a tool"
+
+
+def _argument_rows(arguments: Any) -> List[Tuple[str, str]]:
+    """`[(name, value)]` of a tool call's arguments, each value whole (a person decides on what the
+    tool will actually do, so nothing is cut)."""
+
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except ValueError:
+            return [("arguments", _preview(arguments))]
+    if isinstance(arguments, dict):
+        return [(str(k), _preview(v)) for k, v in arguments.items()]
+    if arguments in (None, "", [], {}):
+        return []
+    return [("arguments", _preview(arguments))]
+
+
+def _preview(value: Any) -> str:
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, (bool, int, float)) or value is None:
+        text = json.dumps(value)
+    else:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    # Whole, never shortened: the person decides on what the tool will actually do (ADR-0026's
+    # no-truncation rule); the mail client wraps or scrolls a long value.
+    return text.strip()
+
+
+def wait_identity(wait: Dict[str, Any]) -> str:
+    """ONE email per wait: the part of a wait that does not change when the same approval is
+    re-issued at the same node.
+
+    A tool-approval wait key (`tool_approval:<run>:<node>:<identity>`, AbstractRuntime
+    `build_tool_approval_wait_key`) changes with the runtime's effect-issuance counter, so a
+    retry of the same node would be a new key and a new email. The identity used here is the
+    node and the semantic tool calls (name + arguments); a question's is its wait key plus the
+    prompt and choices. A different batch at the same node is a new wait (a new email)."""
+
+    kind = str(wait.get("kind") or "")
+    run_id = str(wait.get("run_id") or "")
+    key = str(wait.get("wait_key") or "")
+    if kind == "tool_approval":
+        node = key
+        prefix = f"tool_approval:{run_id}:"
+        if run_id and key.startswith(prefix):
+            node = key[len(prefix):].rsplit(":", 1)[0] or key
+        calls = [
+            {"name": str(c.get("name") or ""), "arguments": c.get("arguments")}
+            for c in (wait.get("details") or [])
+            if isinstance(c, dict)
+        ]
+        digest = hashlib.sha256(json.dumps(calls, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+        return f"tool_approval:{node}:{digest}"
+    content = json.dumps([wait.get("prompt") or "", list(wait.get("choices") or [])], default=str)
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+    return f"{kind}:{key}:{digest}"
+
+
+# ---- the one layout (every kind) -------------------------------------------------------
+
+BRAND = "AbstractFramework"
+WEBSITE = "https://abstractframework.ai"
+GITHUB = "https://github.com/lpalbou/AbstractFramework"
+CONTACT = "contact@abstractframework.ai"
+# The ui-kit palette (console theme tokens): navy band, accent red; the card is light so it
+# reads the same in light and dark mail clients (every block names its own colours).
+C_BAND = "#1a1a2e"
+C_DEEP = "#0f3460"
+C_ACCENT = "#e94560"
+C_PAGE = "#f3f5f8"
+C_CARD = "#ffffff"
+C_TEXT = "#202938"
+C_MUTED = "#526071"
+C_LINE = "#dce1e8"
+C_SOFT = "#f6f8fb"
+C_WARN_LINE = "#b45309"
+C_WARN_BG = "#fff8ed"
+
+KIND_LABELS = {
+    "approval_needed": "Needs your answer",
+    "automation_result": "Automation result",
+    "automation_failed": "Automation failed",
+    "job_finished": "Run finished",
+    "job_failed": "Run failed",
+    "notify_me": "Flow notification",
+    "test": "Test notification",
+}
+
+
+def _h(value: Any) -> str:
+    return html.escape(str(value if value is not None else ""), quote=True)
+
+
+def _block_p(text: str, *, muted: bool = False) -> str:
+    colour = C_MUTED if muted else C_TEXT
+    size = "14px" if muted else "16px"
+    return f'<p style="margin:0 0 14px;color:{colour};font-size:{size};line-height:1.55">{_h(text)}</p>'
+
+
+def _block_rows(rows: List[Tuple[str, str]]) -> str:
+    cells = "".join(
+        f'<tr><td style="padding:6px 12px 6px 0;color:{C_MUTED};font-size:13px;vertical-align:top;white-space:nowrap">{_h(k)}</td>'
+        f'<td style="padding:6px 0;color:{C_TEXT};font-size:14px;vertical-align:top;overflow-wrap:anywhere">{_h(v)}</td></tr>'
+        for k, v in rows
+    )
+    return f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;border-collapse:collapse">{cells}</table>'
+
+
+def _block_call(label: str, name: str, rows: List[Tuple[str, str]]) -> str:
+    args = "".join(
+        f'<tr><td style="padding:3px 10px 3px 0;color:{C_MUTED};font-size:13px;vertical-align:top;white-space:nowrap">{_h(k)}</td>'
+        f'<td style="padding:3px 0;color:{C_TEXT};font-size:13px;font-family:Menlo,Consolas,monospace;vertical-align:top;overflow-wrap:anywhere">{_h(v)}</td></tr>'
+        for k, v in rows
+    )
+    table = f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 0;border-collapse:collapse">{args}</table>' if rows else ""
+    return (
+        f'<div style="margin:0 0 12px;padding:12px 14px;background:{C_SOFT};border:1px solid {C_LINE};border-left:4px solid {C_ACCENT};border-radius:6px">'
+        f'<div style="color:{C_TEXT};font-size:15px;font-weight:bold">{_h(label)}</div>'
+        f'<div style="color:{C_MUTED};font-size:12px;font-family:Menlo,Consolas,monospace">{_h(name)}</div>{table}</div>'
+    )
+
+
+def _block_question(prompt: str, choices: List[str]) -> str:
+    quote = (
+        f'<div style="margin:0 0 12px;padding:12px 14px;background:{C_SOFT};border:1px solid {C_LINE};border-left:4px solid {C_DEEP};'
+        f'border-radius:6px;color:{C_TEXT};font-size:16px;line-height:1.5;white-space:pre-wrap">{_h(prompt)}</div>'
+    ) if prompt else ""
+    items = "".join(f'<li style="margin:0 0 6px;color:{C_TEXT};font-size:15px">{_h(c)}</li>' for c in choices)
+    listing = f'<p style="margin:0 0 6px;color:{C_MUTED};font-size:13px">Choices</p><ol style="margin:0 0 16px;padding-left:22px">{items}</ol>' if items else ""
+    return quote + listing
+
+
+def _block_model(title: str, body: str, *, label: str = "Written by the automation (model-authored text)") -> str:
+    return (
+        f'<div style="margin:0 0 16px;padding:12px 14px;background:{C_SOFT};border:1px solid {C_LINE};border-radius:6px">'
+        f'<p style="margin:0 0 6px;color:{C_MUTED};font-size:12px">{_h(label)}</p>'
+        + (f'<p style="margin:0 0 6px;color:{C_TEXT};font-size:15px;font-weight:bold">{_h(title)}</p>' if title else "")
+        + (f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;white-space:pre-wrap">{_h(body)}</div>' if body else "")
+        + "</div>"
+    )
+
+
+def _block_warning(heading: str, text: str) -> str:
+    return (
+        f'<div style="margin:0 0 16px;padding:14px 16px;border-left:4px solid {C_WARN_LINE};background:{C_WARN_BG};color:{C_TEXT};font-size:14px;line-height:1.5">'
+        f'<strong>{_h(heading)}</strong><p style="margin:8px 0 0;color:{C_TEXT}">{_h(text)}</p></div>'
+    )
+
+
+def _buttons_html(buttons: List[Tuple[str, str, bool]]) -> str:
+    if not buttons:
+        return ""
+    cells = []
+    for label, url, primary in buttons:
+        bg = C_ACCENT if primary else C_DEEP
+        cells.append(
+            f'<td style="padding:0 10px 10px 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td bgcolor="{bg}" style="background:{bg};border-radius:6px"><a href="{_h(url)}" '
+            f'style="display:inline-block;padding:12px 22px;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;border-radius:6px">{_h(label)}</a></td>'
+            "</tr></table></td>"
+        )
+    urls = "".join(
+        f'<p style="margin:0 0 4px;color:{C_MUTED};font-size:12px;overflow-wrap:anywhere">{_h(label)}: <a href="{_h(url)}" style="color:{C_DEEP}">{_h(url)}</a></p>'
+        for label, url, _ in buttons
+    )
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 8px"><tr>{"".join(cells)}</tr></table>{urls}'
+    )
+
+
+def _layout(*, eyebrow: str, title: str, body_html: str, buttons: List[Tuple[str, str, bool]], footer: List[str], ref: str = "") -> str:
+    footer_html = "".join(f'<p style="margin:0 0 8px;color:{C_MUTED};font-size:13px;line-height:1.5">{_h(line)}</p>' for line in footer)
+    ref_html = f'<p style="margin:0 0 8px;color:{C_MUTED};font-size:12px;font-family:Menlo,Consolas,monospace;overflow-wrap:anywhere">Reference: {_h(ref)}</p>' if ref else ""
+    return (
+        '<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"></head>'
+        f'<body bgcolor="{C_PAGE}" style="margin:0;padding:24px 12px;background:{C_PAGE};color:{C_TEXT};'
+        'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5">'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="max-width:600px;width:100%;margin:0 auto">'
+        f'<tr><td bgcolor="{C_BAND}" style="background:{C_BAND};padding:18px 28px;border-radius:10px 10px 0 0">'
+        f'<span style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:0.2px">Abstract</span>'
+        f'<span style="color:{C_ACCENT};font-size:20px;font-weight:bold;letter-spacing:0.2px">Framework</span></td></tr>'
+        f'<tr><td bgcolor="{C_CARD}" style="background:{C_CARD};padding:28px;border:1px solid {C_LINE};border-top:0;border-radius:0 0 10px 10px">'
+        f'<p style="margin:0 0 6px;color:{C_ACCENT};font-size:12px;font-weight:bold;letter-spacing:0.6px;text-transform:uppercase">{_h(eyebrow)}</p>'
+        f'<h1 style="margin:0 0 18px;color:{C_TEXT};font-size:24px;line-height:1.3;font-weight:bold">{_h(title)}</h1>'
+        f"{body_html}{_buttons_html(buttons)}"
+        f'<hr style="border:0;border-top:1px solid {C_LINE};margin:22px 0">'
+        f"{footer_html}{ref_html}"
+        f'<p style="margin:12px 0 0;color:{C_MUTED};font-size:12px"><a href="{WEBSITE}" style="color:{C_DEEP}">abstractframework.ai</a> · '
+        f'<a href="{GITHUB}" style="color:{C_DEEP}">GitHub</a> · <a href="mailto:{CONTACT}" style="color:{C_DEEP}">{CONTACT}</a></p>'
+        "</td></tr></table></body></html>"
+    )
+
+
 def _render_test_notice(console_url: str) -> Tuple[str, str, str]:
     title = "Email notifications are working"
     intro = "Your AbstractFramework gateway successfully sent this test notification."
@@ -256,103 +572,189 @@ def _render_test_notice(console_url: str) -> Tuple[str, str, str]:
         "If you did not request this test, someone else may have access to your gateway account. "
         "Rotate your gateway sign-in token, change your email password, and contact your gateway administrator."
     )
-    website = "https://abstractframework.ai"
-    github = "https://github.com/lpalbou/AbstractFramework"
-    contact = "contact@abstractframework.ai"
-    lines = ["AbstractFramework", "", title, "", intro, ""]
+    lines = [BRAND, "", title, "", intro, ""]
     if console_url:
         lines.extend([f"Open your console: {console_url}", ""])
-    lines.extend([why, "", "DIDN'T REQUEST THIS?", security, "", f"{website} | GitHub: {github} | Email: {contact}"])
-    link = html.escape(console_url, quote=True)
-    console = (
-        f'<p style="margin:24px 0"><a href="{link}" style="display:inline-block;padding:12px 20px;'
-        'background:#17365d;color:#ffffff;text-decoration:none;border-radius:6px">Open your console</a></p>'
-        f'<p style="overflow-wrap:anywhere;font-size:13px"><a href="{link}">{link}</a></p>'
-    ) if console_url else ""
-    html_body = (
-        '<!doctype html><html><body style="margin:0;padding:24px;background:#f3f5f8;color:#202938;'
-        'font-family:Arial,sans-serif;line-height:1.6">'
-        '<div style="max-width:600px;margin:0 auto;padding:28px;background:#ffffff;border-radius:10px">'
-        '<p style="margin:0 0 12px;color:#17365d;font-weight:bold">AbstractFramework</p>'
-        f'<h1 style="font-size:24px;line-height:1.3">{title}</h1><p>{intro}</p>{console}'
-        f'<p style="font-size:14px;color:#526071">{html.escape(why)}</p>'
-        '<div style="margin:24px 0;padding:16px;border-left:4px solid #b45309;background:#fff8ed">'
-        f'<strong>Didn’t request this?</strong><p style="margin:8px 0 0">{security}</p></div>'
-        '<hr style="border:0;border-top:1px solid #dce1e8;margin:24px 0">'
-        f'<p style="font-size:13px"><a href="{website}">abstractframework.ai</a> · '
-        f'<a href="{github}">GitHub</a> · <a href="mailto:{contact}">{contact}</a></p>'
-        '</div></body></html>'
+    lines.extend([why, "", "DIDN'T REQUEST THIS?", security, "", f"{WEBSITE} | GitHub: {GITHUB} | Email: {CONTACT}"])
+    html_body = _layout(
+        eyebrow=KIND_LABELS["test"],
+        title=title,
+        body_html=_block_p(intro) + _block_warning("Didn’t request this?", security),
+        buttons=[("Open your console", console_url, True)] if console_url else [],
+        footer=[why],
     )
     return f"{SUBJECT_PREFIX} Test notification", "\n".join(lines) + "\n", html_body
 
 
+def _calls_of(facts: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """`[{name, arguments}]`: `calls` when the collector had the wait record, else the bare `tools` names."""
+
+    calls = [c for c in (facts.get("calls") or []) if isinstance(c, dict) and str(c.get("name") or "")]
+    if calls:
+        return calls
+    return [{"name": str(t), "arguments": {}} for t in (facts.get("tools") or []) if str(t)]
+
+
+def _unique_labels(calls: List[Dict[str, Any]]) -> List[str]:
+    out: List[str] = []
+    for c in calls:
+        label = tool_label(c.get("name"))
+        if label not in out:
+            out.append(label)
+    return out
+
+
 def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
-    """(subject, text, html) for one notice. `facts` holds typed fields; `model_title` /
-    `model_body` are the automation's own notify text (model-authored, labelled)."""
+    """(subject, text, html) for one notice: ONE branded layout for every kind, the text part
+    carrying the same facts and the same links.
+
+    `facts`: `title` (the display name, never an id), `context` (`[[label, value], …]`: the
+    automation or session, who started it, when it started), `event_at` (ISO) and `time_zone`
+    (the recipient's), `run_id` (the deep link + the Reference line), `session_id` and
+    `code_app` (an "Open in AbstractCode" button), `wait_kind` with `calls` (`[{name,
+    arguments}]`) or `prompt` / `choices`, `cause` / `fix`, `model_title` / `model_body` (the
+    automation's own notify text, labelled; for `notify_me` the flow's Notify me title/body, labelled
+    "Written by the flow:"), `origin` (the browser's, matched against the configured public names
+    only)."""
 
     if kind == "test":
         return _render_test_notice(_console_link(str(facts.get("origin") or "")))
-    title = str(facts.get("title") or "").strip() or "Untitled"
-    status = {
-        "automation_result": "result",
-        "automation_failed": "failed",
-        "approval_needed": "needs your action",
-        "job_finished": "finished",
-        "job_failed": "failed",
-        "notify_me": "notification",
-        "test": "test notification",
-    }.get(kind, kind)
-    subject = f"{SUBJECT_PREFIX} {title}: {status}"
-    lines: List[str] = []
-    if kind == "automation_result":
-        lines.append(f"The automation “{title}” finished an occurrence.")
-    elif kind == "automation_failed":
-        lines.append(f"The automation “{title}” failed after its retries. It is not paused: the next occurrence runs as scheduled.")
-    elif kind == "approval_needed":
-        what = str(facts.get("wait_kind") or "")
-        if what == "tool_approval":
-            tools = ", ".join(str(t) for t in (facts.get("tools") or []) if str(t)) or "a tool"
-            lines.append(f"“{title}” waits for your approval before running {tools}.")
-        elif what == "ask_user":
-            lines.append(f"“{title}” asked you a question and waits for your answer.")
-        else:
-            lines.append(f"“{title}” waits for you.")
-        lines.append("Open the console to approve, deny or answer. Replying to this email does nothing.")
-    elif kind == "job_finished":
-        lines.append(f"The run “{title}” finished.")
-    elif kind == "job_failed":
-        lines.append(f"The run “{title}” failed.")
-    elif kind == "notify_me":
-        lines.append(f"“{title}” notified you.")
+    name = str(facts.get("title") or "").strip() or "Untitled"
+    what = str(facts.get("wait_kind") or "")
+    calls = _calls_of(facts) if kind == "approval_needed" and what == "tool_approval" else []
+    labels = _unique_labels(calls)
+    prompt = str(facts.get("prompt") or "").strip()
+    choices = [str(c) for c in (facts.get("choices") or []) if str(c).strip()]
     cause = str(facts.get("cause") or "").strip()
     fix = str(facts.get("fix") or "").strip()
-    if cause:
-        lines.append(f"Cause: {cause}")
-    if fix:
-        lines.append(f"Fix: {fix}")
     model_title = str(facts.get("model_title") or "").strip()
     model_body = str(facts.get("model_body") or "").strip()
-    if model_title or model_body:
+    run_id = str(facts.get("run_id") or "").strip()
+    session_id = str(facts.get("session_id") or "").strip()
+    ref = str(facts.get("ref") or "").strip()
+    when = when_sentence(str(facts.get("event_at") or ""), str(facts.get("time_zone") or ""))
+
+    # Subject + headline, in plain language (never an id).
+    if kind == "approval_needed" and what == "tool_approval":
+        subject = f"{SUBJECT_PREFIX} {name} needs your approval: {', '.join(labels) or 'a tool'}"
+        headline = f"{name} needs your approval"
+        intro = f"{name} waits for your approval before running {', '.join(labels) or 'a tool'}."
+    elif kind == "approval_needed" and what == "ask_user":
+        subject = f"{SUBJECT_PREFIX} {name} asked you a question"
+        headline = f"{name} asked you a question"
+        intro = f"{name} asked you a question and waits for your answer."
+    elif kind == "approval_needed":
+        subject = f"{SUBJECT_PREFIX} {name} waits for you"
+        headline = f"{name} waits for you"
+        intro = f"{name} waits for you before it continues."
+    elif kind == "automation_result":
+        subject = f"{SUBJECT_PREFIX} {name} finished"
+        headline = f"{name} finished"
+        intro = f"The automation {name} finished an occurrence."
+    elif kind == "automation_failed":
+        subject = f"{SUBJECT_PREFIX} {name} failed"
+        headline = f"{name} failed"
+        intro = f"The automation {name} failed after its retries. It is not paused: the next occurrence runs as scheduled."
+    elif kind == "job_finished":
+        subject = f"{SUBJECT_PREFIX} {name} finished"
+        headline = f"{name} finished"
+        intro = f"The run {name} finished."
+    elif kind == "job_failed":
+        subject = f"{SUBJECT_PREFIX} {name} failed"
+        headline = f"{name} failed"
+        intro = f"The run {name} failed."
+    elif kind == "notify_me":
+        subject = f"{SUBJECT_PREFIX} {name}: notification"
+        headline = f"{name} notified you"
+        intro = f"“{name}” notified you."
+    else:
+        subject = f"{SUBJECT_PREFIX} {name}: {kind}"
+        headline = name
+        intro = ""
+
+    # Context rows: what asked, who started it, when.
+    rows: List[Tuple[str, str]] = []
+    for item in facts.get("context") or []:
+        if isinstance(item, (list, tuple)) and len(item) == 2 and str(item[1] or "").strip():
+            rows.append((str(item[0]), str(item[1]).strip()))
+    started = when_sentence(str(facts.get("started_at") or ""), str(facts.get("time_zone") or ""))
+    if started:
+        rows.append(("Started", started))
+    if when:
+        rows.append(("Waiting since" if kind == "approval_needed" else "When", when))
+
+    # Buttons: the exact wait (the run's page) and, for a session the AbstractCode app can show, its page.
+    base = _gateway_base(str(facts.get("origin") or ""))
+    buttons: List[Tuple[str, str, bool]] = []
+    if base and run_id:
+        buttons.append(("Open in the console", base + run_console_path(run_id), True))
+    elif base:
+        buttons.append(("Open in the console", base + "/console", True))
+    if base and session_id and bool(facts.get("code_app")):
+        buttons.append(("Open in AbstractCode", base + session_code_path(session_id), False))
+
+    # Text twin.
+    lines: List[str] = [BRAND, "", headline, ""]
+    if intro:
+        lines.extend([intro, ""])
+    for k, v in rows:
+        lines.append(f"{k}: {v}")
+    if rows:
         lines.append("")
-        lines.append("Written by the flow:" if kind == "notify_me" else "Written by the automation (model-authored text):")
-        if model_title and model_title != title:
+    body_html = _block_p(intro) if intro else ""
+    if rows:
+        body_html += _block_rows(rows)
+    if calls:
+        for c in calls:
+            arg_rows = _argument_rows(c.get("arguments"))
+            label = tool_label(c.get("name"))
+            lines.append(f"{label} ({c.get('name')})")
+            for k, v in arg_rows:
+                lines.append(f"  {k}: {v}")
+            lines.append("")
+            body_html += _block_call(label, str(c.get("name") or ""), arg_rows)
+    if kind == "approval_needed" and what != "tool_approval" and (prompt or choices):
+        if prompt:
+            lines.extend([prompt, ""])
+        if choices:
+            lines.append("Choices:")
+            lines.extend(f"  {i}. {c}" for i, c in enumerate(choices, 1))
+            lines.append("")
+        body_html += _block_question(prompt, choices)
+    if kind == "approval_needed":
+        action = "Open the console to approve, deny or answer."
+        lines.extend([action, ""])
+        body_html += _block_p(action)
+    if cause:
+        lines.append(f"Cause: {cause}")
+        body_html += _block_rows([("Cause", cause)] + ([("Fix", fix)] if fix else []))
+    elif fix:
+        body_html += _block_rows([("Fix", fix)])
+    if fix:
+        lines.append(f"Fix: {fix}")
+    if cause or fix:
+        lines.append("")
+    if model_title or model_body:
+        model_label = "Written by the flow" if kind == "notify_me" else "Written by the automation (model-authored text)"
+        lines.append(model_label + ":")
+        if model_title and model_title != name:
             lines.append(model_title)
         if model_body:
             lines.append(model_body)
-    ref = str(facts.get("ref") or "").strip()
-    if ref:
         lines.append("")
-        lines.append(f"Reference: {ref}")
-    link = _console_link()
-    if link:
-        lines.append(f"Console: {link}")
-    lines.append("")
-    lines.append(_why_line(kind))
+        body_html += _block_model(model_title if model_title != name else "", model_body, label=model_label)
+    for label, url, _ in buttons:
+        lines.append(f"{label}: {url}")
+    if buttons:
+        lines.append("")
+    footer = [_why_line(kind), "Replying to this email does nothing."]
+    lines.extend(footer)
+    if ref:
+        lines.extend(["", f"Reference: {ref}"])
     text = "\n".join(lines).strip() + "\n"
-    paragraphs = "".join(
-        f"<p>{html.escape(line)}</p>" if line else "" for line in lines
+    html_body = _layout(
+        eyebrow=KIND_LABELS.get(kind, kind), title=headline, body_html=body_html, buttons=buttons, footer=footer, ref=ref,
     )
-    html_body = f"<!doctype html><html><body style=\"font-family:sans-serif\">{paragraphs}</body></html>"
     return subject, text, html_body
 
 
@@ -850,7 +1252,11 @@ def queue_notify_me(plane: EmailPlane, *, record_key: str, run: Any, title: str,
         return False
     rid = str(getattr(run, "run_id", "") or "")
     facts: Dict[str, Any] = {"title": _run_title(run), "model_title": title, "model_body": body or "",
-                             "ref": f"run {rid}", "subject_ref": f"run:{rid}", "recipients": ["self"]}
+                             "ref": f"run {rid}", "subject_ref": f"run:{rid}", "recipients": ["self"],
+                             "run_id": rid, "session_id": str(getattr(run, "session_id", "") or ""),
+                             "code_app": _code_app_installed(), "context": _run_context(run, None),
+                             "started_at": str(getattr(run, "created_at", "") or ""),
+                             "event_at": _now_iso(), "time_zone": recipient_time_zone(plane)}
     return queue_notice(plane, "notify_me", notify_me_key(record_key), facts)
 
 
@@ -1011,17 +1417,124 @@ def send_test_notification(plane: EmailPlane, *, origin: str = "") -> Dict[str, 
     return out
 
 
-def _run_title(run: Any) -> str:
+def _own_title(run: Any) -> str:
+    """The run's own title (`_meta.title`, `vars.title`), "" when it has none."""
+
     vars0 = getattr(run, "vars", None) or {}
     meta = vars0.get("_meta") if isinstance(vars0, dict) else None
     for candidate in (
         (meta or {}).get("title") if isinstance(meta, dict) else None,
         vars0.get("title") if isinstance(vars0, dict) else None,
-        getattr(run, "workflow_id", None),
     ):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
+    return ""
+
+
+def _load_run(run_store: Any, run_id: Any) -> Any:
+    load = getattr(run_store, "load", None)
+    if not callable(load) or not run_id:
+        return None
+    try:
+        return load(str(run_id))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _root_run(run: Any, run_store: Any, *, max_depth: int = 8) -> Any:
+    """The top of the run's parent chain (the one a person started), `run` itself at the top."""
+
+    current = run
+    seen = set()
+    for _ in range(max_depth):
+        parent_id = getattr(current, "parent_run_id", None)
+        if not parent_id or parent_id in seen:
+            break
+        seen.add(parent_id)
+        parent = _load_run(run_store, parent_id)
+        if parent is None:
+            break
+        current = parent
+    return current
+
+
+def _run_title(run: Any, run_store: Any = None) -> str:
+    """The display name: the run's own title, else the title of the run a person started (a
+    sub-run of a flow is named after its node, which is not a name), else that run's workflow."""
+
+    own = _own_title(run)
+    if own:
+        return own
+    root = _root_run(run, run_store) if run_store is not None else run
+    for candidate in (_own_title(root) if root is not run else "", getattr(root, "workflow_id", None), getattr(run, "workflow_id", None)):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
     return str(getattr(run, "run_id", "") or "run")
+
+
+def _started_by(run: Any) -> str:
+    """Who started the run, from its `actor_id`: `person:<id>` → `<id>`, `entity:<name>` →
+    `<name> (entity)`, "" for the gateway's own starts and unknown actors."""
+
+    actor = str(getattr(run, "actor_id", "") or "").strip()
+    if not actor or actor == "gateway":
+        return ""
+    if actor.startswith("person:"):
+        return actor[len("person:"):] or ""
+    if actor.startswith("entity:"):
+        return f"{actor[len('entity:'):]} (entity)"
+    return actor
+
+
+def _run_context(run: Any, run_store: Any, *, label: str = "Workflow") -> List[List[str]]:
+    """`[[label, value], …]` for the context block: the workflow (or automation), who started
+    the run a person started, and when it started."""
+
+    rows: List[List[str]] = []
+    if run is None:
+        return rows
+    root = _root_run(run, run_store)
+    title = _run_title(run, run_store)
+    if title:
+        rows.append([label, title])
+    who = _started_by(root) or _started_by(run)
+    if who:
+        rows.append(["Started by", who])
+    return rows
+
+
+def _started_at(run: Any, run_store: Any) -> str:
+    """When the run a person started began (ISO), "" when unknown."""
+
+    if run is None:
+        return ""
+    root = _root_run(run, run_store)
+    return str(getattr(root, "created_at", "") or getattr(run, "created_at", "") or "")
+
+
+def _wait_facts(wait: Dict[str, Any], run: Any, run_store: Any, *, title: str, context: List[List[str]], ref: str, time_zone: str, code_app: bool) -> Dict[str, Any]:
+    """The approval notice's facts from a typed wait (`typed_wait` / `pending_waits`: prompt,
+    choices, the tool calls with their arguments) and the run record when it loads."""
+
+    kind = str(wait.get("kind") or "")
+    details = [c for c in (wait.get("details") or []) if isinstance(c, dict)] if kind == "tool_approval" else []
+    facts: Dict[str, Any] = {
+        "title": title,
+        "wait_kind": kind,
+        "tools": [str(c.get("name") or "") for c in details],
+        "calls": [{"name": str(c.get("name") or ""), "arguments": c.get("arguments")} for c in details],
+        "prompt": wait.get("prompt") or "",
+        "choices": list(wait.get("choices") or []),
+        "context": context,
+        "run_id": str(wait.get("run_id") or ""),
+        "session_id": str(getattr(run, "session_id", "") or "") if run is not None else "",
+        "code_app": code_app,
+        "started_at": _started_at(run, run_store),
+        "event_at": str(getattr(run, "updated_at", "") or "") if run is not None else "",
+        "time_zone": time_zone,
+        "ref": ref,
+    }
+    return facts
 
 
 def _run_notify(run: Any) -> Dict[str, Any]:
@@ -1118,6 +1631,14 @@ class NotificationCollector:
 
     # --- one fact each, shared by the full and the incremental pass ---------------------
 
+    def _env(self, ctx: Dict[str, Any]) -> Tuple[str, bool]:
+        """The recipient's time zone and whether AbstractCode is installed: read once per pass,
+        and only when a notice is about to be queued (a pass that queues nothing reads neither)."""
+        if "time_zone" not in ctx:
+            ctx["time_zone"] = recipient_time_zone(self.plane)
+            ctx["code_app"] = _code_app_installed()
+        return str(ctx["time_zone"]), bool(ctx["code_app"])
+
     def _attention(self, ledger_store: Any, aid: str, title: str, att: Dict[str, int], first: bool, ctx: Dict[str, Any]) -> int:
         from abstractruntime.automations.attention import list_attention
 
@@ -1142,8 +1663,11 @@ class NotificationCollector:
                 # A failure after the retries: the user's "Job failed" switch.
                 wanted = bool(prefs.get("job_failed"))
             if wanted and (usable or (reconnect and kind == "automation_result")):
+                time_zone, _code = self._env(ctx)
                 facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}",
-                         "subject_ref": f"automation:{aid}"}
+                         "subject_ref": f"automation:{aid}",
+                         "context": [["Automation", title], ["Occurrence", str(it.get("index") or "")]],
+                         "run_id": str(it.get("run_id") or ""), "event_at": str(it.get("at") or ""), "time_zone": time_zone}
                 if kind == "automation_result":
                     facts["model_body"] = it.get("email_result", it.get("body"))
                     facts["recipients"] = it.get("recipients", ["self"])
@@ -1154,14 +1678,24 @@ class NotificationCollector:
                     queued += 1
         return queued
 
-    def _automation_wait(self, aid: str, title: str, w: Dict[str, Any]) -> int:
+    def _automation_wait(self, aid: str, title: str, w: Dict[str, Any], ctx: Dict[str, Any], *, run_store: Any, run: Any = None) -> int:
+        """A person's wait inside an automation's occurrence tree, named after the automation.
+        `run`: the waiting run when the caller already loaded it (the incremental pass)."""
         if w.get("kind") not in ("tool_approval", "ask_user", "event"):
             return 0
-        tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
-        key = idempotency_key("approval_needed", w.get("run_id"), w.get("wait_key"))
-        return 1 if queue_notice(self.plane, "approval_needed", key, {"title": title, "wait_kind": w.get("kind"), "tools": tools, "ref": f"automation {aid}"}) else 0
+        # One email per wait: the key is the wait's identity (node + what it asks), never the
+        # runtime's per-issuance wait key.
+        key = idempotency_key("approval_needed", w.get("run_id"), wait_identity(w))
+        occ = run if run is not None else _load_run(run_store, w.get("run_id"))
+        context = [["Automation", title]]
+        if w.get("index") is not None:
+            context.append(["Occurrence", str(w.get("index"))])
+        time_zone, code_app = self._env(ctx)
+        facts = _wait_facts(w, occ, run_store, title=title, context=context, ref=f"automation {aid}, run {w.get('run_id')}",
+                            time_zone=time_zone, code_app=code_app)
+        return 1 if queue_notice(self.plane, "approval_needed", key, facts) else 0
 
-    def _plain_wait(self, run: Any) -> int:
+    def _plain_wait(self, run: Any, ctx: Dict[str, Any], *, run_store: Any) -> int:
         """A run of this user waiting on a person outside automations (WAITING, reason USER)."""
         from abstractruntime.automations.attention import typed_wait
 
@@ -1171,11 +1705,13 @@ class NotificationCollector:
         w = typed_wait(run)
         if w is None:
             return 0
-        tools = [str(c.get("name") or "") for c in (w.get("details") or []) if isinstance(c, dict)] if w.get("kind") == "tool_approval" else []
-        key = idempotency_key("approval_needed", run.run_id, w.get("wait_key"))
-        return 1 if queue_notice(self.plane, "approval_needed", key, {"title": _run_title(run), "wait_kind": w.get("kind"), "tools": tools, "ref": f"run {run.run_id}"}) else 0
+        key = idempotency_key("approval_needed", run.run_id, wait_identity(w))
+        time_zone, code_app = self._env(ctx)
+        facts = _wait_facts(w, run, run_store, title=_run_title(run, run_store), context=_run_context(run, run_store),
+                            ref=f"run {run.run_id}", time_zone=time_zone, code_app=code_app)
+        return 1 if queue_notice(self.plane, "approval_needed", key, facts) else 0
 
-    def _job_notice(self, run: Any, kind: str, baseline_at: str, usable: bool) -> int:
+    def _job_notice(self, run: Any, kind: str, baseline_at: str, usable: bool, ctx: Dict[str, Any], *, run_store: Any) -> int:
         """"Email me when done" on a COMPLETED (job_finished) or FAILED (job_failed) run."""
         if str(getattr(run, "updated_at", "") or "") < baseline_at:
             return 0
@@ -1187,7 +1723,13 @@ class NotificationCollector:
             return 0
         if not usable:
             return 0
-        facts: Dict[str, Any] = {"title": _run_title(run), "ref": f"run {run.run_id}"}
+        time_zone, code_app = self._env(ctx)
+        facts: Dict[str, Any] = {
+            "title": _run_title(run, run_store), "ref": f"run {run.run_id}", "run_id": run.run_id,
+            "session_id": str(getattr(run, "session_id", "") or ""), "code_app": code_app,
+            "context": _run_context(run, run_store), "started_at": _started_at(run, run_store),
+            "event_at": str(getattr(run, "updated_at", "") or ""), "time_zone": time_zone,
+        }
         if kind == "job_failed":
             cause, fix = _run_error(run)
             facts["cause"] = cause
@@ -1294,7 +1836,7 @@ class NotificationCollector:
                     queued += self._attention(ledger_store, aid, title, att, first, ctx)
                     if str(item.get("status") or "") == "active" and usable and prefs.get("approval_needed") and not first:
                         for w in pending_waits(run_store, aid, limit=20):
-                            queued += self._automation_wait(aid, title, w)
+                            queued += self._automation_wait(aid, title, w, ctx, run_store=run_store)
                 if not page.next_cursor:
                     break
                 cursor = page.next_cursor
@@ -1317,7 +1859,7 @@ class NotificationCollector:
                 rows = _index_rows(run_store, RunStatus.WAITING, 200)
                 if rows is None:
                     for run in run_store.list_runs(status=RunStatus.WAITING, wait_reason=WaitReason.USER, limit=200):
-                        queued += self._plain_wait(run)
+                        queued += self._plain_wait(run, ctx, run_store=run_store)
                 else:
                     user = str(getattr(WaitReason.USER, "value", WaitReason.USER))
                     for row in rows:
@@ -1331,7 +1873,7 @@ class NotificationCollector:
                         if run is None:
                             fresh_seen.pop(rid, None)
                         elif getattr(run, "status", None) == RunStatus.WAITING and getattr(getattr(run, "waiting", None), "reason", None) == WaitReason.USER:
-                            queued += self._plain_wait(run)
+                            queued += self._plain_wait(run, ctx, run_store=run_store)
             if not first:
                 through = _ts(ctx.get("jobs_through")) if ctx.get("jobs_through") else None
                 base = _ts(baseline_at)
@@ -1340,7 +1882,7 @@ class NotificationCollector:
                     rows = _index_rows(run_store, status, 200)
                     if rows is None:
                         for run in run_store.list_runs(status=status, limit=200):
-                            queued += self._job_notice(run, kind, baseline_at, usable)
+                            queued += self._job_notice(run, kind, baseline_at, usable, ctx, run_store=run_store)
                         continue
                     for row in rows:
                         rid, sig = str(row["run_id"]), row_sig(row)
@@ -1356,7 +1898,7 @@ class NotificationCollector:
                         if run is None:
                             fresh_seen.pop(rid, None)  # unreadable now: decided on a later pass
                         elif getattr(run, "status", None) == status:
-                            queued += self._job_notice(run, kind, baseline_at, usable)
+                            queued += self._job_notice(run, kind, baseline_at, usable, ctx, run_store=run_store)
                 if newest is not None:
                     mark = newest - FINISHED_OVERLAP_S
                     if through is None or mark > through:
@@ -1453,14 +1995,14 @@ class NotificationCollector:
                     if aid and summ is not None and str(summ.get("status") or "") == "active":
                         w = typed_wait(run)
                         if w is not None:
-                            queued += self._automation_wait(aid, str(summ.get("title") or "Automation"), w)
+                            queued += self._automation_wait(aid, str(summ.get("title") or "Automation"), w, ctx, run_store=run_store, run=run)
                     waiting = getattr(run, "waiting", None)
                     if getattr(waiting, "reason", None) == WaitReason.USER:
-                        queued += self._plain_wait(run)
+                        queued += self._plain_wait(run, ctx, run_store=run_store)
                 elif status == RunStatus.COMPLETED:
-                    queued += self._job_notice(run, "job_finished", baseline_at, usable)
+                    queued += self._job_notice(run, "job_finished", baseline_at, usable, ctx, run_store=run_store)
                 elif status == RunStatus.FAILED:
-                    queued += self._job_notice(run, "job_failed", baseline_at, usable)
+                    queued += self._job_notice(run, "job_failed", baseline_at, usable, ctx, run_store=run_store)
             except Exception:  # noqa: BLE001
                 pass
         return queued
