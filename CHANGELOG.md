@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
+- `GET /api/gateway/voice/voices?compact=true` keeps `tts_model_details_by_provider` (AbstractVoice 0.19.2: each model's `role`, `"cloning"` for Qwen3-TTS Base, and its picker `label`).
+- `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
 - **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0854 and ADR 0010). There
   are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
   its status, the interaction to answer (a delegated child's approval included), messages with

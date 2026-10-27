@@ -17021,6 +17021,9 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_models_by_provider",
         "stt_models_by_provider",
         "tts_model_roles_by_provider",
+        # AbstractVoice >= 0.19.2: each model's role ("cloning" = a checkpoint that speaks
+        # cloned voices only, e.g. Qwen3-TTS Base) and the label a picker shows.
+        "tts_model_details_by_provider",
         "tts_voices_by_provider",
         "tts_profiles_by_provider",
         "tts_formats_by_provider",
@@ -19476,6 +19479,11 @@ async def voice_voices_catalog(
             out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         else:
             out = _with_cloud_voice_reason(out, provider)
+            if not provider:
+                # The full catalog is what the kit's voice picker reads its
+                # providers from (the console's output.voice editor, the apps):
+                # the cloud providers are listed there too, as on providers_only.
+                out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"))
         out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
         items = (
             _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
@@ -19513,6 +19521,11 @@ async def voice_voices_catalog(
         out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
     else:
         out = _with_cloud_voice_reason(out, provider)
+        if not provider:
+            # The full catalog is what the kit's voice picker reads its
+            # providers from (the console's output.voice editor, the apps):
+            # the cloud providers are listed there too, as on providers_only.
+            out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"))
     out = _with_effective_voice_routes(out, await off_loop("light", _effective_voice_routes))
     items = (
         _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))

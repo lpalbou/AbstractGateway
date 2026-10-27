@@ -8008,6 +8008,21 @@ provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under **Providers**.
 
+**Edit multimodal capability** (a route's **Edit**) sets the route's provider
+and model, an optional **Base URL** and **Options** (JSON); text routes add the
+reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+(`output.voice`) the provider, model and voice are the shared voice picker of
+every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
+**Engine voices** and **Shared voices**, a language filter when the engine
+speaks several, and search. **Choosing a voice plays it** — a short sample
+through the gateway's speech route — so you can go from voice to voice and keep
+the one you like. The button at the right of the voice row plays the sample
+again from the start or stops it (Space toggles it when focused); while a
+sample is on its way it shows a spinner and a click cancels it, and choosing
+another voice cancels the previous sample. A sample that fails says why in one
+line under the row. Choosing a cloned voice also selects the model it was
+cloned with. **Save** stores the voice in the route's options.
+
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; **Past conversations** reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
@@ -13799,6 +13814,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
+- `GET /api/gateway/voice/voices?compact=true` keeps `tts_model_details_by_provider` (AbstractVoice 0.19.2: each model's `role`, `"cloning"` for Qwen3-TTS Base, and its picker `label`).
+- `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
 - **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0854 and ADR 0010). There
   are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
   its status, the interaction to answer (a delegated child's approval included), messages with
