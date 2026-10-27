@@ -89,8 +89,13 @@ class JsonlLedgerTail:
     # pays the same memory).
     _READ_MAX_BYTES = 8 * 1024 * 1024
 
-    def __init__(self, path: Path, *, start_index: int = 0) -> None:
+    def __init__(self, path: Path, *, start_index: int = 0, number_records: bool = False) -> None:
         self._path = Path(path)
+        # Row addresses (AbstractRuntime 0.14.0, ADR 0009): the JSONL store's list() gives every record
+        # `seq` = its 1-based position in the file (recovered records included, added on read, never
+        # persisted). The tail's record index IS that position, so it stamps the same key and stays
+        # replay-equivalent to list() on both sides of that change.
+        self._number_records = bool(number_records)
         self._offset = 0  # byte offset of the first UNCONSUMED complete line
         self._index = 0  # record index produced so far (== wire cursor)
         self._skip = max(0, int(start_index))  # catch-up records to swallow
@@ -187,6 +192,8 @@ class JsonlLedgerTail:
                     self._index += 1
                     continue
                 self._index += 1
+                if self._number_records:
+                    record["seq"] = self._index
                 out.append((self._index, record))
         # NOTE: max_records is deliberately not enforced here — the byte
         # offset advances over the WHOLE consumed chunk, so an early break
@@ -331,7 +338,11 @@ def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any
             try:
                 p = path_fn(str(run_id))
                 if isinstance(p, Path):
-                    return JsonlLedgerTail(p, start_index=start_index)
+                    # A backend with row addresses (`get_record`, AbstractRuntime 0.14.0) numbers what
+                    # list() returns; the tail mirrors it (see JsonlLedgerTail).
+                    return JsonlLedgerTail(
+                        p, start_index=start_index, number_records=callable(getattr(layer, "get_record", None))
+                    )
             except Exception:
                 pass
         # SQLite backend: seq-cursor read.
