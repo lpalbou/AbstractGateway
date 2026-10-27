@@ -19410,6 +19410,12 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
         "end_reasons": ["completed", "failed", "cancelled", "unavailable"],
     }
 
+    # A conversation's standing tool decision, applied by the runtime before any approval wait
+    # (session_tool_policy.py). Clients feature-gate their server-side "approve all" on it.
+    from ..session_tool_policy import capability as _session_tool_policy_capability
+
+    caps["session_tool_policy"] = _session_tool_policy_capability()
+
     caps["contracts"] = _build_client_capability_contracts(caps)
 
     return {"capabilities": caps}
