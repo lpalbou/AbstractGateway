@@ -1887,6 +1887,8 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/music/generate`
 - `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
+- `GET /api/gateway/voice/languages`, `GET /api/gateway/voice/clones`, `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility`
+- `POST /api/gateway/voice/clones`, `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}`, `POST /api/gateway/voice/design` (administrators)
 - `GET /api/gateway/audio/speech/models`
 - `GET /api/gateway/audio/transcriptions/models`
 - `GET /api/gateway/audio/music/providers`
@@ -1905,6 +1907,32 @@ Current direct Gateway endpoints:
 ```
 
 A route the administrator has not set reads `{"configured": false, "provider": null, "model": null, "note": "No gateway default is set for …"}`. A synthesis or transcription request that names no provider and no model runs exactly these routes, so apps show "Gateway default · supertonic / supertonic-3" from here — never from the voice catalog's engine-side fields. The catalog repeats the answer (`gateway_defaults`; `active_tts_provider` / `active_stt_provider` = the configured routes, absent when unset). A configured speech-input route can carry AbstractCore's served `hint` `{code, sentence, route}`: on Apple silicon, a `faster-whisper` route runs on the processor, and the hint says that `mlx-whisper` runs the same model on the Apple GPU (`route` is what applying the recommendation writes; nothing changes by itself). The sentence names where to act and carries no timings. Apps show `hint.sentence` verbatim next to the engine line; the console's defaults grid shows the same sentence from the `input.voice` row's `route_hint`. `/audio/transcribe` returns the route that ran (`provider`, `model`) and `duration_ms`; a `language` hint skips the engine's language detection (faster-whisper large-v3 on an Apple-Silicon CPU: ~25 s → ~9 s for a 4 s clip).
+
+### Voice library
+
+The voices the gateway can speak with, through AbstractRuntime's voice library facade (in the
+gateway's process, or on the AbstractCore server it is configured with):
+
+| Route | What it does |
+|---|---|
+| `GET /voice/languages?kind=&provider=` | `{"languages": {kind: {provider: {provider, languages, open, declared}}}}` for `tts`, `stt` and `cloning`; read without loading a model (`open`: a remote engine that decides its own languages) |
+| `GET /voice/clones?provider=&model=&language=` | `{"voices": [...], "count": n}`: cloned voices, designed (`tags.designed`) and built-in (`tags.builtin`) ones included; `language` keeps the voices that can speak it, native speakers first |
+| `GET /voice/clones/{voice_id}` | one voice's record (`voice_id`, `name`, `engine`, `reference_text`, `meta`); 404 for an unknown id |
+| `POST /voice/clones` (multipart) | a voice from a recording: `file` (up to 25 MB), optional `name`, `reference_text`, `provider` (the cloning engine, e.g. `qwen3-tts`, `omnivoice`), `model`; answers the stored record with its `voice_id` |
+| `PATCH /voice/clones/{voice_id}` | `{name?, reference_text?}`: both checked before either is applied; built-in voices are read-only (422) |
+| `DELETE /voice/clones/{voice_id}` | deletes the voice and its reference audio; built-in voices are read-only (422) |
+| `POST /voice/design` | `{description, name?, language?, text?}`: a voice from a written description (Qwen3-TTS VoiceDesign, cloned with Qwen3-TTS Base), stored as a cloned voice; needs `abstractvoice[qwen3-tts]` and `abstractvoice[stt]` where the voice capability runs (501 otherwise) |
+| `GET /voice/compatibility` | the capability catalog: per kind, provider, model and surface, whether a feature (`speed`, `one_shot`, `design`…) is `native`, `emulated`, `conditional` or `unsupported` |
+
+Cloned voices are one store per machine user, shared by every account of the gateway, so
+creating, changing, designing and deleting a voice is an administrator's act (403 otherwise);
+every signed-in account reads them. A voice is used for speech with `voice=<voice_id>` (and the
+voice's `provider`). `GET /voice/voices?language=fr` filters the voice catalog the same way.
+
+Speech options on `/voice/tts`: `speed` (a multiplier; engines without a native control
+time-stretch the audio, see `/voice/compatibility`) and `one_shot: true` (the whole text as one
+take with one voice, never segmented; refused beyond the engine's limit, e.g. 1000 characters on
+Qwen3-TTS). `/voice/tts/stream` refuses `one_shot` (422): a stream delivers the take in pieces.
 
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises

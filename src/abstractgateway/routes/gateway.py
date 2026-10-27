@@ -12519,6 +12519,11 @@ class VoiceTTSRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Optional TTS model override for this synthesis request.")
     format: str = Field(default="wav", description="Audio container/codec (wav|mp3, backend-dependent).")
     speed: Optional[float] = Field(default=None, description="Optional speech speed multiplier when supported by the backend.")
+    one_shot: Optional[bool] = Field(
+        default=None,
+        description="Render the whole text as one take with one voice (never segmented); refused beyond the "
+        "engine's limit and on the streamed route. `GET /voice/compatibility` lists the engines that support it.",
+    )
     quality_preset: Optional[str] = Field(default=None, description="Optional AbstractVoice quality preset: low, standard, or high.")
     quality: Optional[str] = Field(default=None, description="Compatibility alias for quality_preset.")
     instructions: Optional[str] = Field(default=None, description="Optional expressive/style instructions for backends that support them.")
@@ -12833,6 +12838,8 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         output_spec["provider"] = provider_name
     if speed is not None:
         output_spec["speed"] = speed
+    if getattr(req, "one_shot", None):
+        output_spec["one_shot"] = True
     if quality_preset:
         output_spec["quality_preset"] = quality_preset
     if instructions:
@@ -12942,6 +12949,9 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 @router.post("/runs/{run_id}/voice/tts/stream")
 async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingResponse:
     """Stream Runtime-owned TTS events as JSON Lines."""
+    if getattr(req, "one_shot", None):
+        # AbstractCore renders a one-shot take whole; a stream would deliver it in pieces.
+        raise HTTPException(status_code=422, detail="one_shot is not available on the streamed route; use POST /runs/{run_id}/voice/tts.")
     svc = get_gateway_service()
     rs = svc.host.run_store
     rid = str(run_id or "").strip()
@@ -17009,6 +17019,9 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_voices_by_provider",
         "tts_profiles_by_provider",
         "tts_formats_by_provider",
+        # Languages each engine speaks (and the `language` a listing was filtered by).
+        "tts_languages_by_provider",
+        "language",
         "controls",
         "cloud_providers",
         # Why a provider is not listed / why the listing is empty
@@ -19421,6 +19434,7 @@ async def voice_voices_catalog(
     model: Optional[str] = Query(default=None, description="Optional TTS model/language filter."),
     providers_only: bool = Query(default=False, description="Return provider names without model/voice lists."),
     compact: bool = Query(default=False, description="Return normalized catalog items without duplicated source catalog trees."),
+    language: Optional[str] = Query(default=None, description="Keep the voices that can speak this language (ISO code); native speakers first."),
 ) -> Dict[str, Any]:
     """List TTS voices through the Gateway Runtime discovery facade."""
     discovery, err = _gateway_abstractcore_discovery_facade()
@@ -19474,6 +19488,7 @@ async def voice_voices_catalog(
             provider=provider,
             model=model,
             providers_only=providers_only,
+            language=language,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e

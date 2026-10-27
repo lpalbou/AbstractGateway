@@ -302,6 +302,7 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
             "provider": None,
             "model": None,
             "providers_only": False,
+            "language": None,  # no ?language= filter asked
         }
     ]
 
