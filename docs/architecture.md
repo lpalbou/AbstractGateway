@@ -422,6 +422,62 @@ sequenceDiagram
 Evidence: `src/abstractgateway/routes/gateway.py` (ledger endpoints, SSE,
 commands) and `src/abstractgateway/runner.py` (command application, ticks).
 
+### The durable cursor
+
+Every ledger store numbers a run's records 1, 2, 3, … (`seq`). JSONL persists the number on each
+line, allocated under an advisory file lock, and SQLite allocates it in the same transaction as
+the insert. The raw stream's cursor is that number. `migrate.py` (file to SQLite) keeps it, so a
+cursor a client holds stays valid across a reconnect and a migration (AbstractRuntime ADR 0009,
+backlog 0082).
+
+### The replay view: one reconstruction, every client
+
+What a client shows for a run comes from one reducer, AbstractRuntime's `abstractruntime.replay`:
+
+- the tree of runs, through delegation waits;
+- the status;
+- the person-facing interaction (a child's approval included);
+- messages with provenance;
+- one activity per node execution;
+- artifacts and usage.
+
+The gateway serves that view (`GET /runs/{id}/view`, `/view/stream`, see
+[api.md](./api.md#replay-view-runsrun_idview)) and adds no rule of its own:
+
+```mermaid
+flowchart LR
+  RT[Runner: Runtime.tick] -->|append| L[(Ledger store: seq per run)]
+  L -->|subscribe: a coalescing wake-up| E[ViewEntry per run tree]
+  E -->|list_after: new records only| L
+  E -->|ReplayView.apply: one fold| V[(cached view + JSON per cursor token)]
+  V -->|delta, same bytes| S1[client 1]
+  V -->|delta| S2[client 2]
+  V -->|delta| SN[client N]
+  C[Client] -->|POST /commands: interaction.command| G[Gateway]
+```
+
+- **One fold per record.** `ViewHub` (`src/abstractgateway/replay_view.py`) keeps one
+  `ViewEntry` per (plane, root run), in an LRU of 64. An entry with live subscribers is never
+  evicted. A refresh reads only the records after each run's folded seq: an indexed read on
+  SQLite, a seek to the remembered byte offset on JSONL. It folds them once and hands the same
+  delta to every subscriber. N clients cost one fold, not N.
+- **Cache.** The view's JSON is cached per cursor token, so a GET with nothing new costs one
+  `list_after` check per run, and a 304 sends no body. A read that changes nothing (an unchanged
+  snapshot) produces no delta.
+- **Wake-ups, not timers.** In-process appends wake the streams through
+  `ObservableLedgerStore.subscribe`. In split mode, where the runner is another process, a
+  `list_after` check runs every 0.25 s and reads no bytes while nothing was appended. A 5 s
+  safety check re-reads open runs' snapshots, for legacy ledgers without terminal records. An
+  idle stream parses nothing.
+- **Reconnect.** The SSE id is the cursor token. An older token gets one delta, computed as the
+  difference between a rebuild at that token and now. `?at=<token>` serves the view as the
+  ledger stood at that point, which is how a push opens at its event.
+- **Authorization.** The entry is keyed by the caller's own plane (its service's stores), with
+  the same rule as `GET /runs/{id}`.
+
+Evidence: `src/abstractgateway/replay_view.py`, `src/abstractgateway/routes/replay_view.py`,
+`tests/test_gateway_replay_view.py`, `scripts/bench_replay_view.py` (numbers in backlog 0943).
+
 ## Automations
 
 An automation is a durable AbstractRuntime root run, the **controller**, whose
