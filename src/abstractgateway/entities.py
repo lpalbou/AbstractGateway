@@ -415,7 +415,7 @@ class EntityHome:
         (curiosity), open PROBLEMS (something wrong needing a fix), and
         incubating IDEAS (direction) — the same folded reads the future
         heartbeat's need-check will use. The reads come from the runtime
-        memory facade (AbstractRuntime 0.14.0 carries all three)."""
+        memory facade (AbstractRuntime 0.15.0 carries all three)."""
         from abstractruntime.integrations.abstractmemory.memory_facade import (
             open_ideas,
             open_problems,

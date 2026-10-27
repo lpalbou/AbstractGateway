@@ -91,7 +91,7 @@ class JsonlLedgerTail:
 
     def __init__(self, path: Path, *, start_index: int = 0, number_records: bool = False) -> None:
         self._path = Path(path)
-        # Row addresses (AbstractRuntime 0.14.0, ADR 0009): the JSONL store's list() gives every record
+        # Row addresses (AbstractRuntime 0.15.0, ADR 0011): the JSONL store's list() gives every record
         # `seq` = its 1-based position in the file (recovered records included, added on read, never
         # persisted). The tail's record index IS that position, so it stamps the same key and stays
         # replay-equivalent to list() on both sides of that change.
@@ -338,7 +338,7 @@ def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any
             try:
                 p = path_fn(str(run_id))
                 if isinstance(p, Path):
-                    # A backend with row addresses (`get_record`, AbstractRuntime 0.14.0) numbers what
+                    # A backend with row addresses (`get_record`, AbstractRuntime 0.15.0) numbers what
                     # list() returns; the tail mirrors it (see JsonlLedgerTail).
                     return JsonlLedgerTail(
                         p, start_index=start_index, number_records=callable(getattr(layer, "get_record", None))
