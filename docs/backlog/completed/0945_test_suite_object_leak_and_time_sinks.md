@@ -65,6 +65,14 @@ leak is the harness's.
 - The time-sink fixes were measured per file (leftovers 50 tests 12.7 s; f4 10.5 s -> 1.7 s; backlog drain
   5.7 s -> 1.2 s; ledger-stream latency 5.7 s -> 1.8 s and 1.6 s), not in a further full run.
 
+- CI on this branch (faster suite) exposed a pre-existing race in `tests/e2e_events` (seen before on
+  `fix/webhook-test-vector-not-scannable`): a webhook call or feed poll made right after
+  `POST /automations` found the controller not yet parked on its wake key (`woken` empty;
+  `abstractruntime/triggers/connections.py:732-735`). `e2e_support.create_automation` now returns once the
+  controller is armed. Reproduced locally by delaying the runner's first tick of each run by 1.5 s
+  (both CI failures, red), green with the fix; 5 consecutive runs of `tests/e2e_events` +
+  `test_automations_api.py` green.
+
 ## Follow-ups (not done here)
 
 - **Entity background threads keep every service alive (product).** `EntityChatHost` (`entity_chat.py:460`),
