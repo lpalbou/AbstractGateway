@@ -95,8 +95,10 @@ def test_api_declares_tui_parity_timeout_budgets() -> None:
     # AbortController is unavailable (the promise MUST settle either way).
     assert "Promise.race" in api
     assert "setTimeout(" in api and "clearTimeout(" in api
-    # `slow`/`timeoutMs` are ours and must never reach fetch's request init.
-    assert "const { slow = false, timeoutMs, ...init } = options;" in api
+    # `slow`/`timeoutMs` are ours and must never reach fetch's request init;
+    # a caller's `signal` is chained into our controller, never passed raw
+    # (it would replace the deadline's abort).
+    assert "const { slow = false, timeoutMs, signal: callerSignal, ...init } = options;" in api
 
 
 def test_api_names_the_failure_class_for_the_operator() -> None:
@@ -205,10 +207,11 @@ def test_fetch_default_models_evicts_a_failed_lookup() -> None:
     assert "await state.providerModels.get(cacheKey)" not in fn
 
 
-def test_provider_and_voice_caches_never_store_a_promise() -> None:
-    """The sibling caches await BEFORE writing — keep it that way."""
+def test_provider_cache_never_stores_a_promise() -> None:
+    """The sibling cache awaits BEFORE writing — keep it that way. (The voice
+    list is the kit picker's own since 0949: no console voice cache.)"""
     source = _console_script()
-    for name in ("fetchDefaultProviders", "fetchDefaultVoices"):
+    for name in ("fetchDefaultProviders",):
         fn = _slice_function(source, name)
         assert "const payload = await api(" in fn, name
         assert ", promise)" not in fn, name
@@ -230,23 +233,24 @@ def test_load_default_models_has_a_terminal_failure_state() -> None:
     assert "throw e;" in fn
 
 
-def test_load_default_voices_has_a_terminal_failure_state() -> None:
-    fn = _slice_function(_console_script(), "loadDefaultVoices")
-    assert 'emptyLabel: "Loading voices..."' in fn
-    assert '"Voice discovery failed"' in fn
-    assert "throw e;" in fn
+def test_the_console_has_no_voice_list_of_its_own() -> None:
+    """0949: output.voice adopts the kit's picker; a second (native) voice list
+    is how the console drifted from the apps (raw clone ids, no groups)."""
+    source = _console_script()
+    for gone in ("function loadDefaultVoices", "function fetchDefaultVoices", "function voiceOptionsFromCatalog", 'id="modal-default-voice"'):
+        assert gone not in source and gone not in gateway_console_html(), gone
 
 
 def test_provider_change_handler_guards_both_loaders() -> None:
     """The genuinely unguarded path: switching provider while offline.
 
     openDefaultModal already wrapped its call; this handler did not, so a
-    failed model lookup propagated and the voice select was never degraded.
+    failed model lookup propagated as an unhandled rejection.
     """
     handler = _slice_function(_console_script(), "reloadDefaultModalCatalogs")
     assert "try {" in handler
     assert "await loadDefaultModels(" in handler
-    assert ".catch(" in handler
+    assert "} catch {" in handler
 
 
 def test_the_free_text_provider_lane_is_a_live_control() -> None:
@@ -352,6 +356,7 @@ def _save_default_harness(scenario_js: str) -> str:
 {_slice_function(source, "customLaneValue")}
 {_slice_function(source, "activeDefaultProvider")}
 {_slice_function(source, "activeDefaultModel")}
+{_slice_function(source, "defaultVoicePickActive")}
 {_slice_function(source, "defaultVoiceValue")}
 {_slice_function(source, "textValue")}
 
@@ -368,7 +373,7 @@ async function api(path, options = {{}}) {{
   if (options.method === "PUT") puts.push({{ path, body: JSON.parse(options.body) }});
   return {{ routes: [] }};
 }}
-const state = {{ activeDefaultRow: null, defaultModalPrefill: null }};
+const state = {{ activeDefaultRow: null, defaultModalPrefill: null, defaultVoicePick: null }};
 // openDefaultModal's prefill, as the save sees it: what was on screen when the
 // modal opened, so an untouched field can be told from an edited one.
 function prefillFrom(row) {{
@@ -454,57 +459,69 @@ results.push({ step: "shut", put: puts[puts.length - 1] });
 
 
 def test_an_offline_save_cannot_unset_a_voice_the_picker_could_not_show() -> None:
-    """A disabled control expresses no intent, so it must not be read as one.
+    """A voice nobody touched must survive a save.
 
-    Offline, voice discovery fails and the picker degrades to a disabled, empty
-    select. The stored `voice` is hidden from the JSON box (the picker owns that
-    key), so reading "" off the dead select deleted it from both places at once:
-    an operator editing the base URL of a working route silently unset its
-    voice, with nothing on screen to show it happened.
+    Offline, voice discovery fails. The stored `voice` is hidden from the JSON
+    box (the picker owns that key), so a save that read "no voice" off a picker
+    that could not list anything deleted it from both places at once: an
+    operator editing the options of a working route silently unset its voice.
+    Since 0949 the picker is the kit's (islands mountVoiceSettings): its pick
+    starts as the stored voice and changes only when the operator picks.
     """
     scenario = """
 const row = {
   key: "output.voice", kind: "output", modality: "voice",
+  provider: "abstractvoice", model: "supertonic",
   options: { voice: "aria", language: "fr" },
 };
 state.activeDefaultRow = row;
-$("modal-default-provider").value = "abstractvoice";
-$("modal-default-model").value = "supertonic";
-$("modal-default-provider-custom").className = "hidden";
-$("modal-default-model-custom").className = "hidden";
+// openDefaultModal's pick for a voice route: the stored triple.
+state.defaultVoicePick = { provider: "abstractvoice", model: "supertonic", voice: defaultVoiceValue(row), profile: "" };
 // The JSON box as openDefaultModal prefills it: voice/profile stripped out,
 // because the picker owns them.
 $("modal-default-options").value = JSON.stringify({ language: "fr" });
-$("modal-default-voice").value = "aria";
 prefillFrom(row);
 
-// Offline: discovery failed, so the select is empty and DISABLED. The JSON box
-// is edited, so options travel — and must carry the voice the picker hid.
-$("modal-default-voice").disabled = true;
-$("modal-default-voice").value = "";
+// Offline: the kit could list nothing, the pick is untouched. The JSON box is
+// edited, so options travel — and must carry the voice the picker owns.
 $("modal-default-options").value = JSON.stringify({ language: "de" });
 await saveDefault();
-results.push({ step: "offline", body: puts[puts.length - 1].body });
+results.push({ step: "offline", put: puts[puts.length - 1] });
 
-// Online: the picker is a real control again and owns the key.
-$("modal-default-voice").disabled = false;
-$("modal-default-voice").value = "coral";
+// The operator picks another voice.
+state.defaultVoicePick = { ...state.defaultVoicePick, voice: "coral" };
 await saveDefault();
-results.push({ step: "online", body: puts[puts.length - 1].body });
+results.push({ step: "picked", put: puts[puts.length - 1] });
 
-// ...including clearing it, which is a deliberate act on a live control.
-$("modal-default-voice").value = "";
+// A profile (the kit's other kind) is stored as `voice`, one id.
+state.defaultVoicePick = { ...state.defaultVoicePick, voice: "", profile: "aiden" };
 await saveDefault();
-results.push({ step: "cleared", body: puts[puts.length - 1].body });
+results.push({ step: "profile", put: puts[puts.length - 1] });
+
+// ...and "Provider default voice" clears it, a deliberate act.
+state.defaultVoicePick = { ...state.defaultVoicePick, voice: "", profile: "" };
+await saveDefault();
+results.push({ step: "cleared", put: puts[puts.length - 1] });
+
+// Options untouched, voice untouched: nothing about options is sent.
+$("modal-default-options").value = JSON.stringify({ language: "fr" });
+state.defaultVoicePick = { provider: "abstractvoice", model: "supertonic", voice: "aria", profile: "" };
+await saveDefault();
+results.push({ step: "untouched", put: puts[puts.length - 1] });
 """
-    steps = {r["step"]: r["body"] for r in _node(_save_default_harness(scenario))}
-    assert steps["offline"]["options"] == {"language": "de", "voice": "aria"}, (
+    steps = {r["step"]: r["put"] for r in _node(_save_default_harness(scenario))}
+    assert steps["offline"]["body"]["options"] == {"language": "de", "voice": "aria"}, (
         "an offline save wiped a voice the operator never touched"
     )
-    assert steps["online"]["options"] == {"language": "de", "voice": "coral"}
-    assert steps["cleared"]["options"] == {"language": "de"}, (
-        "a live picker set to 'no voice' must still be able to clear it"
+    assert steps["offline"]["body"]["provider"] == "abstractvoice" and steps["offline"]["body"]["model"] == "supertonic", (
+        "the save must read provider and model from the kit picker's pick"
     )
+    assert steps["picked"]["body"]["options"] == {"language": "de", "voice": "coral"}
+    assert steps["profile"]["body"]["options"] == {"language": "de", "voice": "aiden"}
+    assert steps["cleared"]["body"]["options"] == {"language": "de"}, (
+        "the picker set to the provider default voice must still be able to clear it"
+    )
+    assert "options" not in steps["untouched"]["body"], "an untouched pick and box must not echo options back"
 
 
 def test_an_untouched_base_url_or_options_is_never_echoed_back() -> None:

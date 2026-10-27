@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 7
+- Planned: 8
 - Proposed: 46
-- Completed: 28
+- Completed: 29
 - Deprecated: 1
 - Recurrent: 0
 
@@ -45,8 +45,8 @@ can trust without importing local gateway packages.
      2026-10-08: 0846 completed (R16.2) -> planned 4, completed 24.
      2026-10-27: recounted from the directories while filing 0945 (completed
      directly): planned 7, proposed 44, completed 26, deprecated 1.
-     2026-10-28 (0.16.0 release): 0946 and 0947 completed; recounted from the
-     directories: planned 7, proposed 46, completed 28, deprecated 1. -->
+     2026-10-28 (0.16.0 release): 0946, 0947 and 0949 completed; recounted from the
+     directories: planned 8, proposed 46, completed 29, deprecated 1. -->
 
 ## Priority Bands
 
@@ -109,6 +109,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
+| [0950_cancel_a_running_synthesis.md](planned/0950_cancel_a_running_synthesis.md) | A running `/voice/tts` synthesis can be cancelled: a cancel token from the route (client disconnect, explicit cancel) through the runtime voice facade to the AbstractVoice engines, checked between sentences; root 1060. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
@@ -158,6 +159,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Console adopts the shared voice section (completed 2026-10-28, 0.16.0) | `planned/0949_console_adopts_the_shared_voice_section.md` | [completed/0949_console_adopts_the_shared_voice_section.md](completed/0949_console_adopts_the_shared_voice_section.md) | The capability editor's `output.voice` mounts the kit's voice picker (ui-kit 0.9.1): voices by name, grouped, language filter, search; choosing a voice plays it (play/stop). PR #12. | PR #12 checks green. |
 | Replay view routes (completed 2026-10-28, 0.16.0) | `planned/0947_replay_view_routes_cache_and_client_migration.md` | [completed/0947_replay_view_routes_cache_and_client_migration.md](completed/0947_replay_view_routes_cache_and_client_migration.md) | `GET /runs/{id}/view` (ETag = cursor token, 304, `?at=`) and `/view/stream` served from one fold per record per run tree; `migrate.py` keeps `seq`; principal isolation. PR #8. Client migrations stay in each client's repository. | `tests/test_gateway_replay_view.py`, `tests/test_migrate_preserves_ledger_seq.py`, the isolation matrix; `scripts/bench_replay_view.py` numbers in PR #8. |
 | Session tool policy routes (completed 2026-10-27, 0.16.0) | `planned/0946_session_tool_policy_routes.md` | [completed/0946_session_tool_policy_routes.md](completed/0946_session_tool_policy_routes.md) | `/sessions/{id}/tool-policy`: a conversation's approve/deny held server-side, clamped to the caller's authorized tools; runtime floor 0.14.0. PR #9. The live multi-client check stays with the clients (root 1061). | Route, clamp, merge-race and reset tests in PR #9; CI green. |
 | Test suite object leak and time sinks (completed 2026-10-27, 0.16.0) | N/A | [completed/0945_test_suite_object_leak_and_time_sinks.md](completed/0945_test_suite_object_leak_and_time_sinks.md) | The harness frees each re-imported app (FastAPI's endpoint memo caches and the package attribute kept every one alive) and no test leaves GC tuning (`gc.freeze`) behind; four harness waits shortened. Follow-ups: entity reaper threads that keep stopped services alive, `gc.freeze` and later cyclic garbage in `serve`. | `tests/test_harness_reimported_app_is_freed.py` (mutations 6/6 red); full suite 63.4 -> 24.3 min, peak RSS 10.1 GB -> 1.22 GB on an M-series Mac. |

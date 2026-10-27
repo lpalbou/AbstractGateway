@@ -86,6 +86,21 @@ provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under **Providers**.
 
+**Edit multimodal capability** (a route's **Edit**) sets the route's provider
+and model, an optional **Base URL** and **Options** (JSON); text routes add the
+reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+(`output.voice`) the provider, model and voice are the shared voice picker of
+every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
+**Engine voices** and **Shared voices**, a language filter when the engine
+speaks several, and search. **Choosing a voice plays it** — a short sample
+through the gateway's speech route — so you can go from voice to voice and keep
+the one you like. The button at the right of the voice row plays the sample
+again from the start or stops it (Space toggles it when focused); while a
+sample is on its way it shows a spinner and a click cancels it, and choosing
+another voice cancels the previous sample. A sample that fails says why in one
+line under the row. Choosing a cloned voice also selects the model it was
+cloned with. **Save** stores the voice in the route's options.
+
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; **Past conversations** reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
