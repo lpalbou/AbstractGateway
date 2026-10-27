@@ -368,3 +368,26 @@ def test_a_reset_racing_a_merge_is_not_undone(gateway, monkeypatch):
     merged = _policy(gateway, "POST", {"approve": {"tools": ["write_file"]}}).json()["policy"]
     assert racer.raced
     assert merged["approve"] == {"write_file": "tool"}  # the reset stood: fetch_url is not back
+
+
+def test_the_documented_envelopes(gateway, monkeypatch):
+    """docs/api.md clauses: GET revision with a null policy, DELETE ?if_revision, the 409/503 bodies, scope."""
+    put = _policy(gateway, "PUT", {"approve": {"tools": ["fetch_url"]}}).json()
+    assert set(put) == {"session_id", "policy", "scope"} and set(put["scope"]) == {"approve", "deny"}
+    stale = gateway.delete(f"/api/gateway/sessions/{SID}/tool-policy?if_revision=0", headers=HEADERS)
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["reason_code"] == "revision_conflict" and stale.json()["detail"]["revision"] == 1
+    gone = gateway.delete(f"/api/gateway/sessions/{SID}/tool-policy?if_revision=1", headers=HEADERS).json()
+    assert (gone["policy"], gone["revision"]) == (None, 2) and "scope" in gone
+    got = _policy(gateway, "GET").json()
+    assert (got["policy"], got["revision"]) == (None, 2)
+
+    import abstractgateway.routes.gateway as gw
+
+    async def _broken():
+        return {"items": [], "error": "registry down"}
+
+    monkeypatch.setattr(gw, "discovery_tools", _broken)
+    down = _policy(gateway, "POST", {"approve": {"all": True}})
+    assert down.status_code == 503 and down.json()["detail"]["reason_code"] == "tool_inventory_unavailable"
+    assert _policy(gateway, "GET").json()["revision"] == 2  # nothing written
