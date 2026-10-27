@@ -880,6 +880,8 @@ def require_runtime_features(runtime: Any) -> None:
         missing.append("the session history window (abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS)")
     if not callable(getattr(runtime, "set_email_context_resolver", None)) or not callable(getattr(runtime, "set_event_inbox", None)):
         missing.append("per-user email (Runtime.set_email_context_resolver / set_event_inbox)")
+    if not callable(getattr(runtime, "set_session_tool_policy_store", None)):
+        missing.append("the session tool policy (Runtime.set_session_tool_policy_store)")
     try:
         from abstractruntime.integrations.abstractcore.run_facade import inline_run_active  # noqa: F401
     except ImportError:
