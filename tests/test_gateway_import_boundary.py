@@ -284,13 +284,9 @@ def test_no_second_module_re_exports_the_seam() -> None:
 # and are counted like statements.
 # ---------------------------------------------------------------------------
 
-_ABSTRACTMEMORY_BURN_DOWN: dict[tuple[str, str], int] = {
-    # entities.py `EntityHome.wake_reasons`: `open_questions` / `open_problems` / `open_ideas`
-    # are read off the package; the runtime memory facade does not re-export them yet
-    # (its `GATEWAY_NAMES` was seeded from the named imports). Fix in AbstractRuntime, then
-    # delete this entry.
-    ("entities.py", "import abstractmemory"): 1,
-}
+# Burned down to empty on 2026-10-27 (34 -> 0, backlog 0943). It stays as the one place an
+# exemption could be written, so a new one is visible in review; it must not grow.
+_ABSTRACTMEMORY_BURN_DOWN: dict[tuple[str, str], int] = {}
 
 
 def _is_abstractmemory(module: str) -> bool:

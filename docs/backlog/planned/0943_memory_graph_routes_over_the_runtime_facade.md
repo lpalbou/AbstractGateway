@@ -28,9 +28,8 @@ derivations, and the memory contract descriptor naming the root store instead of
   `POST /memory/sources/reconstruct`, `GET /memory/derived?ref_key=` (shapes in docs/api.md "Memory graph").
 - `memory_store.resolve_memory_home(config)`: `sqlite` backend -> the KG file itself; `lancedb`/`memory` ->
   `<plane>/abstractmemory/memory.sqlite3`. `open_memory_home(config, create=, **stores)` -> `MemoryFacade`.
-- Store classes, `TripleQuery` and every entity-side name come from the facade; one exemption is left
-  (`entities.py` `import abstractmemory` for `open_questions`/`open_problems`/`open_ideas`, which the facade
-  does not re-export yet).
+- Store classes, `TripleQuery` and every entity-side name (the wake reads `open_questions`/`open_problems`/
+  `open_ideas` included, runtime 9eea551) come from the facade; the burn-down list is empty (34 -> 0).
 - `tests/test_gateway_import_boundary.py` (AbstractMemory rule + burn-down), `tests/test_gateway_memory_routes.py`,
   `tests/test_gateway_memory_owner_ids.py`, `tests/test_gateway_memory_contract_descriptor.py`.
 
@@ -55,8 +54,6 @@ derivations, and the memory contract descriptor naming the root store instead of
 
 ## Remaining follow-ups
 
-- Runtime: re-export `open_questions`, `open_problems`, `open_ideas` from the facade; then delete the last
-  burn-down entry.
 - Gateway: the bundle host passes no `journal` to the builder, so closures applied by MEMORY_REVISE are in the
   revision log and history but not folded into ranked retrieval; passing `SQLiteJournal(home)` needs the
   host's reload/close lifecycle to own it.

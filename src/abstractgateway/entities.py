@@ -414,18 +414,17 @@ class EntityHome:
         """The autonomy drivers (maintainer rounds 4-6): open QUESTIONS
         (curiosity), open PROBLEMS (something wrong needing a fix), and
         incubating IDEAS (direction) — the same folded reads the future
-        heartbeat's need-check will use. An engine missing a read (version
-        skew) degrades that key to [] with a labeled warning."""
-        import abstractmemory
+        heartbeat's need-check will use. The reads come from the runtime
+        memory facade (AbstractRuntime 0.14.0 carries all three)."""
+        from abstractruntime.integrations.abstractmemory.memory_facade import (
+            open_ideas,
+            open_problems,
+            open_questions,
+        )
 
         out: Dict[str, Any] = {}
-        warnings: List[str] = []
-        for key in ("questions", "problems", "ideas"):
-            reader = getattr(abstractmemory, f"open_{key}", None)
-            if not callable(reader):
-                out[key] = []
-                warnings.append(f"#FALLBACK engine lacks the open_{key} read; upgrade abstractmemory")
-                continue
+        readers = {"questions": open_questions, "problems": open_problems, "ideas": open_ideas}
+        for key, reader in readers.items():
             rows = reader(self.store, scope=DIARY_SCOPE, owner_id=self.entity_id, limit=limit, journal=self.journal)
             entries: List[Dict[str, Any]] = []
             for row in rows:
@@ -439,8 +438,6 @@ class EntityHome:
                     }
                 )
             out[key] = entries
-        if warnings:
-            out["warnings"] = warnings
         return out
 
     def cognition_drives(self) -> Optional[Dict[str, Any]]:

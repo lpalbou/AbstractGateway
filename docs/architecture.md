@@ -36,9 +36,8 @@ desktop Assistant, scripts) and **AbstractRuntime**:
   runtime ADR 0009), like AbstractCore through its facades (ADR 0001): the store classes,
   `TripleQuery`, the graph (`MemoryGraph`, `SourceRef`) and the entity-side names are its
   re-exports. `tests/test_gateway_import_boundary.py` fails on any direct `abstractmemory`
-  import outside an explicit burn-down list that only shrinks; one entry is left
-  (`entities.py` reads `open_questions`/`open_problems`/`open_ideas` off the package until
-  the facade re-exports them). The plane's memory graph is served under
+  import (the burn-down list that admitted the 34 historical ones is empty and only
+  shrinks). The plane's memory graph is served under
   `/api/gateway/memory/*` ([api.md](./api.md#memory-graph)) from the plane's memory home
   (`memory_store.resolve_memory_home`).
 - Higher-level apps (optional): AbstractFlow (authoring), AbstractCode,
