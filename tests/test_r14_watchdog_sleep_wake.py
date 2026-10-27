@@ -25,6 +25,8 @@ from typing import Any, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="SIGSTOP/SIGCONT and the backstop process are POSIX")
@@ -153,7 +155,7 @@ def test_a_real_hang_exits_75_with_the_incident_even_when_writing_it_is_slow(tmp
     assert len(files) == 1, files
     inc = json.loads(files[0].read_text())
     assert inc.get("kind") != "backstop" and "_deliberately_blocking_handler" in json.dumps(inc["loop_stack"])
-    assert time.monotonic() - t0 < 15
+    timing_budget(time.monotonic() - t0, 15, "sleep/wake scenario")
 
 
 @posix_only
@@ -175,7 +177,7 @@ def test_a_real_hang_exits_within_the_limit_plus_two_ticks(tmp_path: Path) -> No
     t_block = asyncio.run(_main())
     assert fired, "a 1.5 s block with a 0.5 s limit did not fire"
     when, age = fired[0]
-    assert when - t_block <= 0.5 + 2 * 0.05 + 0.15, when - t_block  # limit + 2 ticks (+ scheduling slack)
+    timing_budget(when - t_block, 0.5 + 2 * 0.05 + 0.15, "watchdog fired after the block (limit + 2 ticks + slack)", inclusive=True)
 
 
 @posix_only
@@ -237,7 +239,7 @@ def test_the_backstop_leaves_when_the_gateway_dies_even_if_a_fork_holds_the_pipe
             time.sleep(0.05)
         else:
             pytest.fail("the backstop outlived its gateway while a fork held the pipe")
-        assert time.monotonic() - t0 < 1.0  # within a few ticks (tick 0.1 s)
+        timing_budget(time.monotonic() - t0, 1.0, "backstop exit after its gateway (a few 0.1 s ticks)")
     finally:
         try:
             os.kill(holder, signal.SIGKILL)

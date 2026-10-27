@@ -22,8 +22,8 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 7
-- Proposed: 41
-- Completed: 24
+- Proposed: 44
+- Completed: 26
 - Deprecated: 1
 - Recurrent: 0
 
@@ -42,7 +42,9 @@ can trust without importing local gateway packages.
      without a count update); after the 0928 move, planned = 5 and
      completed = 23. 0934 is still missing from the Planned Items table
      below (flagged, not backfilled in this pass).
-     2026-10-08: 0846 completed (R16.2) -> planned 4, completed 24. -->
+     2026-10-08: 0846 completed (R16.2) -> planned 4, completed 24.
+     2026-10-27: recounted from the directories while filing 0945 (completed
+     directly): planned 7, proposed 44, completed 26, deprecated 1. -->
 
 ## Priority Bands
 
@@ -155,6 +157,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Test suite object leak and time sinks (completed 2026-10-27, **UNRELEASED**) | N/A | [completed/0945_test_suite_object_leak_and_time_sinks.md](completed/0945_test_suite_object_leak_and_time_sinks.md) | The harness frees each re-imported app (FastAPI's endpoint memo caches and the package attribute kept every one alive) and no test leaves GC tuning (`gc.freeze`) behind; four harness waits shortened. Follow-ups: entity reaper threads that keep stopped services alive, `gc.freeze` and later cyclic garbage in `serve`. | `tests/test_harness_reimported_app_is_freed.py` (mutations 6/6 red); full suite 63.4 -> 24.3 min, peak RSS 10.1 GB -> 1.22 GB on an M-series Mac. |
 | Publish/promote without rebuilding every service (completed 2026-10-08, **UNRELEASED**, R16.2) | `planned/0846_publish_promote_must_not_rebuild_every_service.md` | [completed/0846_publish_promote_must_not_rebuild_every_service.md](completed/0846_publish_promote_must_not_rebuild_every_service.md) | A publish swaps the compiled workflow registry on the running runtime (`registry_swap`); a service's runtime is rebuilt only for a newly needed capability (`service_reload`) or on request (`full_rebuild`); in-flight runs keep their spec; one service per data dir; every publish reports `reload {kind, services, duration_ms, sentence}` and the audit line records it. | `tests/test_gateway_publish_without_rebuild.py`; mutation 12/12 red; live drive before/after (health p99 1048 ms -> 2.1 ms, next turn miss -> hit). |
 | Automations v1 façade and acceptance (completed 2026-09-27, **UNRELEASED**) | `planned/0928_automations_v1_gateway_facade_and_acceptance.md` | [completed/0928_automations_v1_gateway_facade_and_acceptance.md](completed/0928_automations_v1_gateway_facade_and_acceptance.md) | The `/api/gateway/automations…` façade and `/trigger-sources` over the runtime's automation objects; `session_kind` / `role` on `/runs` with turn roots; the seen store; the `reason_code` envelope; legacy projection; `automation_defaults`; typed waits and `policy.tool_approval`; the client `_runtime` allowlist. Commits `57f26b9`…`4ece2f5`; reviews 46/47/52 GO after fixes (55 pending); framework E2E 9/9 with a real model. The release needs the runtime floor raised (W1, root 0941). | Full suite 2514 passed; `scripts/accept_automations_v1.py` 16/16 (restart mid-occurrence, discussion read-only, zero-call replay, unattended shell tick, tool approval by kind). |
 | Route authorization contract test + exception-swallowing audit | `proposed/0070_route_authorization_contract_test_and_exception_audit.md` | [completed/0070_route_authorization_contract_test_and_exception_audit.md](completed/0070_route_authorization_contract_test_and_exception_audit.md) | Whole-app authorization invariant pinned in three layers (boundary, per-write decision, served-surface proof); 13 durability-relevant silent exception swallows now log with context and consequence. Accepted by laurent 2026-07-21 ("a route can never ship unprotected"). | `pytest -q tests/test_gateway_route_authorization_contract.py tests/test_gateway_runner_swallow_audit.py`; full suite 857 passed. |

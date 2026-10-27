@@ -26,6 +26,8 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Tuple
 
 import pytest
+
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.basic
@@ -104,11 +106,11 @@ def _drive(env: Any, calls: _Calls, do: Callable[[TestClient], Any]) -> Tuple[An
 def _assert_off_loop(calls: _Calls, worst_gap: float, pool: str, *, n: int = 1) -> None:
     assert len(calls.rows) >= n, calls.rows
     blocked = calls.blocked_s()
-    assert blocked < 0.001, f"the loop ran {blocked * 1000:.1f} ms of the route's blocking work"
+    timing_budget(blocked, 0.001, "blocking work run on the loop")
     names = {name for name, _l, _d in calls.rows}
     assert all(name.startswith(f"gw-{pool}") for name in names), names
     # From outside: no gap anywhere near the 200 ms of work (generous for a loaded machine).
-    assert worst_gap < WORK_S / 2, f"loop stalled {worst_gap * 1000:.1f} ms"
+    timing_budget(worst_gap, WORK_S / 2, "loop stall during the route's blocking work")
 
 
 def _save_runs(env: Any, n_children: int = 0) -> str:

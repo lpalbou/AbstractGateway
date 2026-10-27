@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from email_fixtures import *  # noqa: F401,F403 - fixtures
 from email_fixtures import ALICE, connect_body, plane_of
 
@@ -229,4 +231,4 @@ def test_benchmark_11500_quiet_runs_skip_under_5ms(gateway, imap, smtp, stores) 
     for _ in range(20):
         assert _collect(plane, stores.svc).get("skipped") == 1
     per_pass = (time.perf_counter() - t) / 20
-    assert per_pass < 0.005, f"{per_pass * 1000:.2f} ms per quiet pass"
+    timing_budget(per_pass, 0.005, "mail collector quiet pass")

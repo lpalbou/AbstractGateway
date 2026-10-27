@@ -105,6 +105,8 @@ _role_lock = threading.Lock()
 #         (`policy.tool_policy`), streamed read-aloud recordings tagged under the `voice/` artifact space.
 # 0.12.0: the run index and store change tokens, `origin_for` (run origin), the event inbox streams.
 # 0.13.0: the voice library facade and per-runtime voice stores (routes/voice_library.py).
+# 0.14.0: every ledger record carries its per-run `seq` and every LedgerStore has `list_after`
+#         (ledger_tail.py picks its reader by them; the replay view reads the cursor).
 ABSTRACTRUNTIME_FLOOR = "0.14.0"
 
 

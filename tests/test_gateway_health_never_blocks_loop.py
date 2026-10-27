@@ -21,6 +21,8 @@ import time
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 
@@ -55,7 +57,7 @@ def test_health_snapshot_returns_immediately_while_a_build_holds_the_lock(build_
         assert snap["building"] is True
     elapsed = time.monotonic() - t0
     # The bounded 0.5 s acquire made this 5 s; non-blocking is microseconds.
-    assert elapsed < 0.5, f"10 health snapshots took {elapsed:.2f}s behind a held build lock"
+    timing_budget(elapsed, 0.5, "10 health snapshots behind a held build lock")
 
 
 def test_concurrent_health_probes_answer_within_a_second_during_a_stuck_build(build_holding_the_lock) -> None:
@@ -75,4 +77,4 @@ def test_concurrent_health_probes_answer_within_a_second_during_a_stuck_build(bu
     assert len(bodies) == 12
     assert all(b["runner"].get("building") is True for b in bodies)
     assert all(b.get("warming_up") is True for b in bodies)
-    assert elapsed < 1.0, f"12 concurrent /api/health probes took {elapsed:.2f}s during a stuck build"
+    timing_budget(elapsed, 1.0, "12 concurrent /api/health probes during a stuck build")

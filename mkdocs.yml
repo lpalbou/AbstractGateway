@@ -9,6 +9,7 @@ docs_dir: docs
 # Planning notes live next to the user docs but are not part of the site.
 exclude_docs: |
   backlog/
+  adr/
 
 theme:
   name: material

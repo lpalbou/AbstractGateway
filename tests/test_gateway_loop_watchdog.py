@@ -24,6 +24,8 @@ from typing import Any, List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 
@@ -70,7 +72,7 @@ def test_watchdog_stays_quiet_on_a_responsive_loop() -> None:
 
     age = asyncio.run(_main())
     assert fired == []
-    assert age < 0.5
+    timing_budget(age, 0.5, "watchdog heartbeat age")
 
 
 _STANDALONE = textwrap.dedent(
@@ -97,7 +99,7 @@ def test_blocked_loop_exits_with_the_watchdog_code_and_dumps_stacks() -> None:
     t0 = time.monotonic()
     proc = subprocess.run([sys.executable, "-c", _STANDALONE.format(backstop="True")], capture_output=True, text=True, timeout=30)
     assert proc.returncode == WATCHDOG_EXIT_CODE != 0, proc.stderr
-    assert time.monotonic() - t0 < 20
+    timing_budget(time.monotonic() - t0, 20, "backstop exit")
     assert "[FATAL] gateway watchdog: the event loop has not run for" in proc.stderr
     assert "the event-loop thread is blocked here" in proc.stderr
     assert "_deliberately_blocking_handler" in proc.stderr
