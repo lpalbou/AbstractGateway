@@ -27,6 +27,11 @@ name.
    (add the re-export or method, cut a patch release: runtime ADR 0008), and the gateway raises
    its runtime floor to that release. The gateway never imports the name directly "for now",
    never copies the code, and never guesses a replacement.
+   This covers whole features and capabilities, not only names, and every lower-level package
+   (AbstractCore, AbstractVoice, AbstractMemory, their dependencies): a capability the gateway
+   lacks is surfaced by the runtime, which does the integration (a facade method, a typed
+   refusal such as a 501 with the install hint, or a runtime backlog item). A missing capability
+   is never a justification for a direct import of a lower-level package.
 3. A gateway change that needs a facade addition ships after the runtime release that carries
    it; its changelog entry names that runtime version, and `pyproject.toml` pins it.
 
