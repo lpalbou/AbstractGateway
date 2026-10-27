@@ -1709,6 +1709,92 @@ authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
 remain deprecated compatibility aliases. Gateways without entity session-tool
 support still support the established Assistant tool-control contract.
 
+### Session tool policy (approve or deny for the whole conversation)
+
+A person's standing tool decision for one conversation ("approve all", "approve all web tools",
+"deny `execute_command`", reset) is held by the gateway, not by the client. The runtime reads it
+before it decides whether a tool batch waits: a covered call runs with **no approval wait and no
+interaction**, a denied call is refused with no wait, and each decision is an
+`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session
+(the run tree's root session): each turn's root run, delegated agent child runs, runs resumed after
+a restart. Approvals do not reach automation runs, runs that read text other people wrote
+(untrusted input), entity visits or runs started without a `session_id`; a deny reaches every run of
+the session, and also wins over an approval that was shown before the deny and answered after it.
+Every answer carries `scope`, which says so in words.
+
+| Method | Path | Meaning |
+|---|---|---|
+| GET | `/api/gateway/sessions/{session_id}/tool-policy` | `{session_id, policy, revision}` (`policy: null` when none) |
+| PUT | same | replace the policy |
+| POST | same | merge: adds the new selectors' tools to the stored ones (never narrows, never re-expands an earlier `all`/`kinds`); guarded by the revision it read, so a concurrent reset or deny is never undone |
+| DELETE | same (`?if_revision=`) | reset: later calls follow the normal defaults |
+
+Body (PUT, POST):
+
+```json
+{"approve": {"tools": ["fetch_url"], "kinds": ["web"], "all": false, "max_risk_rank": 3},
+ "deny": {"tools": ["execute_command"], "kinds": []},
+ "ask": ["send_email"], "client": "panel-chat", "if_revision": 4}
+```
+
+- `kinds` are the `toolset` values of `GET /api/gateway/discovery/tools` rows (`files`, `web`,
+  `system`, `email`, `mcp:<server>`…); `all` means every tool the gateway authorizes for the
+  caller; `max_risk_rank` (1–4) limits what `kinds` and `all` expand to by the row's `risk_rank`.
+- **The gateway clamps**: approve selectors expand, at write time, to the `enabled` rows
+  `GET /discovery/tools` serves the caller (email tools only when the account's agent email tools
+  are on, MCP tools only for servers offered to agents). Anything else is listed in `clamped`
+  (`not_authorized`, `unknown_kind`). A tool enabled later is not covered by an earlier `all`.
+  The run's own `allowed_tools` still blocks any tool outside it.
+- `deny` wins over `approve`; `ask` keeps names asking under `approve`.
+- `all` and `kinds` include the tools whose destination the model chooses (`fetch_url`,
+  `browser_probe`, `send_email` when email is on): "allow all" is the person's explicit word for this
+  conversation, unlike the gateway's default tier ceiling, which never auto-approves them. A client
+  that wants them to keep asking lists them in `ask` (or narrows with `max_risk_rank`).
+- `if_revision` (body of PUT/POST; query `?if_revision=` on DELETE): a mismatch answers `409`
+  `{"detail": {"reason_code": "revision_conflict", "message", "revision": <current>}}`. The
+  gateway never retries a client-sent `if_revision`. Without one, a POST guards itself with the
+  revision it read and re-reads and re-merges on a conflict (up to 5 tries, then the same 409
+  without `revision`); a PUT without one is last-writer-wins.
+- Malformed body or session id: `422 {"detail": {"reason_code": "invalid_request", "message"}}`.
+  When the caller's tool inventory cannot be built, writes answer
+  `503 {"detail": {"reason_code": "tool_inventory_unavailable", "message"}}` (no policy is written
+  that the gateway cannot clamp).
+
+Answers. PUT and POST: `{session_id, policy, scope}`, where `policy` is
+`{version, session_id, revision, approve: {name: selector}, deny: {name: selector}, ask, request,
+clamped, set_by: {tenant_id, user_id, client}, set_at}`. GET: `{session_id, policy, revision,
+scope}`; the top-level `revision` is the session's current revision also when `policy` is `null`
+(0 for a session never written, the reset's revision after a DELETE), the value to send as
+`if_revision`. DELETE: `{session_id, policy: null, revision, scope}`. `scope` is on all four
+answers, an object of two sentences:
+
+```json
+{"approve": "every run of this conversation (turns and their delegated child runs), except automation runs, runs that read text other people wrote, and entity visits",
+ "deny": "every run of this conversation, automation runs and untrusted-input runs included"}
+```
+
+Writes and resets are audited (`session.tool_policy_set`, `session.tool_policy_reset`).
+
+Ledger record (an activity; there is no wait, waiting record or resume for these calls):
+
+```json
+{"effect": {"type": "emit_event", "payload": {"name": "abstract.tool_policy_decision", "scope": "run",
+  "payload": {"decision": "auto_approved", "source": "session_policy", "session_id": "s-123",
+              "node_id": "agent", "tool_calls": [{"call_id": "c1", "name": "fetch_url", "matched": "kind:web"}],
+              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "laurent", "client": "panel-chat"},
+                         "set_at": "2026-10-27T10:00:00+00:00"}}}},
+ "status": "completed"}
+```
+
+`decision` is `auto_approved` or `denied`. Clients feature-gate on
+`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`: `true`
+with `{version, endpoint, methods, approve, deny, ask, record}`, or
+`{supported: false, reason: "abstractruntime has no session tool policy"}` when the installed
+runtime lacks it; an older gateway has no key at all.
+To offer "approve all" on an approval a client is showing: write the policy first, then answer
+that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
+already exist.
+
 ## Beyond the core
 
 `/api/gateway/*` also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).  

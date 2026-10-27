@@ -70,6 +70,17 @@ Notes:
   reason is a collection error, as is a test module that reads the real-home
   path without the marker. `pytest --markers` lists all three.
 
+### Wall-clock budgets never fail a test by default
+
+A test's structural assertions (the work ran off the event loop, the stream closed, nothing was
+dropped) always run. Its latency budgets (`p99 < 500 ms`, "the loop never stalled 50 ms") go through
+`tests/timing.py`: `timing_budget(actual, limit, what)` prints one `[timing] what: actual vs limit`
+line and never fails, because a busy machine or a shared CI runner can pause the whole process for
+seconds. Set `ABSTRACTGATEWAY_TIMING_STRICT=1` to assert the budgets (a quiet machine measuring a
+latency change on purpose): `ABSTRACTGATEWAY_TIMING_STRICT=1 pytest -s tests/test_perf_*.py`.
+`patient(timeout_s)` stretches a wait that only a hang should reach (x5 unless strict). New
+latency checks use the helper, never a bare `assert elapsed < ...`.
+
 ## How to contribute
 
 1. **Open an issue** (or a draft PR) describing what you want to change and why.

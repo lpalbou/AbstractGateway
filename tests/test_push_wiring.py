@@ -22,6 +22,8 @@ from typing import List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from push_fakes import REG, TOKEN_A, WATCH_TOPIC, FakeRelay, raise_approval
 from test_gateway_principal_isolation_matrix import _client, _create_user
 
@@ -97,7 +99,7 @@ def test_split_mode_append_from_another_process_within_three_seconds(tmp_path: P
             subprocess.run([sys.executable, "-c", code, str(plane)], check=True, timeout=60)
             appended = time.monotonic()
             _wait(lambda: len(relay.calls) >= 1, timeout=10)
-            assert time.monotonic() - appended <= 3.0, time.monotonic() - appended
+            timing_budget(time.monotonic() - appended, 3.0, "split-mode append to relay call", inclusive=True)
             assert relay.calls[0]["kind"] == "question"
             del t0
         finally:

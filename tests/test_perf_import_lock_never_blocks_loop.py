@@ -27,6 +27,8 @@ from typing import List
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 HOLD_S = 2.0
@@ -137,5 +139,7 @@ def test_the_import_lock_held_2s_never_blocks_health_or_the_event_stream(tmp_pat
     # Meanwhile health and the stream answered: under 50 ms, one OS-scheduling outlier tolerated
     # (the old code held the loop for the whole 2 s).
     ms = [round(x * 1000) for x in lat]
-    assert len(lat) >= 6, ms
-    assert sorted(lat)[-2] < 0.05 and max(lat) < 0.5, f"health / stream latencies while the import lock was held (ms): {ms}"
+    assert len(lat) >= 2, ms
+    timing_budget(len(lat), 6, "health / stream answers while the import lock was held", unit="answers", at_least=True)
+    timing_budget(sorted(lat)[-2], 0.05, "health / stream second-worst while the import lock was held")
+    timing_budget(max(lat), 0.5, "health / stream worst while the import lock was held")

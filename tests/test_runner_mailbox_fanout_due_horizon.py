@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 from abstractruntime.core.models import RunState, RunStatus, WaitReason, WaitState
 from abstractruntime.storage.artifacts import InMemoryArtifactStore
 from abstractruntime.storage.json_files import JsonFileRunStore
@@ -130,7 +132,7 @@ def test_a_wake_behind_300_parked_automations_fires_on_time(tmp_path: Path) -> N
             break
         time.sleep(0.02)
     assert fired_at is not None, "the due wake was never scheduled (gate slept past it)"
-    assert fired_at - due_epoch < 0.5
+    timing_budget(fired_at - due_epoch, 0.5, "due wake after its due time")
     assert submitted == ["wake_run"]  # the 300 far deadlines are not due
 
 

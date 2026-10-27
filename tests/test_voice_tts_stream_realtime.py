@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+
 pytestmark = pytest.mark.basic
 
 
@@ -125,7 +127,7 @@ def test_first_audio_reaches_the_client_before_the_second_segment_is_synthesised
             assert first_audio is not None and first_audio["sequence"] == 0
             assert engine.synthesised == 1, "the second segment was synthesised before the first reached the client"
             # The gateway answers while synthesis is in progress.
-            assert _health_ms(base) < 1000
+            timing_budget(_health_ms(base), 1000, "health while synthesis runs", unit="ms")
             engine.go.set()
             rest = [json.loads(raw) for raw in resp]
         assert [e.get("sequence") for e in rest if e.get("type") == "audio"] == [1, 2]
@@ -151,7 +153,7 @@ def test_health_answers_while_the_engine_setup_blocks(tmp_path, monkeypatch):
         t = threading.Thread(target=_client, daemon=True)
         t.start()
         time.sleep(0.3)  # the request is now inside stream_voice's blocked setup
-        assert _health_ms(base) < 1000, "the event loop is blocked by the voice engine's setup"
+        timing_budget(_health_ms(base), 1000, "health during the voice engine's blocked setup", unit="ms")
         engine.setup_go.set()
         t.join(10)
         assert result["events"][-1]["type"] == "done"
