@@ -117,5 +117,5 @@ The text above is stale on the cost model: `/runs/{id}/ledger/stream` no longer 
 ledger every 250 ms. It wakes on `ObservableLedgerStore.subscribe` and reads incrementally
 through `src/abstractgateway/ledger_tail.py` (a JSONL byte-offset tail, SQLite `list_after`);
 the 0.25 s check remains only where the appender is another process (split mode) and costs one
-`stat()` when nothing changed. `Last-Event-ID` is honoured. The replay view stream (0943)
+`stat()` when nothing changed. `Last-Event-ID` is honoured. The replay view stream (0947)
 follows the same subscription. What remains of this item is the multi-worker bridge (0076).

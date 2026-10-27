@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Replay view** (backlog 0943; framework root 0993; AbstractRuntime 0853 and ADR 0009). There
+- **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0853 and ADR 0009). There
   are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
   its status, the interaction to answer (a delegated child's approval included), messages with
   provenance, one activity per node execution, artifacts, usage, the workflow (bundle, version,

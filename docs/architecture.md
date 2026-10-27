@@ -476,7 +476,7 @@ flowchart LR
   the same rule as `GET /runs/{id}`.
 
 Evidence: `src/abstractgateway/replay_view.py`, `src/abstractgateway/routes/replay_view.py`,
-`tests/test_gateway_replay_view.py`, `scripts/bench_replay_view.py` (numbers in backlog 0943).
+`tests/test_gateway_replay_view.py`, `scripts/bench_replay_view.py` (numbers in backlog 0947).
 
 ## Automations
 

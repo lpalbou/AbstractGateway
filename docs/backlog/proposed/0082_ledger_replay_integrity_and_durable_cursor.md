@@ -130,7 +130,7 @@ this harness exists and passes.
   order+count (test-proven); the false lock/fsync note is corrected.
 
 
-## Progress (2026-10-27, with 0943 and AbstractRuntime 0853 / ADR 0009)
+## Progress (2026-10-27, with 0947 and AbstractRuntime 0853 / ADR 0009)
 
 - Cursor identity decided (ADR 0009): the per-run ledger `seq`. JSONL now persists it on every
   append (allocated under an advisory file lock spanning the head read and the write, so
@@ -145,4 +145,4 @@ this harness exists and passes.
 - JSONL durability posture: a lock, no fsync per append (the cost per record would dominate a
   streaming run); hosted multi-writer deployments use SQLite.
 - The AGENTS.md lock/fsync note no longer exists in this repository (checked 2026-10-27).
-- Remaining: move this item to completed when 0943 and runtime 0853 merge.
+- Remaining: move this item to completed when 0947 and runtime 0853 merge.

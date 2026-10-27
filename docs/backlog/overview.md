@@ -98,12 +98,12 @@ relevant.
 ## Planned Items
 
 Priority P1: user-scoped MCP credentials and access (0936), requested after the shared RAGnarok demo.
-Priority P0: the replay view (0943): `/runs/{id}/view` + `/view/stream` over AbstractRuntime's reducer (its 0853, ADR 0009), the per-run view cache, the client migration order; the gateway 0.16.0 release waits for it (framework root 1055).
+Priority P0: the replay view (0947): `/runs/{id}/view` + `/view/stream` over AbstractRuntime's reducer (its 0853, ADR 0009), the per-run view cache, the client migration order; the gateway 0.16.0 release waits for it (framework root 1055).
 Priority P1: push every registered device (0940) — the phone-first rule leaves a watch away from its iPhone without alerts (operator, 2026-10-26); review by Fable + an adversarial architect before code.
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0943_replay_view_routes_cache_and_client_migration.md](planned/0943_replay_view_routes_cache_and_client_migration.md) | `GET /runs/{id}/view` (ETag = cursor token, 304, `?at=`) and `/view/stream` (view, deltas, Last-Event-ID) served from one cached fold per run tree; principal isolation; benchmark before/after (3,000 records, 50 subscribers); client migration order, panel-chat first. |
+| [0947_replay_view_routes_cache_and_client_migration.md](planned/0947_replay_view_routes_cache_and_client_migration.md) | `GET /runs/{id}/view` (ETag = cursor token, 304, `?at=`) and `/view/stream` (view, deltas, Last-Event-ID) served from one cached fold per run tree; principal isolation; benchmark before/after (3,000 records, 50 subscribers); client migration order, panel-chat first. |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
@@ -141,7 +141,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0073_run_lifecycle_webhooks_event_egress.md](proposed/0073_run_lifecycle_webhooks_event_egress.md) | Phase 3. Promote after 0075 (efficient triggering) or with a poll-based trigger. |
 | [0074_openai_compatible_facade.md](proposed/0074_openai_compatible_facade.md) | Phase 3. Promote after 0071/0072 or as a demo spike. |
 | [0075_event_driven_ledger_streaming.md](proposed/0075_event_driven_ledger_streaming.md) | Phase 3. The single-node part shipped (`ledger_tail.py`, the append subscription; see its 2026-10-27 note); the multi-worker bridge follows demand (0076 triggers). |
-| [0082_ledger_replay_integrity_and_durable_cursor.md](proposed/0082_ledger_replay_integrity_and_durable_cursor.md) | Phase 3 prerequisite. Durable cursor (per-run `seq` on every store, JSONL included), `migrate.py` keeping seq and the I1-I5 harness land with 0943 / runtime 0853 (2026-10-27 note); complete it when those merge. |
+| [0082_ledger_replay_integrity_and_durable_cursor.md](proposed/0082_ledger_replay_integrity_and_durable_cursor.md) | Phase 3 prerequisite. Durable cursor (per-run `seq` on every store, JSONL included), `migrate.py` keeping seq and the I1-I5 harness land with 0947 / runtime 0853 (2026-10-27 note); complete it when those merge. |
 | [0083_agentic_orchestration_parity_to_retire_codex.md](proposed/0083_agentic_orchestration_parity_to_retire_codex.md) | Phase 2/3 enabler. Promote when durable self-evolution (0067-C) is prioritized; primarily AbstractRuntime/AbstractAgent work that lets the framework retire the codex subprocess. |
 | [0076_scale_out_runner_leasing_and_durable_log_tail.md](proposed/0076_scale_out_runner_leasing_and_durable_log_tail.md) | Phase 4. Promote only when explicit scale triggers are measured. |
 | [0077_usage_metering_quotas_analytics.md](proposed/0077_usage_metering_quotas_analytics.md) | Phase 4. Promote when hosted use goes beyond trusted teams. |

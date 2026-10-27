@@ -1,4 +1,4 @@
-# 0943-gateway: [FEATURE] Serve the replay view: `/runs/{id}/view`, its stream, the per-run view cache, and the client migration
+# 0947-gateway: [FEATURE] Serve the replay view: `/runs/{id}/view`, its stream, the per-run view cache, and the client migration
 
 > Package: abstractgateway (routes, cache, fan-out); abstractruntime (the reducer `abstractruntime.replay`, its backlog 0853 and ADR 0009)
 > Type: feature
