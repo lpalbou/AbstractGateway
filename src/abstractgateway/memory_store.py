@@ -207,11 +207,22 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
     class_name = _BACKEND_CLASS_NAMES[resolved_backend]
     try:
         memory_facade = _memory_facade()
-        store_class = getattr(memory_facade, class_name, None)
-    except Exception as e:  # pragma: no cover - the facade's install hint (AbstractMemory missing)
+    except ImportError as e:
+        # The runtime predates its AbstractMemory facade: name the runtime floor (as the host-build
+        # RuntimeTooOld check does), not AbstractMemory.
+        from .live_deltas import ABSTRACTRUNTIME_FLOOR
+
         return (
-            "AbstractMemory is not available. Install/repair the base Gateway environment "
-            f"with `pip install abstractgateway`. Import error: {e}"
+            f"this gateway needs abstractruntime>={ABSTRACTRUNTIME_FLOOR} (its AbstractMemory facade, "
+            "abstractruntime.integrations.abstractmemory.memory_facade); the installed runtime lacks it. "
+            f"Upgrade it: pip install -U 'abstractruntime>={ABSTRACTRUNTIME_FLOOR}'. Import error: {e}"
+        )
+    try:
+        store_class = getattr(memory_facade, class_name, None)
+    except Exception as e:  # the facade's install hint: AbstractMemory itself is missing or too old
+        return (
+            "AbstractMemory is not available (the gateway needs AbstractMemory>=0.4.0 through AbstractRuntime). "
+            f"Install/repair the base Gateway environment with `pip install abstractgateway`. Import error: {e}"
         )
 
     if store_class is None:
