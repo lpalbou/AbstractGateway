@@ -286,3 +286,52 @@ def test_a_read_that_changes_nothing_broadcasts_nothing(client: TestClient) -> N
     _token2, _body2, again = read_view(entry)
     assert again is None
     assert poll(entry, reload_open_snapshots=True) == (False, False)
+
+
+def _seed_case(case: Dict[str, Any]) -> None:
+    """Put a conformance case's ledgers and snapshots in the gateway's own stores, seq kept."""
+    from abstractgateway.ledger_tail import _unwrap_chain
+    from abstractruntime.storage.sqlite import SqliteLedgerStore, _runstate_from_dict
+
+    rs, ls = _stores()
+    layers = list(_unwrap_chain(ls))
+    for rid, recs in case["records"].items():
+        sq = next((x for x in layers if isinstance(x, SqliteLedgerStore)), None)
+        if sq is not None:
+            sq.import_records(rid, recs)
+            continue
+        jsonl = next(x for x in layers if callable(getattr(x, "_path", None)))
+        with jsonl._path(rid).open("w", encoding="utf-8") as f:
+            for rec in recs:
+                f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+    for snap in case["runs"].values():
+        rs.save(_runstate_from_dict(dict(snap)))
+
+
+def _conformance_cases() -> List[str]:
+    from abstractruntime.replay.conformance import case_names
+
+    return case_names()
+
+
+@pytest.mark.parametrize("case_name", _conformance_cases())
+@pytest.mark.parametrize("client", ["file", "sqlite"], indirect=True)
+def test_the_gateway_serves_every_conformance_case_as_the_runtime_replays_it(client: TestClient, case_name: str) -> None:
+    """The view a client gets is the runtime's reducer over the stored ledgers (ADR 0009)."""
+    from abstractruntime.replay import replay
+    from abstractruntime.replay.conformance import load_case
+
+    assert len(_conformance_cases()) >= 8
+    rs, _ls = _stores()
+    case = load_case(case_name)
+    _seed_case(case)
+    root = case["manifest"]["root_run_id"]
+    got = client.get(f"/api/gateway/runs/{root}/view", headers=H)
+    assert got.status_code == 200, got.text
+    # The stored snapshots are RunStates (what a host holds); the reducer over them and the
+    # stored records is the conformance answer, and it is the case's expected view.
+    snaps = {rid: rs.load(rid) for rid in case["runs"]}
+    want = replay(case["records"], {k: v for k, v in snaps.items() if v is not None}, root_run_id=root).to_json()
+    assert got.json() == want
+    assert got.json() == case["expected_view"]
+    assert "$slim" not in got.text
