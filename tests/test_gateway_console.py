@@ -63,7 +63,9 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'visionCatalog("image to video", "image_to_video")' in console.text
     assert '<select id="modal-default-provider">' in console.text
     assert '<select id="modal-default-model">' in console.text
-    assert '<select id="modal-default-voice">' in console.text
+    # output.voice: the kit's voice picker (islands mountVoiceSettings), not a native select.
+    assert '<div id="modal-default-voice-picker"' in console.text
+    assert '<select id="modal-default-voice">' not in console.text
     assert 'id="default-modal-backdrop"' in console.text
     assert 'class="modal flow-modal default-modal"' in console.text
     # Charter refactor (operator 2026-07-15): the kit tokens are now the
@@ -547,6 +549,12 @@ async function fetch(path, options = {{}}) {{
     }}
     return response(200, {{ ok: true, music_artifact: {{ "$artifact": "music-1", content_type: "audio/wav" }} }});
   }}
+  // The capability editor's voice sample (the kit picker's previewVoice): the voice-test run.
+  if (path === "/api/gateway/runs/session_memory_gateway_console_voicetest_default_admin/voice/tts" && options.method === "POST") {{
+    return response(200, {{ ok: true, audio_artifact: {{ "$artifact": "sample-1", content_type: "audio/wav" }} }});
+  }}
+  if (path === "/api/gateway/runs/session_memory_gateway_console_voicetest_default_admin/artifacts/sample-1/content") return blobResponse("audio/wav", "wav");
+  if (path === "/api/gateway/voice/voices?compact=true&provider=openai&model=tts-1") return response(200, {{ tts_providers: ["openai"], items: [] }});
   if (path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/artifacts/img-1/content") return blobResponse("image/png", "png");
   if (path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/artifacts/voice-1/content") return blobResponse("audio/wav", "wav");
   if (path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/artifacts/music-1/content") return blobResponse("audio/wav", "wav");
@@ -788,15 +796,6 @@ await assertDefaultModal(
   "/api/gateway/vision/provider_models?task=image_to_video&provider=mlx-gen"
 );
 await assertDefaultModal(
-  {{ key: "output.voice", kind: "output", modality: "voice", label: "Voice Output" }},
-  "openai",
-  "tts-1",
-  "/api/gateway/voice/voices?providers_only=true&compact=true",
-  "/api/gateway/audio/speech/models?provider=openai",
-  "/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true",
-  "coral"
-);
-await assertDefaultModal(
   {{ key: "input.voice", kind: "input", modality: "voice", label: "Voice Input" }},
   "whisper",
   "whisper-large-v3",
@@ -902,6 +901,9 @@ if (imageEditSaveBody.provider !== "mlx-gen" || imageEditSaveBody.model !== "Abs
   throw new Error("save image edit default did not preserve provider/model");
 }}
 
+// output.voice: the editor mounts the kit's voice picker (islands mountVoiceSettings)
+// instead of native provider / model / voice selects. The VM carries no islands
+// bundle, so these checks drive the exact props the console hands the island.
 await context.openDefaultModal({{
   key: "output.voice",
   kind: "output",
@@ -911,18 +913,43 @@ await context.openDefaultModal({{
   model: "tts-1",
   options: {{ voice: "alloy", quality_preset: "standard" }},
 }});
-if (el("modal-default-voice").value !== "alloy") {{
-  throw new Error("voice default modal did not restore the configured voice");
+if (el("modal-default-voice-picker").classList.contains("hidden") || !el("modal-default-provider-label").classList.contains("hidden") || !el("modal-default-model-label").classList.contains("hidden")) {{
+  throw new Error("output.voice must show the kit voice picker in place of the native provider/model selects");
 }}
-el("modal-default-voice").value = "coral";
+if (!String(el("default-modal-message").textContent).includes("the abstractuic islands bundle did not load")) {{
+  throw new Error("a missing islands bundle must be said in the dialog, never a silent native fallback");
+}}
+let voiceProps = context.defaultVoicePickerProps();
+if (voiceProps.value.provider !== "openai" || voiceProps.value.model !== "tts-1" || voiceProps.value.voice !== "alloy") {{
+  throw new Error("voice default modal did not hand the configured route to the picker: " + JSON.stringify(voiceProps.value));
+}}
+if (voiceProps.delivery !== false || voiceProps.showReset !== false || voiceProps.intro !== null) {{
+  throw new Error("the capability editor's picker shows provider/model/voice only");
+}}
+await voiceProps.fetchCatalog("openai", "tts-1");
+if (!calls.some((call) => call.path === "/api/gateway/voice/voices?compact=true&provider=openai&model=tts-1")) {{
+  throw new Error("the picker's catalog must be the shared GET /voice/voices call");
+}}
+voiceProps.onChange({{ provider: "openai", model: "tts-1", voice: "coral", profile: "" }});
+voiceProps = context.defaultVoicePickerProps();
+const sampleBytes = await voiceProps.previewVoice(voiceProps.value, undefined, {{ signal: new AbortController().signal }});
+const sampleCall = calls.find((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_voicetest_default_admin/voice/tts" && call.method === "POST");
+if (!sampleCall) throw new Error("choosing a voice must synthesize through the voice-test run's TTS lane");
+const sampleBody = JSON.parse(sampleCall.body);
+if (sampleBody.voice !== "coral" || sampleBody.provider !== "openai" || sampleBody.model !== "tts-1" || sampleBody.timeout_s !== 25) {{
+  throw new Error("the sample must use the picked voice and the short deadline: " + sampleCall.body);
+}}
+if (!(sampleBytes instanceof ArrayBuffer) || sampleBytes.byteLength !== 3) {{
+  throw new Error("previewVoice must hand the kit the sample's bytes");
+}}
 el("save-default").onclick();
 await new Promise((resolve) => setTimeout(resolve, 0));
 await new Promise((resolve) => setTimeout(resolve, 0));
 const voiceSaveCall = calls.find((call) => call.path === "/api/gateway/config/capability-defaults/output/voice" && call.method === "PUT");
 if (!voiceSaveCall) throw new Error("save voice default did not call the capability default route");
 const voiceSaveBody = JSON.parse(voiceSaveCall.body);
-if (voiceSaveBody.options.voice !== "coral" || voiceSaveBody.options.quality_preset !== "standard") {{
-  throw new Error("save voice default did not persist the selected voice in options");
+if (voiceSaveBody.provider !== "openai" || voiceSaveBody.model !== "tts-1" || voiceSaveBody.options.voice !== "coral" || voiceSaveBody.options.quality_preset !== "standard") {{
+  throw new Error("save voice default did not persist the picked voice in options: " + voiceSaveCall.body);
 }}
 
 await context.renderDefaults({{

@@ -1397,19 +1397,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      padding-top: 5px;
 	      padding-bottom: 5px;
 	    }
-	    /* Voice row: the select and its play/stop toggle on one line. */
-	    .voice-pick-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
-	    .voice-pick-row select { flex: 1 1 auto; min-width: 0; }
-	    .voice-play {
-	      flex: 0 0 auto; width: 32px; min-width: 32px; height: 32px; padding: 0;
-	      display: inline-grid; place-items: center; font-size: 13px; line-height: 1;
-	    }
-	    .voice-play[data-state="loading"] { color: var(--text-muted); }
-	    .voice-play[data-state="loading"]::before {
-	      content: ""; width: 12px; height: 12px; border: 2px solid var(--ui-border-2);
-	      border-top-color: var(--accent); border-radius: 50%; animation: afspin .8s linear infinite;
-	    }
-	    .voice-play[data-state="loading"] .voice-play-glyph { display: none; }
 	    .default-modal-route {
 	      display: inline-flex;
 	      width: fit-content;
@@ -3000,13 +2987,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="modal-body">
 	        <div class="default-config-form">
-	          <label>Provider<select id="modal-default-provider"></select>
+	          <label id="modal-default-provider-label">Provider<select id="modal-default-provider"></select>
 	            <input id="modal-default-provider-custom" class="hidden" type="text" autocomplete="off"
 	                   placeholder="type the provider id — none were discovered"></label>
-	          <label>Model<select id="modal-default-model"></select>
+	          <label id="modal-default-model-label">Model<select id="modal-default-model"></select>
 	            <input id="modal-default-model-custom" class="hidden" type="text" autocomplete="off"
 	                   placeholder="type the model id — discovery could not reach this provider"></label>
-	          <label id="modal-default-voice-label" class="hidden">Voice<span class="voice-pick-row"><select id="modal-default-voice"></select><button id="modal-default-voice-play" type="button" class="secondary voice-play" data-state="idle" aria-label="Play voice sample" title="Play a short sample of the selected voice (choosing a voice plays it)"><span class="voice-play-glyph" aria-hidden="true">▶</span></button></span><audio id="modal-default-voice-audio" preload="auto" hidden></audio></label>
+	          <!-- output.voice: the kit's shared voice picker (islands mountVoiceSettings) —
+	               speech provider, model and voice, grouped Your / Engine / Shared voices,
+	               a language filter, search; choosing a voice plays it (play/stop toggle). -->
+	          <div id="modal-default-voice-picker" class="default-voice-picker hidden"></div>
 	          <label id="modal-default-reasoning-label" class="hidden" title="Default reasoning effort for reasoning-capable models on this route. 'Not set' sends no reasoning parameter. A request that names its own effort wins.">Reasoning<select id="modal-default-reasoning">
 	            <option value="">not set</option>
 	            <option value="minimal">minimal</option>
@@ -3835,7 +3825,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -5968,6 +5958,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // (anti-mixing: explicit fields win over the home triple), so what
 	    // you hear is what saving would produce — never a fabricated
 	    // selection presented as configuration.
+	    // ONE voice catalog call for every kit voice picker on this page (the
+	    // entity's voice, the output.voice capability editor): the same
+	    // GET /voice/voices the apps' pickers read.
+	    function voiceCatalog(provider, model) {
+	      return api(withQuery("/api/gateway/voice/voices", { compact: true, ...(provider ? { provider } : {}), ...(model ? { model } : {}) }));
+	    }
 	    function entityVoicePickerProps(name) {
 	      const v = state._entityVoice || {};
 	      const eff = v.effective && v.effective.provider ? v.effective : null;
@@ -5977,7 +5973,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return {
 	        value: state._entityVoiceValue || {},
 	        onChange: (next) => entityVoiceChanged(name, next),
-	        fetchCatalog: (provider, model) => api(withQuery("/api/gateway/voice/voices", { compact: true, ...(provider ? { provider } : {}), ...(model ? { model } : {}) })),
+	        fetchCatalog: voiceCatalog,
 	        intro: null,
 	        delivery: false,
 	        showReset: false,
@@ -9316,52 +9312,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       return dedupeOptionValues(out);
     }
-    function voiceOptionsFromCatalog(payload, provider, model = "") {
-      const wantedProvider = String(provider || "").trim().toLowerCase();
-      const wantedModel = String(model || "").trim().toLowerCase();
-      const out = [];
-      const add = (value, providerFallback = provider, modelFallback = "") => {
-        const rec = objectValue(value);
-        const params = objectValue(rec?.params);
-        const tags = objectValue(rec?.tags);
-        const itemProvider = (rec
-          ? textValue(rec.provider)
-            || textValue(rec.provider_id)
-            || textValue(rec.engine_id)
-            || textValue(rec.engine)
-            || textValue(tags?.provider)
-            || textValue(params?.provider)
-            || textValue(params?.engine)
-            || String(providerFallback || "").trim()
-          : String(providerFallback || "").trim()).toLowerCase();
-        if (wantedProvider && itemProvider && itemProvider !== wantedProvider) return;
-        const itemModel = (rec
-          ? textValue(rec.model)
-            || textValue(rec.model_id)
-            || textValue(params?.model)
-            || textValue(params?.model_id)
-            || textValue(params?.model_filename)
-            || String(modelFallback || "").trim()
-          : String(modelFallback || "").trim()).toLowerCase();
-        if (wantedModel && itemModel && itemModel !== wantedModel) return;
-        const voice = catalogVoiceFromItem(value);
-        if (!voice) return;
-        const label = catalogLabelFromItem(value, voice) || voice;
-        state.voiceLabels.set(voice, label);
-        out.push(voice);
-      };
-      for (const key of ["items", "profiles", "voices", "cloned_voices"]) {
-        arrayValue(payload?.[key]).forEach((item) => add(item));
-      }
-      for (const key of ["tts_voices_by_provider", "tts_profiles_by_provider"]) {
-        const map = objectValue(payload?.[key]);
-        if (!map) continue;
-        for (const [mapProvider, values] of Object.entries(map)) {
-          arrayValue(values).forEach((item) => add(item, mapProvider));
-        }
-      }
-      return dedupeOptionValues(out);
-    }
     function withQuery(path, params = {}) {
       const query = Object.entries(params)
         .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== "")
@@ -9769,26 +9719,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      state.providerModels.set(cacheKey, models);
 	      return models;
 	    }
-	    async function fetchDefaultVoices(provider, model, row) {
-	      if (!provider || !isVoiceOutputDefault(row)) return [];
-	      const path = withQuery("/api/gateway/voice/voices", { provider, model, compact: true });
-	      const cacheKey = defaultVoicesKey(provider, model);
-	      if (!state.providerModels.has(cacheKey)) {
-	        const payload = await api(path);
-	        state.providerModels.set(cacheKey, voiceOptionsFromCatalog(payload, provider, model));
-	        state.voiceReasons.set(cacheKey, voiceUnavailableReason(payload));
-	      }
-	      return state.providerModels.get(cacheKey) || [];
-	    }
-	    function defaultVoicesKey(provider, model) {
-	      return `voices::${provider}::${model || ""}`;
-	    }
-	    // WHY a voice listing is empty, in the gateway's / AbstractVoice's own
-	    // words ("Supertonic is not installed: … Install it with: …", "OpenAI:
-	    // needs an API key (add it under Providers)") — never a bare "no voices".
-	    function voiceUnavailableReason(payload) {
-	      return textValue(payload?.unavailable_reason) || textValue(payload?.error) || "";
-	    }
 	    // OFFLINE IS A SUPPORTED MODE, NOT A DEGRADED ONE. A provider or model
 	    // field that can only offer *discovered* values is a dead end the moment
 	    // discovery cannot reach anything — which is the normal case on a
@@ -9827,9 +9757,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // model lane never opened, and the save then refused for want of a model
 	    // the operator had no field to type. One accessor, no fifth spelling.
 	    function activeDefaultProvider() {
+	      // output.voice: the kit picker's pick is the provider (no select).
+	      if (defaultVoicePickActive()) return String(state.defaultVoicePick?.provider || "").trim();
 	      return customLaneValue("modal-default-provider-custom") || $("modal-default-provider").value;
 	    }
 	    function activeDefaultModel() {
+	      if (defaultVoicePickActive()) return String(state.defaultVoicePick?.model || "").trim();
 	      return customLaneValue("modal-default-model-custom") || $("modal-default-model").value;
 	    }
 	    // A LATE RESOLVE MUST NOT PAINT A MODAL THAT HAS MOVED ON. Every load
@@ -9887,53 +9820,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      setCustomLane("modal-default-model-custom", !models.length, selected);
 	      if (selected && !models.includes(selected)) {
 	        $("default-modal-message").textContent = `Configured model "${selected}" is not currently in the discovered ${catalog.scope} catalog for ${provider}.`;
-	        $("default-modal-message").className = "message error";
-	      }
-	    }
-	    async function loadDefaultVoices(provider, model = "", selected = "", row = null) {
-	      const label = $("modal-default-voice-label");
-	      const select = $("modal-default-voice");
-	      if (!isVoiceOutputDefault(row)) {
-	        label.classList.add("hidden");
-	        setSelectOptions(select, [], { emptyLabel: "No voice selector for this route", disabled: true, labelMap: state.voiceLabels });
-	        return;
-	      }
-	      label.classList.remove("hidden");
-	      if (!provider) {
-	        setSelectOptions(select, [], { emptyLabel: "Select provider first", disabled: true, labelMap: state.voiceLabels });
-	        return;
-	      }
-	      if (!model) {
-	        setSelectOptions(select, [], { emptyLabel: "Select model first", disabled: true, labelMap: state.voiceLabels });
-	        return;
-	      }
-	      setSelectOptions(select, [], { emptyLabel: "Loading voices...", disabled: true, labelMap: state.voiceLabels });
-	      // Same contract as the model select: the "Loading voices..." label
-	      // never outlives the request that set it.
-	      let voices;
-	      try {
-	        voices = await fetchDefaultVoices(provider, model, row || {});
-	      } catch (e) {
-	        if (defaultModalMoved(row)) throw e;
-	        setSelectOptions(select, [], { emptyLabel: "Voice discovery failed", disabled: true, labelMap: state.voiceLabels });
-	        $("default-modal-message").textContent = `voice discovery failed: ${e.message || e}`;
-	        $("default-modal-message").className = "message error";
-	        throw e;
-	      }
-	      if (defaultModalMoved(row)) return;
-	      const reason = voices.length ? "" : (state.voiceReasons.get(defaultVoicesKey(provider, model)) || "");
-	      setSelectOptions(select, voices, {
-	        emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
-	        disabled: !voices.length,
-	        selected,
-	        labelMap: state.voiceLabels,
-	      });
-	      if (reason) {
-	        $("default-modal-message").textContent = reason;
-	        $("default-modal-message").className = "message warn";
-	      }
-	      if (selected && !voices.includes(selected)) {
-	        $("default-modal-message").textContent = `Configured voice "${selected}" is not currently in the discovered voice catalog for ${provider}/${model}.`;
 	        $("default-modal-message").className = "message error";
 	      }
 	    }
@@ -14637,7 +14523,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // named (a tiny text smoke). Image/video/music tests would be slow,
 	      // expensive, and ride watchdog-less routes — the Sandbox tab is their
 	      // honest surface. output.voice has no Test: choosing a voice plays it
-	      // (voicePreviewOnSelect), which is the same synthesis Test made.
+	      // through the kit picker (defaultVoiceSample), the synthesis Test made.
 	      const key = defaultRowKey(row);
 	      return key === "output.text" || key === "input.text";
 	    }
@@ -14656,7 +14542,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("default-modal-message").textContent = "";
 	      $("default-modal-message").className = "message";
 	      clearDefaultTest();
-	      voicePreviewReset();
 	      // Per-route base URL and raw options, mirroring the console-TUI's route
 	      // editor. Offline, base_url is how a route is pointed at a local
 	      // inference server on a non-default port — which is why the web console
@@ -14665,8 +14550,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const storedOptions = row.options && typeof row.options === "object" && !Array.isArray(row.options)
 	        ? row.options
 	        : null;
-	      // The voice picker owns `voice`/`profile`; showing them here too would
-	      // invite the two controls to disagree in front of the operator.
+	      // The voice picker (the kit's) owns `voice`/`profile`; showing them here
+	      // too would invite the two controls to disagree in front of the operator.
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
 	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
@@ -14690,6 +14575,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
+	      if (isVoiceOutputDefault(row)) {
+	        // output.voice: the kit picker discovers providers, models and
+	        // voices itself (GET /voice/voices); nothing native to load.
+	        setDefaultVoicePickMode(true);
+	        state.defaultVoicePick = { provider: row.provider || "", model: row.model || "", voice: defaultVoiceValue(row), profile: "" };
+	        renderDefaultVoicePicker();
+	        loadDefaultReasoning(row);
+	        loadDefaultSpeculation(row);
+	        $("clear-default").classList.toggle("hidden", !defaultRowConfigured(row));
+	        return;
+	      }
+	      setDefaultVoicePickMode(false);
 	      let discoveredProviders = [];
 	      try {
 	        discoveredProviders = await fetchDefaultProviders(row);
@@ -14734,12 +14631,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // error string overwrote the loader's "type the model id" guidance.
 	      await loadDefaultModels(activeDefaultProvider(), row.model || "", row).catch(() => {});
 	      refreshDefaultSpeculationSupport();
-	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), defaultVoiceValue(row), row).catch(() => {});
 	      if (defaultModalMoved(row)) return;
 	      $("clear-default").classList.toggle("hidden", !defaultRowConfigured(row));
 	    }
 	    function closeDefaultModal() {
-	      voicePreviewReset();
+	      unmountDefaultVoicePicker();
 	      $("default-modal-backdrop").classList.add("hidden");
 	      state.activeDefaultRow = null;
 	      state.defaultModalPrefill = null;
@@ -14748,16 +14644,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // two cannot drift into meaning different things.
 	    async function reloadDefaultModalCatalogs() {
 	      const row = state.activeDefaultRow || null;
-	      clearDefaultTest();  // a stale audition must not survive a provider change
-	      voicePreviewReset();
-	      // Both loaders paint their own terminal state and rethrow. Catch here
-	      // so a failed MODEL lookup still lets the voice select reach an end
-	      // state instead of being skipped by the propagating rejection.
+	      clearDefaultTest();  // a stale test result must not survive a provider change
+	      // The loader paints its own terminal state and rethrows.
 	      try {
 	        await loadDefaultModels(activeDefaultProvider(), "", row);
 	      } catch { /* terminal state + modal message already set by the loader */ }
-	      await loadDefaultVoices(activeDefaultProvider(), activeDefaultModel(), "", row)
-	        .catch(() => { /* ditto */ });
 	      refreshDefaultSpeculationSupport();
 	    }
     // ------------------------------------------------------------------
@@ -15913,159 +15804,103 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const p = state.principal || {};
 	      return `session_memory_gateway_console_voicetest_${sessionMemoryIdPart(p.tenant_id, "default")}_${sessionMemoryIdPart(p.user_id || p.runtime_id, "user")}`;
 	    }
-	    // ---- Voice preview: choosing a voice plays it --------------------
-	    // The operator scrolls voices and hears each one; the toggle at the
-	    // right of the select replays (from 0) or stops (back to 0). ONE
-	    // sample at a time: a newer choice aborts the older synthesis and its
-	    // playback, so fast scrolling never queues audio. The short debounce
-	    // keeps arrow-key scrolling from starting a synthesis per row — the
-	    // gateway cannot cancel a synthesis already started, so each one
-	    // started would still run to the end server-side.
-	    const VOICE_PREVIEW_TEXT = "Hello — this is the voice you selected, speaking from the gateway.";
-	    const VOICE_PREVIEW_DEBOUNCE_MS = 200;
-	    const voicePreview = { seq: 0, timer: null, controller: null, key: "", url: "", note: "" };
-	    function voicePreviewSelection() {
-	      return { provider: activeDefaultProvider(), model: activeDefaultModel(), voice: $("modal-default-voice").value || "" };
+	    // ---- output.voice: the kit's SHARED voice picker -------------------
+	    // The capability editor mounts islands mountVoiceSettings (the picker
+	    // the entity tab and the apps render) in place of its own provider /
+	    // model / voice selects: the voices by name, grouped Your / Engine /
+	    // Shared voices, the language filter and search, and choosing a voice
+	    // plays it (the kit's play/stop toggle; a newer choice aborts the
+	    // older sample through opts.signal). Base URL and Options stay the
+	    // console's. The pick lives in state.defaultVoicePick; the save reads
+	    // it (activeDefaultProvider / activeDefaultModel / saveDefault).
+	    const DEFAULT_VOICE_SAMPLE_TEXT = "Hello — this is the voice you selected, speaking from the gateway.";
+	    function defaultVoicePickActive() {
+	      return Boolean(state.activeDefaultRow) && isVoiceOutputDefault(state.activeDefaultRow);
 	    }
-	    function voicePreviewKey(sel) {
-	      return JSON.stringify([sel.provider, sel.model, sel.voice]);
+	    // The sample: the production TTS lane (the run-scoped route the old
+	    // Test button used, with its short deadline so a wedged backend fails
+	    // fast), the bytes handed to the kit, which plays them. Empty voice =
+	    // the provider's default voice, exactly what saving without one does.
+	    async function defaultVoiceSample(prefs, text, opts = {}) {
+	      const provider = String(prefs?.provider || "").trim();
+	      const model = String(prefs?.model || "").trim();
+	      if (!provider) throw new Error("pick a speech provider first");
+	      const body = { text: text || DEFAULT_VOICE_SAMPLE_TEXT, provider, request_id: sandboxRequestId(), timeout_s: 25 };
+	      if (model) body.model = model;
+	      const voice = String(prefs?.voice || prefs?.profile || "").trim();
+	      if (voice) body.voice = voice;
+	      const runId = voiceTestRunId();
+	      const signal = opts && opts.signal ? opts.signal : undefined;
+	      const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body), signal });
+	      const url = sandboxArtifactUrl(runId, res.audio_artifact);
+	      if (!url) throw new Error("the synthesis returned no audio");
+	      const audio = await fetch(url, { method: "GET", credentials: "same-origin", signal });
+	      if (!audio.ok) throw new Error(`audio download failed (HTTP ${audio.status})`);
+	      return await audio.arrayBuffer();
 	    }
-	    function setVoicePlayState(mode) {
-	      const button = $("modal-default-voice-play");
-	      button.dataset.state = mode;
-	      button.setAttribute("aria-busy", mode === "loading" ? "true" : "false");
-	      const playing = mode === "playing";
-	      const glyph = button.querySelector(".voice-play-glyph");
-	      if (glyph) glyph.textContent = playing ? "■" : "▶";
-	      const label = playing ? "Stop voice sample" : mode === "loading" ? "Synthesizing voice sample… (click to cancel)" : "Play voice sample";
-	      button.setAttribute("aria-label", label);
-	      button.title = label;
+	    function defaultVoicePickerProps() {
+	      return {
+	        value: state.defaultVoicePick || {},
+	        onChange: (next) => {
+	          state.defaultVoicePick = {
+	            provider: String(next?.provider || ""),
+	            model: String(next?.model || ""),
+	            voice: String(next?.voice || ""),
+	            profile: String(next?.profile || ""),
+	          };
+	          renderDefaultVoicePicker();
+	        },
+	        fetchCatalog: voiceCatalog,
+	        intro: null,
+	        delivery: false,
+	        showReset: false,
+	        voiceDefaultLabel: "Provider default voice",
+	        previewVoice: defaultVoiceSample,
+	      };
 	    }
-	    function voicePreviewNote(text) {
-	      // The dialog's one-line note. Ours is cleared by the next sample;
-	      // anyone else's (a discovery warning) is left alone.
-	      const note = $("default-modal-message");
-	      if (text) {
-	        note.textContent = text;
-	        note.className = "message error";
-	        voicePreview.note = text;
-	      } else if (voicePreview.note && note.textContent === voicePreview.note) {
-	        note.textContent = "";
-	        note.className = "message";
-	        voicePreview.note = "";
+	    // Mount (or update) the picker. A bundle without it is a vendoring
+	    // defect said in the dialog — never a fallback to a second picker.
+	    function renderDefaultVoicePicker() {
+	      if (state.defaultVoiceIsland) {
+	        state.defaultVoiceIsland.update(defaultVoicePickerProps());
+	        return true;
+	      }
+	      const lib = islandsLib();
+	      if (!lib || typeof lib.mountVoiceSettings !== "function") {
+	        const why = lib ? "the abstractuic islands bundle has no mountVoiceSettings" : "the abstractuic islands bundle did not load";
+	        if (typeof window !== "undefined" && window.document && window.document.getElementById("af-console-islands")) {
+	          console.error(`AbstractGateway console: ${why}; the voice picker is unavailable.`);
+	        }
+	        $("default-modal-message").textContent = `The voice picker is unavailable: ${why}.`;
+	        $("default-modal-message").className = "message error";
+	        return false;
+	      }
+	      state.defaultVoiceIsland = lib.mountVoiceSettings($("modal-default-voice-picker"), defaultVoicePickerProps());
+	      return true;
+	    }
+	    // Unmounted on close and on a non-voice route: the kit stops a sample
+	    // that is playing or on its way when the picker goes.
+	    function unmountDefaultVoicePicker() {
+	      if (state.defaultVoiceIsland) {
+	        try { state.defaultVoiceIsland.unmount(); } catch {}
+	        state.defaultVoiceIsland = null;
 	      }
 	    }
-	    function voicePreviewAbort() {
-	      // Supersede every pending or in-flight sample: a late answer from one
-	      // of them sees a newer seq and is dropped unplayed.
-	      voicePreview.seq += 1;
-	      if (voicePreview.timer !== null) { clearTimeout(voicePreview.timer); voicePreview.timer = null; }
-	      if (voicePreview.controller) { try { voicePreview.controller.abort(); } catch {} voicePreview.controller = null; }
-	    }
-	    function voicePreviewRewind() {
-	      const audio = $("modal-default-voice-audio");
-	      try { audio.pause(); } catch {}
-	      try { audio.currentTime = 0; } catch {}
-	    }
-	    function voicePreviewReset() {
-	      // The selection's route moved (open, close, provider, model): no
-	      // sample of the old one may play or be replayed.
-	      voicePreviewAbort();
-	      voicePreviewRewind();
-	      if (voicePreview.url && typeof URL !== "undefined" && URL.revokeObjectURL) {
-	        try { URL.revokeObjectURL(voicePreview.url); } catch {}
+	    function setDefaultVoicePickMode(on) {
+	      $("modal-default-voice-picker").classList.toggle("hidden", !on);
+	      $("modal-default-provider-label").classList.toggle("hidden", on);
+	      $("modal-default-model-label").classList.toggle("hidden", on);
+	      if (on) {
+	        setCustomLane("modal-default-provider-custom", false);
+	        setCustomLane("modal-default-model-custom", false);
+	      } else {
+	        unmountDefaultVoicePicker();
+	        state.defaultVoicePick = null;
 	      }
-	      voicePreview.url = "";
-	      voicePreview.key = "";
-	      voicePreviewNote("");
-	      setVoicePlayState("idle");
-	    }
-	    async function voicePreviewPlay() {
-	      // Always from 0: a replay never resumes mid-sentence.
-	      const audio = $("modal-default-voice-audio");
-	      voicePreviewRewind();
-	      setVoicePlayState("playing");
-	      try {
-	        await audio.play();
-	      } catch (err) {
-	        if (err && err.name === "AbortError") return;  // a stop/new sample interrupted play()
-	        setVoicePlayState("idle");
-	        voicePreviewNote(err && err.name === "NotAllowedError"
-	          ? "The browser blocked autoplay — press ▶ to hear the voice."
-	          : `Voice sample could not play: ${String((err && err.message) || err)}`);
-	      }
-	    }
-	    function voicePreviewEnded() {
-	      voicePreviewRewind();
-	      setVoicePlayState("idle");
-	    }
-	    async function voicePreviewSynthesize() {
-	      voicePreviewAbort();
-	      voicePreviewRewind();
-	      const seq = voicePreview.seq;
-	      const sel = voicePreviewSelection();
-	      if (!sel.provider || !sel.model) { setVoicePlayState("idle"); return; }
-	      const controller = typeof AbortController === "function" ? new AbortController() : null;
-	      voicePreview.controller = controller;
-	      const signal = controller ? controller.signal : undefined;
-	      setVoicePlayState("loading");
-	      voicePreviewNote("");
-	      try {
-	        // The production TTS lane, with the short deadline the old Test
-	        // button used: a wedged backend fails fast instead of spinning.
-	        // Empty voice = the provider's DEFAULT voice, exactly what saving
-	        // without a voice produces.
-	        const body = { text: VOICE_PREVIEW_TEXT, provider: sel.provider, model: sel.model, request_id: sandboxRequestId(), timeout_s: 25 };
-	        if (sel.voice) body.voice = sel.voice;
-	        const runId = voiceTestRunId();
-	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body), signal });
-	        if (seq !== voicePreview.seq) return;
-	        const url = sandboxArtifactUrl(runId, res.audio_artifact);
-	        if (!url) throw new Error("the synthesis returned no audio");
-	        const audioRes = await fetch(url, { method: "GET", credentials: "same-origin", signal });
-	        if (!audioRes.ok) throw new Error(`audio download failed (HTTP ${audioRes.status})`);
-	        const blob = await audioRes.blob();
-	        if (seq !== voicePreview.seq) return;
-	        const contentType = String(res.audio_artifact?.content_type || "").trim();
-	        const typed = contentType && (!blob.type || blob.type === "application/octet-stream") ? new Blob([blob], { type: contentType }) : blob;
-	        if (voicePreview.url) { try { URL.revokeObjectURL(voicePreview.url); } catch {} }
-	        voicePreview.url = URL.createObjectURL(typed);
-	        voicePreview.key = voicePreviewKey(sel);
-	        voicePreview.controller = null;
-	        $("modal-default-voice-audio").src = voicePreview.url;
-	        await voicePreviewPlay();
-	      } catch (err) {
-	        if (seq !== voicePreview.seq) return;  // superseded: its failure is not news
-	        voicePreview.controller = null;
-	        setVoicePlayState("idle");
-	        voicePreviewNote(`Voice sample failed: ${String((err && err.message) || err)}`);
-	      }
-	    }
-	    function voicePreviewOnSelect() {
-	      voicePreviewAbort();
-	      voicePreviewRewind();
-	      const sel = voicePreviewSelection();
-	      if (!sel.provider || !sel.model) { setVoicePlayState("idle"); return; }
-	      setVoicePlayState("loading");
-	      const seq = voicePreview.seq;
-	      voicePreview.timer = setTimeout(() => {
-	        voicePreview.timer = null;
-	        if (seq === voicePreview.seq) voicePreviewSynthesize();
-	      }, VOICE_PREVIEW_DEBOUNCE_MS);
-	    }
-	    function voicePreviewToggle() {
-	      const mode = $("modal-default-voice-play").dataset.state;
-	      if (mode === "playing") { voicePreviewRewind(); setVoicePlayState("idle"); return; }
-	      if (mode === "loading") { voicePreviewAbort(); setVoicePlayState("idle"); return; }
-	      if (voicePreview.url && voicePreview.key === voicePreviewKey(voicePreviewSelection())) {
-	        voicePreviewPlay();
-	        return;
-	      }
-	      voicePreviewSynthesize();
 	    }
 	    async function testDefault() {
 	      // Single-flight: the button disables while one test runs. Text routes
-	      // only — output.voice auditions by choosing a voice (voicePreview*).
+	      // only — output.voice auditions by choosing a voice (defaultVoiceSample).
 	      const row = state.activeDefaultRow;
 	      if (!row) return;
 	      const button = $("test-default");
@@ -16159,28 +15994,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          }
 	        }
 	        let optionsEdited = optionsText !== String(prefill.options || "").trim();
-	        // The voice picker edits the same dict, and it is the more specific
-	        // control, so it wins for the keys it owns — but only WHILE IT IS
-	        // ONE. It is disabled whenever the catalog is empty or the probe
-	        // failed, and a disabled control expresses no operator intent:
-	        // reading "" off it then deleted a voice nobody cleared, so an
-	        // offline save that only meant to set a base URL silently unset a
-	        // working route's voice. Those keys are hidden from the JSON box
-	        // above, so nothing else would have carried them.
+	        // The voice picker (the kit's) edits the same dict and is the more
+	        // specific control, so it wins for the keys it owns. Its pick starts
+	        // as the stored voice and changes only when the operator picks, so
+	        // an offline save (no catalog) keeps a voice nobody touched — those
+	        // keys are hidden from the JSON box above. A profile is stored as
+	        // `voice` (one id, as the entity voice and the TTS lane read it).
 	        if (isVoiceOutputDefault(row)) {
-	          const voiceSelect = $("modal-default-voice");
-	          if (voiceSelect.disabled) {
-	            const stored = defaultVoiceValue(row);
-	            if (stored) options.voice = stored;
-	          } else {
-	            delete options.voice;
-	            delete options.profile;
-	            const voice = voiceSelect.value;
-	            if (voice) options.voice = voice;
-	            // The picker writes INTO this dict, so a changed pick makes the
-	            // dict dirty even when the JSON box was never touched.
-	            if (voice !== String(prefill.voice || "")) optionsEdited = true;
-	          }
+	          const pick = state.defaultVoicePick || {};
+	          delete options.voice;
+	          delete options.profile;
+	          const voice = String(pick.voice || pick.profile || "").trim();
+	          if (voice) options.voice = voice;
+	          // The picker writes INTO this dict, so a changed pick makes the
+	          // dict dirty even when the JSON box was never touched.
+	          if (voice !== String(prefill.voice || "")) optionsEdited = true;
 	        }
 	        if (isTextGenerationDefault(row)) {
 	          if (Object.prototype.hasOwnProperty.call(options, "speculation")) throw new Error("Use the MTP selector for speculation; the options box edits the remaining provider settings.");
@@ -16464,20 +16292,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("modal-default-provider-custom").onchange = reloadDefaultModalCatalogs;
 	    $("modal-default-model").onchange = () => {
 	      clearDefaultTest();
-	      voicePreviewReset();
 	      refreshDefaultSpeculationSupport();
-	      return loadDefaultVoices(
-	        activeDefaultProvider(),
-	        activeDefaultModel(),
-	        "",
-	        state.activeDefaultRow || null
-	      );
 	    };
-	    // The typed model is a model choice too, so the voice catalog follows it.
 	    $("modal-default-model-custom").onchange = $("modal-default-model").onchange;
-	    $("modal-default-voice").onchange = () => voicePreviewOnSelect();
-	    $("modal-default-voice-play").onclick = () => voicePreviewToggle();
-	    $("modal-default-voice-audio").onended = () => voicePreviewEnded();
 	    $("modal-default-speculation").onchange = () => clearDefaultTest();
 	    $("save-default").onclick = saveDefault;
 	    $("test-default").onclick = testDefault;
