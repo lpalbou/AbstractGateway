@@ -48,6 +48,12 @@ console's own list showed cloned voices by raw 32-hex ids in one flat list, whil
 - The kit picker offers its "Workflow / Gateway default" provider choice; in a capability editor that
   choice cannot be saved (Save says to pick a provider and model). A `VoiceSettings` `inheritLabel`
   prop would let the console hide or rename it (abstractuic follow-up).
+- A synthesis the browser abandons still runs on the gateway: `POST runs/{id}/voice/tts` cannot be
+  cancelled (no disconnect check, no cancel by `request_id`). The kit waits 200 ms after a choice so
+  going through voices starts one synthesis, but a sample abandoned mid-synthesis finishes on the
+  engine. A server-side cancel is the follow-up (see 0233 real run cancellation).
+- `endpoint:<id>` provider profiles are no longer offered for `output.voice` (the kit lists
+  `tts_providers` of `GET /voice/voices`); the models are the same discovery (`get_voice_catalog`).
 - Console TUI (`console-tui/src/ui/routes.rs`): its route editor has a voice combobox and a Test that
   synthesizes but does not play (the TUI plays audio elsewhere through `afplay`/`paplay`). Not
   changed here (operator: report only).
@@ -59,6 +65,6 @@ console's own list showed cloned voices by raw 32-hex ids in one flat list, whil
   the island props: catalog call, sample, save); `test_gateway_console_offline.py` (save from the
   pick: offline keeps the voice, profile stored as voice, clear); `test_gateway_capability_catalog_proxy.py`
   (cloud providers in the full catalog). Mutation-checked red: no signal, no unmount on close, the
-  pick not saved, the cloud providers not listed.
+  pick not saved, the cloud providers not listed, `api()` not chaining or not remapping the cancel.
 - Kit behaviour: abstractuic `ui-kit/scripts/check_voice_library.mjs` 0947 checks (choice plays,
   newer choice aborts, stop stops, play replays from 0 without a request, busy, error line).

@@ -186,3 +186,41 @@ def test_no_native_voice_list_no_replay_panel_and_the_vendored_kit_has_the_toggl
     from abstractgateway.console_islands import ISLANDS_JS
 
     assert "af-voice-settings__voice-row" in ISLANDS_JS and "mountVoiceSettings" in ISLANDS_JS
+
+
+def test_api_cancels_on_the_callers_signal_and_says_cancelled() -> None:
+    """The SHIPPED api(): a caller's signal reaches fetch, and a cancel rejects as
+    AbortError (the kit drops it silently), never as the timeout sentence."""
+    source = _console_script()
+    harness = f"""
+const API_TIMEOUT_MS = 1500;
+const API_SLOW_TIMEOUT_MS = 1500;
+function csrf() {{ return ""; }}
+const seen = [];
+globalThis.fetch = (path, init) => new Promise((resolve, reject) => {{
+  seen.push(init.signal);
+  init.signal.addEventListener("abort", () => {{ const e = new Error("aborted"); e.name = "AbortError"; reject(e); }}, {{ once: true }});
+}});
+{_slice_function(source, "api")}
+const results = [];
+const ctl = new AbortController();
+const pending = api("/x", {{ method: "POST", body: "{{}}", signal: ctl.signal }});
+await new Promise((r) => setTimeout(r, 0));
+const inner = seen[0];
+const t0 = Date.now();
+ctl.abort();
+let err = null;
+try {{ await pending; }} catch (e) {{ err = {{ name: e.name, message: e.message }}; }}
+const ms = Date.now() - t0;
+const early = new AbortController();
+early.abort();
+let err2 = null;
+try {{ await api("/y", {{ signal: early.signal }}); }} catch (e) {{ err2 = e.name; }}
+results.push({{ ms, innerAborted: inner.aborted, notCallerSignal: inner !== ctl.signal, err, err2 }});
+console.log(JSON.stringify(results));
+"""
+    out = _node(harness)[0]
+    assert out["innerAborted"] and out["ms"] < 500, f"the caller's cancel must abort the request at once ({out['ms']} ms)"
+    assert out["notCallerSignal"], "the caller's signal is chained, never replacing the deadline's controller"
+    assert out["err"] == {"name": "AbortError", "message": "Request cancelled."}
+    assert out["err2"] == "AbortError", "an already-aborted signal cancels at once"
