@@ -54,9 +54,15 @@ derivations, and the memory contract descriptor naming the root store instead of
 
 ## Remaining follow-ups
 
-- Gateway: the bundle host passes no `journal` to the builder, so closures applied by MEMORY_REVISE are in the
-  revision log and history but not folded into ranked retrieval; passing `SQLiteJournal(home)` needs the
-  host's reload/close lifecycle to own it.
+- Gateway (done in review G3): the bundle host passes the store's `SQLiteJournal`, the plane's `runtime_id` and
+  artifact store to the builder (`hosts/bundle_host.build_gateway_memory_kg_handlers`); the host closes the
+  journal with the store on reload.
+- Gateway: every `/memory/*` request opens and closes the home (`MemoryFacade.open_mind`: an SQLite open, the
+  graph tables checked; the first open after AbstractMemory 0.4.0 runs the one-time JSON -> float32-blob vector
+  upgrade inside that request, holding the write lock). Follow-up: keep one facade per plane (opened at service
+  build, closed with the service), like the bundle host's store.
+- Gateway: the owner rule is advisory inside a plane (a principal reads every partition it can derive; on the
+  shared default plane a caller who learns another run id can name it). Separate accounts need separate planes.
 - Runtime/gateway: a LanceDB plane revises only after decision 2 (or a builder that takes a separate home).
 - Operator decision 5 (memory transition): the owner rule on `/kg/query` itself (still plane-wide).
 
