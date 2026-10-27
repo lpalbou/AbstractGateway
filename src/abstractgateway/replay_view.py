@@ -38,6 +38,9 @@ from abstractruntime.replay.delta import LIST_KEYS, SCALAR_KEYS
 # Records read per run per refresh pass (a pass loops until a run is drained).
 _PAGE = 2000
 _MAX_ENTRIES = 64
+# Frames waiting for one stream beyond which it is considered gone (a live client reads them at
+# once; 2,000 frames is minutes of a busy run).
+MAX_QUEUED_FRAMES = 2000
 
 
 def _encode(event: str, data: Dict[str, Any], event_id: Optional[str] = None) -> bytes:
@@ -53,7 +56,19 @@ class _Subscriber:
     queue: "asyncio.Queue[bytes]" = field(default_factory=asyncio.Queue)
     wake: asyncio.Event = field(default_factory=asyncio.Event)
 
+    dead: bool = False
+
     def deliver(self, frame: bytes) -> None:  # on the subscriber's loop
+        if self.dead:
+            return
+        if self.queue.qsize() >= MAX_QUEUED_FRAMES:
+            # Nobody reads this stream (a client gone without the generator noticing): drop it
+            # rather than queue every later delta forever; the entry forgets it at the next fold.
+            self.dead = True
+            while not self.queue.empty():
+                self.queue.get_nowait()
+            self.wake.set()
+            return
         self.queue.put_nowait(frame)
         self.wake.set()
 
@@ -112,6 +127,9 @@ class ViewEntry:
             snaps.update(self._load_snapshots(open_runs, force=True))
         for _ in range(64):  # a pass can reveal children; bounded
             run_ids = self.view.run_ids
+            # Published BEFORE this pass reads: an append to a run found by the previous pass is
+            # either read below or wakes the pump (`on_append`), never lost in between.
+            self.tree_ids = frozenset(run_ids)
             snaps.update(self._load_snapshots(run_ids))
             batch: List[Dict[str, Any]] = []
             for rid in run_ids:
@@ -161,6 +179,16 @@ class ViewEntry:
 
     def broadcast(self, delta: Dict[str, Any]) -> None:
         frame = _encode("delta", delta, delta.get("cursor", {}).get("token"))
+        gone = [sub for sub in self.subscribers if sub.dead]
+        for sub in gone:
+            self.subscribers.remove(sub)
+        if gone and not self.subscribers and self.unsubscribe is not None:
+            try:
+                self.unsubscribe()
+            except Exception:  # noqa: BLE001
+                pass
+            self.unsubscribe = None
+            self.pump_loop = None
         for sub in list(self.subscribers):
             try:
                 sub.loop.call_soon_threadsafe(sub.deliver, frame)
@@ -209,21 +237,27 @@ class ViewEntry:
                 self.pump_scheduled = False
             raise
 
-    def view_at(self, token: str, *, as_of: bool = False) -> Optional[ReplayView]:
-        """The view at an older cursor: each run's records up to the token's seq (None when the
-        token is not one of this view's: an unknown run, a seq beyond what is folded).
-
-        `as_of=False` (a reconnect) folds the runs' current snapshots, so the difference to the
-        current view is only what the ledger added. `as_of=True` (`GET /view?at=`, a push
-        opened at its seq) keeps only what a snapshot says that does not change as a run
-        progresses (its workflow, parent, input, session): the view as the ledger stood then."""
+    def plan_at_locked(self, token: str) -> Optional[Dict[str, int]]:
+        """{run id: seq} of an older cursor of this view (caller holds `lock`); None when the
+        token is not one of this view's (an unknown run, a seq beyond what is folded)."""
         token_map = resolve_cursor_token(token, self.view.run_ids)
         if not token_map:
             return None
+        if any(seq > self.view.last_seq(rid) for rid, seq in token_map.items()):
+            return None
+        return token_map
+
+    def view_at(self, token_map: Dict[str, int], *, as_of: bool = False) -> ReplayView:
+        """The view at a planned cursor (`plan_at_locked`): each run's records up to its seq.
+        Reads the stores, so it runs WITHOUT the entry lock (a large tree takes seconds).
+
+        `as_of=False` (a reconnect) folds the runs' current snapshots, so the difference to the
+        current view is only what the ledger added. `as_of=True` (`GET /view?at=`, a push
+        opened at its seq) keeps only the runs the token names (the tree as it was) and only
+        what a snapshot says that does not change as a run progresses (its workflow, parent,
+        input, session): the view as the ledger stood then."""
         records: Dict[str, List[Dict[str, Any]]] = {}
         for rid, seq in token_map.items():
-            if seq > self.view.last_seq(rid):
-                return None
             if seq <= 0:
                 continue
             got: List[Dict[str, Any]] = []
@@ -236,7 +270,7 @@ class ViewEntry:
                 after = int(recs[-1].get("seq") or seq)
             records[rid] = got
         snaps = {}
-        for rid in self.view.run_ids:
+        for rid in (list(token_map) if as_of else list(self.view.run_ids)):
             try:
                 snap = self.run_store.load(rid)
             except Exception:  # noqa: BLE001
@@ -367,7 +401,8 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
     if last_token and current is not None:
         try:
             with entry.lock:
-                old = entry.view_at(last_token)
+                plan = entry.plan_at_locked(last_token)
+            old = entry.view_at(plan) if plan else None
         except Exception:  # noqa: BLE001 - a reconnect we cannot rebuild gets the whole view
             old = None
         if old is not None:
@@ -386,11 +421,14 @@ def subscribe(entry: ViewEntry, sub: _Subscriber, last_token: Optional[str]) -> 
 def read_view_at(entry: ViewEntry, token: str) -> Optional[bytes]:
     """Worker thread: the view at a cursor token (JSON bytes), None when the token is not one."""
     with entry.lock:
-        entry.refresh_locked()
-        try:
-            old = entry.view_at(token, as_of=True)
-        except Exception:  # noqa: BLE001 - an unreadable ledger: no view at that cursor
-            old = None
+        delta = entry.refresh_locked()
+        if delta is not None and entry.subscribers:
+            entry.broadcast(delta)  # what this read folded, live streams must get too
+        plan = entry.plan_at_locked(token)
+    try:
+        old = entry.view_at(plan, as_of=True) if plan else None
+    except Exception:  # noqa: BLE001 - an unreadable ledger: no view at that cursor
+        old = None
     if old is None:
         return None
     return json.dumps(old.to_json(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")

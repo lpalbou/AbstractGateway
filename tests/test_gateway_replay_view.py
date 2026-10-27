@@ -267,7 +267,10 @@ def test_view_at_a_cursor_is_the_ledger_as_it_stood(client: TestClient) -> None:
     at = client.get(f"/api/gateway/runs/{ROOT}/view", params={"at": held["cursor"]["token"]}, headers=H)
     assert at.status_code == 200, at.text
     v = at.json()
-    assert v["cursor"] == held["cursor"]
+    # The same records of the same runs (the digest of the snapshots' part differs: an as-of view
+    # keeps only what a snapshot says that does not change as a run progresses).
+    assert v["cursor"]["runs"] == held["cursor"]["runs"]
+    assert v["cursor"]["token"].split("~")[0] == held["cursor"]["token"].split("~")[0]
     assert v["status"] == "waiting" and v["interaction"]["kind"] == "tool_approval"
     assert v["interaction"]["run_id"] == CHILD and v["activities"] == held["activities"]
     assert client.get(f"/api/gateway/runs/{ROOT}/view", params={"at": "zzzzzzzz:3"}, headers=H).status_code == 404

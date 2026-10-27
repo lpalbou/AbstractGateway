@@ -670,8 +670,15 @@ To reconnect, send `Last-Event-ID` (or `?after=`) with the last id you received:
 
 Every client following a run tree shares one cached view. The gateway folds each appended record
 once and sends the same delta to every subscriber. The stream wakes on the ledger append itself.
-Nothing is re-read on a timer, except a `list_after` check every 0.25 s when the runner is
-another process (split mode). That check reads no bytes when nothing was appended.
+The ledger is never re-parsed on a timer. Two periodic checks remain, each run once per view
+however many streams follow it:
+- a `list_after` check every 0.25 s when the runner is another process (split mode), which reads
+  no bytes while nothing was appended;
+- a re-read of the open runs' snapshots every 5 s. A pause, for instance, changes a snapshot
+  without writing a record.
+
+A change that comes only from a snapshot also changes the cursor token: the token ends with a
+`~<digest>` of the snapshots' contribution, so the ETag and a reconnect see it.
 
 Authorization follows `GET /runs/{run_id}`. A run outside the caller's own plane returns 404.
 

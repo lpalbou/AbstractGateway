@@ -103,7 +103,18 @@ async def stream_run_view(
         # Registers the stream; the first one also subscribes the ENTRY to the ledger's appends,
         # so an append to the tree is folded once (the entry's pump) and reaches every stream
         # as the same frame. A stream never folds on its own except the checks below.
-        frames, terminal = await off_loop("heavy", subscribe, entry, sub, last_token)
+        joining = asyncio.ensure_future(off_loop("heavy", subscribe, entry, sub, last_token))
+        try:
+            frames, terminal = await asyncio.shield(joining)
+        except asyncio.CancelledError:
+            # The client left while the worker was registering it: unregister once it has.
+            def _leave(_f: "asyncio.Future[Any]") -> None:
+                try:
+                    loop.run_in_executor(None, unsubscribe, entry, sub)
+                except RuntimeError:
+                    pass  # loop closing; the bounded queue drops the stream at the next fold
+            joining.add_done_callback(_leave)
+            raise
         try:
             from ..split_mode import is_api_process
 
@@ -118,7 +129,7 @@ async def stream_run_view(
             last_check = last_emit
             last_safety = last_emit
             while True:
-                if await request.is_disconnected():
+                if sub.dead or await request.is_disconnected():
                     return
                 sub.wake.clear()
                 sent = False
