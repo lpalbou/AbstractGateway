@@ -216,5 +216,62 @@ def test_vision_catalog_endpoint_allowed_models_need_no_probe(tmp_path: Path, mo
         stub.model_calls.clear()
         body = client.get("/api/gateway/vision/provider_models?task=text_to_image&provider=endpoint:pinned", headers=headers).json()
     assert [item["id"] for item in body["items"]] == ["gpt-image-1"]
-    assert stub.model_calls == []
-    assert stub.vision_calls == []  # an endpoint provider is not an AbstractVision backend
+    assert stub.model_calls == []  # the allowed models are the list: no model listing
+    # A NAMED endpoint's own catalog is read through the profile's connection, for its per-model word.
+    assert [(c["provider"], c["base_url"], c["provider_api_key"]) for c in stub.vision_calls] == [
+        ("openai-compatible", "http://127.0.0.1:8317/v1", "sk-scratch-not-real")
+    ]
+
+
+# ---------------------------------------------------------------------------
+# A named endpoint: its own catalog's word first, the model name otherwise
+# ---------------------------------------------------------------------------
+
+
+def _relay_row(model: str, images: Any = None, **extra: Any) -> Dict[str, Any]:
+    row: Dict[str, Any] = {"id": model, **extra}
+    if images is not None:
+        row["raw"] = {"airelays": {"capabilities": {"routes": {"images": images}}}}
+    return row
+
+
+def test_endpoint_evidence_reads_relay_routes_then_declared_tasks() -> None:
+    from abstractgateway.endpoint_vision_catalog import endpoint_model_evidence
+
+    assert endpoint_model_evidence(_relay_row("gpt-image-2", True), "text_to_image") == ("gpt-image-2", True)
+    assert endpoint_model_evidence(_relay_row("gpt-image-2", False), "text_to_image") == ("gpt-image-2", False)
+    assert endpoint_model_evidence({"id": "my-painter", "capabilities": ["text_to_image"]}, "text_to_image") == ("my-painter", True)
+    assert endpoint_model_evidence({"id": "my-painter", "capabilities": ["text_to_image"]}, "image_to_image") == ("my-painter", False)
+    assert endpoint_model_evidence({"model": "openai-compatible/gpt-image-2"}, None) == ("gpt-image-2", None)
+    assert endpoint_model_evidence({"id": "unknown"}, "text_to_image") == ("unknown", None)
+
+
+def test_endpoint_evidence_adds_removes_and_otherwise_keeps_the_name_rule() -> None:
+    from abstractgateway.endpoint_vision_catalog import apply_endpoint_evidence
+
+    class _Profile:
+        allowed_models: tuple = ()
+
+    rows = [
+        _relay_row("gpt-image-2", False),  # the name says image, the relay says no: removed
+        {"id": "painter-x", "tasks": ["text_to_image"]},  # an unusual name the relay vouches for: added
+        {"id": "dall-e-3"},  # the relay says nothing: the name rule's answer stands
+    ]
+    named = ["dall-e-3", "gpt-image-2"]
+    assert apply_endpoint_evidence(_Profile(), named, rows, task="text_to_image") == ["dall-e-3", "painter-x"]
+    pinned = _Profile()
+    pinned.allowed_models = ("painter-x",)
+    assert apply_endpoint_evidence(pinned, named, rows, task="text_to_image") == ["painter-x"]
+    assert apply_endpoint_evidence(_Profile(), named, [], task="text_to_image") == ["dall-e-3", "gpt-image-2"]
+
+
+def test_a_named_endpoint_that_does_not_exist_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    stub = _StubDiscovery()
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (stub, None))
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        resp = client.get("/api/gateway/vision/provider_models?task=text_to_image&provider=endpoint:nobody", headers=headers)
+    assert resp.status_code in (400, 404), resp.text
+    assert stub.vision_calls == []

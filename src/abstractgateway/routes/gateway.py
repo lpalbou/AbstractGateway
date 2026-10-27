@@ -90,6 +90,7 @@ from ..provider_endpoint_profiles import (
     resolve_effective_endpoint_profile,
 )
 from ..endpoint_vision_catalog import (
+    apply_endpoint_evidence,
     endpoint_profile_image_models,
     merge_endpoint_vision_catalog,
     profile_is_image_family,
@@ -19973,6 +19974,12 @@ async def vision_provider_models_catalog(
         )
     discovery, err = _gateway_abstractcore_discovery_facade()
     endpoint_provider = str(provider or "").strip().lower().startswith("endpoint:")
+    named_profile: Any = None
+    if endpoint_provider:
+        # A NAMED endpoint must exist and be enabled: "not found" says so, an empty list would not.
+        named_profile = _resolve_endpoint_profile_for_request(request, str(provider or "").strip())
+        if named_profile is None or not getattr(named_profile, "enabled", True):
+            raise HTTPException(status_code=404, detail="Endpoint profile is unavailable or disabled")
     # A request filtered to an AbstractVision backend gets no endpoint rows.
     # The endpoint probes run concurrently with the AbstractVision catalog.
     endpoint_lookup: Optional["asyncio.Future[Any]"] = None
@@ -20019,8 +20026,35 @@ async def vision_provider_models_catalog(
         )
 
     if endpoint_provider:
-        # An endpoint profile is not an AbstractVision backend: asking the
-        # facade about it can only answer "unknown provider".
+        # A named endpoint: its own catalog (asked through the profile's connection) says, per
+        # model, whether it serves the task; a model it says nothing about is decided by its name
+        # (`apply_endpoint_evidence`). The listing of every provider keeps the name rule alone.
+        catalog_rows: list = []
+        if discovery is not None and not err and profile_is_image_family(named_profile) and wanted_image_tasks(task_value):
+            try:
+                endpoint_catalog = await _discovery_to_thread(
+                    discovery.list_vision_provider_models,
+                    task=task_value,
+                    base_url=named_profile.base_url or None,
+                    provider_api_key=named_profile.api_key or _request_provider_api_key(request),
+                    provider=named_profile.provider_family,
+                    providers_only=False,
+                )
+                if isinstance(endpoint_catalog, dict) and isinstance(endpoint_catalog.get("models"), list):
+                    catalog_rows = list(endpoint_catalog["models"])
+            except Exception:  # noqa: BLE001 - the name rule still answers; the probe's error is not the listing's
+                catalog_rows = []
+        named_lookup = endpoint_lookup
+
+        async def _with_evidence() -> Any:
+            entries, errors = (await named_lookup) if named_lookup is not None else ([], {})
+            by_profile = {p.virtual_provider_id: models for p, models in entries}
+            models = apply_endpoint_evidence(
+                named_profile, by_profile.get(named_profile.virtual_provider_id, []), catalog_rows, task=task_value
+            )
+            return ([(named_profile, models)] if models else []), errors
+
+        endpoint_lookup = asyncio.ensure_future(_with_evidence())
         return await _respond(
             {
                 "available": False,

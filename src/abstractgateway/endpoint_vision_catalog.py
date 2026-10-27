@@ -149,6 +149,71 @@ def endpoint_vision_model_item(profile: Any, model_id: str, *, task: Optional[st
     }
 
 
+_EVIDENCE_ALIASES = {
+    "text_to_image": {"text_to_image", "t2i", "image", "images", "image_generation", "images_generations"},
+    "image_to_image": {"image_to_image", "i2i", "image_edit", "image_edits", "images_edits", "inpaint"},
+}
+
+
+def endpoint_model_evidence(item: Any, task: Optional[str]) -> Tuple[str, Optional[bool]]:
+    """`(model id, verdict)` from one row of an endpoint's own vision catalog.
+
+    The verdict is what the endpoint SAYS about the model for `task`: True (it serves it),
+    False (it does not), None (it says nothing; the model's name decides, see
+    `known_image_model_tasks`). Evidence, in order: AI Relays' route flags
+    (`raw.airelays.capabilities.routes.images`), then a declared `capabilities` / `tasks` list.
+    A routing prefix (`openai-compatible/gpt-image-2`) is dropped from the id.
+    """
+    if not isinstance(item, dict):
+        return "", None
+    model = str(item.get("id") or item.get("model") or "").strip().rsplit("/", 1)[-1]
+    if not model:
+        return "", None
+    tasks = wanted_image_tasks(task)
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    relay = raw.get("airelays") if isinstance(raw.get("airelays"), dict) else {}
+    caps = relay.get("capabilities") if isinstance(relay.get("capabilities"), dict) else {}
+    routes = caps.get("routes") if isinstance(caps.get("routes"), dict) else {}
+    if isinstance(routes.get("images"), bool):
+        return model, bool(routes["images"]) and bool(tasks)
+    declared: set = set()
+    for field in ("capabilities", "tasks"):
+        value = item.get(field)
+        if isinstance(value, list):
+            declared.update(_norm_token(v) for v in value)
+    if declared:
+        return model, any(declared & _EVIDENCE_ALIASES.get(t, {t}) for t in tasks)
+    return model, None
+
+
+def apply_endpoint_evidence(
+    profile: Any,
+    named_models: Sequence[str],
+    catalog_rows: Sequence[Any],
+    *,
+    task: Optional[str],
+) -> List[str]:
+    """The models a NAMED endpoint offers for `task`: its own catalog's word when it gives one,
+    the model name otherwise.
+
+    `named_models` are the models the name rule kept (`endpoint_profile_image_models`);
+    `catalog_rows` the endpoint's own vision catalog rows. A model the endpoint says serves
+    the task is added; a model it says does not is removed; a model it says nothing about keeps
+    the name rule's answer. The profile's `allowed_models`, when set, bound the result.
+    """
+    verdicts: Dict[str, Optional[bool]] = {}
+    for row in catalog_rows or ():
+        model, verdict = endpoint_model_evidence(row, task)
+        if model and verdict is not None:
+            verdicts[model] = verdict
+    out = [m for m in named_models if verdicts.get(m) is not False]
+    out += [m for m, ok in verdicts.items() if ok and m not in out]
+    allowed = [str(m) for m in (getattr(profile, "allowed_models", None) or ())]
+    if allowed:
+        out = [m for m in out if m in allowed]
+    return sorted(dict.fromkeys(out))
+
+
 def merge_endpoint_vision_catalog(
     response: Dict[str, Any],
     entries: Sequence[Tuple[Any, List[str]]],

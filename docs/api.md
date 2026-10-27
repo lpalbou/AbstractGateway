@@ -1896,7 +1896,7 @@ Current direct Gateway endpoints:
 - `GET /api/gateway/vision/provider_models`
 - `GET /api/gateway/vision/adapters`
 
-`/vision/provider_models` lists AbstractVision's backends and, for `text_to_image` and `image_to_image`, the enabled `openai` / `openai-compatible` endpoint profiles that serve the task (`provider` = `endpoint:<id>`, described in `endpoint_providers`; a profile whose endpoint could not be read is named in `endpoint_provider_errors`). A profile qualifies with a known OpenAI image model (`gpt-image-*`, `dall-e-*`; only those models are listed) or by declaring the task in its `capabilities` (all its models). `?provider=endpoint:<id>` returns that profile's image models.
+`/vision/provider_models` lists AbstractVision's backends and, for `text_to_image` and `image_to_image`, the enabled `openai` / `openai-compatible` endpoint profiles that serve the task (`provider` = `endpoint:<id>`, described in `endpoint_providers`; a profile whose endpoint could not be read is named in `endpoint_provider_errors`). A profile qualifies with a known OpenAI image model (`gpt-image-*`, `dall-e-*`; only those models are listed) or by declaring the task in its `capabilities` (all its models). `?provider=endpoint:<id>` returns that profile's image models and also reads the endpoint's own catalog through the profile's connection: a model the endpoint says serves the task is listed (whatever its name), a model it says does not is left out, and a model it says nothing about is decided by its name as above; the profile's `allowed_models` bound the result. An endpoint that does not exist or is disabled answers 404.
 
 `/voice/defaults` is the one answer to "which engines speak and listen by default":
 
