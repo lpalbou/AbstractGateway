@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Replay view** (backlog 0943; framework root 0993; AbstractRuntime 0853 and ADR 0009). There
+  are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
+  its status, the interaction to answer (a delegated child's approval included), messages with
+  provenance, one activity per node execution, artifacts, usage, the workflow (bundle, version,
+  entrypoint) and the cursor. It has an ETag set to the cursor token, answers 304 on
+  `If-None-Match`, and takes `?at=<token>` for the view as the ledger stood at that point.
+  `GET /api/gateway/runs/{run_id}/view/stream` is SSE: one `view`, then a `delta` per fold, with
+  `Last-Event-ID` resume and `done`.
+  - The view is computed by AbstractRuntime's reducer and served from one cached fold per run
+    tree. Each record is folded once and fanned out to every subscriber.
+  - Streams wake on the ledger append and never re-parse on a timer. A read that changes nothing
+    sends no delta.
+  - Authorization follows `GET /runs/{id}`, and the principal isolation matrix covers the new
+    routes.
+  - `/view/stream` counts in the SSE concurrency pool.
+  - Docs: api.md "Replay view", architecture.md.
+  - Benchmark: `scripts/bench_replay_view.py`.
+- **Migration keeps the ledger cursor** (backlog 0082). `migrate.py` (file to SQLite) imports each
+  run's records with their order, count and `seq` (`SqliteLedgerStore.import_records`): records
+  read by the JSONL store, concatenated lines recovered, and lines written before `seq` numbered
+  by position. It used to re-append records, which renumbered them. The raw stream's `id:` (the
+  count of records consumed) equals the record's `seq`.
+
 - **Voice library** (`routes/voice_library.py`): `GET /api/gateway/voice/languages` (the languages each voice engine accepts), `GET /api/gateway/voice/clones` (cloned voices, designed and built-in included, `?language=` keeps the ones that speak it), `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility` (which engine supports `speed`, `one_shot`, design… and how), and `POST /api/gateway/voice/clones` (a voice from a recording), `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}` (rename, replace the transcript, delete) and `POST /api/gateway/voice/design` (a voice from a written description). Through AbstractRuntime's voice library facade, locally or on the configured AbstractCore server. See [api.md](docs/api.md#voice-library).
 - **Personal voices per account** (backlog 0942): with user accounts on and local voice engines, each account keeps the voices it clones or designs in its own store (`<plane>/voices`), in front of the shared library (the built-in voices and every voice the administrator creates; the administrator's plane is the library). An account creates, renames and deletes its own voices; library voices are read-only to it. Where every account shares one store (single-user mode, an AbstractCore server doing the voice work), voice changes stay admin-only (403). `language` on `POST /api/gateway/voice/clones`; `POST /api/gateway/voice/clones/{voice_id}/deploy` (administrators) shares a voice with every account. A reference recording may be up to 25 MB (the security layer's 10 MB write cap does not apply to it). Requires AbstractRuntime 0.13.0; personal stores need AbstractVoice 0.19.0.
 - `GET /api/gateway/voice/voices?language=` filters the voice catalog by language (native speakers first); `compact=true` keeps `tts_languages_by_provider`.
