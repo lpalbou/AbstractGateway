@@ -452,8 +452,9 @@ def memory_reconstruct_source(request: Request, req: ReconstructRequest) -> Dict
         ledger_store=svc.stores.ledger_store,
         run_store=svc.stores.run_store,
         artifact_store=svc.stores.artifact_store,
-        # The plane's runtime: a ref stamped by another runtime (an entity home's) is not read from this ledger.
-        runtime_id=svc.config.runtime_id or None,
+        # The plane's runtime, the id the bundle host stamps on refs (build_gateway_memory_kg_handlers): a ref
+        # stamped by another runtime (an entity home's) is not read from this ledger.
+        runtime_id=svc.host.catalog_runtime_id,
     )
     return facade.reconstruct_source(ref, limit=int(req.limit))
 

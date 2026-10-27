@@ -1049,6 +1049,46 @@ def _derive_bundle_workflows(
     return agents, listeners
 
 
+
+def build_gateway_memory_kg_handlers(
+    *,
+    data_root: Path,
+    run_store: Any,
+    artifact_store: Any,
+    runtime_id: str,
+    embedder: Optional[Any] = None,
+) -> Tuple[Dict[Any, Any], Any]:
+    """The runtime's `memory_kg_*` + MEMORY_REVISE handlers over the plane's KG store: (handlers, the store
+    resolution). With the `sqlite` backend the store IS the plane's memory home (`resolve_memory_home`) and its
+    journal (same file) receives MEMORY_REVISE closures; `runtime_id` (the plane's, as `/memory/sources/reconstruct`
+    reads it) is stamped on every SourceRef; `artifact_store` lets MEMORY_REVISE check the artifacts it names."""
+    try:
+        from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
+        from abstractruntime.storage.artifacts import utc_now_iso
+    except Exception as e:  # pragma: no cover
+        from ..live_deltas import ABSTRACTRUNTIME_FLOOR
+
+        raise WorkflowBundleError(
+            "Bundle uses memory_kg_* nodes but the AbstractRuntime memory integration is not available "
+            f"(AbstractRuntime>={ABSTRACTRUNTIME_FLOOR} with AbstractMemory). Import error: {e}"
+        ) from e
+    try:
+        resolution = open_gateway_memory_store(base_dir=Path(data_root), embedder=embedder, with_journal=True)
+    except Exception as e:
+        raise WorkflowBundleError(
+            "Bundle uses memory_kg_* nodes, but Gateway could not open the configured AbstractMemory store. "
+            f"{e}"
+        ) from e
+    handlers = build_memory_kg_effect_handlers(
+        store=resolution.store,
+        run_store=run_store,
+        now_iso=utc_now_iso,
+        journal=resolution.journal,
+        runtime_id=runtime_id,
+        artifact_store=artifact_store,
+    )
+    return handlers, resolution
+
 @dataclass
 class WorkflowBundleGatewayHost:
     """Gateway host that starts/ticks runs from WorkflowBundles (no AbstractFlow import).
@@ -1090,6 +1130,9 @@ class WorkflowBundleGatewayHost:
     skipped_bundles: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
     memory_store: Optional[Any] = None
     memory_store_info: Optional[Dict[str, Any]] = None
+    # The journal on the memory store's file (sqlite backend), handed to MEMORY_REVISE so a close op's
+    # ClosureRecord is journaled; closed with the store when a reload swaps them.
+    memory_journal: Optional[Any] = None
     # The flow-scanned provider/model bootstrap pair used at load time. Kept so
     # `refresh_capability_defaults` re-resolves through the IDENTICAL cascade
     # instead of a second, subtly different one.
@@ -1786,8 +1829,8 @@ class WorkflowBundleGatewayHost:
         run_store: Any,
         ledger_store: Any,
         artifact_store: Any,
-    ) -> Tuple[Runtime, Optional[Any], Optional[Dict[str, Any]], frozenset]:
-        """Build the runtime the compiled workflows need: (runtime, memory store, its info, capabilities).
+    ) -> Tuple[Runtime, Optional[Any], Optional[Dict[str, Any]], Optional[Any], frozenset]:
+        """Build the runtime the compiled workflows need: (runtime, memory store, its info, its journal, capabilities).
 
         `capabilities` is what this runtime CAN serve ("llm", "tools", "memory_kg"):
         a later reload swaps a new registry onto it as long as the new workflows
@@ -1801,31 +1844,21 @@ class WorkflowBundleGatewayHost:
         extra_effect_handlers: Dict[Any, Any] = {}
         memory_store_obj: Optional[Any] = None
         memory_store_info: Optional[Dict[str, Any]] = None
+        memory_journal_obj: Optional[Any] = None
         if needs_memory_kg:
-            try:
-                from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
-                from abstractruntime.storage.artifacts import utc_now_iso
-            except Exception as e:  # pragma: no cover
-                raise WorkflowBundleError(
-                    "Bundle uses memory_kg_* nodes but AbstractMemory integration is not available. "
-                    "Install/repair with `pip install abstractgateway`."
-                ) from e
-
             embedder = build_gateway_memory_embedder(base_dir=Path(data_root))
-
-            try:
-                memory_resolution = open_gateway_memory_store(base_dir=Path(data_root), embedder=embedder)
-                memory_store_obj = memory_resolution.store
-                memory_store_info = memory_resolution.public_dict()
-            except Exception as e:
-                raise WorkflowBundleError(
-                    "Bundle uses memory_kg_* nodes, but Gateway could not open the configured AbstractMemory store. "
-                    f"{e}"
-                ) from e
+            extra_effect_handlers, memory_resolution = build_gateway_memory_kg_handlers(
+                data_root=Path(data_root),
+                run_store=run_store,
+                artifact_store=artifact_store,
+                runtime_id=catalog_runtime,
+                embedder=embedder,
+            )
+            memory_store_obj = memory_resolution.store
+            memory_store_info = memory_resolution.public_dict()
+            memory_journal_obj = memory_resolution.journal
             for warning in list((memory_store_info or {}).get("warnings") or []):
                 logger.warning("Gateway memory store warning: %s", warning)
-
-            extra_effect_handlers = build_memory_kg_effect_handlers(store=memory_store_obj, run_store=run_store, now_iso=utc_now_iso)
             capabilities.add("memory_kg")
 
         # Optional AbstractCore integration for LLM_CALL + TOOL_CALLS + MODEL_RESIDENCY.
@@ -2168,7 +2201,7 @@ class WorkflowBundleGatewayHost:
             catalog_tenant_id=catalog_tenant,
             catalog_runtime_id=catalog_runtime,
         )
-        return runtime, memory_store_obj, memory_store_info, frozenset(capabilities)
+        return runtime, memory_store_obj, memory_store_info, memory_journal_obj, frozenset(capabilities)
 
     @staticmethod
     def load_from_dir(
@@ -2236,7 +2269,7 @@ class WorkflowBundleGatewayHost:
             email_tools_listed=bool(email_tools_listed),
             cache=cache,
         )
-        runtime, memory_store_obj, memory_store_info, capabilities = WorkflowBundleGatewayHost._build_runtime(
+        runtime, memory_store_obj, memory_store_info, memory_journal_obj, capabilities = WorkflowBundleGatewayHost._build_runtime(
             needs=compiled.needs,
             flow_scanned_llm_defaults=compiled.flow_scanned_llm_defaults,
             wf_reg=compiled.workflow_registry,
@@ -2273,6 +2306,7 @@ class WorkflowBundleGatewayHost:
             event_listener_specs_by_root=compiled.event_listener_specs_by_root,
             memory_store=memory_store_obj,
             memory_store_info=memory_store_info,
+            memory_journal=memory_journal_obj,
             _default_bundle_id=compiled.default_bundle_id,
             _flow_scanned_llm_defaults=compiled.flow_scanned_llm_defaults,
             # The store as this host just published it; anything newer on disk
@@ -2722,6 +2756,7 @@ class WorkflowBundleGatewayHost:
                 rearm_warnings.append(f"#FALLBACK runtime rebuild hook failed: {type(e).__name__}: {e}")
         with self._lock:
             old_memory_store = getattr(self, "memory_store", None)
+            old_memory_journal = self.memory_journal
             self._pin_in_flight_runs(dict(self.specs or {}), new_host.specs, self.workflow_registry)
             self.bundles = new_host.bundles
             self.bundle_sources = new_host.bundle_sources
@@ -2738,6 +2773,7 @@ class WorkflowBundleGatewayHost:
             self.event_listener_specs_by_root = new_host.event_listener_specs_by_root
             self.memory_store = new_host.memory_store
             self.memory_store_info = new_host.memory_store_info
+            self.memory_journal = new_host.memory_journal
             self._default_bundle_id = new_host._default_bundle_id
             self.framework_bundles_dir = new_host.framework_bundles_dir
             self.deprecation_store = new_host.deprecation_store
@@ -2753,13 +2789,14 @@ class WorkflowBundleGatewayHost:
             self._compile_cache = new_host._compile_cache
             self._runtime_capabilities = new_host._runtime_capabilities
             self._share_pins_with_runtime()
-        try:
-            if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
-                close = getattr(old_memory_store, "close", None)
-                if callable(close):
-                    close()
-        except Exception:
-            pass
+        for old, new in ((old_memory_journal, self.memory_journal), (old_memory_store, getattr(self, "memory_store", None))):
+            try:
+                if old is not None and old is not new:
+                    close = getattr(old, "close", None)
+                    if callable(close):
+                        close()
+            except Exception:
+                pass
         out = self._reload_result()
         if rearm_warnings:
             out["warnings"] = rearm_warnings

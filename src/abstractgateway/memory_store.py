@@ -98,6 +98,8 @@ class GatewayMemoryStoreResolution:
     config: GatewayMemoryStoreConfig
     capabilities: Dict[str, Any]
     warnings: list[str] = field(default_factory=list)
+    # `SQLiteJournal` on the store's own file (sqlite backend, `with_journal=True`): the caller closes it.
+    journal: Any = None
 
     def public_dict(self) -> Dict[str, Any]:
         return {
@@ -305,11 +307,14 @@ def open_gateway_memory_store(
     backend: Optional[str] = None,
     path: Optional[Path | str] = None,
     require_vector: Optional[bool] = None,
+    with_journal: bool = False,
 ) -> GatewayMemoryStoreResolution:
     """Open an AbstractMemory TripleStore selected by Gateway config.
 
     Gateway owns backend/path selection. AbstractMemory owns the store classes
-    and query semantics.
+    and query semantics. `with_journal`: with the `sqlite` backend also open the
+    `SQLiteJournal` on the same file (the plane home's journal), so MEMORY_REVISE
+    closures are journaled; other backends have no journal (None).
     """
 
     config = resolve_memory_store_config(
@@ -320,6 +325,7 @@ def open_gateway_memory_store(
     )
 
     warnings: list[str] = []
+    journal: Any = None
     store_embedder = _normalize_embedder(embedder)
     has_embedder = store_embedder is not None
 
@@ -345,6 +351,8 @@ def open_gateway_memory_store(
             raise RuntimeError("SQLite memory backend requires a store path")
         config.path.parent.mkdir(parents=True, exist_ok=True)
         store = SQLiteTripleStore(config.path)
+        if with_journal:
+            journal = _memory_facade().SQLiteJournal(config.path)
         capabilities = {
             "persistent": True,
             "structured_query": True,
@@ -369,9 +377,10 @@ def open_gateway_memory_store(
 
     if config.require_vector and not bool(capabilities.get("semantic_query")):
         try:
-            close = getattr(store, "close", None)
-            if callable(close):
-                close()
+            for part in (journal, store):
+                close = getattr(part, "close", None)
+                if callable(close):
+                    close()
         finally:
             raise RuntimeError(
                 f"Memory backend '{config.backend}' does not satisfy ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR=1 "
@@ -383,4 +392,5 @@ def open_gateway_memory_store(
         config=config,
         capabilities=capabilities,
         warnings=warnings,
+        journal=journal,
     )

@@ -299,14 +299,14 @@ def test_the_plane_home_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ba
 def test_memory_revise_through_the_bundle_host_store_lands_in_the_home_the_routes_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """With the `sqlite` KG backend the store the bundle host hands `build_memory_kg_effect_handlers`
-    (`open_gateway_memory_store`, hosts/bundle_host.py) IS the plane home: a MEMORY_REVISE applied through
-    the runtime's handler is what `/memory/*` serves."""
+    """With the `sqlite` KG backend the bundle host's wiring (`build_gateway_memory_kg_handlers`, the function
+    `_build_runtime` calls) hands MEMORY_REVISE the plane home, its journal, the plane's runtime id and artifact
+    store: an assert + close applied through the runtime's handler is what `/memory/*` serves, the close is
+    journaled, and the refs it stamped reconstruct through the route."""
     from abstractruntime.core.models import Effect, EffectType
-    from abstractruntime.integrations.abstractmemory.effect_handlers import build_memory_kg_effect_handlers
-    from abstractruntime.storage.artifacts import utc_now_iso
 
-    from abstractgateway.memory_store import open_gateway_memory_store, resolve_memory_home
+    from abstractgateway.hosts.bundle_host import build_gateway_memory_kg_handlers
+    from abstractgateway.memory_store import resolve_memory_home
 
     monkeypatch.setenv("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND", "sqlite")
     monkeypatch.delenv("ABSTRACTGATEWAY_MEMORY_STORE_PATH", raising=False)
@@ -322,29 +322,46 @@ def test_memory_revise_through_the_bundle_host_store_lands_in_the_home_the_route
         run = svc.host.run_store.load(r.json()["run_id"])
         artifact_id = svc.stores.artifact_store.store(b"verbatim", content_type="text/plain", run_id=run.run_id).artifact_id
 
-        resolution = open_gateway_memory_store(base_dir=Path(svc.stores.base_dir))
+        handlers, resolution = build_gateway_memory_kg_handlers(
+            data_root=Path(svc.stores.base_dir), run_store=svc.host.run_store,
+            artifact_store=svc.stores.artifact_store, runtime_id=svc.host.catalog_runtime_id,
+        )
         try:
             assert resolution.config.path == resolve_memory_home(resolution.config)
-            handlers = build_memory_kg_effect_handlers(store=resolution.store, run_store=svc.host.run_store, now_iso=utc_now_iso)
-            outcome = handlers[EffectType.MEMORY_REVISE](
-                run,
-                Effect(type=EffectType.MEMORY_REVISE, payload={
-                    "ops": [_claim("mem-r", "global_memory", scope="global")],
-                    "scope": "global", "owner_id": "global_memory", "artifact_ids": [artifact_id],
-                    "revision_id": "rev-r",
-                }),
-                None,
-            )
+            assert resolution.journal is not None
+            revise = handlers[EffectType.MEMORY_REVISE]
+            outcome = revise(run, Effect(type=EffectType.MEMORY_REVISE, payload={
+                "ops": [_claim("mem-r", "global_memory", scope="global")],
+                "scope": "global", "owner_id": "global_memory", "artifact_ids": [artifact_id], "revision_id": "rev-r",
+            }), None)
             assert outcome.status == "completed", outcome.error
+            outcome = revise(run, Effect(type=EffectType.MEMORY_REVISE, payload={
+                "ops": [{"op": "close", "payload": {"assertion_id": "mem-r", "valid_until": "2026-10-03T00:00:00+00:00",
+                                                    "kind": "retract", "replacement_ids": [], "reason": "wrong"}}],
+                "scope": "global", "owner_id": "global_memory", "artifact_ids": [artifact_id], "revision_id": "rev-r-close",
+            }), None)
+            assert outcome.status == "completed", outcome.error
+            # The close is in the journal the store shares its file with (ranked recall folds closures from it).
+            assert [c.assertion_id for c in resolution.journal.closures(assertion_id="mem-r")] == ["mem-r"]
         finally:
+            resolution.journal.close()
             resolution.store.close()
 
         h = client.get("/api/gateway/memory/mem-r/history", headers=ADMIN)
         assert h.status_code == 200, h.text
-        assert [(e["event"], e["revision_id"]) for e in h.json()["items"]] == [("asserted", "rev-r")]
+        events = h.json()["items"]
+        assert [(e["event"], e["revision_id"]) for e in events] == [("asserted", "rev-r"), ("closed", "rev-r-close")]
+        assert events[1]["detail"]["closure_id"]
         s = client.get("/api/gateway/memory/mem-r/sources", headers=ADMIN)
-        # Called outside a runtime step there is no seq: the runtime stamps the (real) run, never a guessed step.
-        assert {i["key"] for i in s.json()["items"]} == {f"artifact:{artifact_id}", f"run:{run.run_id}"}
+        items = s.json()["items"]
+        # Called outside a runtime step there is no seq: the runtime stamps the (real) run, never a guessed step,
+        # and every ref carries the plane's runtime id.
+        assert {i["key"] for i in items} == {f"artifact:{artifact_id}", f"run:{run.run_id}"}
+        assert {i.get("runtime_id") for i in items} == {svc.host.catalog_runtime_id}
+        art = next(i for i in items if i["kind"] == "artifact")
+        art = {k: v for k, v in art.items() if k != "key"}
+        rec = client.post("/api/gateway/memory/sources/reconstruct", headers=ADMIN, json={"ref": art})
+        assert rec.status_code == 200 and rec.json()["status"] == "ok" and rec.json()["content"] == "verbatim", rec.text
 
 
 def get_gateway_service_for_admin():
