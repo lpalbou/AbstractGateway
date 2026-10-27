@@ -1360,7 +1360,9 @@ def _imap_starttls_srv(domain: str) -> tuple:
         return None, "none"
     resolve = AUTODISCOVER_NET.get("resolve_srv")
     if resolve is None:
-        from abstractcore.comms.email.discovery import resolve_srv_default as resolve
+        # AbstractRuntime 0.13.1: the email facade re-exports AbstractCore's SRV resolver (the
+        # gateway never imports abstractcore directly; tests/test_gateway_import_boundary.py).
+        from abstractruntime.integrations.abstractcore.email_facade import resolve_srv_default as resolve
     try:
         records = resolve(f"_imap._tcp.{domain}", AUTODISCOVER_TIMEOUT_S)
     except Exception:  # noqa: BLE001 - no record, no answer
