@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 5
+- Planned: 6
 - Proposed: 44
 - Completed: 24
 - Deprecated: 1
@@ -98,9 +98,11 @@ relevant.
 ## Planned Items
 
 Priority P1: user-scoped MCP credentials and access (0936), requested after the shared RAGnarok demo.
+Priority P1: push every registered device (0940) — the phone-first rule leaves a watch away from its iPhone without alerts (operator, 2026-10-26); review by Fable + an adversarial architect before code.
 
 | Item | Acceptance summary |
 | --- | --- |
+| [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
