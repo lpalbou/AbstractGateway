@@ -40,8 +40,8 @@ Optional extras (see `pyproject.toml`):
 
 Default dependency floors (see `pyproject.toml`):
 - `AbstractRuntime>=0.12.0` (publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.26.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
-- `abstractvoice>=0.15.0` (the voice listings import `abstractvoice.engine_runtime`)
+- `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.3.0`
 

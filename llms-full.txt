@@ -315,8 +315,8 @@ Optional extras (see `pyproject.toml`):
 
 Default dependency floors (see `pyproject.toml`):
 - `AbstractRuntime>=0.12.0` (publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.26.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
-- `abstractvoice>=0.15.0` (the voice listings import `abstractvoice.engine_runtime`)
+- `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.3.0`
 
@@ -11488,8 +11488,8 @@ Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 Direct, run-scoped Gateway routes (each creates a durable child run and
 returns artifacts):
 
-- voice and audio: `POST /api/gateway/runs/{run_id}/voice/tts`,
-  `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- voice and audio: `POST /api/gateway/runs/{run_id}/voice/tts` (with `speed` and
+  `one_shot`), `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - images: `POST /api/gateway/runs/{run_id}/images/generate`, `/images/edit`,
   `/images/upscale`
 - video: `POST /api/gateway/runs/{run_id}/videos/generate`,
@@ -11504,7 +11504,12 @@ Discovery and catalogs for thin clients:
   plugins, endpoints and feature gates, with `common.readiness`
 - voice, speech, transcription, music and vision catalogs
   (`/api/gateway/voice/voices`, `/audio/*/models`, `/audio/music/providers`,
-  `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`
+  `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`;
+  `?language=` filters the voice catalog
+- the voice library: `/api/gateway/voice/languages`, `/voice/clones` (list, read; create
+  from a recording, rename, delete for administrators), `/voice/design` (a voice from a
+  description, administrators) and `/voice/compatibility` (which engine supports which voice
+  feature); see [docs/api.md](docs/api.md#voice-library)
 - `/api/gateway/artifacts/search`: cross-run, session and run artifact search
 - `/api/gateway/kg/query`: KG memory queries (LanceDB by default)
 - `/api/gateway/prompt_cache/*` and `/api/gateway/sessions/{session_id}/prompt_cache/*`:
@@ -12361,6 +12366,17 @@ Configure the voice routes (`output.voice`, `input.voice`) in the console's
 backend (`ABSTRACTGATEWAY_VOICE_TTS_ENGINE`,
 `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL`, …). Local voice engines need the
 `apple` or `gpu` extra. See [configuration.md](docs/configuration.md).
+
+### Voice library: `403`, `501` or `422`
+
+- `403` on `POST /voice/clones`, `PATCH`/`DELETE /voice/clones/{id}` or `POST /voice/design`:
+  these change the voices every account shares and need an administrator's session.
+- `501` on `POST /voice/design`: designing a voice needs `abstractvoice[qwen3-tts]` and
+  `abstractvoice[stt]` where the voice capability runs (the gateway's environment, or the
+  AbstractCore server it uses); the answer names the missing part.
+- `422` on a built-in voice: built-in voices are read-only.
+- `422` on `/voice/tts/stream` with `one_shot`: a one-take render is only available on
+  `POST /runs/{run_id}/voice/tts`.
 
 ### Catalog routes return only `gateway_static` defaults
 
@@ -17077,6 +17093,11 @@ Higher-level apps use the gateway instead of importing Runtime or Core:
   the lower-layer fields.
 - Direct run-scoped media routes cover TTS, STT, image generation, edit and
   upscale, text-to-video, image-to-video, and music.
+- The voice library (`routes/voice_library.py`: languages, cloned voices,
+  cloning, voice design, the capability catalog) goes through AbstractRuntime's
+  voice library facade, in process or on the configured AbstractCore server;
+  cloned voices live in one AbstractVoice store per machine user, so its
+  changes are admin-only.
 - Voice listen is a host-capture contract: clients capture audio and then
   upload it or emit an event.
 - Model residency is Runtime/provider-owned and Gateway-normalized:
@@ -17556,6 +17577,15 @@ higher-app contract that tells clients how to handle local capture:
 
 This keeps live capture UX owned by higher apps such as Assistant or Observer
 while Gateway stays responsible for durable runs, artifacts, and transcription.
+
+### Can each account have its own voices?
+
+Not yet. Cloned voices (recorded, designed, built-in) live in one AbstractVoice store per
+machine user, so every account of a gateway lists and speaks with the same voices. That is why
+creating, renaming, deleting and designing a voice (`/api/gateway/voice/clones`,
+`/api/gateway/voice/design`) are administrator actions, while every account can list and use
+them. Personal voices per account, next to a library an administrator deploys for everyone,
+are planned (backlog 0942). See [api.md](docs/api.md#voice-library).
 
 ### Are catalog responses normalized by Gateway?
 

@@ -292,6 +292,17 @@ backend (`ABSTRACTGATEWAY_VOICE_TTS_ENGINE`,
 `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL`, …). Local voice engines need the
 `apple` or `gpu` extra. See [configuration.md](./configuration.md).
 
+### Voice library: `403`, `501` or `422`
+
+- `403` on `POST /voice/clones`, `PATCH`/`DELETE /voice/clones/{id}` or `POST /voice/design`:
+  these change the voices every account shares and need an administrator's session.
+- `501` on `POST /voice/design`: designing a voice needs `abstractvoice[qwen3-tts]` and
+  `abstractvoice[stt]` where the voice capability runs (the gateway's environment, or the
+  AbstractCore server it uses); the answer names the missing part.
+- `422` on a built-in voice: built-in voices are read-only.
+- `422` on `/voice/tts/stream` with `one_shot`: a one-take render is only available on
+  `POST /runs/{run_id}/voice/tts`.
+
 ### Catalog routes return only `gateway_static` defaults
 
 The request reached a gateway without the capability packages you expected,

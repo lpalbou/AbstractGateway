@@ -251,8 +251,8 @@ Compose and deployment details: [docs/deployment.md](docs/deployment.md).
 Direct, run-scoped Gateway routes (each creates a durable child run and
 returns artifacts):
 
-- voice and audio: `POST /api/gateway/runs/{run_id}/voice/tts`,
-  `POST /api/gateway/runs/{run_id}/audio/transcribe`
+- voice and audio: `POST /api/gateway/runs/{run_id}/voice/tts` (with `speed` and
+  `one_shot`), `POST /api/gateway/runs/{run_id}/audio/transcribe`
 - images: `POST /api/gateway/runs/{run_id}/images/generate`, `/images/edit`,
   `/images/upscale`
 - video: `POST /api/gateway/runs/{run_id}/videos/generate`,
@@ -267,7 +267,12 @@ Discovery and catalogs for thin clients:
   plugins, endpoints and feature gates, with `common.readiness`
 - voice, speech, transcription, music and vision catalogs
   (`/api/gateway/voice/voices`, `/audio/*/models`, `/audio/music/providers`,
-  `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`
+  `/vision/*`), each with a `gateway_catalog_v1` envelope and canonical `items`;
+  `?language=` filters the voice catalog
+- the voice library: `/api/gateway/voice/languages`, `/voice/clones` (list, read; create
+  from a recording, rename, delete for administrators), `/voice/design` (a voice from a
+  description, administrators) and `/voice/compatibility` (which engine supports which voice
+  feature); see [docs/api.md](docs/api.md#voice-library)
 - `/api/gateway/artifacts/search`: cross-run, session and run artifact search
 - `/api/gateway/kg/query`: KG memory queries (LanceDB by default)
 - `/api/gateway/prompt_cache/*` and `/api/gateway/sessions/{session_id}/prompt_cache/*`:

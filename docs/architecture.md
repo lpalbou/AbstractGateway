@@ -735,6 +735,11 @@ Higher-level apps use the gateway instead of importing Runtime or Core:
   the lower-layer fields.
 - Direct run-scoped media routes cover TTS, STT, image generation, edit and
   upscale, text-to-video, image-to-video, and music.
+- The voice library (`routes/voice_library.py`: languages, cloned voices,
+  cloning, voice design, the capability catalog) goes through AbstractRuntime's
+  voice library facade, in process or on the configured AbstractCore server;
+  cloned voices live in one AbstractVoice store per machine user, so its
+  changes are admin-only.
 - Voice listen is a host-capture contract: clients capture audio and then
   upload it or emit an event.
 - Model residency is Runtime/provider-owned and Gateway-normalized:

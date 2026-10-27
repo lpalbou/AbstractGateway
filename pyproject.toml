@@ -65,7 +65,9 @@ dependencies = [
   # browser_probe serves local pages from a loopback origin scoped to the run's workspaces.
   # 2.26.0: SecretVault seals with a key FILE and never an OS keychain (no `keyring`
   # dependency); the gateway passes `<data dir>/secrets/sealing.key` (security/sealing.py).
-  "abstractcore>=2.26.0",
+  # 2.30.0: the voice facade's languages, cloned-voice management, voice design and capability
+  # catalog, `language` on the voice catalog, `one_shot` on speech (the voice library routes).
+  "abstractcore>=2.30.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -73,7 +75,9 @@ dependencies = [
   # but that is three hops; the direct import gets a direct floor.
   # 0.14.0: streamed speech starts sooner (a short first segment) for the gateway's
   # /voice/tts/stream, and stream metrics report the execution device.
-  "abstractvoice>=0.15.1",
+  # 0.18.2: languages, voice design, cloned-voice management (the voice library routes); never
+  # above AbstractCore's own abstractvoice floor (tests/test_gateway_install_profiles.py).
+  "abstractvoice>=0.18.2",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
   # calls it never makes. 0.3.17: entity visit react turns send the runtime's
@@ -112,7 +116,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.26.0",
+  "abstractcore[embeddings]>=2.30.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,

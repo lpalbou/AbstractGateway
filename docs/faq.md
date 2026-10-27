@@ -365,6 +365,15 @@ higher-app contract that tells clients how to handle local capture:
 This keeps live capture UX owned by higher apps such as Assistant or Observer
 while Gateway stays responsible for durable runs, artifacts, and transcription.
 
+### Can each account have its own voices?
+
+Not yet. Cloned voices (recorded, designed, built-in) live in one AbstractVoice store per
+machine user, so every account of a gateway lists and speaks with the same voices. That is why
+creating, renaming, deleting and designing a voice (`/api/gateway/voice/clones`,
+`/api/gateway/voice/design`) are administrator actions, while every account can list and use
+them. Personal voices per account, next to a library an administrator deploys for everyone,
+are planned (backlog 0942). See [api.md](./api.md#voice-library).
+
 ### Are catalog responses normalized by Gateway?
 
 Catalog routes carry a Gateway-owned envelope: `catalog` (contract
