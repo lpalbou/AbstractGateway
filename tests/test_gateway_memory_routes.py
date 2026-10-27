@@ -8,6 +8,7 @@ test never imports AbstractMemory either). Each test goes red when its route is 
 from __future__ import annotations
 
 import urllib.parse
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -135,7 +136,8 @@ def test_query_returns_the_revisions_written_into_the_plane_home(world) -> None:
     assert body["truncated"] is False
     assert body["home"]["path"].endswith("users/default/alice/runtime/abstractmemory/memory.sqlite3")
     by_id = {i["assertion_id"]: i for i in body["items"]}
-    assert by_id["mem-a"]["valid_until"] == "2026-10-02T00:00:00+00:00"
+    # Compared as instants: AbstractMemory may normalise the stored spelling (fractional seconds).
+    assert datetime.fromisoformat(by_id["mem-a"]["valid_until"]) == datetime.fromisoformat("2026-10-02T00:00:00+00:00")
 
     # Bounded: limit cuts and says so.
     r = c.post("/api/gateway/memory/query", headers=alice, json={"scope": "session", "session_id": SESSION, "limit": 1})
@@ -350,3 +352,51 @@ def get_gateway_service_for_admin():
     from abstractgateway.service import get_gateway_service_for_principal
 
     return get_gateway_service_for_principal(local_admin_principal())
+
+
+def _cross_owner_lineage(world) -> None:
+    """mem-y (another owner) names a secret artifact; alice's mem-own derives from mem-y AND from her own mem-a."""
+    facade = _plane_facade(world["svc"])
+    try:
+        facade.apply_revision(_revision(
+            "rev-y", [_claim("mem-y", "someone_else", scope="global", s="ex:secret2")], owner="someone_else",
+            scope="global", provenance={"sources": [{"kind": "artifact", "artifact_id": "SECRET-ARTIFACT"}], "actor": "runtime"},
+        ))
+        facade.apply_revision(_revision(
+            "rev-own", [_claim("mem-own", world["owner"], o="ex:d2")], owner=world["owner"],
+            provenance={"derived_from": ["mem-y", "mem-a"], "actor": "abstractmemory:test"},
+        ))
+    finally:
+        _close(facade)
+
+
+def test_transitive_sources_never_cross_into_another_owners_memory(world) -> None:
+    _cross_owner_lineage(world)
+    c, alice = world["client"], world["alice"]
+    assert c.get("/api/gateway/memory/mem-y/sources", headers=alice).status_code == 403
+    r = c.get("/api/gateway/memory/mem-own/sources", headers=alice, params={"session_id": SESSION})
+    assert r.status_code == 200, r.text
+    keys = {i["key"] for i in r.json()["items"]}
+    assert "artifact:SECRET-ARTIFACT" not in keys
+    # Her own parent mem-a is still followed; the foreign parent is counted, not silently dropped.
+    assert keys == {f"step:{world['run_id']}#{world['seq']}", f"artifact:{world['artifact_id']}"}
+    assert r.json()["withheld"] == 1
+
+
+def test_history_hides_another_owners_ids(world) -> None:
+    _cross_owner_lineage(world)
+    c, alice = world["client"], world["alice"]
+    h = c.get("/api/gateway/memory/mem-own/history", headers=alice, params={"session_id": SESSION})
+    assert h.status_code == 200, h.text
+    assert h.json()["items"][0]["detail"]["derived_from"] == ["mem-a"]
+    assert h.json()["withheld"] == 1
+
+
+def test_the_refusal_does_not_name_the_other_owner(world) -> None:
+    c, alice = world["client"], world["alice"]
+    for r in (
+        c.get("/api/gateway/memory/mem-x/history", headers=alice),
+        c.post("/api/gateway/memory/query", headers=alice, json={"scope": "global", "owner_id": "someone_else"}),
+    ):
+        assert r.status_code == 403, r.text
+        assert "someone_else" not in r.text

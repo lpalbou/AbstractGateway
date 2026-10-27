@@ -130,13 +130,14 @@ def _caller_owners(request: Request, svc: Any, *, run_id: Optional[str], session
     return owners
 
 
-def _forbidden(owner: str) -> HTTPException:
+def _forbidden() -> HTTPException:
+    """The refusal never names the owner it protects (G5): the caller learns only that it is not theirs."""
     return HTTPException(
         status_code=403,
         detail={
             "reason": "owner_forbidden",
-            "message": f"owner {owner!r} is not one of this caller's owners (name its run_id or session_id; "
-            "other owners need an admin principal)",
+            "message": "not one of this caller's owners (name your run_id or session_id; other owners need an "
+            "admin principal)",
         },
     )
 
@@ -160,8 +161,96 @@ def _require_readable(facade: Any, memory_id: str, owners: Optional[Set[str]]) -
         raise HTTPException(status_code=404, detail=f"memory {memory_id!r} not found")
     owner = str(getattr(row, "owner_id", "") or "")
     if owner not in owners:
-        raise _forbidden(owner)
+        raise _forbidden()
     return row.to_dict()
+
+
+#: How many memories a lineage walk visits at most (the graph's own walk is bounded the same way).
+MAX_LINEAGE_VISITS = 1000
+
+
+def _readable(facade: Any, ids: Iterable[str], owners: Optional[Set[str]]) -> Set[str]:
+    """The ids among `ids` this caller may read: all of them for an admin; else the assertion rows whose owner
+    is the caller's (a record's graph id, or any id without a row, is not readable to a non-admin)."""
+    wanted = [i for i in dict.fromkeys(ids) if isinstance(i, str) and i]
+    if owners is None:
+        return set(wanted)
+    rows = _rows_by_id(facade, wanted)
+    return {i for i in wanted if i in rows and str(getattr(rows[i], "owner_id", "") or "") in owners}
+
+
+def _parents(facade: Any) -> Any:
+    """`memory id -> the ids it was derived from`, read from its `asserted` history events."""
+
+    def parents_of(memory_id: str) -> List[str]:
+        out: List[str] = []
+        for event in facade.history(memory_id, limit=MAX_LINEAGE_VISITS):
+            if event.get("event") == "asserted":
+                for parent in (event.get("detail") or {}).get("derived_from") or ():
+                    if isinstance(parent, str) and parent not in out:
+                        out.append(parent)
+        return out
+
+    return parents_of
+
+
+def _owned_lineage_sources(facade: Any, memory_id: str, owners: Set[str], limit: int) -> tuple:
+    """(SourceRef dicts, withheld): the memory's sources and, breadth-first, those of the memories it was derived
+    from, walking ONLY through memories this caller may read. A parent of another owner is not followed (its refs
+    stay hidden) and is counted in `withheld`. At most `limit` refs, `MAX_LINEAGE_VISITS` memories."""
+    parents_of = _parents(facade)
+    out: Dict[str, Dict[str, Any]] = {}
+    seen, queue, withheld, visits = {memory_id}, [memory_id], set(), 0
+    SourceRef = _facade().SourceRef
+    while queue and len(out) < limit and visits < MAX_LINEAGE_VISITS:
+        current = queue.pop(0)
+        visits += 1
+        for ref in facade.sources_of(current, transitive=False, limit=limit):
+            out.setdefault(SourceRef.from_dict(ref).key(), ref)
+            if len(out) >= limit:
+                break
+        parents = [p for p in parents_of(current) if p not in seen]
+        seen.update(parents)
+        allowed = _readable(facade, parents, owners)
+        for parent in parents:
+            if parent in allowed:
+                queue.append(parent)
+            else:
+                withheld.add(parent)
+    return list(out.values()), len(withheld)
+
+
+_ID_LIST_DETAIL_KEYS = ("derived_from", "replacement_ids")
+
+
+def _filter_event_ids(facade: Any, events: List[Dict[str, Any]], owners: Optional[Set[str]]) -> tuple:
+    """History events with the memory ids they name (`derived_from`, `replacement_ids`, and the `derived_from`
+    of an adoption's `previous_provenance`) cut to what this caller may read; (events, withheld ids count)."""
+    if owners is None:
+        return events, 0
+    named: List[str] = []
+    for event in events:
+        detail = event.get("detail") or {}
+        for key in _ID_LIST_DETAIL_KEYS:
+            named.extend(i for i in detail.get(key) or () if isinstance(i, str))
+        prev = detail.get("previous_provenance")
+        if isinstance(prev, dict):
+            named.extend(i for i in prev.get("derived_from") or () if isinstance(i, str))
+    allowed = _readable(facade, named, owners)
+    hidden = {i for i in named if i not in allowed}
+    if not hidden:
+        return events, 0
+    out = []
+    for event in events:
+        detail = dict(event.get("detail") or {})
+        for key in _ID_LIST_DETAIL_KEYS:
+            if isinstance(detail.get(key), (list, tuple)):
+                detail[key] = [i for i in detail[key] if i not in hidden]
+        prev = detail.get("previous_provenance")
+        if isinstance(prev, dict) and isinstance(prev.get("derived_from"), (list, tuple)):
+            detail["previous_provenance"] = {**prev, "derived_from": [i for i in prev["derived_from"] if i not in hidden]}
+        out.append({**event, "detail": detail})
+    return out, len(hidden)
 
 
 def _bounded(limit: int) -> int:
@@ -255,7 +344,7 @@ def memory_query(request: Request, req: MemoryQueryRequest) -> Dict[str, Any]:
     if owners_allowed is not None:
         for _, owner in targets:
             if owner not in owners_allowed:
-                raise _forbidden(str(owner))
+                raise _forbidden()
 
     limit = _bounded(req.limit)
     home = _home_info(svc)
@@ -355,17 +444,18 @@ def memory_history(
     if facade is None:
         if owners is not None:
             raise HTTPException(status_code=404, detail=f"memory {memory_id!r} not found")
-        return {"ok": True, "memory_id": memory_id, "owner_id": None, "count": 0, "items": [], "truncated": False}
+        return {"ok": True, "memory_id": memory_id, "owner_id": None, "count": 0, "items": [], "truncated": False,
+                "withheld": 0}
     try:
         row = _require_readable(facade, memory_id, owners)
         events = facade.history(memory_id, limit=limit + 1)
+        truncated = len(events) > limit
+        events, withheld = _filter_event_ids(facade, events[:limit], owners)
     finally:
         _close(facade)
-    truncated = len(events) > limit
-    events = events[:limit]
     return {
         "ok": True, "memory_id": memory_id, "owner_id": (row or {}).get("owner_id"), "count": len(events),
-        "items": events, "truncated": truncated,
+        "items": events, "truncated": truncated, "withheld": withheld,
     }
 
 
@@ -385,13 +475,20 @@ def memory_sources(
     if facade is None:
         if owners is not None:
             raise HTTPException(status_code=404, detail=f"memory {memory_id!r} not found")
-        return {"ok": True, "memory_id": memory_id, "transitive": transitive, "count": 0, "items": [], "truncated": False}
+        return {"ok": True, "memory_id": memory_id, "transitive": transitive, "count": 0, "items": [], "truncated": False,
+                "withheld": 0}
     try:
         _require_readable(facade, memory_id, owners)
-        refs = facade.sources_of(memory_id, transitive=bool(transitive), limit=limit + 1)
+        withheld = 0
+        if owners is None or not transitive:
+            refs = facade.sources_of(memory_id, transitive=bool(transitive), limit=limit + 1)
+        else:
+            # The graph's own transitive walk crosses owners; a non-admin walks only through its own memories.
+            refs, withheld = _owned_lineage_sources(facade, memory_id, owners, limit + 1)
     finally:
         _close(facade)
     truncated = len(refs) > limit
     SourceRef = _facade().SourceRef
     items = [{**r, "key": SourceRef.from_dict(r).key()} for r in refs[:limit]]
-    return {"ok": True, "memory_id": memory_id, "transitive": bool(transitive), "count": len(items), "items": items, "truncated": truncated}
+    return {"ok": True, "memory_id": memory_id, "transitive": bool(transitive), "count": len(items), "items": items,
+            "truncated": truncated, "withheld": withheld}
