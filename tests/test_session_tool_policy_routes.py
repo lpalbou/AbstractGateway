@@ -287,7 +287,8 @@ def test_deny_refuses_with_no_wait(gateway):
 
 
 def test_routes_validate_merge_and_guard_revisions(gateway):
-    assert _policy(gateway, "GET").json() == {"session_id": SID, "policy": None, "revision": 0}
+    got = _policy(gateway, "GET").json()
+    assert (got["session_id"], got["policy"], got["revision"]) == (SID, None, 0) and "deny" in got["scope"]
     assert _policy(gateway, "PUT", {"approve": {"nope": True}}).status_code == 422
     assert _policy(gateway, "PUT", {"approve": {"max_risk_rank": 9}}).status_code == 422
     assert _policy(gateway, "PUT", {"approve": {"all": True}}, session_id="bad id!").status_code in (404, 422)
@@ -299,3 +300,71 @@ def test_routes_validate_merge_and_guard_revisions(gateway):
     three = _policy(gateway, "PUT", {"approve": {"kinds": ["no-such-kind"]}, "if_revision": 2}).json()["policy"]
     assert three["approve"] == {} and three["clamped"] == [{"selector": "kinds", "name": "no-such-kind", "reason": "unknown_kind"}]
     assert one["revision"] == 1
+
+
+def _serve_inventory(monkeypatch, mutate):
+    """Serve GET /discovery/tools through `mutate(rows)`: the account's authorization changes."""
+    import abstractgateway.routes.gateway as gw
+
+    real = gw.discovery_tools
+
+    async def _patched():
+        out = await real()
+        out["items"] = mutate([dict(r) for r in out.get("items") or []])
+        return out
+
+    monkeypatch.setattr(gw, "discovery_tools", _patched)
+
+
+def test_an_executable_allowed_tool_the_account_is_not_authorized_for_still_asks(gateway, monkeypatch):
+    # fetch_url is in the run's tools and in the host's executor, but this account's inventory
+    # serves it disabled: approve-all must not cover it.
+    _serve_inventory(monkeypatch, lambda rows: [dict(r, enabled=False) if r.get("name") == "fetch_url" else r for r in rows])
+    policy = _policy(gateway, "PUT", {"approve": {"all": True, "tools": ["fetch_url"]}}).json()["policy"]
+    assert "fetch_url" not in policy["approve"] and "write_file" in policy["approve"]
+    assert {"selector": "tools", "name": "fetch_url", "reason": "not_authorized"} in policy["clamped"]
+    NEXT_CALL.update({"name": "fetch_url", "arguments": {"url": URL}, "call_id": "u1"})
+    run_id = _start(gateway, ["fetch_url"])
+    _rid, wait = _wait_until(lambda: _approval_wait(gateway, run_id))
+    assert [c["name"] for c in wait["details"]["tool_calls"]] == ["fetch_url"]
+    assert _decisions(gateway, _tree(gateway, run_id)) == []
+
+
+def test_a_merge_never_narrows_and_never_re_expands_an_earlier_all(gateway, monkeypatch):
+    first = _policy(gateway, "PUT", {"approve": {"all": True, "max_risk_rank": 4}}).json()["policy"]
+    assert "execute_command" in first["approve"]
+    # A later grant made on a quieter batch keeps what was granted before.
+    second = _policy(gateway, "POST", {"approve": {"all": True, "max_risk_rank": 1}}).json()["policy"]
+    assert "execute_command" in second["approve"] and second["request"]["approve"]["max_risk_rank"] == 4
+    # A tool enabled after the `all` write is not covered by it, merge or not.
+    _serve_inventory(monkeypatch, lambda rows: rows + [{"name": "new_tool", "toolset": "web", "enabled": True, "risk_rank": 1}])
+    third = _policy(gateway, "POST", {"approve": {"tools": ["read_file"]}}).json()["policy"]
+    assert "new_tool" not in third["approve"]
+
+
+def test_a_reset_racing_a_merge_is_not_undone(gateway, monkeypatch):
+    import abstractgateway.routes.session_tool_policy as routes
+
+    assert _policy(gateway, "PUT", {"approve": {"tools": ["fetch_url"]}}).status_code == 200
+    real = routes._store()
+
+    class _ResetLandsFirst:
+        """The other device's DELETE lands between this merge's read and its write, once."""
+
+        def __init__(self):
+            self.raced = False
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+        def put(self, sid, policy, *, if_revision=None):
+            if not self.raced:
+                self.raced = True
+                real.delete(sid)
+            return real.put(sid, policy, if_revision=if_revision)
+
+    racer = _ResetLandsFirst()
+    monkeypatch.setattr(routes, "_store", lambda: racer)
+    merged = _policy(gateway, "POST", {"approve": {"tools": ["write_file"]}}).json()["policy"]
+    assert racer.raced
+    assert merged["approve"] == {"write_file": "tool"}  # the reset stood: fetch_url is not back

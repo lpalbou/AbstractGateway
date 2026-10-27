@@ -6489,16 +6489,18 @@ A person's standing tool decision for one conversation ("approve all", "approve 
 "deny `execute_command`", reset) is held by the gateway, not by the client. The runtime reads it
 before it decides whether a tool batch waits: a covered call runs with **no approval wait and no
 interaction**, a denied call is refused with no wait, and each decision is an
-`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session:
-each turn's root run, delegated agent child runs, runs resumed after a restart. It does not apply
-to automation occurrences, runs that read text other people wrote (untrusted input), or runs
-started without a `session_id`.
+`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session
+(the run tree's root session): each turn's root run, delegated agent child runs, runs resumed after
+a restart. Approvals do not reach automation runs, runs that read text other people wrote
+(untrusted input), entity visits or runs started without a `session_id`; a deny reaches every run of
+the session, and also wins over an approval that was shown before the deny and answered after it.
+Every answer carries `scope`, which says so in words.
 
 | Method | Path | Meaning |
 |---|---|---|
 | GET | `/api/gateway/sessions/{session_id}/tool-policy` | `{session_id, policy, revision}` (`policy: null` when none) |
 | PUT | same | replace the policy |
-| POST | same | merge into the policy (approve, deny and ask lists are unioned) |
+| POST | same | merge: adds the new selectors' tools to the stored ones (never narrows, never re-expands an earlier `all`/`kinds`); guarded by the revision it read, so a concurrent reset or deny is never undone |
 | DELETE | same (`?if_revision=`) | reset: later calls follow the normal defaults |
 
 Body (PUT, POST):
@@ -6518,6 +6520,10 @@ Body (PUT, POST):
   (`not_authorized`, `unknown_kind`). A tool enabled later is not covered by an earlier `all`.
   The run's own `allowed_tools` still blocks any tool outside it.
 - `deny` wins over `approve`; `ask` keeps names asking under `approve`.
+- `all` and `kinds` include the tools whose destination the model chooses (`fetch_url`,
+  `browser_probe`, `send_email` when email is on): "allow all" is the person's explicit word for this
+  conversation, unlike the gateway's default tier ceiling, which never auto-approves them. A client
+  that wants them to keep asking lists them in `ask` (or narrows with `max_risk_rank`).
 - `if_revision` mismatch: `409 {reason_code: "revision_conflict"}`. Malformed body: 422.
 
 Answer: `{session_id, policy}` where `policy` is

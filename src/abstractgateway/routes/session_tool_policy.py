@@ -21,7 +21,9 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..session_tool_policy import (
     PolicyRequestError,
+    SCOPE,
     build_policy,
+    merge_policies,
     merge_requests,
     normalize_request,
     session_tool_policy_store,
@@ -71,22 +73,35 @@ async def _write(request: Request, session_id: str, body: Any, *, merge: bool) -
     except PolicyRequestError as exc:
         raise _invalid(exc) from None
     store = _store()
-    if merge:
-        current = await off_loop("light", store.get, sid)
-        req = merge_requests((current or {}).get("request"), req)
     # The caller's authorized tools: the same rows (and the same per-account gates) discovery serves.
     inventory = await discovery_tools()
     if inventory.get("error"):
         raise HTTPException(status_code=503, detail={"reason_code": "tool_inventory_unavailable", "message": str(inventory["error"])})
     set_by = {"tenant_id": principal.tenant_id, "user_id": principal.user_id, "client": client}
-    policy = build_policy(req, inventory.get("items") or [], set_by=set_by)
-    try:
-        stored = await off_loop("light", lambda: store.put(sid, policy, if_revision=if_revision))
-    except SessionToolPolicyConflict as exc:
-        raise _conflict(exc) from None
+    built = build_policy(req, inventory.get("items") or [], set_by=set_by)
+    stored = None
+    # A merge is a read-merge-write guarded by the revision it read, so a concurrent write (a
+    # reset, a deny from another device) is never silently undone: on a conflict it re-reads and
+    # merges again. A client-sent `if_revision` is the caller's own guard and is never retried.
+    for _attempt in range(5):
+        if merge:
+            revision, current = await off_loop("light", store.get_with_revision, sid)
+            policy = merge_policies(current, built, merge_requests((current or {}).get("request"), req))
+            guard = if_revision if if_revision is not None else revision
+        else:
+            policy, guard = built, if_revision
+        try:
+            stored = await off_loop("light", lambda: store.put(sid, policy, if_revision=guard))
+            break
+        except SessionToolPolicyConflict as exc:
+            if not merge or if_revision is not None:
+                raise _conflict(exc) from None
+    if stored is None:
+        raise HTTPException(status_code=409, detail={"reason_code": "revision_conflict",
+                                                     "message": "the policy kept changing while it was merged; retry"})
     _note(request, sid, "tool_policy_set")
     _audit("session.tool_policy_set", session_id=sid, actor=principal.user_id, changed=True)
-    return {"session_id": sid, "policy": stored}
+    return {"session_id": sid, "policy": stored, "scope": SCOPE}
 
 
 @router.get("/sessions/{session_id}/tool-policy", summary="A conversation's tool policy")
@@ -96,8 +111,8 @@ async def get_session_tool_policy(request: Request, session_id: str) -> Dict[str
     _principal_from_request(request)
     sid = _sid(session_id)
     store = _store()
-    policy = await off_loop("light", store.get, sid)
-    return {"session_id": sid, "policy": policy, "revision": await off_loop("light", store.revision, sid)}
+    revision, policy = await off_loop("light", store.get_with_revision, sid)
+    return {"session_id": sid, "policy": policy, "revision": revision, "scope": SCOPE}
 
 
 @router.put(
@@ -134,4 +149,4 @@ async def delete_session_tool_policy(request: Request, session_id: str, if_revis
         raise _conflict(exc) from None
     _note(request, sid, "tool_policy_reset")
     _audit("session.tool_policy_reset", session_id=sid, actor=principal.user_id, changed=True)
-    return {"session_id": sid, "policy": None, "revision": revision}
+    return {"session_id": sid, "policy": None, "revision": revision, "scope": SCOPE}

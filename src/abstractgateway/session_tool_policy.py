@@ -117,8 +117,9 @@ def normalize_request(body: Any) -> Dict[str, Any]:
 
 
 def merge_requests(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> Dict[str, Any]:
-    """POST semantics: union of approve and deny selectors and of ask; `all` sticks once set; the
-    newer `max_risk_rank` wins when given."""
+    """POST semantics (provenance of the merged policy): union of approve and deny selectors and
+    of ask; `all` sticks once set; `max_risk_rank` is the wider of the two (no rank = unbounded).
+    A merge never narrows; narrowing is a PUT."""
     if not isinstance(old, dict):
         return new
     oa, na = old.get("approve") or {}, new["approve"]
@@ -128,7 +129,9 @@ def merge_requests(old: Optional[Dict[str, Any]], new: Dict[str, Any]) -> Dict[s
             "tools": sorted(set(oa.get("tools") or []) | set(na["tools"])),
             "kinds": sorted(set(oa.get("kinds") or []) | set(na["kinds"])),
             "all": bool(oa.get("all")) or na["all"],
-            "max_risk_rank": na["max_risk_rank"] if na["max_risk_rank"] is not None else oa.get("max_risk_rank"),
+            "max_risk_rank": None
+            if na["max_risk_rank"] is None or oa.get("max_risk_rank") is None
+            else max(int(na["max_risk_rank"]), int(oa["max_risk_rank"])),
         },
         "deny": {
             "tools": sorted(set(od.get("tools") or []) | set(nd["tools"])),
@@ -203,6 +206,28 @@ def build_policy(
         "set_by": dict(set_by),
         "set_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
+
+
+def merge_policies(current: Optional[Dict[str, Any]], new: Dict[str, Any], request: Dict[str, Any]) -> Dict[str, Any]:
+    """POST: the stored policy plus the NEW selectors' expansion, never a re-expansion of the old
+    ones (an earlier `all` must not silently grow to tools enabled since it was written) and never
+    narrower than before. Deny and ask still win over approve. `clamped` is this write's."""
+    if not isinstance(current, dict):
+        return {**new, "request": request}
+    approve = {**dict(current.get("approve") or {}), **dict(new.get("approve") or {})}
+    deny = {**dict(current.get("deny") or {}), **dict(new.get("deny") or {})}
+    ask = sorted(set(current.get("ask") or []) | set(new.get("ask") or []))
+    for name in list(approve):
+        if name in deny or name in ask:
+            approve.pop(name)
+    return {**new, "approve": dict(sorted(approve.items())), "deny": dict(sorted(deny.items())), "ask": ask, "request": request}
+
+
+SCOPE = {
+    "approve": "every run of this conversation (turns and their delegated child runs), except automation runs, runs "
+    "that read text other people wrote, and entity visits",
+    "deny": "every run of this conversation, automation runs and untrusted-input runs included",
+}
 
 
 def split_client(body: Any) -> Tuple[Optional[str], Optional[int]]:
