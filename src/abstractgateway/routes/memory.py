@@ -35,6 +35,7 @@ from ..memory_store import (
     resolve_memory_store_config,
     session_memory_owner_id,
 )
+from ..memory_access import caller_owner_ids, owner_forbidden
 from ..service import get_gateway_service
 from .gateway import KGQueryRequest, _principal_from_request
 
@@ -113,36 +114,13 @@ def _clean(value: Optional[str]) -> Optional[str]:
 
 
 def _caller_owners(request: Request, svc: Any, *, run_id: Optional[str], session_id: Optional[str]) -> Optional[Set[str]]:
-    """None for an admin (every owner); else the owners this caller can derive (see the module docstring)."""
-    principal = _principal_from_request(request)
-    if principal.is_admin():
-        return None
-    from abstractruntime.integrations.abstractmemory.effect_handlers import resolve_scope_owner_id
-
-    owners: Set[str] = {global_memory_owner_id()}
-    if run_id:
-        run = _load_run(svc, run_id)
-        rs = svc.host.run_store
-        for scope in ("run", "session", "global"):
-            owners.add(resolve_scope_owner_id(run, scope=scope, run_store=rs))
-    if session_id:
-        try:
-            owners.add(session_memory_owner_id(session_id))
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-    return owners
+    """None for an admin (every owner); else the caller's own owner ids (`memory_access.caller_owner_ids`,
+    operator decision 5: own runs/sessions, entities it created, its plane's global owner when the plane is its own)."""
+    return caller_owner_ids(_principal_from_request(request), svc, run_id=run_id, session_id=session_id)
 
 
 def _forbidden() -> HTTPException:
-    """The refusal never names the owner it protects (G5): the caller learns only that it is not theirs."""
-    return HTTPException(
-        status_code=403,
-        detail={
-            "reason": "owner_forbidden",
-            "message": "not one of this caller's owners (name your run_id or session_id; other owners need an "
-            "admin principal)",
-        },
-    )
+    return owner_forbidden()
 
 
 def _rows_by_id(facade: Any, ids: Iterable[str]) -> Dict[str, Any]:
@@ -344,10 +322,18 @@ def memory_query(request: Request, req: MemoryQueryRequest) -> Dict[str, Any]:
             raise HTTPException(status_code=400, detail="run_id or session_id is required for scope=session (or provide owner_id)")
         targets = [(scope, owner)]
 
+    notes: List[str] = []
     if owners_allowed is not None:
-        for _, owner in targets:
-            if owner not in owners_allowed:
-                raise _forbidden()
+        if scope == "all":
+            # The implicit expansion of scope=all keeps only the caller's owners and says what it left out
+            # (the plane's global owner on a runtime the caller does not own alone); never an explicit owner.
+            kept = [(label, owner) for label, owner in targets if owner in owners_allowed]
+            notes.extend(f"{label}: not yours on this runtime, left out" for label, owner in targets if owner not in owners_allowed)
+            targets = kept
+        else:
+            for _, owner in targets:
+                if owner not in owners_allowed:
+                    raise _forbidden()
 
     limit = _bounded(req.limit)
     home = _home_info(svc)
@@ -357,7 +343,7 @@ def memory_query(request: Request, req: MemoryQueryRequest) -> Dict[str, Any]:
     if facade is None:
         return {
             "ok": True, "scope": scope, "owner_id": None, "count": 0, "items": [], "truncated": False,
-            "warnings": [f"memory home does not exist at {home['path']} (nothing recorded yet)"], "home": home,
+            "warnings": [f"memory home does not exist at {home['path']} (nothing recorded yet)", *notes], "home": home,
         }
     try:
         TripleQuery = _facade().TripleQuery
@@ -382,7 +368,7 @@ def memory_query(request: Request, req: MemoryQueryRequest) -> Dict[str, Any]:
     single_owner = targets[0][1] if len(targets) == 1 else None
     return {
         "ok": True, "scope": scope, "owner_id": single_owner, "count": len(items), "items": items,
-        "truncated": truncated, "warnings": None, "home": home,
+        "truncated": truncated, "warnings": notes or None, "home": home,
     }
 
 

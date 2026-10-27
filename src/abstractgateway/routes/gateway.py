@@ -15319,8 +15319,12 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
 
 
 @router.post("/kg/query", response_model=KGQueryResponse)
-async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
-    """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global."""
+async def kg_query(req: KGQueryRequest, request: Request) -> KGQueryResponse:
+    """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global.
+
+    Owner rule (operator decision 5, `memory_access.caller_owner_ids`): an admin reads every owner; any
+    other principal reads only its own (its runs and sessions, the entities it created, its plane's
+    global owner when the plane is its own). A foreign `owner_id` and `all_owners` are admin-only (403)."""
     svc = get_gateway_service()
     rs = svc.host.run_store
 
@@ -15340,6 +15344,16 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         raise HTTPException(status_code=400, detail="owner_id is not supported when scope=all")
     if owner_override and all_owners:
         raise HTTPException(status_code=400, detail="all_owners cannot be combined with owner_id")
+
+    from ..memory_access import caller_owner_ids, owner_forbidden
+
+    owners_allowed = await off_loop(
+        "light", caller_owner_ids, _principal_from_request(request), svc, run_id=rid, session_id=sid
+    )
+    if owners_allowed is not None and all_owners:
+        raise owner_forbidden("all_owners needs an admin principal")
+    if owners_allowed is not None and owner_override and owner_override not in owners_allowed:
+        raise owner_forbidden()
 
     memory_config = resolve_memory_store_config(base_dir=Path(svc.stores.base_dir))
     has_query_text = isinstance(req.query_text, str) and bool(req.query_text.strip())
@@ -15490,6 +15504,9 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
                     owners.append(("global", _global_owner_id()))
                     warnings.append("run scope omitted (no run_id available)")
 
+                if owners_allowed is not None:
+                    warnings.extend(f"{label}: not yours on this runtime, left out" for label, oid in owners if oid not in owners_allowed)
+                    owners = [(label, oid) for label, oid in owners if oid in owners_allowed]
                 for label, oid in owners:
                     try:
                         items.extend(_query_scope(store=store, scope_label=label, owner_id=oid))
@@ -15523,6 +15540,8 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
                             resolved_owner_id = resolve_scope_owner_id(run, scope="session", run_store=rs)
                     else:
                         raise HTTPException(status_code=400, detail=f"Unsupported scope: {scope}")
+                    if owners_allowed is not None and resolved_owner_id not in owners_allowed:
+                        raise owner_forbidden()
 
                 items = _query_scope(store=store, scope_label=scope, owner_id=None if all_owners else resolved_owner_id)
             except HTTPException:
