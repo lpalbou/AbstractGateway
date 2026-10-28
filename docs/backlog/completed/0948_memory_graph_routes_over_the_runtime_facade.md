@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (host); abstractruntime (the memory facade, its 0856 and ADR 0011); abstractmemory (the graph, its ADR 0003 and 0056)
 > Type: feature
-> Status: planned (implemented on `feat/memory-graph-routes`; ships after AbstractRuntime 0.14.0 and AbstractMemory 0.4.0 are on PyPI, root ADR-0034)
+> Status: completed (2026-10-28, 0.17.0)
 > Created: 2026-10-27
 > Priority: P1
 > Labels: memory, provenance, boundary, thin-client
@@ -81,3 +81,6 @@ derivations, and the memory contract descriptor naming the root store instead of
 `tests/test_gateway_memory_routes.py` (real plane: run, ledger row, artifact, two revisions through the
 facade; query, history, sources, reconstruct ok/source_gone/unsupported/422, derived, owner refusals, admin
 reads), the boundary test red on any new direct import and on a stale exemption.
+
+Completed 2026-10-28: PR #7 merged (`f349cebc`) with CI green (4214 passed on 3.10-3.13); released in 0.17.0 on
+AbstractRuntime 0.15.0 and AbstractMemory 0.4.0. Direct `abstractmemory` imports: 34 (8 files) -> 0.

@@ -22,7 +22,16 @@ none of them depends on the others.
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.16.0** ([CHANGELOG](CHANGELOG.md)): the replay view
+**What's new in 0.17.0** ([CHANGELOG](CHANGELOG.md)): memory graph routes
+(`/api/gateway/memory/*`: query, history, sources, source reconstruction,
+derived memories) over AbstractRuntime 0.15.0's memory facade, with a strict
+owner rule (a person reads only their own graph and the graphs of the entities
+they created; `/kg/query` follows the same rule). The gateway no longer imports
+AbstractMemory directly. It requires AbstractRuntime 0.15.0 and AbstractMemory
+0.4.0, whose vector re-encoding is one way: upgrade every process sharing a
+plane together.
+
+**What's new in 0.16.0**: the replay view
 (`GET /runs/{id}/view` and `/view/stream`, one fold per record shared by every
 client), a per-conversation tool policy (approve or deny for the whole
 session), the voice library with personal voices per account, triggers
