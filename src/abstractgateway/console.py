@@ -2213,8 +2213,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <!-- First run (0.18.0): a fresh gateway (GET /session/onboarding `unclaimed`) shows this
 	           form instead of the sign-in form. Choosing the admin password claims the gateway and
-	           opens the setup guide. The setup code field shows only when the gateway asks for it
-	           (`setup_code_required`: the browser is not on the gateway's own machine). -->
+	           opens the setup guide. The setup code field shows when the gateway asks for it
+	           (`setup_code_required`, always while unclaimed since review: a header-less proxy looks local). -->
 	      <form id="onboarding-form" class="af-gateway-signin__form" novalidate hidden>
 	        <div class="af-gateway-signin__field">
 	          <label class="af-gateway-signin__label" for="onboard-name">Your name</label>
@@ -15766,7 +15766,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
         $("onboard-code-field").hidden = !st.setup_code_required;
         if (st.setup_code_required && st.setup_code_reason) {
-          $("onboard-code-help").textContent = `${st.setup_code_reason} Enter the six-word setup code: run abstractgateway claim --code on the gateway's machine (the installer printed it too).`;
+          $("onboard-code-help").textContent = `${st.setup_code_reason} Six words: the installer printed them, or run abstractgateway claim --code on the gateway's machine.`;
         }
         setLoginStatus("Not set up yet", "neutral");
       } else {

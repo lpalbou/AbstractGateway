@@ -10,7 +10,7 @@ users.py) and never anywhere else.
   existing hashes. Verification is constant-time.
 - **Strength rule** (`password_problem`): at least 10 characters, at least 5 different
   characters, not the account name, not a well-known password. Passphrases are welcome.
-- **Attempt limits** (`SignInLimiter`): per client address and per account, process-local
+- **Attempt limits** (`SignInLimiter`): per client address, per (account, address) and per account, decaying, process-local
   (a restart clears them, like the token lockout in security/gateway_security.py). A locked
   account or address is refused with 429 and `retry_after_s` even when the password is right:
   otherwise the lock would not stop guessing.
@@ -135,15 +135,21 @@ def burn_equivalent_time(password: str) -> None:
 
 
 class SignInLimiter:
-    """Failure counters per client address and per account (both checked before verifying).
+    """Refused-attempt counters, checked before verifying. Every counter DECAYS: failures older
+    than `window_s` stop counting, so nobody can keep a lock alive forever with one guess per
+    window (review finding, 0.18.0).
 
-    - address: `ip_failures` failures in `window_s` lock that address for `ip_lock_s`;
-    - account: from the `account_after`-th consecutive failure the account is locked for
-      `account_base_s * 2**(n - account_after)` seconds, capped at `account_max_s`;
-    - `global_failures` > 0: that many failures in `window_s` across ALL addresses lock the
-      whole door for `ip_lock_s` (the onboarding form: many addresses must not add up to a
-      guessing rate).
-    A success clears the account's and the address's counters."""
+    - address: `ip_failures` refusals from one address in `window_s` lock that address for `ip_lock_s`;
+    - account from ONE address: from the `account_after`-th consecutive refusal (with no quiet
+      `window_s` in between) that (account, address) pair is locked `account_base_s * 2**(n -
+      account_after)` seconds, capped at `account_max_s`. Keyed on the pair, so a stranger guessing
+      from elsewhere does not lock the owner out;
+    - account from ALL addresses: `account_total` refusals in `window_s` lock the account for
+      `ip_lock_s` (the backstop against guessing from many addresses; the account's token still
+      signs in);
+    - `global_failures` > 0: that many refusals in `window_s` across all addresses lock the door for
+      everyone except callers that pass `exempt_global=True` (a direct local request).
+    A success clears the address's and the pair's counters."""
 
     def __init__(
         self,
@@ -154,6 +160,7 @@ class SignInLimiter:
         account_after: int = 5,
         account_base_s: float = 30.0,
         account_max_s: float = 900.0,
+        account_total: int = 50,
         global_failures: int = 0,
         max_entries: int = 10_000,
     ) -> None:
@@ -163,42 +170,45 @@ class SignInLimiter:
         self.account_after = max(1, int(account_after))
         self.account_base_s = float(account_base_s)
         self.account_max_s = float(account_max_s)
+        self.account_total = max(1, int(account_total))
         self.global_failures = max(0, int(global_failures))
         self._max_entries = int(max_entries)
         self._lock = threading.Lock()
         self._ip: Dict[str, List[float]] = {}
         self._ip_locked: Dict[str, float] = {}
-        self._acct: Dict[str, Tuple[int, float]] = {}  # key -> (consecutive failures, locked until)
+        self._pair: Dict[Tuple[str, str], Tuple[int, float, float]] = {}  # (acct, ip) -> (n, locked until, last)
+        self._acct: Dict[str, List[float]] = {}
+        self._acct_locked: Dict[str, float] = {}
         self._global: List[float] = []
         self._global_locked = 0.0
 
     def reset(self) -> None:
         with self._lock:
-            self._ip.clear()
-            self._ip_locked.clear()
-            self._acct.clear()
+            for d in (self._ip, self._ip_locked, self._pair, self._acct, self._acct_locked):
+                d.clear()
             self._global.clear()
             self._global_locked = 0.0
 
-    def _prune(self, now: float) -> None:
-        if len(self._ip) > self._max_entries:
-            for k in list(self._ip)[: self._max_entries // 10]:
-                self._ip.pop(k, None)
-        if len(self._acct) > self._max_entries:
-            for k in list(self._acct)[: self._max_entries // 10]:
-                self._acct.pop(k, None)
+    def _prune(self) -> None:
+        for d in (self._ip, self._ip_locked, self._pair, self._acct, self._acct_locked):
+            if len(d) > self._max_entries:
+                for k in list(d)[: self._max_entries // 10]:
+                    d.pop(k, None)
 
-    def check(self, *, ip: str, account: str = "") -> Optional[Tuple[str, int]]:
+    def check(self, *, ip: str, account: str = "", exempt_global: bool = False) -> Optional[Tuple[str, int]]:
         """(`"address"` | `"account"` | `"everyone"`, seconds to wait) when locked, else None."""
         now = time.time()
         with self._lock:
-            if self._global_locked > now:
+            if not exempt_global and self._global_locked > now:
                 return ("everyone", int(self._global_locked - now) + 1)
             until = self._ip_locked.get(ip, 0.0)
             if until > now:
                 return ("address", int(until - now) + 1)
             if account:
-                _n, a_until = self._acct.get(account, (0, 0.0))
+                n, p_until, _last = self._pair.get((account, ip), (0, 0.0, 0.0))
+                if p_until > now:
+                    return ("account", int(p_until - now) + 1)
+                a_until = self._acct_locked.get(account, 0.0)
                 if a_until > now:
                     return ("account", int(a_until - now) + 1)
         return None
@@ -206,7 +216,7 @@ class SignInLimiter:
     def failure(self, *, ip: str, account: str = "") -> None:
         now = time.time()
         with self._lock:
-            self._prune(now)
+            self._prune()
             rows = [t for t in self._ip.get(ip, []) if now - t < self.window_s]
             rows.append(now)
             self._ip[ip] = rows
@@ -214,12 +224,20 @@ class SignInLimiter:
                 self._ip_locked[ip] = now + self.ip_lock_s
                 self._ip[ip] = []
             if account:
-                n, _until = self._acct.get(account, (0, 0.0))
+                n, _until, last = self._pair.get((account, ip), (0, 0.0, 0.0))
+                if last and now - last >= self.window_s:
+                    n = 0  # a quiet window resets the ratchet
                 n += 1
                 lock_until = 0.0
                 if n >= self.account_after:
                     lock_until = now + min(self.account_max_s, self.account_base_s * (2 ** (n - self.account_after)))
-                self._acct[account] = (n, lock_until)
+                self._pair[(account, ip)] = (n, lock_until, now)
+                arows = [t for t in self._acct.get(account, []) if now - t < self.window_s]
+                arows.append(now)
+                self._acct[account] = arows
+                if len(arows) >= self.account_total:
+                    self._acct_locked[account] = now + self.ip_lock_s
+                    self._acct[account] = []
             if self.global_failures:
                 self._global = [t for t in self._global if now - t < self.window_s]
                 self._global.append(now)
@@ -232,17 +250,18 @@ class SignInLimiter:
             self._ip.pop(ip, None)
             self._ip_locked.pop(ip, None)
             if account:
-                self._acct.pop(account, None)
+                self._pair.pop((account, ip), None)
 
 
 #: Password sign-in (`POST /session/login` with a password) and password changes that check
-#: the current password: 10 failures per address per 15 minutes; 5 in a row lock the account
-#: 30 s, doubling to 15 minutes.
+#: the current password: 10 refusals per address per 15 minutes; 5 in a row for one account from
+#: one address lock that pair 30 s, doubling to 15 minutes; 50 for one account from all addresses
+#: lock the account 15 minutes.
 PASSWORD_LIMITER = SignInLimiter()
 
 #: The first-run onboarding form: 5 refused setup codes per address per 15 minutes, and 20
 #: across every address lock the form for everyone for 15 minutes.
-ONBOARDING_LIMITER = SignInLimiter(ip_failures=5, account_after=10**6, global_failures=20)
+ONBOARDING_LIMITER = SignInLimiter(ip_failures=5, account_after=10**6, account_total=10**6, global_failures=20)
 
 
 def limit_message(scope: str, retry_after_s: int) -> str:

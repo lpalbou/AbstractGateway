@@ -17,27 +17,28 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
 ### Added
 
 - **"Set up your gateway"** (first-run onboarding). A fresh data folder is *unclaimed*: the console shows,
-  instead of the sign-in form, a form to choose the admin's display name and password (and, unless the
-  browser is on the gateway's own machine, the six-word **setup code**). Submitting sets the password, signs
+  instead of the sign-in form, a form to choose the admin's display name and password and give the six-word
+  **setup code** (always: a proxy that adds no forwarding headers is indistinguishable from a local browser; the
+  person at the machine keeps the no-code one-time link). Submitting sets the password, signs
   in and opens the setup guide. Before, a fresh server reached through a proxy or Tailscale Funnel showed
   "Use the token your gateway admin gave you" and refused the one-time link ("loopback, not through a
   proxy"): there was no way in without SSH. `GET|POST /api/gateway/session/onboarding` (public, browser only,
   5 refused codes per address and 20 per gateway per 15 minutes, every claim logged with the client address).
-  Any admin sign-in closes the window for good and deletes pending one-time links; a data folder that was not
-  fresh when 0.18.0 first ran is never unclaimed.
+  Any admin sign-in, or an admin creating an account, closes the window for good and deletes pending one-time
+  links; a data folder that was not fresh when 0.18.0 first ran (accounts, or a shared-token deployment) is never
+  unclaimed.
 - **The setup code** (`<data dir>/auth/onboarding.json`, 0600): `abstractgateway claim --code` prints it;
   `abstractgateway service install` and `service enable` print it in their summary; `serve` says where to get
   it (the code itself stays out of service logs).
 - **Password sign-in.** `POST /api/gateway/session/login` takes `{user_id, password}` as well as
   `{user_id, token}` (exactly one); `user_id` may also be the account's display name. scrypt hashes on the
-  account record; attempt limits per address (10 / 15 min) and per account (5 in a row, 30 s doubling to
-  15 min; the token keeps working). The console's sign-in form asks for the password first; **Sign in with a
+  account record; decaying attempt limits per address (10 / 15 min), per account from one address (5 in a row,
+  30 s doubling to 15 min) and per account from all addresses (50 / 15 min); the token keeps working. The console's sign-in form asks for the password first; **Sign in with a
   token instead** switches to the token.
 - **Setting passwords.** `PUT /api/gateway/me/password` (anyone, the current password once one is set),
   `PUT|DELETE /api/gateway/admin/accounts/{id}/password` (admins), and an optional `password` on
   `POST /api/gateway/admin/users`. In the console: a **Password** field in **Create user**, and a key button on
-  each account row. Changing a password signs the account's other browsers out (a session is bound to the
-  token and the password).
+  each account row. Setting, changing or removing a password signs the account's other browsers out at once.
 - Account rows (`GET /admin/accounts`, `/me/accounts`) carry `password_set`, `display_name` and
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".

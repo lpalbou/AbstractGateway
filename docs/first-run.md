@@ -47,7 +47,7 @@ gateway**:
 |---|---|
 | Your name | The admin's display name in the console (default `admin`). You can sign in with it or with the account id `admin` |
 | Admin password, Confirm | At least 10 characters with at least 5 different ones, not the account name and not a well-known password. A few words make a good one |
-| Setup code | Shown only when the browser is not on the gateway's own machine (see below) |
+| Setup code | The six words printed when the gateway was installed (see below) |
 | Remember this browser | Keeps the session for 30 days instead of until the browser closes |
 
 **Set up and sign in** sets the password, signs this browser in as the admin
@@ -55,11 +55,12 @@ and opens the first-run guide (section 2). From then on the same address shows
 the sign-in form, and the onboarding never comes back for this data folder.
 
 **The setup code.** Until the admin password is set, whoever reaches the
-console first could set it. A request that comes straight from the gateway's
-own machine (a loopback connection without proxy headers) needs nothing more.
-Any other request, including one relayed by a proxy on the same machine such
-as `tailscale serve` or Tailscale Funnel, must also give the six-word setup
-code. Print it on the gateway's machine:
+console first could set it, so the form always asks for the six-word setup
+code, from any browser. (The gateway cannot tell a browser on its own machine
+from a proxy that relays strangers without saying so, such as a minimal nginx
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
+skip the form with the one-time link of section 3, which needs no code. Print
+the code on the gateway's machine:
 
 ```bash
 abstractgateway claim --code
@@ -74,13 +75,15 @@ is already set up.
 
 **What closes the onboarding.** Setting the admin password here, or ANY admin
 sign-in (a one-time link from section 3, the admin token, a code sent by
-email), or an admin setting the admin's password from the Accounts page. When
+email), an admin setting the admin's password from the Accounts page, or an
+admin creating another account. When
 it closes, unused one-time links are deleted. A data folder that already had
 accounts when the gateway was upgraded to 0.18.0 is never "fresh": it keeps
 the sign-in form.
 
 **Limits.** 5 wrong setup codes from one address, or 20 from all addresses
-together, lock the form for 15 minutes. Every claim is logged with the
+together, lock the form for 15 minutes (the second lock never applies to a
+browser on the gateway's own machine). Every claim is logged with the
 client address (a warning log line, the audit log, and
 `<data dir>/auth/onboarding.json`, mode `0600`).
 
@@ -98,10 +101,13 @@ set:
 - by each person for themselves: the key button on their own row (it asks the
   current password once one is set).
 
-Setting or changing a password signs that account's other browsers out. Ten
-wrong passwords from one address lock that address for 15 minutes; five wrong
-passwords in a row for one account lock that account for 30 seconds, doubling
-up to 15 minutes, while its token keeps working. See
+Setting, changing or removing a password signs that account's other browsers
+out. Ten wrong passwords from one address lock that address for 15 minutes;
+five wrong passwords in a row for one account from one address lock that
+address out of that account for 30 seconds, doubling up to 15 minutes; fifty
+for one account from all addresses lock the account for 15 minutes. Every
+lock ends (a quiet 15 minutes resets the counters), and the account's token
+keeps working. See
 [security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window).
 
 ## 2. The first-run guide

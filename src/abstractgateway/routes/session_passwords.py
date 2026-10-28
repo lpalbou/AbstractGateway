@@ -12,9 +12,11 @@
 The unclaimed window (first_run.py "Onboarding") is the risk this module guards: the form is
 answered only for a browser request (an Origin header the gateway accepts; the security
 middleware refuses any other Origin before this code runs), it is rate limited per address and
-for the whole gateway (passwords.ONBOARDING_LIMITER), and unless the request comes straight
-from this machine (a loopback socket peer, no proxy forwarding headers) it needs the six-word
-setup code the local CLI prints. A claim is logged with the client address (warning log line,
+for the whole gateway (passwords.ONBOARDING_LIMITER), and it ALWAYS needs the six-word setup code
+the local CLI prints. (A first version skipped the code for a loopback peer without forwarding
+headers; adversarial review showed a proxy that adds no headers -- a minimal nginx `proxy_pass`,
+`tailscale funnel --tcp`, `ssh -R` -- is indistinguishable from that, so a stranger could take the
+gateway. The person at the machine has the no-code path already: the one-time claim link.) A claim is logged with the client address (warning log line,
 the audit line's `onboarding` detail, and `claimed_from` in `<data>/auth/onboarding.json`).
 """
 
@@ -84,25 +86,17 @@ def client_address(request: Request) -> str:
     return peer
 
 
-def setup_code_requirement(request: Request) -> Optional[str]:
-    """None when the request comes straight from this machine (loopback socket peer, no
-    forwarding headers); otherwise why the setup code is needed: `proxied` | `remote`.
-
-    Deliberately stricter than "network mode internet or proxy trust on": a fresh gateway behind
-    a container's port mapping or on a shared LAN looks private to itself and is still reachable
-    by strangers. The person who installed it has the code (installer summary, `abstractgateway
-    claim --code`)."""
-    if any(request.headers.get(h) for h in FORWARDING_HEADERS):
-        return "proxied"
-    if not _is_loopback(_peer(request)):
-        return "remote"
-    return None
+def direct_local(request: Request) -> bool:
+    """A loopback socket peer with no forwarding headers. NOT proof that a person at this machine
+    is asking (a header-less proxy looks the same), so it never skips the setup code; it only
+    exempts the request from the gateway-wide onboarding lock, so strangers cannot lock out the
+    machine's own browser."""
+    return _is_loopback(_peer(request)) and not any(request.headers.get(h) for h in FORWARDING_HEADERS)
 
 
-_REQUIREMENT_TEXT = {
-    "proxied": "This page reached the gateway through a proxy, so the gateway can't tell who is asking.",
-    "remote": "This browser is not on the gateway's own machine.",
-}
+SETUP_CODE_REASON = (
+    "The first password takes over this gateway, so it asks for the setup code printed when it was installed."
+)
 
 
 def _refuse(status: int, reason_code: str, message: str, **extra: Any) -> HTTPException:
@@ -132,20 +126,19 @@ def _audit(request: Request, key: str, value: Dict[str, Any]) -> None:
     summary="Is this gateway waiting for its first admin password?",
     description="Public. `{unclaimed, setup_code_required, setup_code_reason, account, password_rule, "
     "password_min_length}`. `unclaimed` true = a fresh data dir whose admin has no password and no one has "
-    "signed in as admin yet: the console shows \"Set up your gateway\". `setup_code_required` true = the form "
-    "also needs the six-word setup code (`abstractgateway claim --code` on the gateway's machine), because this "
-    "request did not come straight from that machine. `account` is the admin account id while unclaimed, else null.",
+    "signed in as admin yet: the console shows \"Set up your gateway\". `setup_code_required` is true whenever "
+    "unclaimed: the form needs the six-word setup code (`abstractgateway claim --code` on the gateway's machine; "
+    "the installer prints it). `account` is the admin account id while unclaimed, else null.",
 )
 async def session_onboarding_status(request: Request) -> Dict[str, Any]:
     data_dir = gateway_data_dir_from_env()
     from ..first_run import onboarding_unclaimed
 
     rec = await off_loop("light", onboarding_unclaimed, data_dir) if gateway_user_auth_enabled() else None
-    reason = setup_code_requirement(request)
     return {
         "unclaimed": rec is not None,
-        "setup_code_required": bool(rec is not None and reason is not None),
-        "setup_code_reason": _REQUIREMENT_TEXT.get(reason or "") if rec is not None else None,
+        "setup_code_required": rec is not None,
+        "setup_code_reason": SETUP_CODE_REASON if rec is not None else None,
         "account": str(rec.get("user_id") or "admin") if rec is not None else None,
         "password_rule": PASSWORD_RULE,
         "password_min_length": MIN_LENGTH,
@@ -200,32 +193,30 @@ async def session_onboarding_claim(request: Request, response: Response, payload
     if not str(request.headers.get("origin") or "").strip():
         raise _refuse(403, "onboarding_browser_only", "Set up the gateway from its console page in a browser.")
     ip = client_address(request)
-    locked = ONBOARDING_LIMITER.check(ip=ip)
-    if locked:
-        raise _refuse(429, "too_many_attempts", limit_message(*locked), retry_after_s=locked[1])
     data_dir = gateway_data_dir_from_env()
     rec = await off_loop("light", onboarding_unclaimed, data_dir)
     if rec is None:
         raise _refuse(409, "already_claimed", "This gateway is already set up. Sign in with your account and password.")
+    locked = ONBOARDING_LIMITER.check(ip=ip, exempt_global=direct_local(request))
+    if locked:
+        raise _refuse(429, "too_many_attempts", limit_message(*locked), retry_after_s=locked[1])
     account = str(rec.get("user_id") or "admin")
     if payload.password != payload.password_confirm:
         raise _refuse(400, "password_mismatch", "The two passwords are different.", field="password_confirm")
     problem = password_problem(payload.password, account=account)
     if problem:
         raise _refuse(400, "password_too_weak", problem, field="password")
-    reason = setup_code_requirement(request)
-    if reason is not None:
-        if not str(payload.setup_code or "").strip():
-            raise _refuse(
-                403, "setup_code_required",
-                f"{_REQUIREMENT_TEXT[reason]} Enter the setup code: run `abstractgateway claim --code` on the gateway's machine.",
-                field="setup_code",
-            )
-        if not await off_loop("light", setup_code_matches, data_dir, payload.setup_code):
-            ONBOARDING_LIMITER.failure(ip=ip)
-            logger.warning("onboarding: wrong setup code from %s", ip)
-            _audit(request, "onboarding", {"refused": "setup_code", "client_ip": ip})
-            raise _refuse(403, "setup_code_refused", "That setup code is not right. Check the six words and try again.", field="setup_code")
+    if not str(payload.setup_code or "").strip():
+        raise _refuse(
+            403, "setup_code_required",
+            f"{SETUP_CODE_REASON} Enter it, or run `abstractgateway claim --code` on the gateway's machine.",
+            field="setup_code",
+        )
+    if not await off_loop("light", setup_code_matches, data_dir, payload.setup_code):
+        ONBOARDING_LIMITER.failure(ip=ip)
+        logger.warning("onboarding: wrong setup code from %s", ip)
+        _audit(request, "onboarding", {"refused": "setup_code", "client_ip": ip})
+        raise _refuse(403, "setup_code_refused", "That setup code is not right. Check the six words and try again.", field="setup_code")
     user = await off_loop(
         "light", _claim_unlocked, data_dir, display_name=payload.display_name, password=payload.password, client_ip=ip
     )
@@ -233,8 +224,7 @@ async def session_onboarding_claim(request: Request, response: Response, payload
         raise _refuse(409, "already_claimed", "This gateway was just set up from another browser. Sign in instead.")
     ONBOARDING_LIMITER.success(ip=ip)
     logger.warning("gateway claimed: %s/%s set the admin password through the console onboarding from %s", user.tenant_id, user.user_id, ip)
-    _audit(request, "onboarding", {"claimed": True, "account": f"{user.tenant_id}/{user.user_id}", "client_ip": ip,
-                                   "setup_code": reason is not None})
+    _audit(request, "onboarding", {"claimed": True, "account": f"{user.tenant_id}/{user.user_id}", "client_ip": ip})
     out = _issue_gateway_browser_session(request, response, user.to_principal(), remember=bool(payload.remember), via="onboarding")
     out["claimed"] = True
     out["first_run"] = first_run_state(data_dir)
@@ -277,6 +267,15 @@ def password_sign_in_principal(request: Request, *, account: str, password: str,
 # ---------------------------------------------------------------------------
 
 
+def _end_sessions(user: Any, keep_session_id: str = "") -> None:
+    from ..security.sessions import GatewaySessionStore
+
+    try:
+        GatewaySessionStore().delete_sessions_for(user_id=user.user_id, tenant_id=user.tenant_id, keep_session_id=keep_session_id)
+    except Exception:  # noqa: BLE001 - the credential fingerprint still ends them lazily
+        logger.exception("could not end the sessions of %s/%s", user.tenant_id, user.user_id)
+
+
 class MyPasswordRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -316,6 +315,7 @@ async def me_set_password(request: Request, response: Response, payload: MyPassw
     updated = await off_loop("light", lambda: registry.set_password(
         user_id=rec.user_id, tenant_id=rec.tenant_id, password_hash=hash_password(payload.new_password)))
     _audit(request, "password", {"account": f"{rec.tenant_id}/{rec.user_id}", "changed": bool(rec.password_hash), "set": True})
+    _end_sessions(updated)
     out: Dict[str, Any] = {"ok": True, "user": updated.public_dict()}
     if gateway_session_id_from_cookie_header(request.headers.get("cookie")):
         out["session"] = _issue_gateway_browser_session(request, response, updated.to_principal(), remember=False, via="password_change")
@@ -378,6 +378,7 @@ async def admin_set_password(
     updated = await off_loop("light", lambda: GatewayUserRegistry().set_password(
         user_id=rec.user_id, tenant_id=rec.tenant_id, password_hash=hash_password(payload.password)))
     _audit(request, "password", {"account": f"{rec.tenant_id}/{rec.user_id}", "set": True, "by_admin": True})
+    _end_sessions(updated)
     out: Dict[str, Any] = {"ok": True, "user": updated.public_dict()}
     admin = _principal_from_request(request)
     from ..security.sessions import gateway_session_id_from_cookie_header
@@ -400,4 +401,5 @@ async def admin_clear_password(request: Request, account_id: str, tenant_id: str
     updated = await off_loop("light", lambda: GatewayUserRegistry().set_password(
         user_id=rec.user_id, tenant_id=rec.tenant_id, password_hash=""))
     _audit(request, "password", {"account": f"{rec.tenant_id}/{rec.user_id}", "removed": True})
+    _end_sessions(updated)
     return {"ok": True, "user": updated.public_dict()}

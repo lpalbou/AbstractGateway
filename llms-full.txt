@@ -480,18 +480,23 @@ constant time. No password is ever written, logged or returned. The strength rul
 10 characters with at least 5 different ones, not built around the account name, not a
 well-known password.
 
-**Attempt limits** (process-local; a restart clears them, like the token lockout below).
-Ten refused passwords from one address in 15 minutes lock that address for 15 minutes.
-Five refused passwords in a row for one account lock the account for 30 seconds, doubling
-up to 15 minutes. A locked address or account answers 429 `too_many_attempts` with
-`retry_after_s`, even for the right password; the account's TOKEN still signs in, so a
-guesser cannot lock automation out. Every refusal is the same sentence (`password_refused`:
+**Attempt limits** (process-local; a restart clears them, like the token lockout below;
+every counter decays: refusals older than 15 minutes stop counting). Ten refused passwords
+from one address in 15 minutes lock that address for 15 minutes. Five refused passwords in a
+row for one account FROM ONE ADDRESS lock that (account, address) pair for 30 seconds,
+doubling up to 15 minutes, so a guesser elsewhere does not lock the owner out. Fifty refused
+passwords for one account from all addresses in 15 minutes lock the account for 15 minutes.
+A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
+account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
+trust on (or behind a proxy that passes the header through), the address is the left-most
+`X-Forwarded-For` entry, which a client can vary; the per-account limit still holds. Every refusal is the same sentence (`password_refused`:
 "That account and password don't match.") whether the account is unknown, has no password,
 is deactivated or the password is wrong, and an unknown account costs the same scrypt time.
 
 **Sessions follow credentials.** A browser session is bound to the account's credentials
-(token hash, and the password hash once one is set): changing either signs the account's
-other browsers out. `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
+(token hash, and the password hash once one is set), and setting, changing or removing a
+password also deletes the account's other sessions at once (so none can revive when a
+credential returns to an earlier value). `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
 give the browser that made the change a fresh session.
 
 **Who sets passwords.** Anyone signed in sets their own (`PUT /me/password`, current password
@@ -517,18 +522,21 @@ That window is the risk, and it is fenced:
 - **browser only**: the POST needs an `Origin` header, and the security middleware has
   already refused any Origin the gateway does not accept;
 - **the setup code** (six words from a list of 273, about 48 bits, stored in
-  `<data dir>/auth/onboarding.json`, 0600) is required unless the request comes straight
-  from the gateway's own machine: a loopback socket peer and none of `X-Forwarded-For`,
-  `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, `Forwarded`. This is deliberately
-  stricter than "internet mode or proxy trust on": a gateway behind `tailscale serve`/Funnel,
-  a container's port mapping or a shared LAN looks private to itself and is still reachable
-  by strangers;
+  `<data dir>/auth/onboarding.json`, 0600) is ALWAYS required. A gateway behind
+  `tailscale serve`/Funnel, a container's port mapping, a shared LAN, or a proxy that adds
+  no forwarding headers at all (a minimal nginx `proxy_pass`, `tailscale funnel --tcp`,
+  `ssh -R`) looks like a local caller to itself, so nothing about a request proves the person
+  is at the machine. (A first draft skipped the code for a loopback peer without forwarding
+  headers; the adversarial review took the gateway through a header-less proxy.) Someone at
+  the machine has the no-code path anyway: the one-time claim link;
 - **limits**: 5 refused setup codes per address and 20 across all addresses per 15 minutes
-  (then 429 for 15 minutes);
+  (then 429 for 15 minutes; the gateway-wide lock never applies to a loopback peer without
+  forwarding headers, so strangers cannot lock the machine's own browser out);
 - **logged**: a warning log line and the audit line's `onboarding` detail with the client
   address, and `claimed_at / claimed_via / claimed_from` in `onboarding.json`;
 - **closes for good** on the first admin sign-in of any kind (password, token, one-time
-  link, email code) or when the admin gets a password; pending one-time links are deleted
+  link, email code), when the admin gets a password, or when an admin creates an account
+  (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
   then. A data folder that was not fresh when 0.18.0 first ran never has the record, so an
   upgrade never opens the window.
 
@@ -1146,7 +1154,7 @@ gateway**:
 |---|---|
 | Your name | The admin's display name in the console (default `admin`). You can sign in with it or with the account id `admin` |
 | Admin password, Confirm | At least 10 characters with at least 5 different ones, not the account name and not a well-known password. A few words make a good one |
-| Setup code | Shown only when the browser is not on the gateway's own machine (see below) |
+| Setup code | The six words printed when the gateway was installed (see below) |
 | Remember this browser | Keeps the session for 30 days instead of until the browser closes |
 
 **Set up and sign in** sets the password, signs this browser in as the admin
@@ -1154,11 +1162,12 @@ and opens the first-run guide (section 2). From then on the same address shows
 the sign-in form, and the onboarding never comes back for this data folder.
 
 **The setup code.** Until the admin password is set, whoever reaches the
-console first could set it. A request that comes straight from the gateway's
-own machine (a loopback connection without proxy headers) needs nothing more.
-Any other request, including one relayed by a proxy on the same machine such
-as `tailscale serve` or Tailscale Funnel, must also give the six-word setup
-code. Print it on the gateway's machine:
+console first could set it, so the form always asks for the six-word setup
+code, from any browser. (The gateway cannot tell a browser on its own machine
+from a proxy that relays strangers without saying so, such as a minimal nginx
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
+skip the form with the one-time link of section 3, which needs no code. Print
+the code on the gateway's machine:
 
 ```bash
 abstractgateway claim --code
@@ -1173,13 +1182,15 @@ is already set up.
 
 **What closes the onboarding.** Setting the admin password here, or ANY admin
 sign-in (a one-time link from section 3, the admin token, a code sent by
-email), or an admin setting the admin's password from the Accounts page. When
+email), an admin setting the admin's password from the Accounts page, or an
+admin creating another account. When
 it closes, unused one-time links are deleted. A data folder that already had
 accounts when the gateway was upgraded to 0.18.0 is never "fresh": it keeps
 the sign-in form.
 
 **Limits.** 5 wrong setup codes from one address, or 20 from all addresses
-together, lock the form for 15 minutes. Every claim is logged with the
+together, lock the form for 15 minutes (the second lock never applies to a
+browser on the gateway's own machine). Every claim is logged with the
 client address (a warning log line, the audit log, and
 `<data dir>/auth/onboarding.json`, mode `0600`).
 
@@ -1197,10 +1208,13 @@ set:
 - by each person for themselves: the key button on their own row (it asks the
   current password once one is set).
 
-Setting or changing a password signs that account's other browsers out. Ten
-wrong passwords from one address lock that address for 15 minutes; five wrong
-passwords in a row for one account lock that account for 30 seconds, doubling
-up to 15 minutes, while its token keeps working. See
+Setting, changing or removing a password signs that account's other browsers
+out. Ten wrong passwords from one address lock that address for 15 minutes;
+five wrong passwords in a row for one account from one address lock that
+address out of that account for 30 seconds, doubling up to 15 minutes; fifty
+for one account from all addresses lock the account for 15 minutes. Every
+lock ends (a quiet 15 minutes resets the counters), and the account's token
+keeps working. See
 [security.md](docs/security.md#sign-in-passwords-tokens-and-the-first-run-window).
 
 ## 2. The first-run guide
@@ -14113,27 +14127,28 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
 ### Added
 
 - **"Set up your gateway"** (first-run onboarding). A fresh data folder is *unclaimed*: the console shows,
-  instead of the sign-in form, a form to choose the admin's display name and password (and, unless the
-  browser is on the gateway's own machine, the six-word **setup code**). Submitting sets the password, signs
+  instead of the sign-in form, a form to choose the admin's display name and password and give the six-word
+  **setup code** (always: a proxy that adds no forwarding headers is indistinguishable from a local browser; the
+  person at the machine keeps the no-code one-time link). Submitting sets the password, signs
   in and opens the setup guide. Before, a fresh server reached through a proxy or Tailscale Funnel showed
   "Use the token your gateway admin gave you" and refused the one-time link ("loopback, not through a
   proxy"): there was no way in without SSH. `GET|POST /api/gateway/session/onboarding` (public, browser only,
   5 refused codes per address and 20 per gateway per 15 minutes, every claim logged with the client address).
-  Any admin sign-in closes the window for good and deletes pending one-time links; a data folder that was not
-  fresh when 0.18.0 first ran is never unclaimed.
+  Any admin sign-in, or an admin creating an account, closes the window for good and deletes pending one-time
+  links; a data folder that was not fresh when 0.18.0 first ran (accounts, or a shared-token deployment) is never
+  unclaimed.
 - **The setup code** (`<data dir>/auth/onboarding.json`, 0600): `abstractgateway claim --code` prints it;
   `abstractgateway service install` and `service enable` print it in their summary; `serve` says where to get
   it (the code itself stays out of service logs).
 - **Password sign-in.** `POST /api/gateway/session/login` takes `{user_id, password}` as well as
   `{user_id, token}` (exactly one); `user_id` may also be the account's display name. scrypt hashes on the
-  account record; attempt limits per address (10 / 15 min) and per account (5 in a row, 30 s doubling to
-  15 min; the token keeps working). The console's sign-in form asks for the password first; **Sign in with a
+  account record; decaying attempt limits per address (10 / 15 min), per account from one address (5 in a row,
+  30 s doubling to 15 min) and per account from all addresses (50 / 15 min); the token keeps working. The console's sign-in form asks for the password first; **Sign in with a
   token instead** switches to the token.
 - **Setting passwords.** `PUT /api/gateway/me/password` (anyone, the current password once one is set),
   `PUT|DELETE /api/gateway/admin/accounts/{id}/password` (admins), and an optional `password` on
   `POST /api/gateway/admin/users`. In the console: a **Password** field in **Create user**, and a key button on
-  each account row. Changing a password signs the account's other browsers out (a session is bound to the
-  token and the password).
+  each account row. Setting, changing or removing a password signs the account's other browsers out at once.
 - Account rows (`GET /admin/accounts`, `/me/accounts`) carry `password_set`, `display_name` and
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".

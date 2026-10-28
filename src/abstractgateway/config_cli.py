@@ -277,7 +277,13 @@ def ensure_bootstrap_admin_user(
         token = explicit_token or existing_file_token or generate_gateway_token()
         # A FRESH data dir: no account at all, and a token nobody holds yet (generated now).
         # Only then does the console offer "Set up your gateway" (first_run.open_onboarding).
-        fresh = not registry.list_users() and not explicit_token and not existing_file_token
+        fresh = (
+            not registry.list_users() and not explicit_token and not existing_file_token
+            # A shared-token deployment switching to accounts holds data already: not fresh.
+            and not any(str(os.getenv(n) or "").strip() for n in (
+                "ABSTRACTGATEWAY_AUTH_TOKEN", "ABSTRACTGATEWAY_AUTH_TOKENS",
+                "ABSTRACTFLOW_GATEWAY_AUTH_TOKEN", "ABSTRACTFLOW_GATEWAY_AUTH_TOKENS"))
+        )
         record, issued_token = registry.create_user(
             user_id=user_id,
             tenant_id=tenant_id,

@@ -470,18 +470,23 @@ constant time. No password is ever written, logged or returned. The strength rul
 10 characters with at least 5 different ones, not built around the account name, not a
 well-known password.
 
-**Attempt limits** (process-local; a restart clears them, like the token lockout below).
-Ten refused passwords from one address in 15 minutes lock that address for 15 minutes.
-Five refused passwords in a row for one account lock the account for 30 seconds, doubling
-up to 15 minutes. A locked address or account answers 429 `too_many_attempts` with
-`retry_after_s`, even for the right password; the account's TOKEN still signs in, so a
-guesser cannot lock automation out. Every refusal is the same sentence (`password_refused`:
+**Attempt limits** (process-local; a restart clears them, like the token lockout below;
+every counter decays: refusals older than 15 minutes stop counting). Ten refused passwords
+from one address in 15 minutes lock that address for 15 minutes. Five refused passwords in a
+row for one account FROM ONE ADDRESS lock that (account, address) pair for 30 seconds,
+doubling up to 15 minutes, so a guesser elsewhere does not lock the owner out. Fifty refused
+passwords for one account from all addresses in 15 minutes lock the account for 15 minutes.
+A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
+account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
+trust on (or behind a proxy that passes the header through), the address is the left-most
+`X-Forwarded-For` entry, which a client can vary; the per-account limit still holds. Every refusal is the same sentence (`password_refused`:
 "That account and password don't match.") whether the account is unknown, has no password,
 is deactivated or the password is wrong, and an unknown account costs the same scrypt time.
 
 **Sessions follow credentials.** A browser session is bound to the account's credentials
-(token hash, and the password hash once one is set): changing either signs the account's
-other browsers out. `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
+(token hash, and the password hash once one is set), and setting, changing or removing a
+password also deletes the account's other sessions at once (so none can revive when a
+credential returns to an earlier value). `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
 give the browser that made the change a fresh session.
 
 **Who sets passwords.** Anyone signed in sets their own (`PUT /me/password`, current password
@@ -507,18 +512,21 @@ That window is the risk, and it is fenced:
 - **browser only**: the POST needs an `Origin` header, and the security middleware has
   already refused any Origin the gateway does not accept;
 - **the setup code** (six words from a list of 273, about 48 bits, stored in
-  `<data dir>/auth/onboarding.json`, 0600) is required unless the request comes straight
-  from the gateway's own machine: a loopback socket peer and none of `X-Forwarded-For`,
-  `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, `Forwarded`. This is deliberately
-  stricter than "internet mode or proxy trust on": a gateway behind `tailscale serve`/Funnel,
-  a container's port mapping or a shared LAN looks private to itself and is still reachable
-  by strangers;
+  `<data dir>/auth/onboarding.json`, 0600) is ALWAYS required. A gateway behind
+  `tailscale serve`/Funnel, a container's port mapping, a shared LAN, or a proxy that adds
+  no forwarding headers at all (a minimal nginx `proxy_pass`, `tailscale funnel --tcp`,
+  `ssh -R`) looks like a local caller to itself, so nothing about a request proves the person
+  is at the machine. (A first draft skipped the code for a loopback peer without forwarding
+  headers; the adversarial review took the gateway through a header-less proxy.) Someone at
+  the machine has the no-code path anyway: the one-time claim link;
 - **limits**: 5 refused setup codes per address and 20 across all addresses per 15 minutes
-  (then 429 for 15 minutes);
+  (then 429 for 15 minutes; the gateway-wide lock never applies to a loopback peer without
+  forwarding headers, so strangers cannot lock the machine's own browser out);
 - **logged**: a warning log line and the audit line's `onboarding` detail with the client
   address, and `claimed_at / claimed_via / claimed_from` in `onboarding.json`;
 - **closes for good** on the first admin sign-in of any kind (password, token, one-time
-  link, email code) or when the admin gets a password; pending one-time links are deleted
+  link, email code), when the admin gets a password, or when an admin creates an account
+  (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
   then. A data folder that was not fresh when 0.18.0 first ran never has the record, so an
   upgrade never opens the window.
 

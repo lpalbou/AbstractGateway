@@ -1,8 +1,8 @@
 """First-run onboarding and password sign-in (0.18.0), through the real app.
 
 A fresh data dir is UNCLAIMED: the console offers "Set up your gateway" to any accepted origin,
-proxied or not; the setup code is required unless the request comes straight from the gateway's
-machine; choosing the admin password signs in and closes the window for good; the account then
+proxied or not; the setup code is ALWAYS required (a proxy that adds no forwarding headers looks
+exactly like a local browser); choosing the admin password signs in and closes the window for good; the account then
 signs in with a password (attempt-limited) next to its token. The console side is pinned in
 test_gateway_console_first_run.py (node VM).
 """
@@ -66,19 +66,16 @@ def _claim(client: TestClient, data: Path, **extra):
 # ---------------------------------------------------------------------------- the unclaimed state
 
 
-def test_a_fresh_data_dir_is_unclaimed_and_a_remote_browser_must_give_the_setup_code(fresh: Path) -> None:
+def test_a_fresh_data_dir_is_unclaimed_and_always_asks_for_the_setup_code(fresh: Path) -> None:
     st = _client().get("/api/gateway/session/onboarding").json()
     assert st["unclaimed"] is True and st["account"] == "admin"
-    assert st["setup_code_required"] is True and "not on the gateway's own machine" in st["setup_code_reason"]
+    assert st["setup_code_required"] is True and "setup code" in st["setup_code_reason"]
     rec = json.loads(first_run.onboarding_path(fresh).read_text(encoding="utf-8"))
     assert rec["state"] == "unclaimed" and len(rec["setup_code"].split()) == 6
     assert oct(first_run.onboarding_path(fresh).stat().st_mode & 0o777) == "0o600"
-    # Straight from this machine: no code needed.
+    # Even a loopback peer without forwarding headers: a header-less proxy looks the same.
     local = _client(("127.0.0.1", 50001)).get("/api/gateway/session/onboarding").json()
-    assert local["unclaimed"] is True and local["setup_code_required"] is False
-    # Through a proxy on this machine (tailscale serve / Funnel, nginx): the code again.
-    proxied = _client(("127.0.0.1", 50001)).get("/api/gateway/session/onboarding", headers={"X-Forwarded-For": "198.51.100.7"}).json()
-    assert proxied["setup_code_required"] is True and "proxy" in proxied["setup_code_reason"]
+    assert local["unclaimed"] is True and local["setup_code_required"] is True
 
 
 def test_onboarding_from_a_remote_browser_sets_the_password_signs_in_and_closes_the_window(
@@ -123,20 +120,20 @@ def test_onboarding_from_a_remote_browser_sets_the_password_signs_in_and_closes_
     assert me["principal"]["user_id"] == "admin" and me["account"] == {"display_name": "Laurent", "password_set": True}
 
 
-def test_onboarding_straight_from_this_machine_needs_no_code(fresh: Path) -> None:
-    r = _client(("127.0.0.1", 50001)).post("/api/gateway/session/onboarding", json={"password": GOOD, "password_confirm": GOOD}, headers=ORIGIN)
-    assert r.status_code == 200, r.text
-    proxied_fresh = first_run.read_onboarding(fresh)
-    assert proxied_fresh["claimed_from"] == "127.0.0.1"
-
-
-def test_a_proxied_request_from_loopback_still_needs_the_code(fresh: Path) -> None:
-    r = _client(("127.0.0.1", 50001)).post(
-        "/api/gateway/session/onboarding",
-        json={"password": GOOD, "password_confirm": GOOD},
-        headers={**ORIGIN, "X-Forwarded-For": "198.51.100.7", "X-Forwarded-Proto": "https"},
-    )
+@pytest.mark.parametrize("headers", [
+    {},  # a header-less proxy (minimal nginx proxy_pass, `tailscale funnel --tcp`, ssh -R) or a local browser
+    {"Host": "gateway.example.com"},
+    {"X-Forwarded-For": "198.51.100.7", "X-Forwarded-Proto": "https"},
+])
+def test_a_loopback_peer_still_needs_the_code_whatever_its_headers(fresh: Path, headers: dict) -> None:
+    # Adversarial review (0.18.0): skipping the code for a loopback peer let a stranger behind a
+    # header-less proxy take the gateway.
+    client = _client(("127.0.0.1", 50001))
+    r = client.post("/api/gateway/session/onboarding", json={"password": GOOD, "password_confirm": GOOD}, headers={**ORIGIN, **headers})
     assert r.status_code == 403 and r.json()["detail"]["reason_code"] == "setup_code_required"
+    ok = _claim(client, fresh)
+    assert ok.status_code == 200, ok.text
+    assert first_run.read_onboarding(fresh)["claimed_from"] == "127.0.0.1"
 
 
 def test_onboarding_refuses_non_browser_mismatched_and_weak_passwords(fresh: Path) -> None:
@@ -228,7 +225,7 @@ def test_without_user_accounts_there_is_no_onboarding(tmp_path: Path, monkeypatc
 
 def _claimed(fresh: Path) -> TestClient:
     client = _client(("127.0.0.1", 50001))
-    assert client.post("/api/gateway/session/onboarding", json={"password": GOOD, "password_confirm": GOOD, "display_name": "Laurent"}, headers=ORIGIN).status_code == 200
+    assert _claim(client, fresh, display_name="Laurent").status_code == 200
     return client
 
 
@@ -253,17 +250,47 @@ def test_password_sign_in_by_account_or_display_name_and_one_refusal_for_everyth
     assert GOOD not in raw and '"password_hash": "scrypt$' in raw
 
 
-def test_wrong_passwords_lock_the_account_even_for_the_right_one(fresh: Path) -> None:
+def test_wrong_passwords_lock_the_guessing_address_for_that_account_not_the_owner(fresh: Path) -> None:
     _claimed(fresh)
+    guesser = _client(("198.51.100.50", 1))
     for i in range(5):
-        r = _client((f"198.51.100.{50 + i}", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": f"wrong guess {i}"})
-        assert r.status_code == 401
-    locked = _client(("198.51.100.99", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD})
+        assert guesser.post("/api/gateway/session/login", json={"user_id": "admin", "password": f"wrong guess {i}"}).status_code == 401
+    locked = guesser.post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD})
     assert locked.status_code == 429 and locked.json()["detail"]["reason_code"] == "too_many_attempts"
     assert "this account" in locked.json()["detail"]["message"]
-    # The token still signs in (automation and the apps are not locked out by a guesser).
+    # The owner, elsewhere, is not locked out by the guesser (review finding: a renewable lock).
+    assert _client(("198.51.100.99", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD}).status_code == 200
+    # The token still signs in from the guessing address too.
     token = (fresh / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
-    assert _client(("198.51.100.99", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "token": token}).status_code == 200
+    assert guesser.post("/api/gateway/session/login", json={"user_id": "admin", "token": token}).status_code == 200
+
+
+def test_many_addresses_guessing_one_account_lock_it_and_locks_decay(fresh: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.passwords as pw
+
+    _claimed(fresh)
+    for i in range(50):
+        _client((f"10.9.{i // 200}.{i % 200 + 1}", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": "wrong guess here"})
+    r = _client(("198.51.100.99", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD})
+    assert r.status_code == 429
+    # Every lock ends: 16 minutes later the right password works again.
+    real = pw.time.time
+    monkeypatch.setattr(pw.time, "time", lambda: real() + 960)
+    assert _client(("198.51.100.99", 1)).post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD}).status_code == 200
+
+
+def test_a_lone_guess_per_window_never_keeps_a_pair_locked(fresh: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.passwords as pw
+
+    _claimed(fresh)
+    real = pw.time.time
+    clock = {"t": real()}
+    monkeypatch.setattr(pw.time, "time", lambda: clock["t"])
+    client = _client(("198.51.100.51", 1))
+    for _ in range(8):  # one wrong guess every 16 minutes: the ratchet resets each time
+        assert client.post("/api/gateway/session/login", json={"user_id": "admin", "password": "wrong guess here"}).status_code == 401
+        clock["t"] += 960
+    assert client.post("/api/gateway/session/login", json={"user_id": "admin", "password": GOOD}).status_code == 200
 
 
 def test_one_address_guessing_across_accounts_is_locked(fresh: Path) -> None:
@@ -315,7 +342,11 @@ def test_admin_creates_a_member_with_a_password_and_resets_it(fresh: Path) -> No
     assert reset.status_code == 200, reset.text
     assert bob.get("/api/gateway/me").status_code == 401  # signed out by the reset
     assert _client(("198.51.100.71", 1)).post("/api/gateway/session/login", json={"user_id": "bob", "password": "a brand new gate 8"}).status_code == 200
+    # A session from before the reset must not come back when the password is removed (review finding).
+    pre = _client(("198.51.100.74", 1))
+    assert pre.post("/api/gateway/session/login", json={"user_id": "bob", "password": "a brand new gate 8"}).status_code == 200
     removed = admin.delete("/api/gateway/admin/accounts/bob/password", headers=csrf)
+    assert pre.get("/api/gateway/me").status_code == 401
     assert removed.status_code == 200 and removed.json()["user"]["password_set"] is False
     assert _client(("198.51.100.72", 1)).post("/api/gateway/session/login", json={"user_id": "bob", "password": "a brand new gate 8"}).status_code == 401
     # Members set their own.
@@ -378,3 +409,31 @@ def test_claim_code_prints_the_setup_code_until_claimed(fresh: Path, capsys: pyt
     assert exc.value.code == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False and payload["reason_code"] == "no_setup_code" and "already set up" in payload["message"]
+
+
+def test_a_stranger_cannot_lock_this_machines_browser_out_of_onboarding(fresh: Path) -> None:
+    for i in range(20):
+        _claim(_client((f"198.51.100.{i + 1}", 1)), fresh, setup_code="acorn acorn acorn acorn acorn acorn")
+    assert _claim(_client(("198.51.100.200", 1)), fresh).status_code == 429
+    assert _claim(_client(("127.0.0.1", 50001)), fresh).status_code == 200
+
+
+def test_creating_an_account_closes_the_window(fresh: Path) -> None:
+    token = (fresh / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
+    r = _client().post("/api/gateway/admin/users", json={"user_id": "dave", "roles": ["user"]}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert first_run.read_onboarding(fresh)["claimed_via"] == "account_created"
+    assert _client().get("/api/gateway/session/onboarding").json()["unclaimed"] is False
+
+
+def test_a_shared_token_deployment_switching_to_accounts_is_not_fresh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = tmp_path / "data"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "the-old-shared-operator-token")
+    from abstractgateway.config_cli import ensure_bootstrap_admin_user
+    from abstractgateway.service import reset_gateway_boot_state
+
+    reset_gateway_boot_state()
+    ensure_bootstrap_admin_user()
+    assert first_run.read_onboarding(data) is None

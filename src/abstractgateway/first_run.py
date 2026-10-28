@@ -25,18 +25,17 @@ the user's own machine.
 - **First-run state** (`<data>/first_run.json`): whether the console's
   first-run wizard has been completed for this data dir.
 - **Onboarding** (`<data>/auth/onboarding.json`, 0.18.0): a FRESH data dir (the
-  bootstrap admin was just created with a generated token, and no other account
-  existed) is "unclaimed". While unclaimed, the console shows "Set up your
-  gateway" instead of the sign-in form, from any origin the gateway accepts,
-  proxied or not: choosing the admin password claims the gateway. When the
-  gateway is reachable from the internet (network mode internet, proxy trust
-  on, a request that came through a proxy, or a public client address) the form
-  also needs the one-time SETUP CODE (six words) printed by the installer,
-  `abstractgateway claim --code` and `abstractgateway service enable`. Any admin
-  sign-in (password, token, claim link, email code) or a password set on the
-  admin closes the window for good, and pending claim links are deleted then.
-  A data dir that was not fresh when this version first ran never has the file,
-  so an upgrade never reopens it.
+  bootstrap admin was just created with a generated token, on an empty registry,
+  outside a shared-token deployment) is "unclaimed". While unclaimed, the console
+  shows "Set up your gateway" instead of the sign-in form, from any origin the
+  gateway accepts, proxied or not: choosing the admin password, with the
+  one-time SETUP CODE (six words, always required; printed by the installer,
+  `abstractgateway claim --code`, `service install` and `service enable`),
+  claims the gateway. Any admin sign-in (password, token, claim link, email
+  code), a password set on the admin, or an account created closes the window
+  for good, and pending claim links are deleted then. A data dir that was not
+  fresh when this version first ran never has the file, so an upgrade never
+  reopens it.
 """
 
 from __future__ import annotations

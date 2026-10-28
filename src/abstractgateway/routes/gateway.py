@@ -818,6 +818,14 @@ async def gateway_admin_create_user(request: Request, payload: GatewayUserCreate
         raise HTTPException(status_code=400, detail=str(e)) from e
     if password_hash:
         record = registry.set_password(user_id=record.user_id, tenant_id=record.tenant_id, password_hash=password_hash)
+    # A gateway whose admin creates accounts is in use: an open first-run window closes.
+    try:
+        from ..first_run import close_onboarding
+        from .session_passwords import client_address
+
+        close_onboarding(gateway_data_dir_from_env(), via="account_created", client_ip=client_address(request))
+    except Exception:  # noqa: BLE001
+        logger.exception("could not close the onboarding window")
     return {"user": record.public_dict(), "token": issued_token}
 
 
