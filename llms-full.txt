@@ -12480,7 +12480,12 @@ none of them depends on the others.
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.0** ([CHANGELOG](CHANGELOG.md)): memory graph routes
+**What's new in 0.17.1** ([CHANGELOG](CHANGELOG.md)): the console's ui-kit islands
+are resynced from the released kit (ui-kit 0.9.1 -> 0.9.4): the voice picker
+lists each Qwen3-TTS voice once, Create a voice is styled, and the tool approval
+card and tool-row durations are polished.
+
+**What's new in 0.17.0**: memory graph routes
 (`/api/gateway/memory/*`: query, history, sources, source reconstruction,
 derived memories) over AbstractRuntime 0.15.0's memory facade, with a strict
 owner rule (a person reads only their own graph and the graphs of the entities
@@ -13942,7 +13947,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.0] - 2026-10-28
+## [0.17.1] - 2026-10-28
+
+Console: ui-kit islands 0.9.1 -> 0.9.4: voice picker lists each voice once, Create-a-voice styled, approval card and
+tool-row polish (backlog 0956). No route, schema or dependency change.
+
+### Changed
+
+- **Console islands resynced from the released kit** (`console_islands.py`: `@abstractframework/ui-kit` 0.9.4 and
+  `@abstractframework/panel-chat` 0.6.2, AbstractUIC 0.8.2, tag `v0.8.2`; was ui-kit 0.9.1). What the console shows
+  differently: the voice picker (`mountVoiceSettings`, the capability editor's `output.voice` and the entity tab) lists
+  each Qwen3-TTS preset voice once instead of once per model; Create a voice / Manage voices are styled cards with the
+  kit's segmented mode switch; the Sandbox chat's tool approval card names its real scope buttons with one short
+  summary line and a disclosure, and tool rows and turn chips use one duration format. `console_themes.py` records the
+  new `theme.css` hash (the 21 theme blocks are unchanged).
+
 
 Memory graph routes over AbstractRuntime 0.15.0's memory facade (backlog 0948). Requires **AbstractRuntime 0.15.0**
 and **AbstractMemory 0.4.0** (`abstractmemory.graph`).
