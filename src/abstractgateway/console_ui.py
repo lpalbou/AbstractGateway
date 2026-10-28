@@ -460,6 +460,14 @@ CONSOLE_UI_CSS = r"""
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
     .first-run-panel { display: grid; gap: 22px; min-width: 0; border: 0; background: transparent; padding: 0; box-shadow: none; border-radius: var(--radius-sm); }
     .first-run-panel.hidden { display: none !important; }
+    /* 1069: the Default models table. The table scrolls inside its wrap on a narrow screen; the
+       actions wrap inside their cell instead of pushing the table past the panel. */
+    .first-run-default-models { width: 100%; border-collapse: collapse; }
+    .first-run-default-models th, .first-run-default-models td { vertical-align: top; padding: 10px 8px; text-align: left; }
+    .first-run-default-models td.actions { width: 1%; }
+    .first-run-default-models .dm-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 9.5em; }
+    .first-run-default-models .chip { white-space: nowrap; }
+    #first-run-default-models .ui-section-title .ui-sub { white-space: normal; }
     .first-run-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 14px clamp(20px, 3.4vw, 60px); border-top: 1px solid var(--ui-border-1); background: var(--bg-secondary); }
     .first-run-footer .message { flex: 1 1 auto; margin: 0; min-width: 0; font-size: var(--font-size-md); }
     .first-run-footer button { min-width: 96px; }

@@ -15459,7 +15459,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         recCell = `<span class="muted">${esc(why || "AbstractCore recommends no model for this on this computer; choose one.")}</span>`;
       }
       const actions = [];
-      if (rec && m.selector) actions.push(`<button type="button" class="ui-btn is-primary" data-dm-use="${esc(m.selector)}">Use recommended</button>`);
+      const inUse = Boolean(rec && row && row.provider === (typeof rec.route_provider === "string" ? rec.route_provider : rec.provider)
+        && row.model === (typeof rec.route_model === "string" ? rec.route_model : rec.artifact));
+      if (rec && m.selector && !inUse) actions.push(`<button type="button" class="ui-btn is-primary" data-dm-use="${esc(m.selector)}">Use recommended</button>`);
       if (rec && rec.status === "absent") actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-download="1" data-provider="${esc(rec.provider)}" data-artifact="${esc(rec.artifact)}">Download</button>`);
       if (row && !defaultRowReadOnly(row)) actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-choose="${esc(defaultRowKey(row))}">Choose…</button>`);
       return `<tr data-dm-row="${esc(m.id)}"><td><b>${esc(m.label)}</b><div class="muted">${esc(m.what)}</div></td>`
