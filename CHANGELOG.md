@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.1] - 2026-10-28
+## [0.17.2] - 2026-10-28
+
+Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
+
+### Fixed
+
+- **Apps install the release's versions** (`apps_manager.py`). The console's **Install** (and `abstractgateway
+  apps install <id>` / `POST /apps/{id}/install` without a version) installed npm's newest (Flow 0.12.0) while the
+  AbstractFramework release the gateway was installed as pins Flow 0.11.0. A fresh install now installs the release's
+  pin: the installer records the release in `<data dir>/bootstrap.env` (`FRAMEWORK_VERSION`), and that release's
+  `install-manifest.json` (`npm_apps`, read at the framework tag `v<release>`) names each app's version. A newer
+  published version is shown as **Update to x.y.z** and installed only when someone chooses it. When the release's
+  pins cannot be read the install fails with that reason instead of installing the newest; a gateway not installed
+  as a release installs the newest, as before. `GET /apps` adds `release {framework_version, apps, manifest_url,
+  error}` and each row's `release_version`. See [apps.md](docs/apps.md#updates).
+- **`abstractgateway network status` no longer says "user auth off"** on a gateway that turned user auth on
+  itself (`serve` on a loopback address with nothing configured): the run record is written before that switch, so
+  its posture read "nothing configured". A record with no explicit auth posture on a loopback address now reads as
+  user auth on, matching the 401 every token-less call gets.
+- **The llama.cpp engine card** said "CPU on Linux" on a machine where the installer put the CUDA build in; it now
+  names the Linux CUDA build (gpu setting, NVIDIA GPU) and the CPU build otherwise.
+
 
 Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956), and a truthful "why nothing rang" for a run whose On Flow End
 wrote `notify: null`. No route, schema or dependency change.

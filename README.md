@@ -22,7 +22,12 @@ none of them depends on the others.
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.1** ([CHANGELOG](CHANGELOG.md)): the console's ui-kit islands
+**What's new in 0.17.2** ([CHANGELOG](CHANGELOG.md)): the console's app manager installs
+the versions the AbstractFramework release pins (a newer one is offered as an update,
+never installed by itself); `network status` reports the user auth a loopback gateway
+turned on itself.
+
+**What's new in 0.17.1**: the console's ui-kit islands
 are resynced from the released kit (ui-kit 0.9.1 -> 0.9.4): the console's voice
 picker lists each Qwen3-TTS voice once instead of once per model. A run whose
 On Flow End wrote `notify: null` now reports `quiet_reason: "no notify"`, not
