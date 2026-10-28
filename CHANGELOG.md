@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-10-28
+
+Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.3 (backlogs 0963, 0966). No route removed.
+
+### Fixed
+
+- **`/v1/chat/completions` no longer loads a second copy of a model the gateway already holds.** With a GGUF loaded
+  through the model pool (Models page, `POST /api/gateway/models/load`), every `/v1` chat built another full
+  llama.cpp instance of it: a 2.5 GB model on a 16 GB GPU answered 500 "Failed to create llama_context"; on Metal
+  the gateway grew 11.2 -> 43.4 GB over three calls. AbstractCore 2.31.1 (its backlog 0859) lends the resident
+  instance to the request; the gateway's Core floor is now `abstractcore>=2.31.1` (`[embeddings]` too), so an
+  upgrade cannot keep the old Core. `tests/test_v1_reuses_resident_model.py` checks the mounted `/v1` uses the
+  resident model (red against Core 2.31.0).
+- **A flaky test** (`test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes`, 404 `session_not_found` on one
+  CI job per run) wrote its runs while the gateway's boot thread built the run index; it now writes them before the
+  gateway starts (backlog 0963). The underlying race was AbstractRuntime's (`JsonFileRunStore`: a run created
+  between its journal line and its file's publication while another store object builds its index was missed
+  until the next full reconciliation, up to 10 minutes; a split-mode runner creating a run while the API process
+  boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863); 0.15.3 (its 0864) stops that fix's
+  replay from signalling every recent run as changed (the mail notifications re-loaded 400 finished runs). The
+  gateway's floor is `AbstractRuntime>=0.15.3` (`[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
+- **A forwarder setting saved during a push pass is no longer missed** (`push/dispatcher.py`, backlog 0966): the
+  dispatcher started its wait with change tokens taken after it had read the setting, so a save in between never
+  ended the wait (the flaky `test_a_split_runner_sees_the_settings_file_move`). The tokens are now taken before each
+  read.
+- **A run's workflow snapshot ref can no longer be lost to the runner's first tick** (`hosts/bundle_host.py`,
+  backlog 0966): the post-start load-add-save of the run (snapshot ref, default session id) now holds the run's
+  mutation lock, as the tick does, instead of racing it (the flaky history-bundle test; a finished run could go
+  back to its first state). The start waits at most 0.5 s for it.
+- **The change-token benchmark counts only its own thread's file access** (backlog 0966): another thread's `os.stat`
+  read as the probe's (`assert 202 <= 200`).
+
 ## [0.17.2] - 2026-10-28
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.

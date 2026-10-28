@@ -47,7 +47,7 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.30.0" in deps
+    assert "abstractcore>=2.31.1" in deps
     assert "abstractvoice>=0.18.2" in deps
     assert "abstractagent>=0.4.0" in deps
     assert "AbstractMemory[lancedb]>=0.4.0" in deps
@@ -140,7 +140,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.30.0" in embeddings
+    assert "abstractcore[embeddings]>=2.31.1" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras

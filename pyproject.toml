@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.17.2"
+version = "0.17.3"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,7 +46,10 @@ dependencies = [
   # 0.14.0: every ledger record carries its per-run `seq` and every LedgerStore has `list_after`.
   # 0.15.0: the AbstractMemory facade (integrations.abstractmemory.memory_facade) and
   # LedgerStore.get_record: /api/gateway/memory/* and the AbstractMemory boundary (backlog 0948).
-  "AbstractRuntime>=0.15.0",
+  # 0.15.2: an index build never loses a run created during it (the boot warm-up of the run
+  # store; runtime backlog 0863, gateway backlog 0963); 0.15.3: and its replay signals no change
+  # for runs it already filed (runtime 0864: mail notifications re-loaded every recent run).
+  "AbstractRuntime>=0.15.3",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -73,7 +76,9 @@ dependencies = [
   # dependency); the gateway passes `<data dir>/secrets/sealing.key` (security/sealing.py).
   # 2.30.0: the voice facade's languages, cloned-voice management, voice design and capability
   # catalog, `language` on the voice catalog, `one_shot` on speech (the voice library routes).
-  "abstractcore>=2.30.0",
+  # 2.31.1: `/v1/chat/completions` reuses the model the runtime pool already holds instead of a
+  # second full copy per request (Core backlog 0859; gateway backlog 0962).
+  "abstractcore>=2.31.1",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -122,7 +127,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.30.0",
+  "abstractcore[embeddings]>=2.31.1",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -149,7 +154,7 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.15.0",
+  "AbstractRuntime[apple]>=0.15.3",
   "abstractagent[apple]>=0.4.0",
   "AbstractMemory[all-apple]>=0.4.0",
 ]
@@ -157,7 +162,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.15.0",
+  "AbstractRuntime[gpu]>=0.15.3",
   "abstractagent[gpu]>=0.4.0",
   "AbstractMemory[all-gpu]>=0.4.0",
 ]

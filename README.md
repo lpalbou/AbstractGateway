@@ -22,7 +22,12 @@ none of them depends on the others.
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.2** ([CHANGELOG](CHANGELOG.md)): the console's app manager installs
+**What's new in 0.17.3** ([CHANGELOG](CHANGELOG.md)): `/v1/chat/completions` uses the
+model the gateway already holds instead of loading a second copy per request (needs
+AbstractCore 2.31.1, now the floor); a run written while the gateway boots is listed at once
+(AbstractRuntime 0.15.3, now the floor); four flaky tests are root-caused, three of them product races.
+
+**What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
 never installed by itself); `network status` reports the user auth a loopback gateway
 turned on itself.
