@@ -1462,6 +1462,17 @@ every row (<code>status_control</code>, see <a href="#http-api">HTTP API</a>), s
 terminal console say the same words.</p>
 <p>Show log, versions, addresses and commands are under <strong>Technical details</strong>.</p>
 <h2 id="updates">Updates<a class="headerlink" href="#updates" title="Permanent link">&para;</a></h2>
+<p><strong>Install follows the release.</strong> A gateway set up by the AbstractFramework installer records its
+release in <code>&lt;data dir&gt;/bootstrap.env</code> (<code>FRAMEWORK_VERSION</code>). Installing a browser app without a
+version (the console's <strong>Install</strong>, <code>abstractgateway apps install &lt;id&gt;</code>, <code>POST /apps/{id}/install</code>
+without <code>version</code>) installs the version that release pins (<code>npm_apps</code> in the release's
+<code>docs/installers/install-manifest.json</code>, read from the framework repo at the tag <code>v&lt;release&gt;</code>), so
+the installed set is the tested matrix. A newer published version is shown as an update and
+installed only when someone chooses it (<strong>Update to x.y.z</strong>, <code>apps update</code>). When the release's
+pins cannot be read the install fails with that reason instead of installing the newest; a gateway
+not installed as a release (<code>pip install</code>, the installer's <code>--pin</code> / <code>--from</code>) installs the newest.
+<code>GET /apps</code> reports the release (<code>release: {framework_version, apps, manifest_url, error}</code>) and
+each row its <code>release_version</code>.</p>
 <p>Every app row says when a newer version is published: the browser apps from
 the npm registry (<code>dist-tags.latest</code>), the Assistant from PyPI
 (<code>&lt;pypi_url&gt;/abstractassistant/json</code>, <code>info.version</code>). One cache serves the
@@ -2005,7 +2016,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>POST /apps/{id}/install</code> <code>{"version"?, "launch"?, "with_terminal"?}</code></td>
 <td>admin</td>
-<td>ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's <code>install_parts</code> has <code>"tui"</code> (<code>with_terminal: false</code> skips it); the job's <code>parts</code> are its child rows. Starts nothing unless <code>launch: true</code>. For <code>assistant</code>: installs <code>abstractassistant</code> into the gateway's Python (every <code>abstract*</code> package is pinned to its current version in the same command).</td>
+<td>ONE job (without <code>version</code>: the release's pinned version, see "Updates"): Node.js if needed, download, check, dependencies, then the terminal app when the row's <code>install_parts</code> has <code>"tui"</code> (<code>with_terminal: false</code> skips it); the job's <code>parts</code> are its child rows. Starts nothing unless <code>launch: true</code>. For <code>assistant</code>: installs <code>abstractassistant</code> into the gateway's Python (every <code>abstract*</code> package is pinned to its current version in the same command).</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/update</code> <code>{"version"?}</code></td>
