@@ -160,7 +160,7 @@ ENGINE_TEXT: Dict[str, Dict[str, str]] = {
     },
     "llamacpp": {
         "name": "llama.cpp",
-        "description": "Runs GGUF model files inside the gateway: Metal on Apple Silicon, the installer's CUDA, Vulkan or CPU build on Windows, CPU on Linux.",
+        "description": "Runs GGUF model files inside the gateway: Metal on Apple Silicon; on Windows the installer's CUDA, Vulkan or CPU build; on Linux its CUDA build with the gpu setting on an NVIDIA GPU, else the CPU build.",
         "download_url": "https://github.com/abetlen/llama-cpp-python",
         "docs_url": "https://llama-cpp-python.readthedocs.io",
     },
