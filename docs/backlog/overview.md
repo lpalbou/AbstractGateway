@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 8
+- Planned: 9
 - Proposed: 46
 - Completed: 29
 - Deprecated: 1
@@ -108,6 +108,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | --- | --- |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
+| [0948_memory_graph_routes_over_the_runtime_facade.md](planned/0948_memory_graph_routes_over_the_runtime_facade.md) | `/api/gateway/memory/*` (query, history, sources, reconstruct, derived) over the AbstractRuntime memory facade, owner rule, bounded lists; AbstractMemory import boundary with a burn-down list (34 -> 0). Ships after AbstractRuntime 0.14.0 and AbstractMemory 0.4.0. |
 | [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
 | [0950_cancel_a_running_synthesis.md](planned/0950_cancel_a_running_synthesis.md) | A running `/voice/tts` synthesis can be cancelled: a cancel token from the route (client disconnect, explicit cancel) through the runtime voice facade to the AbstractVoice engines, checked between sentences; root 1060. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |

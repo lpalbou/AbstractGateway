@@ -2253,8 +2253,9 @@ STT and listen contract notes:
 
 ## KG memory
 
-`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore.
-Gateway resolves the store through:
+`POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore (opened through the
+AbstractRuntime memory facade). For the graph (history, sources, reconstruction) see
+[Memory graph](#memory-graph). Gateway resolves the store through:
 
 - `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory` (`sqlite` when the installed AbstractMemory build exposes `SQLiteTripleStore`)
 - `ABSTRACTGATEWAY_MEMORY_STORE_PATH`
@@ -2270,6 +2271,104 @@ Capability discovery reports KG memory as available when AbstractMemory is
 installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.
+
+## Memory graph
+
+`/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
+ledger provenance) through AbstractRuntime's memory facade
+(`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
+(ADR 0001). Requires AbstractRuntime 0.14.0 and AbstractMemory 0.4.0.
+
+**Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
+the plane's memory HOME, one SQLite file:
+
+- with `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite` the home IS the KG file `/kg/query` reads
+  (`<plane>/abstractmemory/kg.sqlite3`). The bundle host hands that same store, its journal (same file), the
+  plane's runtime id and artifact store to the runtime's memory effects, so a workflow's MEMORY_REVISE writes
+  what `/memory/*` serves, a `close` is journaled (ranked recall folds it), and every ref it stamps carries the
+  plane's `runtime_id`;
+- with the default `lancedb` (or `memory`) the home is `<plane>/abstractmemory/memory.sqlite3`, beside the
+  LanceDB KG. **Nothing in the gateway writes it yet**: MEMORY_REVISE receives the LanceDB store and fails,
+  naming AbstractMemory backlog 0057. Until the plane store default moves to the SQLite home (memory transition
+  decision 2), `/kg/query` (LanceDB) and `/memory/*` (the home) serve two different stores; only a host writing
+  the home through the runtime facade (`MemoryFacade.open_mind`) fills it.
+
+A read never creates the home (an absent home answers empty, or 404 to a non-admin naming a memory id). The
+plane's service opens the home once, on the first `/memory/*` request that finds it, keeps it for its lifetime
+and closes it at shutdown, so a read never waits for another writer's lock to open the file (the first open
+after upgrading to AbstractMemory 0.4.0 runs its one-time vector upgrade inside that first request). Entity minds (`entities/<slug>/memory.sqlite3`) are not served here.
+
+**Owner rule** (operator decision 5; `memory_access.caller_owner_ids`, the ONE rule `/kg/query` and every
+`/memory/*` route apply). A person owns their memory graph, an entity owns its own, and nobody reads another
+person's graph. The plane is a storage location, not a sharing scope.
+
+- An admin reads every owner. So does every caller of a gateway without user accounts (one operator, one
+  world).
+- Any other principal reads exactly its own owners:
+  - its runs: a `run_id` it names counts only when the run's `_meta.origin.actor` (stamped by the host on
+    `/runs/start`, never taken from the client; read on the run or its nearest ancestor) is
+    `"<tenant>:<user>"` of the principal. A run started by someone else, or with no recorded starter (a
+    legacy run), is 403; a missing run is 404. The run gives its run and session owners;
+  - its sessions: a `session_id` it names counts only when one of the session's runs (newest 200 in the
+    run index) is its own by the same test;
+  - the entities it created (entity -> creator delegation): the owner id (`manifest.entity_id`) of every
+    entity home in its plane whose manifest `created_by` is the principal. An entity with no recorded
+    creator is the admin's only;
+  - its plane's global owner (`global_memory`, or `$ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID`). Planes are per
+    account: the users registry refuses a second account on a runtime id and the default runtime is the
+    operator's, so an account's `global_memory` is its own global memory (a ref stamped under the global
+    owner is the account's own). The rule still checks that the plane serving the request is the
+    principal's (its tenant and runtime id).
+- Anything else is `403 {"detail": {"reason": "owner_forbidden", "message"}}`; the message never names the
+  owner it protects. An explicit `owner_id` that is not the caller's, and `all_owners`, are admin-only:
+  refused, never silently narrowed. `scope=all` expands to the caller's own owners only.
+- A memory id of another owner is 403, an unknown one 404. Every route takes the optional `run_id` /
+  `session_id` (query parameters; in the body of `sources/reconstruct`) to name the caller's run or session.
+- `sources?transitive=true` walks the derivation lineage only through memories the caller may read; a parent
+  of another owner is not followed and is counted in `withheld`.
+- `history` cuts the memory ids an event names (`derived_from`, `replacement_ids`) to the readable ones and
+  counts the hidden ones in `withheld`.
+- `sources/reconstruct`: a non-admin reconstructs a ref only when a memory of one of its owners names it
+  directly (AbstractMemory's `MemoryGraph.names_ref`, one index probe; 403 otherwise, also for a ref nobody
+  names); an admin reconstructs any ref of its plane. AbstractMemory refuses a derivation across owners, so a
+  ref is never reachable through another owner's memory.
+
+Sharing a graph with another person, or topic-scoped access (a notebook shared with a team), is future work:
+today the only delegation is entity -> creator.
+
+**Limitation (today's owner ids).** An `owner_id` is not a principal: it is `session_memory_<sid>`,
+`global_memory`, a run id, or an entity id, strings derived from runs and sessions. The rule above maps a
+principal to the ids derived from ITS OWN runs and sessions (and its entities); a memory written under a
+session id that none of the principal's runs carries is not the principal's, whoever wrote it. `global_memory`
+is shared by everything that runs on the plane, by construction; it is one account's only because planes are
+per account. Making `owner_id` the principal and the scope its kind is pending an operator decision; the
+derivation lives in one function (`memory_access.caller_owner_ids`) so it changes in one place.
+
+**Bounds.** Every list takes `limit` (default 200, at most 500) and answers `truncated: true` when it cut;
+what the owner rule hides is counted in `withheld` (`derived`, `sources`, `history`).
+
+| Method and path | Body / query | Returns |
+|---|---|---|
+| `POST /memory/query` | the `/kg/query` body (`scope`, `run_id`, `session_id`, `owner_id`, `subject`, `predicate`, `object`, `since`, `until`, `active_at`, `all_owners`, `order`), `limit` 1..500; `query_text` is refused (400: the home is structured-only) | `{ok, scope, owner_id, count, items: [assertion], truncated, warnings, home: {path, backend: "sqlite", exists}}` |
+| `GET /memory/{memory_id}/history` | `limit`, `run_id`, `session_id` | `{ok, memory_id, owner_id, count, items: [{event: asserted\|closed\|narrowed, at, revision_id, cause, detail}], truncated, withheld}` in record order |
+| `GET /memory/{memory_id}/sources` | `transitive` (default `true`: also the sources of the readable memories it was derived from), `limit`, `run_id`, `session_id` | `{ok, memory_id, transitive, count, items: [SourceRef + key], truncated, withheld}` |
+| `POST /memory/sources/reconstruct` | `{"ref": SourceRef, "run_id"?, "session_id"?, "limit"? (1..1000, default 200: ledger records of a `run` source)}` | the facade's answer, HTTP 200 for each: `{status: "ok", ref, kind, content, metadata}`, `{status: "partial", ref, kind, content, metadata, unresolved: [path]}` (a step row with a `$slim` marker or an offloaded leaf whose artifact is gone: never `ok` with a hole), `{status: "source_gone", ref, reason}`, `{status: "unsupported", ref, reason}`; 422 `invalid_source_ref` for a malformed ref; 403 `owner_forbidden` (see the owner rule) |
+| `GET /memory/derived` | `ref_key` (required), `limit`, `run_id`, `session_id` | `{ok, ref, ref_key, count, items: [memory id], truncated, withheld}`: the memories naming that source, then those derived from them |
+
+A SourceRef is a dict: `{"kind": "run", "run_id"}`, `{"kind": "step", "run_id", "seq"(int), "step_id"?}`,
+`{"kind": "artifact", "artifact_id", "run_id"?}`, `{"kind": "message", "message_id"}`,
+`{"kind": "event", "event_id", "stream"?}`, `{"kind": "diary_entry", "entry_id", "run_id"?}`, each with an
+optional `runtime_id`. Its key is `run:<run_id>`, `step:<run_id>#<seq>`, `artifact:<id>`, `message:<id>`,
+`event:<id>` or `diary_entry:<id>`; `derived` takes the key (URL-encode `#` as `%23`), not the JSON form,
+and answers 422 `invalid_ref_key` for one it cannot read. Reconstruction reads this plane's ledger, run and
+artifact stores: a `step` gives the ledger row (`content`) with `metadata.{run_id, seq, step_id, node_id,
+status, effect_type}` (a step ref addresses the step's STARTED row, which holds the effect payload; any other
+row at that seq is `source_gone`: the ledger was rewritten), an `artifact` its content (`utf-8` text, else base64, `metadata.encoding`), a `run`
+its state and at most `limit` ledger records, oldest first (`metadata.ledger_records`, `ledger_returned`,
+`ledger_left_out`, `truncated`); `message` refs are `unsupported` (no indexed path yet), and so are `event` and
+`diary_entry` here (no event inbox or diary store is given to the plane facade). The facade reads the plane's
+runtime id (`runtime_id` of the plane's service): a ref naming another runtime (an entity home's) is
+`unsupported`, never resolved against this plane's ledger.
 
 ## Models and engines
 

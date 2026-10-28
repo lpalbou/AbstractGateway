@@ -166,3 +166,22 @@ def test_kg_query_rejects_semantic_query_on_sqlite_before_store_exists(
         )
     assert resp.status_code == 400, resp.text
     assert "Semantic KG query is not available" in resp.text
+
+
+def test_backend_reason_names_the_runtime_floor_when_the_runtime_has_no_memory_facade(monkeypatch) -> None:
+    """An AbstractRuntime older than the memory facade is a RUNTIME problem: the reason names the runtime
+    floor (like the host-build RuntimeTooOld check), never 'AbstractMemory is not available'."""
+    import sys
+
+    from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
+    from abstractgateway.memory_store import memory_backend_unavailable_reason
+
+    import abstractruntime.integrations.abstractmemory as integration
+
+    # An old runtime: the package has no `memory_facade` submodule.
+    monkeypatch.delattr(integration, "memory_facade", raising=False)
+    monkeypatch.setitem(sys.modules, "abstractruntime.integrations.abstractmemory.memory_facade", None)
+    reason = memory_backend_unavailable_reason("sqlite")
+    assert reason is not None
+    assert f"abstractruntime>={ABSTRACTRUNTIME_FLOOR}" in reason
+    assert "AbstractMemory is not available" not in reason

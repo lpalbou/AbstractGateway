@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -40,11 +43,47 @@ def _normalize_backend(raw: Optional[str]) -> str:
     raise ValueError("ABSTRACTGATEWAY_MEMORY_STORE_BACKEND must be one of: lancedb, sqlite, memory")
 
 
+# Owner ids of the KG scopes, for a caller that holds a session id but no run.
+#
+# With a run, the gateway asks the runtime: `resolve_scope_owner_id(run, scope=...)`
+# (abstractruntime.integrations.abstractmemory.effect_handlers). A thin client
+# that only knows its session id (or asks for global memory) has no run to hand
+# over, so the derivation is written here as the PUBLIC rule the runtime applies:
+# `session_memory_<sid>` when the id is safe, else `session_memory_sha_<sha256[:32]>`;
+# global = `$ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID` when safe, else `global_memory`.
+# `tests/test_gateway_memory_owner_ids.py` pins parity with the runtime on real
+# RunStates, so a runtime change turns that test red instead of drifting.
+_SAFE_OWNER_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def session_memory_owner_id(session_id: str) -> str:
+    """Owner id of a session's KG memory (= the runtime's for any run of that session)."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        raise ValueError("session_id must be a non-empty string")
+    if _SAFE_OWNER_ID_RE.match(sid):
+        oid = f"session_memory_{sid}"
+        if _SAFE_OWNER_ID_RE.match(oid):
+            return oid
+    digest = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:32]
+    return f"session_memory_sha_{digest}"
+
+
+def global_memory_owner_id() -> str:
+    """Owner id of the plane's global KG memory (= the runtime's `scope="global"`)."""
+    raw = str(os.environ.get("ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID") or "").strip()
+    if raw and _SAFE_OWNER_ID_RE.match(raw):
+        return raw
+    return "global_memory"
+
+
 @dataclass(frozen=True)
 class GatewayMemoryStoreConfig:
     backend: str
     path: Optional[Path]
     require_vector: bool = False
+    # The plane data folder the config was resolved for (the memory home lives under it).
+    base_dir: Optional[Path] = None
 
     def public_dict(self) -> Dict[str, Any]:
         return {
@@ -60,6 +99,8 @@ class GatewayMemoryStoreResolution:
     config: GatewayMemoryStoreConfig
     capabilities: Dict[str, Any]
     warnings: list[str] = field(default_factory=list)
+    # `SQLiteJournal` on the store's own file (sqlite backend, `with_journal=True`): the caller closes it.
+    journal: Any = None
 
     def public_dict(self) -> Dict[str, Any]:
         return {
@@ -104,7 +145,95 @@ def resolve_memory_store_config(
         backend=resolved_backend,
         path=resolved_path,
         require_vector=bool(require_vector),
+        base_dir=base,
     )
+
+
+def resolve_memory_home(config: GatewayMemoryStoreConfig) -> Path:
+    """The plane's memory HOME: the one SQLite file that holds its memory graph (triples, journal,
+    revision log, provenance index; AbstractMemory ADR 0003) in this phase.
+
+    - backend `sqlite`: the home IS the KG store file (`<plane>/abstractmemory/kg.sqlite3`, or the
+      `ABSTRACTGATEWAY_MEMORY_STORE_PATH` override), so `/kg/query`, `/memory/*` and the runtime's
+      memory effects read and write one file;
+    - backend `lancedb` (the default) or `memory`: LanceDB cannot carry the graph (no revisions,
+      `close`/`narrow` unsupported), so the home is `<plane>/abstractmemory/memory.sqlite3`, beside
+      the LanceDB KG, created on first write through `MemoryFacade.open_mind`.
+
+    One SQLite home per plane with LanceDB as an optional accelerator is AbstractMemory backlog 0057;
+    moving the gateway default off LanceDB (and importing existing plane KG data into the home) waits
+    for the operator's decision 2 of the memory transition. Until then the LanceDB KG and the home
+    are two stores. Entity minds (`entities/<slug>/memory.sqlite3`) are their own homes, not this one.
+    """
+    if config.backend == "sqlite" and config.path is not None:
+        return Path(config.path)
+    if config.base_dir is None:
+        raise ValueError("resolve_memory_home needs a config resolved for a plane (resolve_memory_store_config(base_dir=...))")
+    return Path(config.base_dir) / "abstractmemory" / "memory.sqlite3"
+
+
+def open_memory_home(config: GatewayMemoryStoreConfig, *, create: bool, **stores: Any) -> Optional[Any]:
+    """The plane's `MemoryFacade` over its home (`resolve_memory_home`) and the runtime `stores` that
+    hold its ledger sources (`ledger_store`, `run_store`, `artifact_store`, ...). With `create=False`
+    a home that does not exist yet is not created: None (a read never makes files). The caller closes
+    `facade.journal` and `facade.store`."""
+    home = resolve_memory_home(config)
+    if not home.exists():
+        if not create:
+            return None
+        home.parent.mkdir(parents=True, exist_ok=True)
+    return _memory_facade().MemoryFacade.open_mind(home, **stores)
+
+
+class PlaneMemoryHome:
+    """The plane's memory home, opened ONCE and kept for the service's lifetime (architect review C1).
+
+    Opening a home (`MemoryFacade.open_mind`) touches the file's schema and so waits for any writer's lock
+    (a per-request open stalled 1.9 s behind a 2 s writer and failed after 5 s behind a 7 s one); one open
+    per service makes every later read a plain read. The home does not depend on the loaded bundles, so a
+    host reload keeps it; the service closes it at shutdown (`service._stop_gateway_service_instance`). `get` answers
+    None while the home does not exist (a read never creates it) and re-opens if the resolved path changes.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._path: Optional[Path] = None
+        self._facade: Any = None
+
+    def get(self, config: GatewayMemoryStoreConfig, **stores: Any) -> Optional[Any]:
+        home = resolve_memory_home(config)
+        with self._lock:
+            if self._facade is not None and self._path == home:
+                return self._facade
+            if not home.exists():
+                return None
+            previous = self._facade
+            self._facade = open_memory_home(config, create=False, **stores)
+            self._path = home
+        if previous is not None:
+            _close_facade(previous)
+        return self._facade
+
+    def close(self) -> None:
+        with self._lock:
+            facade, self._facade, self._path = self._facade, None, None
+        if facade is not None:
+            _close_facade(facade)
+
+
+def _close_facade(facade: Any) -> None:
+    for part in (facade.journal, facade.store):
+        close = getattr(part, "close", None)
+        if callable(close):
+            close()
+
+
+def _memory_facade() -> Any:
+    """The runtime's AbstractMemory facade module (runtime ADR 0011; gateway ADR 0001): the store
+    classes are its re-exports, never a direct `abstractmemory` import."""
+    from abstractruntime.integrations.abstractmemory import memory_facade
+
+    return memory_facade
 
 
 def memory_store_exists(config: GatewayMemoryStoreConfig) -> bool:
@@ -121,14 +250,26 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
     resolved_backend = _normalize_backend(backend)
     class_name = _BACKEND_CLASS_NAMES[resolved_backend]
     try:
-        import abstractmemory  # type: ignore
-    except Exception as e:  # pragma: no cover
+        memory_facade = _memory_facade()
+    except ImportError as e:
+        # The runtime predates its AbstractMemory facade: name the runtime floor (as the host-build
+        # RuntimeTooOld check does), not AbstractMemory.
+        from .live_deltas import ABSTRACTRUNTIME_FLOOR
+
         return (
-            "AbstractMemory is not available. Install/repair the base Gateway environment "
-            f"with `pip install abstractgateway`. Import error: {e}"
+            f"this gateway needs abstractruntime>={ABSTRACTRUNTIME_FLOOR} (its AbstractMemory facade, "
+            "abstractruntime.integrations.abstractmemory.memory_facade); the installed runtime lacks it. "
+            f"Upgrade it: pip install -U 'abstractruntime>={ABSTRACTRUNTIME_FLOOR}'. Import error: {e}"
+        )
+    try:
+        store_class = getattr(memory_facade, class_name, None)
+    except Exception as e:  # the facade's install hint: AbstractMemory itself is missing or too old
+        return (
+            "AbstractMemory is not available (the gateway needs AbstractMemory>=0.4.0 through AbstractRuntime). "
+            f"Install/repair the base Gateway environment with `pip install abstractgateway`. Import error: {e}"
         )
 
-    if getattr(abstractmemory, class_name, None) is None:
+    if store_class is None:
         return (
             f"Memory backend '{resolved_backend}' requires AbstractMemory class `{class_name}`, "
             "but the installed AbstractMemory package does not expose it. Install a compatible "
@@ -154,9 +295,7 @@ def _memory_store_class(backend: str) -> Any:
     if reason:
         raise RuntimeError(reason)
 
-    import abstractmemory  # type: ignore
-
-    return getattr(abstractmemory, _BACKEND_CLASS_NAMES[resolved_backend])
+    return getattr(_memory_facade(), _BACKEND_CLASS_NAMES[resolved_backend])
 
 
 def _normalize_embedder(embedder: Optional[Any]) -> Optional[Any]:
@@ -223,11 +362,14 @@ def open_gateway_memory_store(
     backend: Optional[str] = None,
     path: Optional[Path | str] = None,
     require_vector: Optional[bool] = None,
+    with_journal: bool = False,
 ) -> GatewayMemoryStoreResolution:
     """Open an AbstractMemory TripleStore selected by Gateway config.
 
     Gateway owns backend/path selection. AbstractMemory owns the store classes
-    and query semantics.
+    and query semantics. `with_journal`: with the `sqlite` backend also open the
+    `SQLiteJournal` on the same file (the plane home's journal), so MEMORY_REVISE
+    closures are journaled; other backends have no journal (None).
     """
 
     config = resolve_memory_store_config(
@@ -238,6 +380,7 @@ def open_gateway_memory_store(
     )
 
     warnings: list[str] = []
+    journal: Any = None
     store_embedder = _normalize_embedder(embedder)
     has_embedder = store_embedder is not None
 
@@ -263,6 +406,8 @@ def open_gateway_memory_store(
             raise RuntimeError("SQLite memory backend requires a store path")
         config.path.parent.mkdir(parents=True, exist_ok=True)
         store = SQLiteTripleStore(config.path)
+        if with_journal:
+            journal = _memory_facade().SQLiteJournal(config.path)
         capabilities = {
             "persistent": True,
             "structured_query": True,
@@ -287,9 +432,10 @@ def open_gateway_memory_store(
 
     if config.require_vector and not bool(capabilities.get("semantic_query")):
         try:
-            close = getattr(store, "close", None)
-            if callable(close):
-                close()
+            for part in (journal, store):
+                close = getattr(part, "close", None)
+                if callable(close):
+                    close()
         finally:
             raise RuntimeError(
                 f"Memory backend '{config.backend}' does not satisfy ABSTRACTGATEWAY_MEMORY_REQUIRE_VECTOR=1 "
@@ -301,4 +447,5 @@ def open_gateway_memory_store(
         config=config,
         capabilities=capabilities,
         warnings=warnings,
+        journal=journal,
     )

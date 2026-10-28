@@ -309,6 +309,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/embeddings"),
     ("POST", "/api/gateway/sandbox/generate"),
     ("POST", "/api/gateway/kg/query"),  # read-shaped POST (query in body)
+    # Memory graph (routes/memory.py, backlog 0948): read-shaped POSTs over the caller's plane; the
+    # handler applies the owner rule itself (a non-admin reads only its derivable owners, 403 otherwise).
+    ("POST", "/api/gateway/memory/query"),
+    ("POST", "/api/gateway/memory/sources/reconstruct"),
     # --- uploads / reports: principal-scoped stores ------------------------
     ("POST", "/api/gateway/attachments/upload"),
     ("POST", "/api/gateway/bugs/report"),
@@ -677,6 +681,8 @@ def test_served_surface_user_level_writes_pass_authorization(
         ("POST", "/api/gateway/attachments/upload"),
         ("POST", "/api/gateway/runs/start"),
         ("POST", "/api/gateway/kg/query"),
+        ("POST", "/api/gateway/memory/query"),
+        ("POST", "/api/gateway/memory/sources/reconstruct"),
         ("POST", "/api/gateway/visualflows"),
         ("POST", "/api/gateway/entities/Nobody/chat/open"),
     ]

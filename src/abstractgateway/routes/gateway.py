@@ -55,10 +55,12 @@ from abstractruntime.storage.artifacts import build_artifact_descriptor_payload
 from ..work_pools import off_loop
 from ..file_cache import FileVersionCache, listing as file_listing
 from ..memory_store import (
+    global_memory_owner_id,
     memory_backend_unavailable_reason,
     memory_store_exists,
     open_gateway_memory_store,
     resolve_memory_store_config,
+    session_memory_owner_id,
 )
 from ..embeddings_config import resolve_embedding_config
 from ..core_config import (
@@ -126,6 +128,7 @@ from ..security.sessions import (
 from ..security.principal import GatewayPrincipal, current_gateway_principal, local_admin_principal, safe_principal_component
 from ..service import (
     backlog_exec_runner_status,
+    caller_data_dir,
     gateway_multi_user_enabled,
     get_gateway_service,
     invalidate_gateway_service_for_runtime,
@@ -15316,8 +15319,12 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
 
 
 @router.post("/kg/query", response_model=KGQueryResponse)
-async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
-    """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global."""
+async def kg_query(req: KGQueryRequest, request: Request) -> KGQueryResponse:
+    """Query the persisted AbstractMemory KG store (ground truth), scoped to run/session/global.
+
+    Owner rule (operator decision 5, `memory_access.caller_owner_ids`): an admin reads every owner; any
+    other principal reads only its own (its runs and sessions, the entities it created, its plane's
+    global owner when the plane is its own). A foreign `owner_id` and `all_owners` are admin-only (403)."""
     svc = get_gateway_service()
     rs = svc.host.run_store
 
@@ -15337,6 +15344,16 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         raise HTTPException(status_code=400, detail="owner_id is not supported when scope=all")
     if owner_override and all_owners:
         raise HTTPException(status_code=400, detail="all_owners cannot be combined with owner_id")
+
+    from ..memory_access import caller_owner_ids, owner_forbidden
+
+    owners_allowed = await off_loop(
+        "light", caller_owner_ids, _principal_from_request(request), svc, run_id=rid, session_id=sid
+    )
+    if owners_allowed is not None and all_owners:
+        raise owner_forbidden("all_owners needs an admin principal")
+    if owners_allowed is not None and owner_override and owner_override not in owners_allowed:
+        raise owner_forbidden()
 
     memory_config = resolve_memory_store_config(base_dir=Path(svc.stores.base_dir))
     has_query_text = isinstance(req.query_text, str) and bool(req.query_text.strip())
@@ -15364,7 +15381,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
         )
 
     try:
-        from abstractmemory import TripleQuery  # type: ignore
+        from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery  # type: ignore
     except Exception as e:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"AbstractMemory is not available: {e}")
 
@@ -15387,25 +15404,13 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
         return loaded
 
-    _SAFE_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
-
     def _session_owner_id(session_id: str) -> str:
-        sid2 = str(session_id or "").strip()
-        if not sid2:
-            raise HTTPException(status_code=400, detail="session_id must be a non-empty string")
-        if _SAFE_RUN_ID_RE.match(sid2):
-            oid = f"session_memory_{sid2}"
-            if _SAFE_RUN_ID_RE.match(oid):
-                return oid
-        digest = hashlib.sha256(sid2.encode("utf-8")).hexdigest()[:32]
-        return f"session_memory_sha_{digest}"
+        try:
+            return session_memory_owner_id(session_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
-    def _global_owner_id() -> str:
-        raw = os.environ.get("ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID")
-        rid2 = str(raw or "").strip()
-        if rid2 and _SAFE_RUN_ID_RE.match(rid2):
-            return rid2
-        return "global_memory"
+    _global_owner_id = global_memory_owner_id
 
     def _query_scope(*, store: Any, scope_label: str, owner_id: Optional[str]) -> list[Dict[str, Any]]:
         q = TripleQuery(
@@ -15499,6 +15504,9 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
                     owners.append(("global", _global_owner_id()))
                     warnings.append("run scope omitted (no run_id available)")
 
+                if owners_allowed is not None:
+                    warnings.extend(f"{label}: not yours on this runtime, left out" for label, oid in owners if oid not in owners_allowed)
+                    owners = [(label, oid) for label, oid in owners if oid in owners_allowed]
                 for label, oid in owners:
                     try:
                         items.extend(_query_scope(store=store, scope_label=label, owner_id=oid))
@@ -15532,6 +15540,8 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
                             resolved_owner_id = resolve_scope_owner_id(run, scope="session", run_store=rs)
                     else:
                         raise HTTPException(status_code=400, detail=f"Unsupported scope: {scope}")
+                    if owners_allowed is not None and resolved_owner_id not in owners_allowed:
+                        raise owner_forbidden()
 
                 items = _query_scope(store=store, scope_label=scope, owner_id=None if all_owners else resolved_owner_id)
             except HTTPException:
@@ -18805,7 +18815,9 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
     try:
-        base_dir = gateway_data_dir_from_env()
+        # The caller's plane (the store `/kg/query` will open for this principal), never the
+        # root data folder: a non-admin account must see its own store, not the operator's.
+        base_dir = caller_data_dir()
         cfg = resolve_memory_store_config(base_dir=base_dir)
         backend = cfg.backend
         embedding_error = ""

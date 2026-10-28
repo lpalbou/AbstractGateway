@@ -258,7 +258,7 @@ def _utc_now_iso() -> str:
 
 
 def _stream_constants() -> tuple:
-    from abstractmemory.replay import REPLAY_FAMILIES, REPLAY_STREAM, REPLAY_STREAM_VERSION, RESERVED_FAMILIES
+    from abstractruntime.integrations.abstractmemory.memory_facade import REPLAY_FAMILIES, REPLAY_STREAM, REPLAY_STREAM_VERSION, RESERVED_FAMILIES
 
     return REPLAY_STREAM, REPLAY_STREAM_VERSION, REPLAY_FAMILIES, RESERVED_FAMILIES
 
@@ -606,7 +606,7 @@ def _operator_diary_display(home: EntityHome, block: Dict[str, Any], cache: Dict
     if cached is not None:
         return cached
     try:
-        from abstractmemory.records import resolve_digest_assertion
+        from abstractruntime.integrations.abstractmemory.memory_facade import resolve_digest_assertion
 
         assertion = resolve_digest_assertion(home.store, gid)
         attrs = assertion.attributes if assertion is not None and isinstance(assertion.attributes, dict) else {}
@@ -703,7 +703,7 @@ def _operator_exchange_title(home: EntityHome, block: Dict[str, Any], cache: Dic
         return cached
     out = block
     try:
-        from abstractmemory.records import resolve_digest_assertion
+        from abstractruntime.integrations.abstractmemory.memory_facade import resolve_digest_assertion
 
         assertion = resolve_digest_assertion(home.store, gid)
         digest = str(getattr(assertion, "object", "") or "") if assertion is not None else ""

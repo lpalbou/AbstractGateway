@@ -5,7 +5,7 @@ import os
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -66,6 +66,14 @@ class GatewayService:
     # of the process environment (names only, never values) — the console's
     # env-inventory read; the warning lines derived from it ride boot_warnings.
     env_scan: Optional[Dict[str, Any]] = None
+    # The plane's memory home for /memory/* (memory_store.PlaneMemoryHome): opened once, closed at shutdown.
+    memory_home: Any = field(default_factory=lambda: _plane_memory_home())
+
+
+def _plane_memory_home() -> Any:
+    from .memory_store import PlaneMemoryHome
+
+    return PlaneMemoryHome()
 
 
 _service: Optional[GatewayService] = None
@@ -562,6 +570,22 @@ def _runner_needs_restart(runner: Any) -> bool:
         return str(st.get("status")) not in {"active", "standby_peer_active", "starting", "paused"}
     except Exception:
         return False
+
+
+def caller_data_dir() -> Path:
+    """The data folder (`config.data_dir`, = `stores.base_dir`) of the service THIS request is
+    served by, computed with the same rule as `get_gateway_service()` but without building it:
+    the configured gateway data folder when user accounts are off or no principal is bound,
+    else the principal's runtime folder (`<data>/users/<tenant>/<runtime>/runtime`), or for an
+    admin acting on an entity plane, that owner's. Cheap (no service build), so descriptors
+    computed off a request can name the caller's plane instead of the root."""
+    principal = current_gateway_principal()
+    if principal is None or not gateway_multi_user_enabled():
+        return Path(GatewayHostConfig.from_env().data_dir)
+    owner = _ENTITY_PLANE_OWNER.get()
+    if owner is not None and principal.is_admin():
+        principal = owner
+    return Path(_config_for_principal(principal).data_dir)
 
 
 def plane_for_principal(principal: GatewayPrincipal, *, data_dir: Optional[Path] = None) -> Path:
@@ -1860,6 +1884,7 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         registry = getattr(service, "entity_registry", None)
         if registry is not None:
             _stage("entity homes close_all", registry.close_all)
+        _stage("memory home close", service.memory_home.close)
     except Exception:
         log.warning("shutdown: unexpected failure in stop sequence", exc_info=True)
 

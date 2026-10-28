@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # ONE SOURCE for the identity floor (memory's round-7 hardening; the clamp
 # lesson applied): the engine exports the constant, the gate enforces the
 # CHANNEL policy against the imported value — no second copy to drift.
-from abstractmemory.seam import SELF_FRACTION_FLOOR as SUMMON_IDENTITY_FLOOR
+from abstractruntime.integrations.abstractmemory.memory_facade import SELF_FRACTION_FLOOR as SUMMON_IDENTITY_FLOOR
 
 from .entities import DIARY_SCOPE, LIFE_SCOPE, SELF_SCOPE, EntityHome, EntityRegistry
 
@@ -184,8 +184,8 @@ SUMMON_POSTURE_BUDGET: Dict[str, Any] = {
 # ACCEPTABLE ceiling gets the same #RECOMMENDED-class soft warning and
 # proceeds. One source (memory's exports; same discipline as the identity
 # floor). The legacy alias name stays so importers keep working.
-from abstractmemory import ENTITY_CONTEXT_ACCEPTABLE as SUMMON_CONTEXT_ACCEPTABLE_TOKENS  # noqa: E402
-from abstractmemory import ENTITY_CONTEXT_FLOOR as SUMMON_CONTEXT_FLOOR_TOKENS  # noqa: E402
+from abstractruntime.integrations.abstractmemory.memory_facade import ENTITY_CONTEXT_ACCEPTABLE as SUMMON_CONTEXT_ACCEPTABLE_TOKENS  # noqa: E402
+from abstractruntime.integrations.abstractmemory.memory_facade import ENTITY_CONTEXT_FLOOR as SUMMON_CONTEXT_FLOOR_TOKENS  # noqa: E402
 
 SUMMON_CONTEXT_RECOMMENDED_TOKENS = SUMMON_CONTEXT_FLOOR_TOKENS
 
@@ -220,7 +220,7 @@ def summon_budget_profile(
     on the sizing input, never a raise)."""
     import dataclasses
 
-    from abstractmemory import ENTITY_CONTEXT_RECOMMENDED, entity_recall_budget
+    from abstractruntime.integrations.abstractmemory.memory_facade import ENTITY_CONTEXT_RECOMMENDED, entity_recall_budget
 
     from .entity_chat import (
         DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW,

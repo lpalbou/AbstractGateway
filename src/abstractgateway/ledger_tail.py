@@ -11,10 +11,13 @@ incremental reads:
   #FALLBACK). Replay equivalence is the contract: the sequence of records a
   tail produces from index 0 equals `list()` — pinned by tests.
 - `SeqLedgerTail`: cursor read over a store exposing `list_after(run_id,
-  after, limit)` (the SQLite backend; seq is dense 1..N per run, so the
-  record-index cursor and seq coincide — also test-pinned).
-- `ListSliceTail`: honest fallback for stores with neither surface (e.g.
-  in-memory test doubles): `list()[cursor:]` per read — the pre-0075
+  after, limit)`. Since AbstractRuntime 0.14.0 every LedgerStore pages by its
+  persisted `seq` (SQLite by its primary key, JSONL through its own line-offset
+  index, the decorators passing it through), so the gateway's real chain
+  (Offloading(Observable(Jsonl|Sqlite))) resolves here; seq is dense 1..N per
+  run, so the record-index cursor and seq coincide — test-pinned.
+- `ListSliceTail`: honest fallback for stores with neither surface (an older or
+  foreign store with only `list()`): `list()[cursor:]` per read — the pre-0075
   behavior, correct just not cheap.
 
 Cursor semantics (wire-compatible with the existing API): the cursor is the
@@ -89,8 +92,13 @@ class JsonlLedgerTail:
     # pays the same memory).
     _READ_MAX_BYTES = 8 * 1024 * 1024
 
-    def __init__(self, path: Path, *, start_index: int = 0) -> None:
+    def __init__(self, path: Path, *, start_index: int = 0, number_records: bool = False) -> None:
         self._path = Path(path)
+        # Row addresses (AbstractRuntime 0.15.0, ADR 0011): the JSONL store's list() gives every record
+        # `seq` = its 1-based position in the file (recovered records included, added on read, never
+        # persisted). The tail's record index IS that position, so it stamps the same key and stays
+        # replay-equivalent to list() on both sides of that change.
+        self._number_records = bool(number_records)
         self._offset = 0  # byte offset of the first UNCONSUMED complete line
         self._index = 0  # record index produced so far (== wire cursor)
         self._skip = max(0, int(start_index))  # catch-up records to swallow
@@ -189,7 +197,7 @@ class JsonlLedgerTail:
                 self._index += 1
                 if not (isinstance(record.get("seq"), int) and not isinstance(record.get("seq"), bool)):
                     # A line written before `seq` existed: numbered by position, as the store's
-                    # list() numbers it (AbstractRuntime ADR 0009), so tail == list().
+                    # list() numbers it (AbstractRuntime ADR 0011), so tail == list().
                     record["seq"] = self._index
                 out.append((self._index, record))
         # NOTE: max_records is deliberately not enforced here — the byte
@@ -320,7 +328,9 @@ def find_observable(store: Any) -> Optional[Any]:
 
 
 def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any:
-    """Pick the cheapest correct incremental reader for this store chain.
+    """Pick the cheapest correct incremental reader for this store chain: the outermost layer that offers
+    one wins. The gateway chain's outer layers offer `list_after` (AbstractRuntime >= 0.14.0), so it reads by
+    seq; a bare JSONL backend (no decorators) is read by its byte tail, numbering `seq` like its list().
 
     IMPORTANT (offloading contract): list() on the gateway chain serves
     refs-as-refs (OffloadingLedgerStore deliberately does NOT rehydrate on
@@ -336,11 +346,15 @@ def resolve_ledger_tail(store: Any, run_id: str, *, start_index: int = 0) -> Any
             try:
                 p = path_fn(str(run_id))
                 if isinstance(p, Path):
-                    return JsonlLedgerTail(p, start_index=start_index)
+                    # A backend with row addresses (`get_record`, AbstractRuntime 0.15.0) numbers what
+                    # list() returns; the tail mirrors it (see JsonlLedgerTail).
+                    return JsonlLedgerTail(
+                        p, start_index=start_index, number_records=callable(getattr(layer, "get_record", None))
+                    )
             except Exception:
                 pass
     # SQLite backend: seq-cursor read. Every LedgerStore has `list_after` now (AbstractRuntime
-    # ADR 0009) and the decorators delegate it; only a backend with its own (indexed) read is
+    # ADR 0011) and the decorators delegate it; only a backend with its own (indexed) read is
     # cheaper than the plain slice: the base default is `list()` then filter.
     backend = chain[-1] if chain else store
     if _native_list_after(backend):

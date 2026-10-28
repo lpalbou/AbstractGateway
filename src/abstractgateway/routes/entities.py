@@ -2078,7 +2078,7 @@ def get_entity_embedding_status(name: str) -> Dict[str, Any]:
     pin: Optional[Dict[str, Any]] = None
     pin_error: Optional[str] = None
     try:
-        from abstractmemory import read_embedding_pin
+        from abstractruntime.integrations.abstractmemory.memory_facade import read_embedding_pin
 
         raw = read_embedding_pin(registry.entities_dir / manifest.slug / "memory.sqlite3")
         if isinstance(raw, dict):
@@ -2473,7 +2473,7 @@ def entity_cognition(name: str) -> Dict[str, Any]:
         # resting with no process. wake_reasons is limit-clipped at 20 and
         # structurally cannot see ">20" — never a threshold source.
         try:
-            from abstractmemory import DRIVE_PRESSURE_BOUND, drive_pressure as _engine_pressure
+            from abstractruntime.integrations.abstractmemory.memory_facade import DRIVE_PRESSURE_BOUND, drive_pressure as _engine_pressure
 
             import os as _os_dp
 
@@ -4654,7 +4654,7 @@ def promote_entity_candidate(name: str, record_id: str, req: PromoteCandidateReq
     distinct origins). The engine refuses thin evidence loudly — the door
     passes its human-written error through."""
     try:
-        from abstractmemory import promote_candidate
+        from abstractruntime.integrations.abstractmemory.memory_facade import promote_candidate
     except ImportError:
         raise HTTPException(status_code=501, detail="this engine predates candidate review — upgrade abstractmemory")
     registry = _registry()
@@ -4682,7 +4682,7 @@ def reject_entity_candidate(name: str, record_id: str, req: RejectCandidateReque
     """The honest no: lifecycle=rejected with the mandatory reason; the
     record stays indexed unless hide=true (a separate, stated act)."""
     try:
-        from abstractmemory import reject_candidate
+        from abstractruntime.integrations.abstractmemory.memory_facade import reject_candidate
     except ImportError:
         raise HTTPException(status_code=501, detail="this engine predates candidate review — upgrade abstractmemory")
     registry = _registry()

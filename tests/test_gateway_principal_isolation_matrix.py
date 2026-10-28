@@ -313,6 +313,15 @@ def test_alice_bob_kg_memory_is_isolated(tmp_path: Path, monkeypatch: pytest.Mon
     with client:
         alice_headers = _create_user(client, "alice")
         bob_headers = _create_user(client, "bob")
+        # Memory ownership is strict (operator decision 5): a session is alice's because one of its
+        # runs is hers, so she starts one in it.
+        _write_min_bundle(bundles_dir=tmp_path / "runtime" / "users" / "default" / "alice" / "flows")
+        started = client.post(
+            "/api/gateway/runs/start",
+            headers=alice_headers,
+            json={"bundle_id": "iso-bundle", "flow_id": "root", "session_id": "shared-session", "input_data": {"prompt": "hi"}},
+        )
+        assert started.status_code == 200, started.text
 
         from abstractmemory import SQLiteTripleStore, TripleAssertion
 
@@ -346,9 +355,10 @@ def test_alice_bob_kg_memory_is_isolated(tmp_path: Path, monkeypatch: pytest.Mon
             json={"scope": "session", "session_id": "shared-session", "limit": 25},
         )
         assert alice_kg.status_code == 200, alice_kg.text
-        assert bob_kg.status_code == 200, bob_kg.text
         assert any(item.get("subject") == "ex:alice-secret" for item in alice_kg.json().get("items") or [])
-        assert all(item.get("subject") != "ex:alice-secret" for item in bob_kg.json().get("items") or [])
+        # bob has no run in that session id: it is not his (403), and alice's plane is not his either.
+        assert bob_kg.status_code == 403, bob_kg.text
+        assert "ex:alice-secret" not in bob_kg.text
 
 
 def test_regular_user_discovery_and_workspace_helpers_do_not_advertise_admin_operations(
