@@ -13,8 +13,7 @@
 
 The console vendored the kit islands at ui-kit 0.9.1 (`kit_sources_sha256` `feed5196...`) while the
 released kit is ui-kit 0.9.4 (AbstractUIC 0.8.2). The console therefore still listed each Qwen3-TTS
-voice twice in the voice picker and missed the kit's Create-a-voice styling, approval card and
-duration/badge polish. Re-vendored from the released source; no console code changes.
+voice twice in the voice picker. Re-vendored from the released source; no console code changes.
 
 ## What changed
 
@@ -41,3 +40,15 @@ duration/badge polish. Re-vendored from the released source; no console code cha
   `test_vendored_islands_match_the_kit_sources` against the same kit; the previous `console_themes.py`
   failed `test_generated_module_matches_the_kit_source_exactly`.
 - Full suite: see the 0.17.1 PR.
+
+## Findings left open
+
+- The bundle now carries the kit's Create-a-voice / Manage-voices styling, the panel-chat tool approval
+  card and the shared duration format, but the console renders none of them: its voice pickers
+  (`console.py` default-voice and entity pickers) pass no `creation` / `voiceLibrary`, the Sandbox chat
+  island gets no `interaction` and its messages carry no `toolActivity` / `metrics`, and the console
+  formats its own chip (`formatSandboxDuration`, "205.8s" style). Adopting them is console work
+  (found by the adversarial review of this release).
+- `tests/kit_release.py` looks for the tag `v<ui-kit version>` (`v0.9.4`) while AbstractUIC tags its
+  root version (`v0.8.2`), so without `ABSTRACTUIC_SRC` the drift pins read the checkout as-is, not the
+  tag (pre-existing).

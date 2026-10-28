@@ -9,19 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.1] - 2026-10-28
 
-Console: ui-kit islands 0.9.1 -> 0.9.4: voice picker lists each voice once, Create-a-voice styled, approval card and
-tool-row polish (backlog 0956). No route, schema or dependency change.
+Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956). No route, schema or dependency change.
 
 ### Changed
 
 - **Console islands resynced from the released kit** (`console_islands.py`: `@abstractframework/ui-kit` 0.9.4 and
   `@abstractframework/panel-chat` 0.6.2, AbstractUIC 0.8.2, tag `v0.8.2`; was ui-kit 0.9.1). What the console shows
-  differently: the voice picker (`mountVoiceSettings`, the capability editor's `output.voice` and the entity tab) lists
-  each Qwen3-TTS preset voice once instead of once per model; Create a voice / Manage voices are styled cards with the
-  kit's segmented mode switch; the Sandbox chat's tool approval card names its real scope buttons with one short
-  summary line and a disclosure, and tool rows and turn chips use one duration format. `console_themes.py` records the
-  new `theme.css` hash (the 21 theme blocks are unchanged).
+  differently: the voice picker (`mountVoiceSettings`: the capability editor's `output.voice` and the entity tab) lists
+  each Qwen3-TTS preset voice once instead of once per model. The bundle also carries the kit's Create-a-voice styling,
+  tool approval card and duration-format polish, but the console does not render those surfaces today (its voice
+  pickers pass no `creation` / `voiceLibrary`, its Sandbox chat has no approval card or tool rows and formats its own
+  duration chip). `console_themes.py` records the new `theme.css` hash (the 21 theme blocks are unchanged).
 
+## [0.17.0] - 2026-10-28
 
 Memory graph routes over AbstractRuntime 0.15.0's memory facade (backlog 0948). Requires **AbstractRuntime 0.15.0**
 and **AbstractMemory 0.4.0** (`abstractmemory.graph`).
