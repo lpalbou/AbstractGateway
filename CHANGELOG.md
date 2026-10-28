@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-28
+
+Memory graph routes over AbstractRuntime 0.15.0's memory facade (backlog 0948). Requires **AbstractRuntime 0.15.0**
+and **AbstractMemory 0.4.0** (`abstractmemory.graph`).
+
+Upgrade notes (one way):
+
+- AbstractMemory 0.4.0 re-encodes a SQLite home's vectors on first write; a 0.3.x reader then finds no vectors (zero
+  semantic hits, no error). Every process sharing a plane moves to AbstractMemory 0.4.0 together (the `<0.4` cap of
+  0.16.0 is lifted here).
+- `/kg/query` is now owner-scoped for non-admins (see below): a client that read another principal's `owner_id` or
+  `all_owners` on a shared plane now gets 403 `owner_forbidden`.
+
+### Added
+
 - **Memory graph routes** (backlog 0948, memory transition S5): `POST /api/gateway/memory/query`, `GET /api/gateway/memory/{memory_id}/history`, `GET /api/gateway/memory/{memory_id}/sources?transitive=`, `POST /api/gateway/memory/sources/reconstruct` (`{"ref": SourceRef}` -> `ok` / `source_gone` / `unsupported`, 422 for a malformed ref) and `GET /api/gateway/memory/derived?ref_key=step:<run_id>%23<seq>`, read through AbstractRuntime's memory facade from the plane's memory home (`memory_store.resolve_memory_home`: the KG file with the `sqlite` backend, else `<plane>/abstractmemory/memory.sqlite3`). Strict ownership (operator decision 5; `memory_access.caller_owner_ids`, shared with `/kg/query`): an admin reads every owner; anyone else reads only its own runs (the host-stamped `_meta.origin.actor`), its sessions (one of their runs is its own), the entities it created (manifest `created_by`, delegation to the creator) and its own plane's global owner (planes are per account); a foreign `owner_id` and `all_owners` are admin-only, 403 `owner_forbidden` otherwise (the message never names the other owner): `sources?transitive=` walks only through the caller's own memories, `history` hides another owner's ids, `sources/reconstruct` serves only a ref one of the caller's memories names; every list bounded (`limit` <= 500, `truncated`, `withheld`), a `run` source bounded by `limit` (<= 1000). The plane is not a sharing scope. **Two stores until decision 2:** with the default `lancedb` backend `/memory/*` reads `<plane>/abstractmemory/memory.sqlite3`, which nothing in the gateway writes yet (MEMORY_REVISE gets the LanceDB store and fails naming AbstractMemory 0057), while `/kg/query` reads LanceDB; with `sqlite` they are one file, and the bundle host now hands MEMORY_REVISE the store's journal (closures journaled), the plane's `runtime_id` (stamped on every ref, checked on reconstruction) and its artifact store. See [api.md](docs/api.md#memory-graph).
 - **AbstractMemory through the runtime facade** (ADR 0001): `tests/test_gateway_import_boundary.py` now fails on a direct `abstractmemory` import outside an exact burn-down list, and on a stale entry. The 34 direct imports (8 files) are down to 0 and the list is empty: the KG store classes (`memory_store.py`), `TripleQuery` (`/kg/query`, entity replay, entities), the entity wake reads (`open_questions`/`open_problems`/`open_ideas`) and every other entity-side name come from `abstractruntime.integrations.abstractmemory.memory_facade`. `EntityHome.wake_reasons` no longer degrades a missing read to a `#FALLBACK` warning: the runtime floor carries all three.
 - The SSE ledger stream's JSONL byte tail gives every record `seq` (its 1-based position) when the runtime's ledger does (AbstractRuntime 0.15.0 `list()`), so the stream stays equal to the replay.
@@ -14,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/memory/*` opens the plane's memory home once per service (`memory_store.PlaneMemoryHome`, closed at shutdown) instead of per request: a read no longer waits for, or fails behind, another writer's lock on the home.
 - **`/kg/query` applies the ownership rule** (operator decision 5): it used to let any principal of a plane read any `owner_id` there and `all_owners`. A non-admin now reads only its own owners (its runs, its sessions, the entities it created, its plane's global owner); a foreign `owner_id`, `all_owners`, or a `run_id`/`session_id` that is not the caller's is 403 `owner_forbidden`; `scope=all` keeps the caller's own owners only.
 - `/discovery/capabilities` `contracts.common.memory.path` names the caller's plane store (it named the root data folder's to every account); `kg/query`'s session/global owner ids are `memory_store.session_memory_owner_id` / `global_memory_owner_id`, pinned equal to the runtime's `resolve_scope_owner_id` by a test.
-- Requires **AbstractRuntime 0.15.0** (0.14.0 was released without the memory facade) (the memory facade, `LedgerStore.get_record`) and **AbstractMemory 0.4.0** (`abstractmemory.graph`): `pyproject.toml` floors raised. This release waits until both are on PyPI (root ADR-0034).
+- Requires **AbstractRuntime 0.15.0** (the memory facade, `LedgerStore.get_record`; 0.14.0 has neither) and **AbstractMemory 0.4.0** (`abstractmemory.graph`): `pyproject.toml` floors raised.
 
 ## [0.16.0] - 2026-10-28
 
