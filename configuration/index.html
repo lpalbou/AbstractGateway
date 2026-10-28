@@ -1891,11 +1891,11 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.14.0</code> (the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- <code>AbstractRuntime&gt;=0.15.0</code> (the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - <code>abstractcore&gt;=2.30.0</code> (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - <code>abstractvoice&gt;=0.18.2</code> (the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - <code>abstractagent&gt;=0.4.0</code> (the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
-- <code>AbstractMemory[lancedb]&gt;=0.3.0,&lt;0.4</code> (AbstractMemory 0.4.0 migrates its vector store one way; a later gateway release raises the cap)</p>
+- <code>AbstractMemory[lancedb]&gt;=0.4.0</code> (the memory graph, <code>abstractmemory.graph</code>)</p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>

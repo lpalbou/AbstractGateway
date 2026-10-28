@@ -1484,6 +1484,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#memory-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#models-and-engines" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2753,6 +2764,17 @@
     <span class="md-ellipsis">
       
         KG memory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory graph
       
     </span>
   </a>
@@ -5324,8 +5346,9 @@ from the music catalog routes, and treat the returned <code>child_run_id</code> 
   emit an event or upload the resulting audio artifact.</li>
 </ul>
 <h2 id="kg-memory">KG memory<a class="headerlink" href="#kg-memory" title="Permanent link">&para;</a></h2>
-<p><code>POST /api/gateway/kg/query</code> queries the configured AbstractMemory TripleStore.
-Gateway resolves the store through:</p>
+<p><code>POST /api/gateway/kg/query</code> queries the configured AbstractMemory TripleStore (opened through the
+AbstractRuntime memory facade). For the graph (history, sources, reconstruction) see
+<a href="#memory-graph">Memory graph</a>. Gateway resolves the store through:</p>
 <ul>
 <li><code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=lancedb|memory</code> (<code>sqlite</code> when the installed AbstractMemory build exposes <code>SQLiteTripleStore</code>)</li>
 <li><code>ABSTRACTGATEWAY_MEMORY_STORE_PATH</code></li>
@@ -5340,6 +5363,125 @@ support semantic recall.</p>
 installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.</p>
+<h2 id="memory-graph">Memory graph<a class="headerlink" href="#memory-graph" title="Permanent link">&para;</a></h2>
+<p><code>/api/gateway/memory/*</code> serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
+ledger provenance) through AbstractRuntime's memory facade
+(<code>abstractruntime.integrations.abstractmemory.memory_facade</code>); the gateway never imports AbstractMemory
+(ADR 0001). Requires AbstractRuntime 0.14.0 and AbstractMemory 0.4.0.</p>
+<p><strong>Plane and home.</strong> Every route reads the caller's plane (its service's data folder). The graph lives in
+the plane's memory HOME, one SQLite file:</p>
+<ul>
+<li>with <code>ABSTRACTGATEWAY_MEMORY_STORE_BACKEND=sqlite</code> the home IS the KG file <code>/kg/query</code> reads
+  (<code>&lt;plane&gt;/abstractmemory/kg.sqlite3</code>). The bundle host hands that same store, its journal (same file), the
+  plane's runtime id and artifact store to the runtime's memory effects, so a workflow's MEMORY_REVISE writes
+  what <code>/memory/*</code> serves, a <code>close</code> is journaled (ranked recall folds it), and every ref it stamps carries the
+  plane's <code>runtime_id</code>;</li>
+<li>with the default <code>lancedb</code> (or <code>memory</code>) the home is <code>&lt;plane&gt;/abstractmemory/memory.sqlite3</code>, beside the
+  LanceDB KG. <strong>Nothing in the gateway writes it yet</strong>: MEMORY_REVISE receives the LanceDB store and fails,
+  naming AbstractMemory backlog 0057. Until the plane store default moves to the SQLite home (memory transition
+  decision 2), <code>/kg/query</code> (LanceDB) and <code>/memory/*</code> (the home) serve two different stores; only a host writing
+  the home through the runtime facade (<code>MemoryFacade.open_mind</code>) fills it.</li>
+</ul>
+<p>A read never creates the home (an absent home answers empty, or 404 to a non-admin naming a memory id). The
+plane's service opens the home once, on the first <code>/memory/*</code> request that finds it, keeps it for its lifetime
+and closes it at shutdown, so a read never waits for another writer's lock to open the file (the first open
+after upgrading to AbstractMemory 0.4.0 runs its one-time vector upgrade inside that first request). Entity minds (<code>entities/&lt;slug&gt;/memory.sqlite3</code>) are not served here.</p>
+<p><strong>Owner rule</strong> (operator decision 5; <code>memory_access.caller_owner_ids</code>, the ONE rule <code>/kg/query</code> and every
+<code>/memory/*</code> route apply). A person owns their memory graph, an entity owns its own, and nobody reads another
+person's graph. The plane is a storage location, not a sharing scope.</p>
+<ul>
+<li>An admin reads every owner. So does every caller of a gateway without user accounts (one operator, one
+  world).</li>
+<li>Any other principal reads exactly its own owners:</li>
+<li>its runs: a <code>run_id</code> it names counts only when the run's <code>_meta.origin.actor</code> (stamped by the host on
+    <code>/runs/start</code>, never taken from the client; read on the run or its nearest ancestor) is
+    <code>"&lt;tenant&gt;:&lt;user&gt;"</code> of the principal. A run started by someone else, or with no recorded starter (a
+    legacy run), is 403; a missing run is 404. The run gives its run and session owners;</li>
+<li>its sessions: a <code>session_id</code> it names counts only when one of the session's runs (newest 200 in the
+    run index) is its own by the same test;</li>
+<li>the entities it created (entity -&gt; creator delegation): the owner id (<code>manifest.entity_id</code>) of every
+    entity home in its plane whose manifest <code>created_by</code> is the principal. An entity with no recorded
+    creator is the admin's only;</li>
+<li>its plane's global owner (<code>global_memory</code>, or <code>$ABSTRACTRUNTIME_GLOBAL_MEMORY_RUN_ID</code>). Planes are per
+    account: the users registry refuses a second account on a runtime id and the default runtime is the
+    operator's, so an account's <code>global_memory</code> is its own global memory (a ref stamped under the global
+    owner is the account's own). The rule still checks that the plane serving the request is the
+    principal's (its tenant and runtime id).</li>
+<li>Anything else is <code>403 {"detail": {"reason": "owner_forbidden", "message"}}</code>; the message never names the
+  owner it protects. An explicit <code>owner_id</code> that is not the caller's, and <code>all_owners</code>, are admin-only:
+  refused, never silently narrowed. <code>scope=all</code> expands to the caller's own owners only.</li>
+<li>A memory id of another owner is 403, an unknown one 404. Every route takes the optional <code>run_id</code> /
+  <code>session_id</code> (query parameters; in the body of <code>sources/reconstruct</code>) to name the caller's run or session.</li>
+<li><code>sources?transitive=true</code> walks the derivation lineage only through memories the caller may read; a parent
+  of another owner is not followed and is counted in <code>withheld</code>.</li>
+<li><code>history</code> cuts the memory ids an event names (<code>derived_from</code>, <code>replacement_ids</code>) to the readable ones and
+  counts the hidden ones in <code>withheld</code>.</li>
+<li><code>sources/reconstruct</code>: a non-admin reconstructs a ref only when a memory of one of its owners names it
+  directly (AbstractMemory's <code>MemoryGraph.names_ref</code>, one index probe; 403 otherwise, also for a ref nobody
+  names); an admin reconstructs any ref of its plane. AbstractMemory refuses a derivation across owners, so a
+  ref is never reachable through another owner's memory.</li>
+</ul>
+<p>Sharing a graph with another person, or topic-scoped access (a notebook shared with a team), is future work:
+today the only delegation is entity -&gt; creator.</p>
+<p><strong>Limitation (today's owner ids).</strong> An <code>owner_id</code> is not a principal: it is <code>session_memory_&lt;sid&gt;</code>,
+<code>global_memory</code>, a run id, or an entity id, strings derived from runs and sessions. The rule above maps a
+principal to the ids derived from ITS OWN runs and sessions (and its entities); a memory written under a
+session id that none of the principal's runs carries is not the principal's, whoever wrote it. <code>global_memory</code>
+is shared by everything that runs on the plane, by construction; it is one account's only because planes are
+per account. Making <code>owner_id</code> the principal and the scope its kind is pending an operator decision; the
+derivation lives in one function (<code>memory_access.caller_owner_ids</code>) so it changes in one place.</p>
+<p><strong>Bounds.</strong> Every list takes <code>limit</code> (default 200, at most 500) and answers <code>truncated: true</code> when it cut;
+what the owner rule hides is counted in <code>withheld</code> (<code>derived</code>, <code>sources</code>, <code>history</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Body / query</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /memory/query</code></td>
+<td>the <code>/kg/query</code> body (<code>scope</code>, <code>run_id</code>, <code>session_id</code>, <code>owner_id</code>, <code>subject</code>, <code>predicate</code>, <code>object</code>, <code>since</code>, <code>until</code>, <code>active_at</code>, <code>all_owners</code>, <code>order</code>), <code>limit</code> 1..500; <code>query_text</code> is refused (400: the home is structured-only)</td>
+<td><code>{ok, scope, owner_id, count, items: [assertion], truncated, warnings, home: {path, backend: "sqlite", exists}}</code></td>
+</tr>
+<tr>
+<td><code>GET /memory/{memory_id}/history</code></td>
+<td><code>limit</code>, <code>run_id</code>, <code>session_id</code></td>
+<td><code>{ok, memory_id, owner_id, count, items: [{event: asserted\|closed\|narrowed, at, revision_id, cause, detail}], truncated, withheld}</code> in record order</td>
+</tr>
+<tr>
+<td><code>GET /memory/{memory_id}/sources</code></td>
+<td><code>transitive</code> (default <code>true</code>: also the sources of the readable memories it was derived from), <code>limit</code>, <code>run_id</code>, <code>session_id</code></td>
+<td><code>{ok, memory_id, transitive, count, items: [SourceRef + key], truncated, withheld}</code></td>
+</tr>
+<tr>
+<td><code>POST /memory/sources/reconstruct</code></td>
+<td><code>{"ref": SourceRef, "run_id"?, "session_id"?, "limit"? (1..1000, default 200: ledger records of a</code>run<code>source)}</code></td>
+<td>the facade's answer, HTTP 200 for each: <code>{status: "ok", ref, kind, content, metadata}</code>, <code>{status: "partial", ref, kind, content, metadata, unresolved: [path]}</code> (a step row with a <code>$slim</code> marker or an offloaded leaf whose artifact is gone: never <code>ok</code> with a hole), <code>{status: "source_gone", ref, reason}</code>, <code>{status: "unsupported", ref, reason}</code>; 422 <code>invalid_source_ref</code> for a malformed ref; 403 <code>owner_forbidden</code> (see the owner rule)</td>
+</tr>
+<tr>
+<td><code>GET /memory/derived</code></td>
+<td><code>ref_key</code> (required), <code>limit</code>, <code>run_id</code>, <code>session_id</code></td>
+<td><code>{ok, ref, ref_key, count, items: [memory id], truncated, withheld}</code>: the memories naming that source, then those derived from them</td>
+</tr>
+</tbody>
+</table>
+<p>A SourceRef is a dict: <code>{"kind": "run", "run_id"}</code>, <code>{"kind": "step", "run_id", "seq"(int), "step_id"?}</code>,
+<code>{"kind": "artifact", "artifact_id", "run_id"?}</code>, <code>{"kind": "message", "message_id"}</code>,
+<code>{"kind": "event", "event_id", "stream"?}</code>, <code>{"kind": "diary_entry", "entry_id", "run_id"?}</code>, each with an
+optional <code>runtime_id</code>. Its key is <code>run:&lt;run_id&gt;</code>, <code>step:&lt;run_id&gt;#&lt;seq&gt;</code>, <code>artifact:&lt;id&gt;</code>, <code>message:&lt;id&gt;</code>,
+<code>event:&lt;id&gt;</code> or <code>diary_entry:&lt;id&gt;</code>; <code>derived</code> takes the key (URL-encode <code>#</code> as <code>%23</code>), not the JSON form,
+and answers 422 <code>invalid_ref_key</code> for one it cannot read. Reconstruction reads this plane's ledger, run and
+artifact stores: a <code>step</code> gives the ledger row (<code>content</code>) with <code>metadata.{run_id, seq, step_id, node_id,
+status, effect_type}</code> (a step ref addresses the step's STARTED row, which holds the effect payload; any other
+row at that seq is <code>source_gone</code>: the ledger was rewritten), an <code>artifact</code> its content (<code>utf-8</code> text, else base64, <code>metadata.encoding</code>), a <code>run</code>
+its state and at most <code>limit</code> ledger records, oldest first (<code>metadata.ledger_records</code>, <code>ledger_returned</code>,
+<code>ledger_left_out</code>, <code>truncated</code>); <code>message</code> refs are <code>unsupported</code> (no indexed path yet), and so are <code>event</code> and
+<code>diary_entry</code> here (no event inbox or diary store is given to the plane facade). The facade reads the plane's
+runtime id (<code>runtime_id</code> of the plane's service): a ref naming another runtime (an entity home's) is
+<code>unsupported</code>, never resolved against this plane's ledger.</p>
 <h2 id="models-and-engines">Models and engines<a class="headerlink" href="#models-and-engines" title="Permanent link">&para;</a></h2>
 <p>The gateway serves AbstractCore's models and engines payloads unchanged,
 under <code>/api/gateway</code>. The bodies and payloads

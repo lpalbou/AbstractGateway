@@ -1320,7 +1320,15 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   tools, media capabilities, capability-route defaults, the model catalog,
   engine detection and host jobs (downloads, deletes).</li>
 <li><strong>AbstractAgent</strong> and <strong>AbstractMemory</strong> (required by the default install):
-  agent nodes and KG memory for bundle execution.</li>
+  agent nodes and KG memory for bundle execution. AbstractMemory is reached through
+  the Runtime memory facade (<code>abstractruntime.integrations.abstractmemory.memory_facade</code>,
+  runtime ADR 0011), like AbstractCore through its facades (ADR 0001): the store classes,
+  <code>TripleQuery</code>, the graph (<code>MemoryGraph</code>, <code>SourceRef</code>) and the entity-side names are its
+  re-exports. <code>tests/test_gateway_import_boundary.py</code> fails on any direct <code>abstractmemory</code>
+  import (the burn-down list that admitted the 34 historical ones is empty and only
+  shrinks). The plane's memory graph is served under
+  <code>/api/gateway/memory/*</code> (<a href="../api/#memory-graph">api.md</a>) from the plane's memory home
+  (<code>memory_store.resolve_memory_home</code>).</li>
 <li>Higher-level apps (optional): AbstractFlow (authoring), AbstractCode,
   AbstractObserver, AbstractContinuum, AbstractEntity and AbstractAssistant.</li>
 </ul>
