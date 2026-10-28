@@ -13991,6 +13991,8 @@ Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.2 (backlog 
   boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863), now the gateway's floor
   (`AbstractRuntime>=0.15.2`, `[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
 
+## [0.17.2] - 2026-10-28
+
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
 
 ### Fixed

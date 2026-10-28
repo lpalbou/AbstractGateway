@@ -23,7 +23,7 @@ can trust without importing local gateway packages.
 
 - Planned: 15
 - Proposed: 46
-- Completed: 33
+- Completed: 35
 - Deprecated: 2
 - Recurrent: 0
 
