@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-28
+
+Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956), and a truthful "why nothing rang" for a run whose On Flow End
+wrote `notify: null`. No route, schema or dependency change.
+
+### Changed
+
+- **Console islands resynced from the released kit** (`console_islands.py`: `@abstractframework/ui-kit` 0.9.4 and
+  `@abstractframework/panel-chat` 0.6.2, AbstractUIC 0.8.2, tag `v0.8.2`; was ui-kit 0.9.1). What the console shows
+  differently: the voice picker (`mountVoiceSettings`: the capability editor's `output.voice` and the entity tab) lists
+  each Qwen3-TTS preset voice once instead of once per model. The bundle also carries the kit's Create-a-voice styling,
+  tool approval card and duration-format polish, but the console does not render those surfaces today (its voice
+  pickers pass no `creation` / `voiceLibrary`, its Sandbox chat has no approval card or tool rows and formats its own
+  duration chip). `console_themes.py` records the new `theme.css` hash (the 21 theme blocks are unchanged).
+
+### Fixed
+
+- **`GET /api/gateway/runs/{run_id}/after` no longer says "empty title" when Notify me never ran** (`run_after.py`, backlog 0956). An unwired
+  On Flow End `notify` pin writes `notify: null`; the run's `quiet_reason` was `empty title` (shown as "Nothing to
+  notify: the title was empty") although no notification was ever decided. `empty title` is now reported only when
+  `notify` is an object with a blank title; a null or absent `notify` is `no notify` (the run reached no Notify me
+  step). Found on the operator's email-triage flow; `tests/test_run_after.py` covers both shapes.
+
 ## [0.17.0] - 2026-10-28
 
 Memory graph routes over AbstractRuntime 0.15.0's memory facade (backlog 0948). Requires **AbstractRuntime 0.15.0**

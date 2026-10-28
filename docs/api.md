@@ -1576,8 +1576,8 @@ run**.
   (the gateway's push dispatcher), `outbox` (email) or `stream` (an app read your stream and showed
   it; the console lists the item). `device_name` when the device registered one; `reason` on a
   failure.
-- `quiet_reason` (only when there is no alert): `empty title` (On Flow End's notify had no title),
-  `no notify` (nothing in the flow notifies), `still running`, `not recorded yet` (the run ended,
+- `quiet_reason` (only when there is no alert): `empty title` (On Flow End's notify object had a
+  blank title), `no notify` (the run reached no Notify me step; a null `notify` counts as none), `still running`, `not recorded yet` (the run ended,
   the automation has not recorded its decision yet). Deliveries are recorded after the run ends:
   clients read again for a few seconds.
 - `tree`: the runs looked at, the run and its sub-runs (`parent_run_id` links, at most 200).
