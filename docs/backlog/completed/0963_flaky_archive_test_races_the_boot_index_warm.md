@@ -2,7 +2,7 @@
 
 > Package: abstractgateway
 > Type: bug (test harness; product race fixed in AbstractRuntime 0.15.2, its backlog 0863)
-> Status: completed (2026-10-28, 0.17.3)
+> Status: fixed on branch release/0.17.3, NOT released (paused 2026-10-28; target 0.17.3)
 > Created: 2026-10-28
 > Priority: P1 (it blocked the 0.17.2 PR and release runs)
 > Labels: tests, flaky, run-store, index, boot

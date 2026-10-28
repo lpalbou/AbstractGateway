@@ -2,7 +2,7 @@
 
 > Package: abstractgateway
 > Type: bug (two product races, one harness defect)
-> Status: completed (2026-10-28, 0.17.3)
+> Status: fixed on branch release/0.17.3, NOT released (paused 2026-10-28; target 0.17.3)
 > Created: 2026-10-28
 > Priority: P1 (each failed a CI matrix job of a docs-only PR: run 40739931377)
 > Labels: tests, flaky, push, runs, runner

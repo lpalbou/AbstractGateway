@@ -2,7 +2,7 @@
 
 > Package: abstractgateway
 > Type: bug
-> Status: completed (2026-10-28, 0.17.3)
+> Status: fixed on branch release/0.17.3, NOT released (paused 2026-10-28; target 0.17.3)
 > Created: 2026-10-28
 > Priority: P1
 > Labels: openai-api, v1, models, residency, llama.cpp
