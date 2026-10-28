@@ -24,7 +24,7 @@ wrote `notify: null`. No route, schema or dependency change.
 
 ### Fixed
 
-- **`GET .../after` no longer says "empty title" when Notify me never ran** (`run_after.py`, backlog 0956). An unwired
+- **`GET /api/gateway/runs/{run_id}/after` no longer says "empty title" when Notify me never ran** (`run_after.py`, backlog 0956). An unwired
   On Flow End `notify` pin writes `notify: null`; the run's `quiet_reason` was `empty title` (shown as "Nothing to
   notify: the title was empty") although no notification was ever decided. `empty title` is now reported only when
   `notify` is an object with a blank title; a null or absent `notify` is `no notify` (the run reached no Notify me
