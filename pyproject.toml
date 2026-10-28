@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.17.2"
+version = "0.17.3"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -73,7 +73,9 @@ dependencies = [
   # dependency); the gateway passes `<data dir>/secrets/sealing.key` (security/sealing.py).
   # 2.30.0: the voice facade's languages, cloned-voice management, voice design and capability
   # catalog, `language` on the voice catalog, `one_shot` on speech (the voice library routes).
-  "abstractcore>=2.30.0",
+  # 2.31.1: `/v1/chat/completions` reuses the model the runtime pool already holds instead of a
+  # second full copy per request (Core backlog 0859; gateway backlog 0962).
+  "abstractcore>=2.31.1",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -122,7 +124,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.30.0",
+  "abstractcore[embeddings]>=2.31.1",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,

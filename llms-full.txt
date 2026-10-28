@@ -315,7 +315,7 @@ Optional extras (see `pyproject.toml`):
 
 Default dependency floors (see `pyproject.toml`):
 - `AbstractRuntime>=0.15.0` (the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `abstractcore>=2.31.1` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, the voice library: languages, cloned voices, voice design, the capability catalog, and `/v1` chat reusing the model the runtime pool already holds)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.4.0` (the memory graph, `abstractmemory.graph`)
@@ -12492,7 +12492,11 @@ none of them depends on the others.
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.2** ([CHANGELOG](CHANGELOG.md)): the console's app manager installs
+**What's new in 0.17.3** ([CHANGELOG](CHANGELOG.md)): `/v1/chat/completions` uses the
+model the gateway already holds instead of loading a second copy per request (needs
+AbstractCore 2.31.1, now the floor).
+
+**What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
 never installed by itself); `network status` reports the user auth a loopback gateway
 turned on itself.
@@ -13965,7 +13969,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.2] - 2026-10-28
+## [0.17.3] - 2026-10-28
+
+Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code change.
+
+### Fixed
+
+- **`/v1/chat/completions` no longer loads a second copy of a model the gateway already holds.** With a GGUF loaded
+  through the model pool (Models page, `POST /api/gateway/models/load`), every `/v1` chat built another full
+  llama.cpp instance of it: a 2.5 GB model on a 16 GB GPU answered 500 "Failed to create llama_context"; on Metal
+  the gateway grew 11.2 -> 43.4 GB over three calls. AbstractCore 2.31.1 (its backlog 0859) lends the resident
+  instance to the request; the gateway's Core floor is now `abstractcore>=2.31.1` (`[embeddings]` too), so an
+  upgrade cannot keep the old Core. `tests/test_v1_reuses_resident_model.py` checks the mounted `/v1` uses the
+  resident model (red against Core 2.31.0).
+- **A flaky test** (`test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes`, 404 `session_not_found` on one
+  CI job per run) wrote its runs while the gateway's boot thread built the run index; it now writes them before the
+  gateway starts (backlog 0963). The underlying race is AbstractRuntime's (`JsonFileRunStore`: a run created
+  between its journal line and its file's publication while another store object builds its index is missed
+  until the next full reconciliation) and is reported to its owner.
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
 

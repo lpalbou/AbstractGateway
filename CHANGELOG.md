@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.2] - 2026-10-28
+## [0.17.3] - 2026-10-28
+
+Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code change.
+
+### Fixed
+
+- **`/v1/chat/completions` no longer loads a second copy of a model the gateway already holds.** With a GGUF loaded
+  through the model pool (Models page, `POST /api/gateway/models/load`), every `/v1` chat built another full
+  llama.cpp instance of it: a 2.5 GB model on a 16 GB GPU answered 500 "Failed to create llama_context"; on Metal
+  the gateway grew 11.2 -> 43.4 GB over three calls. AbstractCore 2.31.1 (its backlog 0859) lends the resident
+  instance to the request; the gateway's Core floor is now `abstractcore>=2.31.1` (`[embeddings]` too), so an
+  upgrade cannot keep the old Core. `tests/test_v1_reuses_resident_model.py` checks the mounted `/v1` uses the
+  resident model (red against Core 2.31.0).
+- **A flaky test** (`test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes`, 404 `session_not_found` on one
+  CI job per run) wrote its runs while the gateway's boot thread built the run index; it now writes them before the
+  gateway starts (backlog 0963). The underlying race is AbstractRuntime's (`JsonFileRunStore`: a run created
+  between its journal line and its file's publication while another store object builds its index is missed
+  until the next full reconciliation) and is reported to its owner.
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
 
