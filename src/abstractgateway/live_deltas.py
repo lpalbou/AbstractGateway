@@ -109,7 +109,9 @@ _role_lock = threading.Lock()
 #         (ledger_tail.py picks its reader by them; the replay view reads the cursor).
 # 0.15.0: the AbstractMemory facade (integrations.abstractmemory.memory_facade: MemoryFacade, the
 #         re-exported store classes and names) and LedgerStore.get_record (routes/memory.py, backlog 0948).
-ABSTRACTRUNTIME_FLOOR = "0.15.0"
+# 0.15.2: an index build re-applies the journal tail, so the boot warm-up never loses a run written
+#         during it (runtime backlog 0863, gateway backlog 0963).
+ABSTRACTRUNTIME_FLOOR = "0.15.2"
 
 
 class LiveDeltaError(RuntimeError):

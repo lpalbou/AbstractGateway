@@ -314,7 +314,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.15.0` (the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.15.2` (a run written while the gateway boots is indexed at once, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.31.1` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, the voice library: languages, cloned voices, voice design, the capability catalog, and `/v1` chat reusing the model the runtime pool already holds)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -12494,7 +12494,8 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 
 **What's new in 0.17.3** ([CHANGELOG](CHANGELOG.md)): `/v1/chat/completions` uses the
 model the gateway already holds instead of loading a second copy per request (needs
-AbstractCore 2.31.1, now the floor).
+AbstractCore 2.31.1, now the floor); a run written while the gateway boots is listed at once
+(AbstractRuntime 0.15.2, now the floor).
 
 **What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
@@ -13971,7 +13972,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.3] - 2026-10-28
 
-Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code change.
+Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.2 (backlog 0963). No route removed, no gateway code change.
 
 ### Fixed
 
@@ -13984,9 +13985,11 @@ Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code c
   resident model (red against Core 2.31.0).
 - **A flaky test** (`test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes`, 404 `session_not_found` on one
   CI job per run) wrote its runs while the gateway's boot thread built the run index; it now writes them before the
-  gateway starts (backlog 0963). The underlying race is AbstractRuntime's (`JsonFileRunStore`: a run created
-  between its journal line and its file's publication while another store object builds its index is missed
-  until the next full reconciliation) and is reported to its owner.
+  gateway starts (backlog 0963). The underlying race was AbstractRuntime's (`JsonFileRunStore`: a run created
+  between its journal line and its file's publication while another store object builds its index was missed
+  until the next full reconciliation, up to 10 minutes; a split-mode runner creating a run while the API process
+  boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863), now the gateway's floor
+  (`AbstractRuntime>=0.15.2`, `[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
 

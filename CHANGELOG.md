@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.3] - 2026-10-28
 
-Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code change.
+Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.2 (backlog 0963). No route removed, no gateway code change.
 
 ### Fixed
 
@@ -22,9 +22,11 @@ Requires AbstractCore 2.31.1 (backlog 0962). No route removed, no gateway code c
   resident model (red against Core 2.31.0).
 - **A flaky test** (`test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes`, 404 `session_not_found` on one
   CI job per run) wrote its runs while the gateway's boot thread built the run index; it now writes them before the
-  gateway starts (backlog 0963). The underlying race is AbstractRuntime's (`JsonFileRunStore`: a run created
-  between its journal line and its file's publication while another store object builds its index is missed
-  until the next full reconciliation) and is reported to its owner.
+  gateway starts (backlog 0963). The underlying race was AbstractRuntime's (`JsonFileRunStore`: a run created
+  between its journal line and its file's publication while another store object builds its index was missed
+  until the next full reconciliation, up to 10 minutes; a split-mode runner creating a run while the API process
+  boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863), now the gateway's floor
+  (`AbstractRuntime>=0.15.2`, `[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
 

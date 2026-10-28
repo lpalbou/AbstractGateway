@@ -1,7 +1,7 @@
 # 0963-gateway: [BUG] Flaky `test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes` (404 `session_not_found`)
 
 > Package: abstractgateway
-> Type: bug (test harness; product race in AbstractRuntime, reported)
+> Type: bug (test harness; product race fixed in AbstractRuntime 0.15.2, its backlog 0863)
 > Status: completed (2026-10-28, 0.17.3)
 > Created: 2026-10-28
 > Priority: P1 (it blocked the 0.17.2 PR and release runs)
@@ -30,12 +30,13 @@ This is a product race in AbstractRuntime (any process creating a run while anot
 index: a split-mode runner during the API process's boot), not in the gateway: deterministic repro, two store
 objects on one folder, the boot warm-up run between the foreign `+` line and its publication -> the file exists,
 `list_run_index(session_id="s1")` returns 0 rows (framework root
-`untracked/release-closing/w5/round2/race/repro_index_race.py`). Fixing it belongs to AbstractRuntime (for
-example: the mark re-applies the journal records appended within `STALE_TEMP_AGE_S` before it, or a `+` record
-whose file was absent at scan time stays pending); this item does not change AbstractRuntime.
+`untracked/release-closing/w5/round2/race/repro_index_race.py`). Fixed at its source in AbstractRuntime 0.15.2
+(backlog 0863: the first sync after an index build re-applies the journal's last 16 KiB before the build's mark).
 
 ## What changed
 
+- Floor `AbstractRuntime>=0.15.2` (`pyproject.toml` base, `[apple]`, `[gpu]`; `live_deltas.ABSTRACTRUNTIME_FLOOR`,
+  which the install-profile test and the startup "runtime too old" check read).
 - The test writes its runs before the gateway boots (the boot warm-up then indexes them), and checks the first
   listing shows both sessions. What it tests (listings read the archive and kinds files once; the archive write is
   seen at once) is unchanged.
@@ -45,4 +46,6 @@ whose file was absent at scan time stays pending); this item does not change Abs
 - With the window between the `+` line and the publication widened to 0.3 s
   (`untracked/release-closing/w5/round2/race/widen_window.py`): previous test 5/5 failed with the CI's exact 404;
   fixed test 25/25 passed (5 idle, 20 with 12 CPU-busy processes).
+- The previous test order with the widened window against AbstractRuntime 0.15.2: 5/5 passed (3/3 failed with
+  0.15.1): the product race itself is closed.
 - Fixed test, 20 consecutive plain runs: 20 passed; the whole file 3 times under the same CPU load: 3 passed.
