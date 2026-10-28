@@ -229,6 +229,11 @@ app.include_router(model_download_delete_router, prefix="/api")
 from .routes.session_archive import router as session_archive_router  # noqa: E402
 
 app.include_router(session_archive_router, prefix="/api")
+# A conversation's standing tool decision (approve / deny without asking), read by the runtime
+# before any approval wait: routes/session_tool_policy.py, /gateway/sessions/{id}/tool-policy.
+from .routes.session_tool_policy import router as session_tool_policy_router  # noqa: E402
+
+app.include_router(session_tool_policy_router, prefix="/api")
 # Per-account client preferences (round 14: default workflow per app, admin default +
 # account override): routes/account_preferences.py, /gateway/accounts/{account}/preferences.
 from .routes.account_preferences import router as account_preferences_router  # noqa: E402
@@ -287,6 +292,11 @@ app.include_router(email_router, prefix="/api")
 from .routes.me_events import router as me_events_router  # noqa: E402
 
 app.include_router(me_events_router, prefix="/api")
+# The replay view of a run (framework backlog 0993, AbstractRuntime ADR-0009):
+# /gateway/runs/{run_id}/view and /gateway/runs/{run_id}/view/stream.
+from .routes.replay_view import router as replay_view_router  # noqa: E402
+
+app.include_router(replay_view_router, prefix="/api")
 # Apple push devices (framework backlog 1049): /gateway/me/push/devices; literal paths.
 from .routes.push import router as push_router  # noqa: E402
 from .routes.push import settings_router as push_settings_router  # noqa: E402

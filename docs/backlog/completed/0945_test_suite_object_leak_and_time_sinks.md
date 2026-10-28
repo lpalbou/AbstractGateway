@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (tests/conftest.py, tests/app_reimport.py, apps_manager.py)
 > Type: fix (test harness, one product default)
-> Status: completed (2026-10-27, unreleased)
+> Status: completed (2026-10-27, 0.16.0)
 > Created: 2026-10-27
 > Priority: P1
 > Labels: tests, performance, memory, ci, gc

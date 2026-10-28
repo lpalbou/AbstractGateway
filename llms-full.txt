@@ -314,11 +314,11 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.13.1` (the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.14.0` (the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
-- `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library)
+- `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
-- `AbstractMemory[lancedb]>=0.3.0`
+- `AbstractMemory[lancedb]>=0.3.0,<0.4` (AbstractMemory 0.4.0 migrates its vector store one way; a later gateway release raises the cap)
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
@@ -4905,6 +4905,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](docs/maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
+| `/api/gateway/runs/{run_id}/view`, `/view/stream` | the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client) | [below](#replay-view-runsrun_idview) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](docs/push.md) |
 | `/api/gateway/push/settings` | the gateway's Push forwarder address (admins) | [below](#push-forwarder-apigatewaypushsettings), [push.md](docs/push.md#your-own-forwarder) |
@@ -5380,7 +5381,8 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
 Each ledger record arrives as `event: step` with an `id:` line (the records
-consumed so far); a reconnect sends `Last-Event-ID` (or `?after=`) and
+consumed so far, which is also the record's `seq`: every ledger store numbers a run's
+records 1, 2, 3, …); a reconnect sends `Last-Event-ID` (or `?after=`) and
 resumes there. `event: done` closes the stream once the run is finished and
 everything was sent.
 
@@ -5458,6 +5460,97 @@ of several megabytes in `<data dir>/live` while it runs.
 Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gateway.py`
 (`stream_ledger`, `_apply_run_stream_switch`, `discovery_capabilities`),
 `src/abstractgateway/hosts/bundle_host.py` (`install_live_delta_sink`).
+
+## Replay view (`/runs/{run_id}/view`)
+
+The replay view is what a client shows for a run: its status, the approval or question it is
+waiting on, the replies, the tool calls and the steps. AbstractRuntime computes it once, server
+side (`abstractruntime.replay`, its ADR 0009), and every client renders the same thing. The view
+covers the run **tree**, meaning the run and the runs it delegated to. An approval asked by a
+delegated child run is the view's interaction, wherever it waits. Storage encodings never reach
+the client: `$slim` pointers are resolved, and a windowed history is named in `warnings`. A
+client acts through `POST /api/gateway/commands` and `/runs/start`, and the view stream shows
+the result. A client never derives run state from raw ledger records.
+
+### Read: `GET /api/gateway/runs/{run_id}/view`
+
+```bash
+curl -sS -H "$AUTH" -i "$BASE_URL/api/gateway/runs/<run_id>/view"
+# ETag: "9d79f0a7:5.23a34aeb:6.ce182561:1131"
+curl -sS -H "$AUTH" -H 'If-None-Match: "9d79f0a7:5.23a34aeb:6.ce182561:1131"' -i "$BASE_URL/api/gateway/runs/<run_id>/view"
+# 304 Not Modified while nothing was appended
+```
+
+The body is the view, `replay_view_v1`:
+
+| Field | Meaning |
+|---|---|
+| `version` | `"replay_view_v1"` |
+| `root_run_id`, `session_id` | the run asked for, and its session |
+| `workflow` | what the run executes: `{id, bundle_id, bundle_version, flow_id, entrypoint}` (`basic-agent@0.0.5:81795ea9` gives bundle `basic-agent`, version `0.0.5`, entrypoint flow `81795ea9`); `bundle_id` is `null` for a workflow that is not bundled |
+| `status`, `display_status` | `running`, `waiting`, `completed`, `failed`, `cancelled`; the run's own status line (`abstract.status`) |
+| `cursor` | `{token, records, runs}`: the last folded `seq` of each run of the tree (`runs`: run id → seq); `token` is the ETag and the SSE event id |
+| `runs[]` | the tree, root first: `run_id`, `parent_run_id`, `depth`, `workflow`, `status`, `waiting` (kind, wait key, child run), `holds_interaction`, `records`, `first_seq`, `last_seq` |
+| `interaction` | the person-facing wait or `null`: `kind` (`tool_approval`, `ask_user`, `event`), `run_id` (the run that waits, often a child), `wait_key`, `prompt`, `choices`, `tool_calls` (resolved), and `command`, the resume to send through `/commands` |
+| `open_waits[]` | every open wait of the tree, `person_facing` or not (a delegation, a timer, a pause) |
+| `messages[]` | verbatim turns (`role`, `kind`: prompt, answer, question, final, event; `text`) with their provenance: `run_id`, `step_ids`, `seqs`, `artifact_ids`, `source` |
+| `activities[]` | one row per node execution (an Agent node's phases are one row): `kind` (llm, tool, subworkflow, timer, ask_user, tool_policy (a call a conversation's tool policy allowed or denied without asking; never an interaction), …), `name`, `status`, `tool_calls[]` (each call with its status and output), `wait.ended_by` (`resume`, `later_step`, `terminal`), `usage`, `child_run_id` |
+| `artifacts[]` | every `$artifact` reference, with the run, step and seq that produced it |
+| `usage` | tokens and LLM calls, summed over the tree |
+| `warnings[]` | what could not be shown (a `$slim` pointer to a record that was not folded, records before a window) |
+
+`GET /api/gateway/runs/{run_id}/view?at=<cursor token>` returns the view as the ledger stood at
+that cursor. Use it to open a push or a link at the event it names. An unknown token returns 404.
+
+### Follow: `GET /api/gateway/runs/{run_id}/view/stream`
+
+```bash
+curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/view/stream"
+```
+
+Server-sent events:
+
+- `event: view`: the whole view, with `id:` set to its cursor token.
+- `event: delta`: one per fold, with `id:` set to the new token. A delta carries the scalars
+  whole (`status`, `display_status`, `interaction`, `open_waits`, `usage`, `warnings`, `cursor`,
+  `workflow`, `session_id`). It also carries the items that changed in `runs`, `messages`,
+  `activities` and `artifacts`, keyed by `id` (`run_id` for runs). An item is never removed, only
+  updated. `changes[]` names each change with its kind, id, run and seq, which is enough for a
+  push dispatcher to subscribe to it. Applying a delta means: replace the scalars, upsert the
+  items by id, and re-sort each list by its `order`. That is `abstractruntime.replay.apply_delta`,
+  about 40 lines to port.
+- `: keep-alive` comments, every `heartbeat_s` seconds (default 5).
+- `event: done` once the tree is terminal and every record was sent.
+
+**To open a run, read the view with a GET, then follow the stream from its token:**
+`GET /view` (gzip-compressed, cacheable with its ETag), then
+`GET /view/stream?after=<cursor.token>`. A stream joined this way sends nothing until the next
+change. A stream opened without a token starts with the whole view as its first event, and SSE
+frames are not compressed. On a 3,000-record run that frame is about 1 MB, against about 60 KB
+for the compressed GET.
+
+To reconnect, send `Last-Event-ID` (or `?after=`) with the last id you received:
+
+- the current token: nothing is sent until the next change;
+- an older token of this view: one `delta` from there to now;
+- anything else: a new `view`.
+
+Every client following a run tree shares one cached view. The gateway folds each appended record
+once and sends the same delta to every subscriber. The stream wakes on the ledger append itself.
+The ledger is never re-parsed on a timer. Two periodic checks remain, each run once per view
+however many streams follow it:
+- a `list_after` check every 0.25 s when the runner is another process (split mode), which reads
+  no bytes while nothing was appended;
+- a re-read of the open runs' snapshots every 5 s. A pause, for instance, changes a snapshot
+  without writing a record.
+
+A change that comes only from a snapshot also changes the cursor token: the token ends with a
+`~<digest>` of the snapshots' contribution, so the ETag and a reconnect see it.
+
+Authorization follows `GET /runs/{run_id}`. A run outside the caller's own plane returns 404.
+
+Evidence: `src/abstractgateway/routes/replay_view.py`, `src/abstractgateway/replay_view.py`;
+AbstractRuntime `abstractruntime.replay` and its `docs/replay.md`.
 
 ## A run's workspace folder (browse and preview)
 
@@ -6482,6 +6575,92 @@ is cancelled without executing its tools. Managed visits are bound to their
 authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
 remain deprecated compatibility aliases. Gateways without entity session-tool
 support still support the established Assistant tool-control contract.
+
+### Session tool policy (approve or deny for the whole conversation)
+
+A person's standing tool decision for one conversation ("approve all", "approve all web tools",
+"deny `execute_command`", reset) is held by the gateway, not by the client. The runtime reads it
+before it decides whether a tool batch waits: a covered call runs with **no approval wait and no
+interaction**, a denied call is refused with no wait, and each decision is an
+`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session
+(the run tree's root session): each turn's root run, delegated agent child runs, runs resumed after
+a restart. Approvals do not reach automation runs, runs that read text other people wrote
+(untrusted input), entity visits or runs started without a `session_id`; a deny reaches every run of
+the session, and also wins over an approval that was shown before the deny and answered after it.
+Every answer carries `scope`, which says so in words.
+
+| Method | Path | Meaning |
+|---|---|---|
+| GET | `/api/gateway/sessions/{session_id}/tool-policy` | `{session_id, policy, revision}` (`policy: null` when none) |
+| PUT | same | replace the policy |
+| POST | same | merge: adds the new selectors' tools to the stored ones (never narrows, never re-expands an earlier `all`/`kinds`); guarded by the revision it read, so a concurrent reset or deny is never undone |
+| DELETE | same (`?if_revision=`) | reset: later calls follow the normal defaults |
+
+Body (PUT, POST):
+
+```json
+{"approve": {"tools": ["fetch_url"], "kinds": ["web"], "all": false, "max_risk_rank": 3},
+ "deny": {"tools": ["execute_command"], "kinds": []},
+ "ask": ["send_email"], "client": "panel-chat", "if_revision": 4}
+```
+
+- `kinds` are the `toolset` values of `GET /api/gateway/discovery/tools` rows (`files`, `web`,
+  `system`, `email`, `mcp:<server>`…); `all` means every tool the gateway authorizes for the
+  caller; `max_risk_rank` (1–4) limits what `kinds` and `all` expand to by the row's `risk_rank`.
+- **The gateway clamps**: approve selectors expand, at write time, to the `enabled` rows
+  `GET /discovery/tools` serves the caller (email tools only when the account's agent email tools
+  are on, MCP tools only for servers offered to agents). Anything else is listed in `clamped`
+  (`not_authorized`, `unknown_kind`). A tool enabled later is not covered by an earlier `all`.
+  The run's own `allowed_tools` still blocks any tool outside it.
+- `deny` wins over `approve`; `ask` keeps names asking under `approve`.
+- `all` and `kinds` include the tools whose destination the model chooses (`fetch_url`,
+  `browser_probe`, `send_email` when email is on): "allow all" is the person's explicit word for this
+  conversation, unlike the gateway's default tier ceiling, which never auto-approves them. A client
+  that wants them to keep asking lists them in `ask` (or narrows with `max_risk_rank`).
+- `if_revision` (body of PUT/POST; query `?if_revision=` on DELETE): a mismatch answers `409`
+  `{"detail": {"reason_code": "revision_conflict", "message", "revision": <current>}}`. The
+  gateway never retries a client-sent `if_revision`. Without one, a POST guards itself with the
+  revision it read and re-reads and re-merges on a conflict (up to 5 tries, then the same 409
+  without `revision`); a PUT without one is last-writer-wins.
+- Malformed body or session id: `422 {"detail": {"reason_code": "invalid_request", "message"}}`.
+  When the caller's tool inventory cannot be built, writes answer
+  `503 {"detail": {"reason_code": "tool_inventory_unavailable", "message"}}` (no policy is written
+  that the gateway cannot clamp).
+
+Answers. PUT and POST: `{session_id, policy, scope}`, where `policy` is
+`{version, session_id, revision, approve: {name: selector}, deny: {name: selector}, ask, request,
+clamped, set_by: {tenant_id, user_id, client}, set_at}`. GET: `{session_id, policy, revision,
+scope}`; the top-level `revision` is the session's current revision also when `policy` is `null`
+(0 for a session never written, the reset's revision after a DELETE), the value to send as
+`if_revision`. DELETE: `{session_id, policy: null, revision, scope}`. `scope` is on all four
+answers, an object of two sentences:
+
+```json
+{"approve": "every run of this conversation (turns and their delegated child runs), except automation runs, runs that read text other people wrote, and entity visits",
+ "deny": "every run of this conversation, automation runs and untrusted-input runs included"}
+```
+
+Writes and resets are audited (`session.tool_policy_set`, `session.tool_policy_reset`).
+
+Ledger record (an activity; there is no wait, waiting record or resume for these calls):
+
+```json
+{"effect": {"type": "emit_event", "payload": {"name": "abstract.tool_policy_decision", "scope": "run",
+  "payload": {"decision": "auto_approved", "source": "session_policy", "session_id": "s-123",
+              "node_id": "agent", "tool_calls": [{"call_id": "c1", "name": "fetch_url", "matched": "kind:web"}],
+              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "laurent", "client": "panel-chat"},
+                         "set_at": "2026-10-27T10:00:00+00:00"}}}},
+ "status": "completed"}
+```
+
+`decision` is `auto_approved` or `denied`. Clients feature-gate on
+`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`: `true`
+with `{version, endpoint, methods, approve, deny, ask, record}`, or
+`{supported: false, reason: "abstractruntime has no session tool policy"}` when the installed
+runtime lacks it; an older gateway has no key at all.
+To offer "approve all" on an approval a client is showing: write the policy first, then answer
+that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
+already exist.
 
 ## Beyond the core
 
@@ -7829,6 +8008,21 @@ provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under **Providers**.
 
+**Edit multimodal capability** (a route's **Edit**) sets the route's provider
+and model, an optional **Base URL** and **Options** (JSON); text routes add the
+reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+(`output.voice`) the provider, model and voice are the shared voice picker of
+every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
+**Engine voices** and **Shared voices**, a language filter when the engine
+speaks several, and search. **Choosing a voice plays it** — a short sample
+through the gateway's speech route — so you can go from voice to voice and keep
+the one you like. The button at the right of the voice row plays the sample
+again from the start or stops it (Space toggles it when focused); while a
+sample is on its way it shows a spinner and a click cancels it, and choosing
+another voice cancels the previous sample. A sample that fails says why in one
+line under the row. Choosing a cloned voice also selects the model it was
+cloned with. **Save** stores the voice in the route's options.
+
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the **Docs assistant** (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; **Past conversations** reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
@@ -9153,6 +9347,917 @@ token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`; for a gateway on
 this computer it falls back to the data dir's bootstrap admin token. The command prints the gateway's JSON answer
 and exits non-zero when the gateway reports a failure. `unload --force` unloads
 a locked model; in-flight calls on the model are cancelled first.
+
+---
+
+## docs/architecture.md
+
+# AbstractGateway — Architecture
+
+AbstractGateway is a **durable run gateway** for AbstractRuntime, and the
+control plane of an AbstractFramework installation:
+
+- clients **start runs**, and create **automations** that run a workflow on
+  a trigger;
+- clients act through **durable commands** (`pause`, `resume`, `cancel`,
+  `emit_event`, …);
+- clients **replay** the durable ledger and optionally **stream** it (SSE);
+- operators manage users, providers, capability defaults, local engines,
+  models, browser apps and network exposure from one place (the web console,
+  the terminal console, the CLI, or the desktop tray).
+
+This page describes the components in this repository and how they connect.
+For the endpoints, see [api.md](docs/api.md); for settings, see
+[configuration.md](docs/configuration.md).
+
+## Ecosystem placement (AbstractFramework)
+
+AbstractGateway sits between **clients** (browser apps, terminal apps, the
+desktop Assistant, scripts) and **AbstractRuntime**:
+
+- **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
+  and the operator control plane.
+- **AbstractRuntime** (required, 0.7.0 or later): run model, tick loop, workflow registry, stores,
+  live token deltas, the workspace-scoped tools, the automation controller and the session history window.
+  The gateway checks the installed runtime when it builds its workflow host and
+  refuses to start on an older one, naming the version to install.
+- **AbstractCore** (required, reached through Runtime facades): providers,
+  tools, media capabilities, capability-route defaults, the model catalog,
+  engine detection and host jobs (downloads, deletes).
+- **AbstractAgent** and **AbstractMemory** (required by the default install):
+  agent nodes and KG memory for bundle execution.
+- Higher-level apps (optional): AbstractFlow (authoring), AbstractCode,
+  AbstractObserver, AbstractContinuum, AbstractEntity and AbstractAssistant.
+
+## System overview
+
+```mermaid
+flowchart LR
+  subgraph Clients["Clients"]
+    Browser["Browser: /console"]
+    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity, Note)"]
+    TUI["Terminal apps: abstractgateway-console, Code"]
+    Asst["Desktop Assistant"]
+    Tray["Desktop tray helper (separate process)"]
+    CLI["abstractgateway CLI"]
+    OAI["OpenAI-compatible apps and SDKs"]
+  end
+
+  subgraph GW["AbstractGateway process (abstractgateway serve)"]
+    Sec["GatewaySecurityMiddleware: auth, origins, limits, audit log"]
+    Same["Same-machine rule: is the caller at this computer?"]
+    Routes["FastAPI routes /api/gateway/*"]
+    Console["/console (web console)"]
+    Handover["Sign-in hand-overs: apps, terminal, desktop"]
+    Principals["Principal routing: one data plane per user"]
+    Defaults["Default agent workflow resolver (@default)"]
+    Browse["Workspace browser: /runs/{id}/workspace/*"]
+    Autom["Automations API: /automations*, /trigger-sources"]
+    Host["Workflow host: .flow bundles + workflow catalog"]
+    Guard["Run workspace guard: a folder and the built-in deny rules for every run"]
+    Hub["Live-delta hub: llm.delta frames per root run"]
+    Runner["GatewayRunner: command inbox + ticks"]
+    Settings["Runtime settings: network, apps.*, agents.*, skills.shelf, workspace, backlog"]
+    Skills["Skills shelf (seeded from AbstractSkill)"]
+    AppsMgr["Apps manager: Node.js, npm installs, app processes"]
+    Jobs["Engine installs and model download jobs"]
+    HostCtl["Host control: pause, restart, update"]
+    V1["OpenAI API /v1: named API keys, Who can connect, request log"]
+    Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
+  end
+
+  subgraph Lower["Framework packages"]
+    RT["AbstractRuntime: Runtime.tick, stores, workspace-scoped tools"]
+    Core["AbstractCore: providers, catalog, host jobs"]
+  end
+
+  Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
+  WS[("Workspaces: private session folders, allowed workspaces (gateway, account, session levels)")]
+  SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
+
+  Browser -->|HTTP| Sec
+  Browser -->|app pages| AppSrv
+  AppSrv -->|"same-origin proxy: X-Forwarded-For + X-AbstractFramework-App-Proxy"| Sec
+  TUI -->|HTTP| Sec
+  Asst -->|HTTP, gateway session| Sec
+  CLI -->|HTTP or data dir| Sec
+  Tray -->|loopback HTTP, ephemeral token| Sec
+  OAI -->|"HTTP /v1, named API key"| Sec
+  Sec --> V1
+  V1 -->|serving facade| Core
+  V1 -->|request log| Data
+  Sec --> Routes
+  Sec --> Console
+  Routes -.->|installs, open folder, workspace host| Same
+  Routes --> Principals --> Host
+  Routes --> Defaults --> Host
+  Routes --> Browse --> WS
+  Routes --> Autom --> RT
+  Routes --> Settings
+  Routes --> Skills
+  Routes --> AppsMgr
+  Routes --> Jobs
+  Routes --> HostCtl
+  Host --> Guard --> RT
+  Runner --> Host
+  Runner --> RT
+  RT -->|file tools confined to| WS
+  RT -->|live text of LLM calls| Hub
+  Hub -->|"SSE on /runs/{id}/ledger/stream"| Routes
+  RT --> Data
+  Routes --> Data
+  Jobs --> Core
+  Host --> Core
+  AppsMgr -->|starts and supervises| AppSrv
+  AppsMgr -->|launches with a hand-over file| Asst
+  Handover --> AppSrv
+  Handover --> Asst
+  Watchdog -.->|"exit code 75"| SvcMgr
+```
+
+Browser apps reach the gateway through their own app server on this computer,
+which relays every call with the browser's address (`X-Forwarded-For`) and its
+marker header (`X-AbstractFramework-App-Proxy`), so the gateway can tell a
+browser on this computer from one elsewhere on the network
+([security.md](docs/security.md#callers-on-this-computer)).
+
+## Core components (code-mapped)
+
+- **HTTP app** (`src/abstractgateway/app.py`): mounts the routers under `/api`
+  (`/api/gateway/*` is the main surface), `/api/health`, `/console`,
+  `/docs` (Swagger UI) and the app handover routes.
+- **Security layer** (`src/abstractgateway/security/`): the
+  `GatewaySecurityMiddleware` protects `/api/gateway/*` with user or token
+  auth, an origin allowlist, request limits, auth lockouts and an audit log.
+  Browser sessions, principals and the route-family authorization table live
+  in the same package. See [security.md](docs/security.md).
+- **Composition root** (`src/abstractgateway/service.py`): builds the stores,
+  the workflow host and the runner. With user auth on, each principal is
+  routed to its own service and data plane under
+  `<data dir>/users/<tenant>/<runtime>/`.
+- **Durable stores** (`src/abstractgateway/stores.py`): file-backed (default)
+  or SQLite, using AbstractRuntime's RunStore, LedgerStore, CommandStore and
+  ArtifactStore.
+- **Workflow host** (`src/abstractgateway/hosts/bundle_host.py`): loads `.flow`
+  WorkflowBundles and compiles their VisualFlow JSON with
+  `abstractruntime.visualflow_compiler`. Bundle mode is the only workflow
+  source; store VisualFlows through `/api/gateway/visualflows/*` and publish
+  them as bundles. A publish swaps the compiled workflows onto the running
+  runtime (see [Publishing a workflow](#publishing-a-workflow)).
+- **Workflow catalog** (`src/abstractgateway/workflow_catalog.py`): shared,
+  immutable workflow versions with admin-managed default pointers and ACLs.
+  Catalog runs execute in the caller's runtime; the gateway signs the
+  catalog's workflow policy before Runtime receives it.
+- **Runner** (`src/abstractgateway/runner.py`): polls the durable command
+  inbox, applies commands and ticks RUNNING runs. A filesystem lock
+  (`gateway_runner.lock`) prevents double-ticking when API and runner run as
+  separate processes; lock state is reported on `GET /api/health`. On a file
+  store the scheduling pass sleeps until the earliest wait deadline, which it
+  asks the run store for (`next_wait_deadline`, every waiting run), so a wake
+  parked behind hundreds of automations still fires on time.
+- **Per-user event stream** (`src/abstractgateway/events_stream.py`, backlog
+  1046): one ordered, durable stream per person, `user:<tenant>:<user>`, in
+  the plane's data folder (`<data dir>/events/users/<sha256>/`, the runtime's
+  `JsonFileEventInbox`). It holds only what is not a step of a run:
+  `trigger.event`, `wake.scheduled|cancelled`, `attention.raised|seen`,
+  `notification.sent|failed` and the pointers `run.started|finished
+  {run_id, session_id, origin}`, in CloudEvents 1.0 attribute names. The
+  runner writes the pointers after the run store save (ids like
+  `run.started:<run_id>`, so a repeat appends nothing) and the attention
+  events from the `automation.completed` records it observes (the ledger
+  `record_key`, never a body); a boot pass rebuilds what a crash between a
+  save and its append lost. The seen-cursor store writes `attention.seen`,
+  the email outbox `notification.sent|failed`.
+- **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
+  `<data dir>/config/runtime_config.json`, for the settings the consoles, the
+  tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,
+  `agents.default_workflow.<interface>`, `agents.streaming_default`,
+  `skills.shelf`, `workspace_builtin_deny`, the backlog folder, the backlog
+  exec runner, the process manager and the stop kill switch. A write that
+  names an unknown setting is refused whole; writers take a file lock. See
+  [configuration.md](docs/configuration.md).
+- **Default agent workflows** (`src/abstractgateway/agent_defaults.py`):
+  resolves `flow_id: "@default"` plus an agent `interface` to the workflow
+  saved under `agents.default_workflow.<interface>` (or the built-in default)
+  at every run start, for the HTTP routes, the Telegram bridge and the backlog
+  advisor alike, and records the choice as `resolved_workflow`. See
+  [configuration.md](docs/configuration.md#default-agent-workflow).
+- **Account preferences** (`src/abstractgateway/account_preferences.py`,
+  `routes/account_preferences.py`): each account's default workflow per app,
+  stored in the same settings store under `account_preferences`
+  (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`). The admin
+  setting above stays the gateway default; an account overrides it for itself,
+  and the Assistant, AbstractCode and the consoles read and write it instead of
+  keeping the choice on the device. See [api.md](docs/api.md#account-preferences).
+- **Run workspace guard** (`src/abstractgateway/run_workspace_guard.py`):
+  called from the workflow host's `start_run` for every run, whatever started
+  it. It gives a run that named no folder its conversation's gateway-made
+  folder, and adds the built-in deny rules (see
+  [Workspace guard](#workspace-guard-every-run-start)).
+- **Workspace browser** (`src/abstractgateway/workspace_browse.py`): lists
+  and serves the files of a run's workspace folder to the person who started
+  the run, confined to that folder, with the built-in deny list applied at
+  every call. See [api.md](docs/api.md#a-runs-workspace-folder-browse-and-preview).
+- **Live replies** (`src/abstractgateway/live_deltas.py`): the sink the
+  gateway registers on every runtime it builds, the in-memory hub keyed by
+  root run, and the file sink and tailer used when API and runner are separate
+  processes (see [Live replies](#live-replies-token-deltas)).
+- **Skills shelf** (`src/abstractgateway/skills_shelf.py`): resolves the
+  folder skills are read from (`skills.shelf`, else the gateway's own copy in
+  `<data dir>/skills/registry`, refreshed from AbstractSkill's curated shelf
+  at each start). See [configuration.md](docs/configuration.md#skills-shelf).
+- **Same-machine rule** (`src/abstractgateway/security/same_machine.py`):
+  one answer to "is this caller sitting at the gateway computer?", used for
+  installs, opening folders and the workspace routes' host facts. See
+  [security.md](docs/security.md#callers-on-this-computer).
+- **Network exposure** (`src/abstractgateway/network_exposure.py`): resolves the
+  bind (`localhost`, `lan`, `internet`) at `serve` time, checks that the auth
+  posture allows it, discovers the addresses, and serves the reverse-proxy
+  settings the security middleware reads per request.
+- **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
+  `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
+  gateway listener. The security middleware resolves the caller's API key
+  (a named key from `openai_keys.py`, found by its fingerprint, or the
+  account's gateway token) to an account and refuses a named key anywhere
+  outside `/v1`; this layer applies the account's **OpenAI API** switch,
+  Open mode (Guest or the chosen account), *Who can connect* and the request
+  log in the audit log, then hands the request to AbstractCore's serving
+  routes through AbstractRuntime's serving facade. See
+  [openai-api.md](docs/openai-api.md).
+- **Event-loop watchdog** (`src/abstractgateway/loop_watchdog.py`): under
+  `serve`, a tick on the event loop and a checker thread; when the loop has
+  not run for `--watchdog-seconds` (default 30) the gateway writes the blocked
+  stacks to its log and to an incident file (`<data dir>/incidents/watchdog-<UTC
+  stamp>.json` + `.threads.txt`) and exits with code 75, so the LaunchAgent,
+  systemd unit or local supervisor restarts it. The next process reads the
+  newest incident; the console's Resources page (Gateway card, "Last restart")
+  shows "Gateway restarted at <time> after a hang —
+  <reason>". `GET /api/health` reports its state. See
+  [deployment.md](docs/deployment.md).
+- **Worker pools by kind of work** (`src/abstractgateway/work_pools.py`): blocking work leaves the
+  event loop through `off_loop(kind, fn, ...)` into one of three bounded pools: `light` (auth, `/me`,
+  live-update streams, one-record reads), `heavy` (run and artifact scans, listings, workflow reloads)
+  and `watchers` (mail, feeds, provider endpoints, model generation), sized by `serve --pool-light`,
+  `--pool-heavy` and `--pool-watchers`. A cached account service is found without the service lock, so
+  a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
+  sessions file stays the source of truth, this process's own writes apply at once, another
+  process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
+- **Account services built off the event loop** (`src/abstractgateway/service.py`): an account's
+  service (its runtime, stores and runner) is built once in its own thread, however many requests
+  wait for it; requests await the build, and a request that reaches a service still being built
+  answers `503 service_starting` with `Retry-After: 1`. After the boot, `serve --gc-tuning on`
+  freezes the objects the boot built and raises the garbage collector's thresholds.
+- **Reading only what changed**: run listings come from AbstractRuntime's run index
+  (`serve --run-index verify|trusted`); the runner's scan gate and the mail notification check
+  compare the run store's and the ledger's change tokens instead of re-reading the folders; the
+  Triggers page asks AbstractRuntime's active-consumers index who listens to a connection; host
+  status (GPU, memory, model residency) is computed once per short TTL
+  (`src/abstractgateway/host_status_cache.py`). `GET /api/health` reports `pools`, `run_index`
+  and `gc_tuning`.
+- **Push dispatcher** (`src/abstractgateway/push/`): in the process that runs the runner, it turns
+  `attention.raised` into content-free requests to the push relay for registered watches and
+  iPhones ([push.md](docs/push.md)).
+- **Nothing blocks the event loop**: a request body that arrived
+  without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
+  is buffered by the security middleware and replayed through
+  `asgi_receive.replay_body_receive`, which suspends after the body (a replay
+  that kept answering "empty body" would make every streaming response's
+  disconnect listener a busy loop; the core endpoint's internal sub-requests use
+  the same helper). Streamed speech
+  (`voice_stream.py`) holds one permit of the voice synthesis bound
+  (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) from engine setup until its engine
+  thread ends, sets up and pulls the engine on worker threads, and hands
+  events to the loop through a bounded queue; a busy engine is announced to
+  the client with a `queued` line. Reading a reply aloud is never a wait of
+  the run: the durable child run is recorded completed when the stream ends,
+  and the runner closes any streamed-speech wait an older process left
+  behind.
+- **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
+  `model_download_delete.py`): archive and unarchive a conversation (history
+  kept), and delete a downloaded model's files with the engine's own
+  mechanism, refused while the model is loaded, locked or downloading.
+- **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
+  `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
+  installs are gateway jobs; model downloads, deletes and the catalog come from
+  AbstractCore's host job registry and model catalog, which the gateway serves
+  unchanged and extends with parent jobs, cancel and an event stream. See
+  [engines.md](docs/engines.md) and [model-downloads.md](docs/model-downloads.md).
+- **Apps manager** (`src/abstractgateway/apps_manager.py`, `apps_desktop.py`,
+  `routes/apps.py`): installs Node.js when needed, installs the browser apps
+  from npm, runs them as child processes of the gateway, detects apps started
+  elsewhere, installs Code's terminal app, and opens apps signed in through
+  one-time handover codes; it starts the desktop Assistant signed in through a
+  private hand-over file (see [Desktop hand-over](#desktop-assistant-hand-over)).
+  See [apps.md](docs/apps.md).
+- **Host control** (`src/abstractgateway/host_control.py`,
+  `self_update.py`): process-wide pause, graceful restart, and in-place
+  update checks.
+- **Desktop tray** (`src/abstractgateway/tray_supervisor.py`, `tray/`): a
+  helper process started by `serve` on a desktop session. It talks to the
+  gateway over loopback with a per-process token handed over on stdin. See
+  [tray.md](docs/tray.md).
+- **Login service** (`src/abstractgateway/os_service.py`, `autostart.py`):
+  the per-user LaunchAgent, systemd user unit, XDG autostart entry or Windows
+  Run entry that starts plain `abstractgateway serve` at login. See
+  [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional).
+- **Summoned entities** (`src/abstractgateway/entities.py`,
+  `routes/entities.py`): persistent entity homes and their lifecycle. See
+  [entities.md](docs/entities.md).
+- **Automations API** (`src/abstractgateway/routes/automations.py`,
+  `automation_errors.py`, `automation_attention.py`, `automation_defaults.py`,
+  `automation_command_types.py`): the HTTP projection of AbstractRuntime's
+  automations, the error envelope on those paths, the per-user seen store,
+  `automation_defaults` on flows and bundles, and the one list of command
+  types the command route, the runner and the capabilities document share.
+  See [Automations](#automations) and [automations.md](docs/automations.md).
+- **Operator tooling** (`src/abstractgateway/maintenance/`): reports, triage,
+  backlog browsing, the backlog exec runner and the process manager. See
+  [maintenance.md](docs/maintenance.md).
+
+## Publishing a workflow
+
+A service is one data plane: its stores, its runner and one AbstractRuntime
+`Runtime`, which owns the LLM client and its providers (for an in-process
+engine such as MLX: the loaded weights and the session prompt caches), the
+tool executor, the effect handlers and the memory store. Workflows are only
+the compiled registry the runtime reads. So publishing, promoting or
+uploading a workflow changes the registry and nothing else.
+
+```mermaid
+flowchart LR
+  P["publish / promote / upload"] --> C["compile the changed .flow files<br/>(cached by path, mtime, size)"]
+  C --> Q{"does the runtime serve<br/>everything they need?"}
+  Q -->|yes| S["registry_swap<br/>new registry set on the running runtime"]
+  Q -->|no| R["service_reload<br/>rebuild this service's runtime"]
+  S --> K["models, prompt caches, runs<br/>untouched"]
+```
+
+What a reload does (`WorkflowBundleGatewayHost.reload_bundles_from_disk`):
+
+- **`registry_swap`** (publish, promote, upload, the agent email tools
+  switched): the bundle files are compiled into a new
+  `WorkflowRegistry` — only the files whose path, modification time or size
+  changed; every other workflow keeps its compiled object — and
+  `runtime.set_workflow_registry(...)` puts it on the running runtime. No
+  runtime, LLM client, provider, model weights, prompt cache, tool executor
+  or memory store is created or dropped. A service whose files did not move
+  does nothing. Compilation happens off the event loop and outside the host
+  lock; only the swap itself takes the lock.
+- **`service_reload`**: the new workflows need something this service's
+  runtime was started without — the first LLM, Agent or model-residency
+  workflow on a runtime built without a language model, the first tool
+  workflow on a plain one, or the first `memory_kg_*` workflow (it opens the
+  memory store). Only this service's runtime is rebuilt; its in-process models
+  and prompt caches start empty, and the reload says so.
+- **`full_rebuild`**: only on request, `POST /api/gateway/bundles/reload?full=true`
+  (for example after changing the memory store's configuration on disk).
+
+Archiving a workflow is not a reload either: the file keeps loading and the
+archive record refuses new runs. Changing the default model is not a reload: the console's default routes
+re-point the running client in place (`refresh_capability_defaults`).
+
+**Runs in flight keep their workflow.** A run ticks the spec it resolved. A new
+version is a new workflow id (`bundle@0.0.2:flow`), so runs on `0.0.1` simply
+continue on it while new runs start on `0.0.2`. When a version is replaced in
+place (drafts, `overwrite: true`) or removed, every RUNNING or WAITING run of
+it is pinned to the spec it already had and to the whole registry it resolved
+from (`_pin_in_flight_runs`). Its sub-workflows follow it: a child it starts
+after the overwrite is looked up in that pinned registry (the start-subworkflow
+guard and `_PinnableWorkflowRegistry`), and a child run inherits its parent's
+pin, so the whole run tree finishes on the version it started on. The pin is
+released when the run ends. Automations store their concrete
+`bundle@version:flow`, so a republish never changes them; the automation
+controller's spec never changes, so its later occurrences start on what is
+published then. A pinned run resumed by the runtime itself (an event delivered
+to its listener) resumes on its pinned spec too.
+
+**Where it is reported.** Every publish/promote/upload response carries
+`reload: {kind, services, duration_ms, sentence}` (see
+[api.md](docs/api.md#what-a-publish-reloads)), the audit log line of the request
+carries the same `reload` object next to its `duration_ms`, and a
+`service_reload`/`full_rebuild` writes one warning to the gateway log.
+
+**One service per data directory.** Under user auth the admin's requests own
+the default runtime's service; a caller without a signed-in principal (a
+background thread, a boot step) is given that same service instead of a second
+one built over the same directory.
+
+## Durable contract (replay-first)
+
+The gateway is **replay-first**:
+
+- the **durable ledger** is the source of truth;
+- SSE (`/ledger/stream`) is an optimization; clients reconnect by replaying
+  from their last cursor.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway API
+  participant S as Durable stores
+  participant R as Runner
+  participant RT as AbstractRuntime
+
+  C->>G: POST /api/gateway/runs/start
+  G->>S: create run (RUNNING)
+  G-->>C: run_id
+  C->>G: POST /api/gateway/commands (pause, resume, cancel, emit_event)
+  G->>S: append command to the inbox
+  loop every poll
+    R->>S: read new commands, apply them
+    R->>RT: Runtime.tick(run)
+    RT->>S: append StepRecords to the ledger
+  end
+  C->>G: GET /runs/{run_id}/ledger?after=N (replay)
+  G-->>C: items + next_after
+  C->>G: GET /runs/{run_id}/ledger/stream?after=N (SSE, optional)
+```
+
+Evidence: `src/abstractgateway/routes/gateway.py` (ledger endpoints, SSE,
+commands) and `src/abstractgateway/runner.py` (command application, ticks).
+
+### The durable cursor
+
+Every ledger store numbers a run's records 1, 2, 3, … (`seq`). JSONL persists the number on each
+line, allocated under an advisory file lock, and SQLite allocates it in the same transaction as
+the insert. The raw stream's cursor is that number. `migrate.py` (file to SQLite) keeps it, so a
+cursor a client holds stays valid across a reconnect and a migration (AbstractRuntime ADR 0009,
+backlog 0082).
+
+### The replay view: one reconstruction, every client
+
+What a client shows for a run comes from one reducer, AbstractRuntime's `abstractruntime.replay`:
+
+- the tree of runs, through delegation waits;
+- the status;
+- the person-facing interaction (a child's approval included);
+- messages with provenance;
+- one activity per node execution;
+- artifacts and usage.
+
+The gateway serves that view (`GET /runs/{id}/view`, `/view/stream`, see
+[api.md](docs/api.md#replay-view-runsrun_idview)) and adds no rule of its own:
+
+```mermaid
+flowchart LR
+  RT[Runner: Runtime.tick] -->|append| L[(Ledger store: seq per run)]
+  L -->|subscribe: a coalescing wake-up| E[ViewEntry per run tree]
+  E -->|list_after: new records only| L
+  E -->|ReplayView.apply: one fold| V[(cached view + JSON per cursor token)]
+  V -->|delta, same bytes| S1[client 1]
+  V -->|delta| S2[client 2]
+  V -->|delta| SN[client N]
+  C[Client] -->|POST /commands: interaction.command| G[Gateway]
+```
+
+- **One fold per record.** `ViewHub` (`src/abstractgateway/replay_view.py`) keeps one
+  `ViewEntry` per (plane, root run), in an LRU of 64. An entry with live subscribers is never
+  evicted. A refresh reads only the records after each run's folded seq: an indexed read on
+  SQLite, a seek to the remembered byte offset on JSONL. It folds them once and hands the same
+  delta to every subscriber. N clients cost one fold, not N.
+- **Cache.** The view's JSON is cached per cursor token, so a GET with nothing new costs one
+  `list_after` check per run, and a 304 sends no body. A read that changes nothing (an unchanged
+  snapshot) produces no delta.
+- **Wake-ups, not timers.** In-process appends wake the streams through
+  `ObservableLedgerStore.subscribe`. In split mode, where the runner is another process, a
+  `list_after` check runs every 0.25 s and reads no bytes while nothing was appended. A 5 s
+  safety check re-reads open runs' snapshots, for legacy ledgers without terminal records. An
+  idle stream parses nothing.
+- **Reconnect.** The SSE id is the cursor token. An older token gets one delta, computed as the
+  difference between a rebuild at that token and now. `?at=<token>` serves the view as the
+  ledger stood at that point, which is how a push opens at its event.
+- **Authorization.** The entry is keyed by the caller's own plane (its service's stores), with
+  the same rule as `GET /runs/{id}`.
+
+Evidence: `src/abstractgateway/replay_view.py`, `src/abstractgateway/routes/replay_view.py`,
+`tests/test_gateway_replay_view.py`, `scripts/bench_replay_view.py` (numbers in backlog 0947).
+
+## Automations
+
+An automation is a durable AbstractRuntime root run, the **controller**, whose
+id is the automation id. Every workflow host registers the controller workflow
+that ships with AbstractRuntime
+(`abstractframework.automation-controller@1.0.0:controller`), so the runner
+ticks controllers like any run, also after a restart. When the trigger fires,
+the controller starts an **occurrence**, an ordinary child run of the target
+workflow; a **discussion** is a separate root run in its own session, seeded
+with the automation's conversation, on a read-only folder. The gateway routes
+create, read and command automations; they never schedule or run anything.
+
+```mermaid
+flowchart LR
+  subgraph Apps["Apps"]
+    Asst["Assistant"]
+    Obs["Observer"]
+    Flow["Flow editor: automation_defaults"]
+    Code["Code and other chat lists"]
+  end
+
+  subgraph GW["AbstractGateway"]
+    Env["Error envelope (automation paths)"]
+    ARoutes["/api/gateway/automations*<br/>/trigger-sources"]
+    Cmd["/api/gateway/commands<br/>(automation.* and wait answers)"]
+    Runs["/api/gateway/runs<br/>session_kind, role, turn roots"]
+    Start["/api/gateway/runs/start<br/>(discussion turns re-stamped)"]
+    Defs["/visualflows, /bundles<br/>automation_defaults"]
+    Seen[("Seen store<br/>automations/attention/")]
+    Inbox[("Durable command inbox")]
+    Runner["GatewayRunner"]
+  end
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Controller run<br/>(automation id)"]
+    Occ["Occurrence runs<br/>(child runs of the target)"]
+    Disc["Discussion runs<br/>(own session, read-only folder)"]
+    Ledger[("Automation ledger:<br/>definition, commands, attention")]
+  end
+
+  Asst --> Env
+  Obs --> Env
+  Flow -->|save, publish| Defs
+  Code --> Runs
+  Env --> ARoutes
+  ARoutes -->|create| Ctl
+  ARoutes -->|discuss| Disc
+  ARoutes -->|defaults at creation| Defs
+  ARoutes -->|commands, revise| Inbox
+  ARoutes --> Seen
+  ARoutes -->|summaries, occurrences, attention| Ledger
+  Cmd --> Inbox
+  Start --> Disc
+  Runner -->|apply commands| Ctl
+  Runner -->|tick| Ctl
+  Runner -->|tick| Occ
+  Runner -->|tick| Disc
+  Inbox --> Runner
+  Ctl -->|trigger fires| Occ
+  Ctl --> Ledger
+  Occ -->|notify, failure| Ledger
+```
+
+- **Door and applier.** The automation routes check what they can at once
+  (unknown automation, stale revision, a state that rules the command out)
+  and queue commands in the durable inbox; the runner hands each one to
+  AbstractRuntime, which records it as applied or rejected in the
+  automation's ledger.
+- **One writer.** v1 supports one process that ticks, resumes and commands
+  runs on a data folder (the runner); in the split shape the API process only
+  creates runs and queues commands.
+- **Turn roots.** Run lists and the session history bloc read turns through
+  AbstractRuntime's one selector: parent-less runs and occurrences, never
+  controllers, so a growing automation reads as one chat.
+- **Strict history.** A turn in an automation or discussion session is seeded
+  from its durable history strictly: when the history cannot be read the start
+  is refused instead of running without its context.
+- **Boot warm-up.** File-backed stores build the run store's session and
+  children indexes at startup (`stores.py`).
+
+See [automations.md](docs/automations.md) for the HTTP contract and operations.
+
+## Triggers, events and attention
+
+Things that happen outside a run start work, and what needs a person reaches
+them through one stream per account:
+
+- **Trigger connections** are one account's instances of a trigger source (a
+  feed URL, a webhook address with its signing secret; mailboxes are the email
+  accounts). Each has an inbox stream, `trigger:<connection_id>`, that the
+  feed poller and the public webhook ingress append to and the bound
+  automations read.
+- **Run origin**: every run records who or what started it,
+  `_meta.origin {kind: person | trigger | agent | system, actor, client, ref}`.
+- **Wakes**: a run's `schedule_run` call becomes a one-shot automation that runs
+  later as a new turn of the caller's session (`wakes_host.py`).
+- **The per-user event stream** (`events_stream.py`) holds what is not a step
+  of a run: run pointers, trigger events, wakes, attention raised and seen
+  (automation items and waits on a person) and notification outcomes. Clients
+  read it with `GET /api/gateway/me/events` and follow it over SSE
+  (`/me/events/stream`); the desktop tray turns attention into OS
+  notifications.
+
+```mermaid
+flowchart LR
+  subgraph Outside["Outside the gateway"]
+    Sender["External system<br/>(signed webhook call)"]
+    Feed["RSS / Atom feed"]
+    Mail["Your mailboxes (IMAP)"]
+  end
+
+  subgraph GW["AbstractGateway (one plane per account)"]
+    Ingress["POST /triggers/webhooks/{id}<br/>signature = auth"]
+    Poller["Plane worker:<br/>feed poller, mail watcher"]
+    TInbox[("Event inbox<br/>trigger:&lt;id&gt;, email:…")]
+    Runner["GatewayRunner<br/>ticks, ledger observer"]
+    Wakes["schedule_run host<br/>(one-shot automation)"]
+    Outbox[("Email outbox")]
+    Publish["Publish host<br/>(PUBLISH_EVENT: Notify me,<br/>Publish to channel)"]
+    UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
+    Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
+    PushD["Push dispatcher<br/>(runner process)"]
+    After["GET /runs/{id}/after<br/>(what happened after a run)"]
+  end
+
+  Relay["Push relay<br/>(abstractgateway push-relay)"]
+  APNs["Apple push service"]
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Automation controller"]
+    Occ["Occurrence = new run<br/>(origin: trigger / agent)"]
+    Run["Any run<br/>(asks a person, schedules a wake)"]
+  end
+
+  subgraph Clients["Clients"]
+    Tray["Desktop tray<br/>(default notifier)"]
+    Apps["Assistant, Code, watch, console"]
+  end
+
+  Sender --> Ingress --> TInbox
+  Feed --> Poller
+  Mail --> Poller
+  Poller --> TInbox
+  TInbox -->|wake| Ctl
+  Ctl -->|admit| Occ
+  Run -->|SCHEDULE_RUN| Wakes --> Ctl
+  Run -->|PUBLISH_EVENT| Publish -->|"event + attention.raised<br/>(recipient, channels)"| UStream
+  Publish -->|"email listed"| Outbox
+  Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
+  Wakes -->|wake.scheduled| UStream
+  Outbox -->|notification.sent / failed| UStream
+  UStream --> Me
+  Me --> Tray
+  Me --> Apps
+  Tray -->|notification.sent (tray)| Me
+  UStream -->|attention.raised| PushD -->|"no text: topic, token, kind, seq"| Relay --> APNs --> Apps
+  PushD -->|notification.sent / failed| UStream
+  UStream --> After
+```
+
+- **Pointers, not copies.** The stream never holds a step of a run, a prompt
+  or a result body: `attention.raised` carries the ledger `record_key` or the
+  run id, and a client reads the content from the run or the automation.
+- **Ordered and resumable.** Each account's stream has its own gapless
+  `sequence`; the SSE `id` is that sequence, so a client reconnecting with
+  `Last-Event-ID` misses nothing. Event ids are stable, so a repeated write is
+  stored once, and the runner repairs at start what a crash between a save and
+  its stream write left out.
+- **One notification per machine.** The tray announces each attention item;
+  an app on the same computer stays silent when the tray reported it in the
+  last minute.
+- **Alerts choose their channels.** A flow's *Notify me* (a `PUBLISH_EVENT`
+  with an alert) carries `recipient` and `channels` (`tray`, `watch`,
+  `phone`, `email`, `console`; none = all) on its `attention.raised`; every
+  deliverer reads them before delivering (`events_stream.alert_asks`).
+- **Push carries no content.** The push dispatcher sends the relay only the
+  app topic, the device token, the kind of alert and the event's sequence;
+  the app reads the event from the gateway ([push.md](docs/push.md)).
+- **After the run** (`GET /api/gateway/runs/{run_id}/after`) reads back, for
+  one run and its sub-runs, what arrived, how it ended, the alerts it raised
+  and each delivery, from exact reads of the ledger and the stream.
+
+See [api.md](docs/api.md#your-event-stream-apigatewaymeevents) for the event
+vocabulary and the routes, [api.md](docs/api.md#triggers) for trigger
+connections and the webhook ingress, and
+[events-examples.md](docs/events-examples.md) for end-to-end examples.
+
+## Live replies (token deltas)
+
+A run started with `input_data._runtime.stream: true` (or, for an interactive
+`POST /runs/start` that does not say, with the `agents.streaming_default`
+setting on) also delivers the model's text while it is written. The text is a
+live preview, never a ledger record: the durable `llm_call` record still
+carries the answer, and it is written before the call's `llm.delta_end`.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway API (ledger stream)
+  participant H as Live-delta hub
+  participant RT as AbstractRuntime (LLM call)
+  participant S as Durable stores
+
+  C->>G: POST /runs/start (input_data._runtime.stream: true)
+  C->>G: GET /runs/{run_id}/ledger/stream?after=N
+  G->>H: subscribe to the run and every run below it
+  H-->>G: one snapshot per open call (snapshot: true)
+  G-->>C: event: llm.delta (snapshot)
+  loop while the model writes
+    RT->>H: llm.delta {call_id, seq, text, channel}
+    H-->>G: frames since the subscriber's cursor
+    G-->>C: event: llm.delta (no id: line)
+  end
+  RT->>S: llm_call record with the final answer
+  G-->>C: event: step (id: N+1)
+  RT->>H: llm.delta_end {reason}
+  G-->>C: event: llm.delta_end
+  Note over H: when the run ends with a call still open,<br/>the hub closes it (synthetic: true)
+  G-->>C: event: done
+```
+
+- The hub is keyed by the root run, so a subscription to a root sees the
+  replies of its sub-runs, and a subscription to a child sees that child's
+  subtree. Another user's run answers 404.
+- Each subscriber holds at most one pending entry per call (a cursor into
+  that call's text), so a slow client catches up instead of overflowing a
+  queue; nothing is capped.
+- A run that ends while a call is open (stopped, failed, killed by the stop
+  kill switch, or failed by the runner) gets a synthetic `llm.delta_end` for
+  that call, and its state is freed.
+
+With API and runner in separate processes, the runner's model calls write
+their events to a private file and the API process reads them from there:
+
+```mermaid
+flowchart LR
+  subgraph RunnerP["abstractgateway runner"]
+    Call["LLM call in AbstractRuntime"] --> Sink["file sink"]
+  end
+  Sink --> File[("data dir/live/ROOT_RUN_ID.deltas.jsonl<br/>(0600, deleted when the root run ends)")]
+  subgraph ApiP["abstractgateway serve --no-runner"]
+    Tail["file tailer"] --> Hub2["Live-delta hub"] --> Stream["GET /runs/{run_id}/ledger/stream"]
+  end
+  File --> Tail
+```
+
+The frames, fields and end reasons are in
+[api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream).
+
+## Workspace guard (every run start)
+
+Every run the gateway starts works in a folder, follows its effective
+workspaces (one-off > session > account > gateway, clamped to the gateway's
+eligible set), and its file tools are kept out of the gateway's data folder
+and the account's credential folders:
+
+```mermaid
+flowchart TB
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons, automation definitions"] --> Policy["Workspace check: a one-off workspace outside the eligible set or above a cap, a workspace_root the run does not reach, or one inside the data folder (except the caller's own conversation folder), is refused with 400 workspace_refused"]
+  Policy --> Start["Workflow host start_run"]
+  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, automation occurrences"] --> Start
+  Start --> Ensure["No folder named: the conversation's private session folder (or a per-run folder)"]
+  Ensure --> Level["Level: one-off workspace (input_data.workspace) > the session's choice (session_workspaces.json) > the account default > the gateway policy"]
+  Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
+  Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
+  Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
+  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
+```
+
+The rules are whole-folder prefixes, never a listing of a folder's contents,
+so the model's prompt stays the same from turn to turn. An admin can turn the
+run-side rules off (`workspace_builtin_deny`); the workspace browser keeps
+hiding those folders. Shell commands a run may execute are not confined by
+these rules. Details: [configuration.md](docs/configuration.md#workspace-policy-filesystem-scope).
+
+## Desktop Assistant hand-over
+
+Opening the Assistant from the console or the tray starts it on the gateway
+computer already signed in as the person who clicked, without a code or token
+on its command line or in its environment:
+
+```mermaid
+sequenceDiagram
+  participant U as Admin (console Open, tray Launch Assistant)
+  participant G as Gateway
+  participant F as Hand-over file (0600)
+  participant A as Desktop Assistant
+
+  U->>G: POST /api/gateway/apps/assistant/launch
+  G->>F: write {schema, code, base_url, expires_at, user_id}<br/>in the data dir handover folder
+  G->>A: start with --gateway-url URL --gateway-handover-file FILE
+  A->>F: read, then delete
+  A->>G: POST /api/gateway/apps/desktop-handover {code}<br/>(direct loopback call)
+  G-->>A: {base_url, session_id, csrf_token, user_id, expires_at}
+  Note over G,A: single use, two minutes. A relayed call gets 403,<br/>a used or expired code 410
+```
+
+An Assistant that is already running is brought to the front and receives no
+code. See [apps.md](docs/apps.md).
+
+## Thin-client control plane
+
+Higher-level apps use the gateway instead of importing Runtime or Core:
+
+- `GET /api/gateway/discovery/capabilities` exposes a versioned shared
+  contract: run input/history access, media endpoints, voice contracts,
+  prompt-cache surfaces, host state, session caches, model residency, and
+  `common.readiness` (a compact summary of Gateway-owned surface readiness).
+- Provider, model and voice catalogs are routed through the gateway and carry
+  a `gateway_catalog_v1` envelope (`catalog` plus canonical `items`) next to
+  the lower-layer fields.
+- Direct run-scoped media routes cover TTS, STT, image generation, edit and
+  upscale, text-to-video, image-to-video, and music.
+- The voice library (`routes/voice_library.py`: languages, cloned voices,
+  cloning, voice design, the capability catalog) goes through AbstractRuntime's
+  voice library facade, in process or on the configured AbstractCore server;
+  cloned voices live in one AbstractVoice store per machine user, so its
+  changes are admin-only.
+- Voice listen is a host-capture contract: clients capture audio and then
+  upload it or emit an event.
+- Model residency is Runtime/provider-owned and Gateway-normalized:
+  `GET /models/loaded` and `GET /host/state` relay Runtime's host records and
+  add `model_residency_row_v1` rows. The gateway never fabricates residency,
+  memory or GPU facts; unavailable sections degrade in-band.
+- Reads (`/models/loaded`, `/host/state`, `/host/metrics/*`,
+  `GET /sessions/prompt_cache`) serve any authenticated principal; mutations
+  (model load/unload/lock/download, prompt-cache clearing, installs) require an
+  admin.
+
+## Deployment shapes
+
+```mermaid
+flowchart TB
+  subgraph Desktop["Your own computer"]
+    LS["Login service (optional)"] --> Serve1["abstractgateway serve<br/>API + runner + tray"]
+    Serve1 --> AppsLocal["Browser apps on 127.0.0.1"]
+  end
+  subgraph Server["Server or container"]
+    API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
+    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
+    Proxy["TLS reverse proxy or tunnel"] --> API
+    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
+    Worker --- ModelHost
+  end
+```
+
+- **Single process**: `abstractgateway serve` starts the HTTP API and the
+  runner. On a desktop session it also starts the tray helper, and it starts
+  the browser apps you enabled.
+- **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
+  (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
+  one data dir, so you can restart the API without pausing durable execution.
+  The runner process ticks every run, holds the one text model, and runs the
+  mail watchers, feed polling, push dispatcher and bridges; the API process
+  only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
+  `/v1` admits each request, then forwards it to a model host the runner
+  serves on `127.0.0.1` (address and per-start secret in
+  `<data dir>/split/model_host.json`), so the model is never loaded twice.
+  Live replies pass through `<data dir>/live/`; events the API delivers reach
+  runs the runner parked (the run store's indexes refresh across processes).
+  The full table of who does what: [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
+- **Container**: the GHCR image runs `serve` with user auth; see
+  [deployment.md](docs/deployment.md).
+
+Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
+(lock file), `src/abstractgateway/split_mode.py` (model host, placement).
+
+## Security model (summary)
+
+`GatewaySecurityMiddleware` applies to paths starting with `/api/gateway`:
+
+- **Authentication**: Gateway user accounts (browser sessions or user bearer
+  tokens), or a shared server/operator token.
+- **Origin allowlist**: the loopback origins, the gateway's own LAN origins in
+  a network mode, and the `allowed_origins` setting.
+- **Abuse resistance**: body size caps, concurrency caps, auth lockouts, audit
+  log.
+- **Callers on this computer**: one rule decides who counts as sitting at the
+  gateway computer (installs, opening folders); a browser that reaches the
+  gateway through an app server counts only when the browser itself is on this
+  computer.
+- **Workspace guard**: every run works in a folder, and its file tools never
+  reach the gateway's data folder or the account's credential folders.
+
+`session_id`, `run_id`, `artifact_id` and memory owner ids are references,
+not authorization proofs. With user auth on, each principal runs on its own
+data plane; browser apps exchange a user token for an HTTP-only session cookie
+plus CSRF token. See [security.md](docs/security.md).
+
+## Evidence (jump-to-code)
+
+- Composition root: `src/abstractgateway/service.py`
+- Publishing without a rebuild: `src/abstractgateway/hosts/bundle_host.py`
+  (`_compile_workflows`, `_build_runtime`, `reload_bundles_from_disk`,
+  `_pin_in_flight_runs`), `src/abstractgateway/workflow_reload.py`,
+  `src/abstractgateway/service.py` (`reload_gateway_workflow_bundles`)
+- API surface: `src/abstractgateway/routes/` (`gateway.py`, `apps.py`,
+  `engines.py`, `network.py`, `entities.py`)
+- Runner: `src/abstractgateway/runner.py`
+- Stores: `src/abstractgateway/stores.py`
+- Automations: `src/abstractgateway/routes/automations.py`,
+  `src/abstractgateway/automation_errors.py`,
+  `src/abstractgateway/automation_attention.py`,
+  `src/abstractgateway/automation_defaults.py`,
+  `src/abstractgateway/automation_command_types.py`,
+  `src/abstractgateway/session_history_bloc.py`
+- Security: `src/abstractgateway/security/`
+- Settings: `src/abstractgateway/runtime_config.py`
+- Default agent workflows: `src/abstractgateway/agent_defaults.py`
+- Live replies: `src/abstractgateway/live_deltas.py`
+- Workspace guard and browser: `src/abstractgateway/run_workspace_guard.py`,
+  `src/abstractgateway/workspace_browse.py`
+- Same-machine rule: `src/abstractgateway/security/same_machine.py`
+- Desktop hand-over: `src/abstractgateway/apps_desktop.py`,
+  `src/abstractgateway/apps_manager.py`, `src/abstractgateway/routes/apps.py`
+- CLI: `src/abstractgateway/cli.py`
+
+## Related docs
+
+- [getting-started.md](docs/getting-started.md): run the gateway and choose stores
+- [configuration.md](docs/configuration.md): every setting and environment variable
+- [api.md](docs/api.md): the client contract
+- [automations.md](docs/automations.md): automations, their routes and operations
+- [security.md](docs/security.md): auth, origins, network exposure
+- [deployment.md](docs/deployment.md): containers and Compose
+- [faq.md](docs/faq.md) and [troubleshooting.md](docs/troubleshooting.md)
 
 ---
 
@@ -10928,7 +12033,7 @@ existing deployments; use `abstractgateway` for new ones.
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.3.0`
+- `AbstractMemory[lancedb]>=0.3.0,<0.4`
 - `abstractagent`
 - FastAPI/Uvicorn
 
@@ -11246,6 +12351,10 @@ PyPI release is available, matching the AbstractCore server image pattern.
 
 # AbstractGateway
 
+[![PyPI](https://img.shields.io/pypi/v/abstractgateway.svg)](https://pypi.org/project/abstractgateway/)
+[![CI](https://github.com/lpalbou/AbstractGateway/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lpalbou/AbstractGateway/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-lpalbou.info-blue.svg)](https://www.lpalbou.info/AbstractGateway/)
+
 AbstractGateway is a **deployable Run Gateway host** for AbstractRuntime runs,
 and the control plane of an AbstractFramework installation:
 
@@ -11263,6 +12372,14 @@ none of them depends on the others.
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.16.0** ([CHANGELOG](CHANGELOG.md)): the replay view
+(`GET /runs/{id}/view` and `/view/stream`, one fold per record shared by every
+client), a per-conversation tool policy (approve or deny for the whole
+session), the voice library with personal voices per account, triggers
+(feeds, webhooks, several mailboxes) and per-user event streams with Apple
+push. It requires AbstractRuntime 0.14.0; its hash-chained ledgers are read
+by 0.14.0 verifiers only, so upgrade writers and verifiers together.
 
 ## AbstractFramework ecosystem
 
@@ -11709,7 +12826,7 @@ Related repos:
 | [first-run.md](docs/first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
 | [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API and runner (opt-in), file vs SQLite stores |
 | [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, worker pools and off-loop service builds, automations, triggers, events and attention (alerts with their channels, push), live replies, the workspace guard, the desktop hand-over, deployment shapes (split mode) |
-| [adr/](docs/adr/README.md) | the architectural decision records: the durable rules the design follows (AbstractCore access only through AbstractRuntime facades) |
+| [adr/](https://github.com/lpalbou/AbstractGateway/tree/main/docs/adr) | the architectural decision records: the durable rules the design follows (AbstractCore access only through AbstractRuntime facades) |
 | [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections, the well-known feed catalogue, sample inputs and the signed webhook ingress, your event stream (`/me/events`, its vocabulary, published alerts with `recipient` and `channels`, the one-notification-per-machine rule), After the run (`/runs/{run_id}/after`), push devices and the push forwarder setting, discovery, media, models, host state, `/about`; map of every route family |
 | [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, split mode (API and runner in two processes), CLI flags (worker pools, run index, GC tuning, push relay) and the load test |
 | [faq.md](docs/faq.md) | recurring questions and limits |
@@ -12709,36 +13826,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-28
+
+Upgrade notes (one way):
+
+- AbstractRuntime 0.14.0 writes `seq` on every hash-chained JSONL ledger line. A `verify_ledger_chain` from an
+  older AbstractRuntime reports those lines as tampered: upgrade every writer and verifier of a ledger together.
+- Timing budgets in the test suite are reports, not failures, unless `ABSTRACTGATEWAY_TIMING_STRICT=1`
+  (CONTRIBUTING.md); CI keeps structural checks (off-loop, time to first audio) instead of wall-clock budgets.
+
+### Added
+
+- **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0854 and ADR 0010). There
+  are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
+  its status, the interaction to answer (a delegated child's approval included), messages with
+  provenance, one activity per node execution, artifacts, usage, the workflow (bundle, version,
+  entrypoint) and the cursor. It has an ETag set to the cursor token, answers 304 on
+  `If-None-Match`, and takes `?at=<token>` for the view as the ledger stood at that point.
+  `GET /api/gateway/runs/{run_id}/view/stream` is SSE: one `view`, then a `delta` per fold, with
+  `Last-Event-ID` resume and `done`.
+  - The view is computed by AbstractRuntime's reducer and served from one cached fold per run
+    tree. Each record is folded once and fanned out to every subscriber.
+  - Streams wake on the ledger append and never re-parse on a timer. A read that changes nothing
+    sends no delta.
+  - Authorization follows `GET /runs/{id}`, and the principal isolation matrix covers the new
+    routes.
+  - `/view/stream` counts in the SSE concurrency pool.
+  - Docs: api.md "Replay view", architecture.md.
+  - Benchmark: `scripts/bench_replay_view.py`.
+
+- **Session tool policy** (backlog 0946): `GET`/`PUT`/`POST`/`DELETE /api/gateway/sessions/{session_id}/tool-policy`, a conversation's standing "approve / deny without asking" (`approve: {tools, kinds, all, max_risk_rank}`, `deny: {tools, kinds}`, `ask`), stored per account beside the run store (`<data dir>/session_tool_policy.sqlite3`) and read by the runtime before any approval wait: an approved call runs with no wait and no interaction in any app, a denied call is refused with no wait, and each decision is an `abstract.tool_policy_decision` ledger record (who set the policy, when, which selector matched). The gateway clamps: approve selectors expand to the tools `GET /discovery/tools` serves the caller as enabled; the rest is listed in `clamped`. Every runtime the host builds gets the store (`hosts/bundle_host.py`); `capabilities.session_tool_policy` on `GET /discovery/capabilities`; a runtime without it is refused at host build. Fixes the approval gate that flashed in every app when a person had approved all tools or a kind of tool (the client answered the wait after it arrived). Requires AbstractRuntime 0.14.0 (the session tool policy, its backlog 0853). Docs: [api.md](docs/api.md#session-tool-policy-approve-or-deny-for-the-whole-conversation). Tests: tests/test_session_tool_policy_routes.py.
+
 - **Voice library** (`routes/voice_library.py`): `GET /api/gateway/voice/languages` (the languages each voice engine accepts), `GET /api/gateway/voice/clones` (cloned voices, designed and built-in included, `?language=` keeps the ones that speak it), `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility` (which engine supports `speed`, `one_shot`, design… and how), and `POST /api/gateway/voice/clones` (a voice from a recording), `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}` (rename, replace the transcript, delete) and `POST /api/gateway/voice/design` (a voice from a written description). Through AbstractRuntime's voice library facade, locally or on the configured AbstractCore server. See [api.md](docs/api.md#voice-library).
+
 - **Personal voices per account** (backlog 0942): with user accounts on and local voice engines, each account keeps the voices it clones or designs in its own store (`<plane>/voices`), in front of the shared library (the built-in voices and every voice the administrator creates; the administrator's plane is the library). An account creates, renames and deletes its own voices; library voices are read-only to it. Where every account shares one store (single-user mode, an AbstractCore server doing the voice work), voice changes stay admin-only (403). `language` on `POST /api/gateway/voice/clones`; `POST /api/gateway/voice/clones/{voice_id}/deploy` (administrators) shares a voice with every account. A reference recording may be up to 25 MB (the security layer's 10 MB write cap does not apply to it). Requires AbstractRuntime 0.13.0; personal stores need AbstractVoice 0.19.0.
+
 - `GET /api/gateway/voice/voices?language=` filters the voice catalog by language (native speakers first); `compact=true` keeps `tts_languages_by_provider`.
+
 - `GET /api/gateway/vision/provider_models?provider=endpoint:<id>` also reads that endpoint's own catalog: a model it says makes images is listed whatever its name, one it says does not is left out, the others are decided by name as before; an endpoint that does not exist or is disabled answers 404 instead of an empty list. A model id with an organisation prefix (`black-forest-labs/FLUX.1-schnell`) is kept whole; only a routing prefix naming the provider family is dropped.
+
 - `POST /api/gateway/runs/{run_id}/voice/tts` takes `one_shot` (the whole text as one take with one voice); the streamed route refuses it with 422.
 
-- Push: a notification is never passive any more (a passive push sits silently in Notification Center): approvals and questions are time-sensitive, every other kind is an ordinary alert with banner and sound; and the dispatcher is phone-first (the iPhone app and the watch app are one family, Apple mirrors the phone's alert to the watch; a watch signed in on its own is pushed directly; "watch" alone in a Notify me node still pushes the watch).
+- **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
+
+- `GET /api/gateway/voice/voices?compact=true` keeps `tts_model_details_by_provider` (AbstractVoice 0.19.2: each model's `role`, `"cloning"` for Qwen3-TTS Base, and its picker `label`).
+
+- `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
 
 - **Split mode works as an opt-in** (backlog 1054, round 3): `abstractgateway runner --data-dir DIR` + `abstractgateway serve --no-runner --data-dir DIR`. The API process loads no text model: its runtime builds the model client at the first call instead of at boot (AbstractRuntime `set_default_model_warmup(False)`), and the OpenAI-compatible `/v1` admits each request as before, then forwards it, streaming both ways, to a model host the runner process serves on `127.0.0.1` (address and a per-start secret in `<data dir>/split/model_host.json`, mode 0600; a request without the secret is refused; no runner = `503 runner_unavailable`, never a local load). Events the API process delivers reach runs the runner parked (AbstractRuntime: the event-wait and mailbox indexes refresh across processes). Mail watchers, feed polling, the notification outbox, the push dispatcher and the Telegram/agora bridges run only in the runner process (they used to start in both). `/api/health` rows carry `mode` (`split`/`combined`), `process` (`api`/`runner`/`combined`) and, in the API process, `runner_process` `{pid, alive, heartbeat_fresh, model_host}`. `runner` takes `--data-dir`. Docs: configuration.md (the two commands, who does what), architecture.md. Tests: `/v1` forwarded with one model load (fake model host), secret refused, no runner = 503, dead address ignored; a hermetic two-process smoke (run started on the API completes in the runner, health, `/v1`, no model built in the API process). Not the default yet.
-
-- A flow editor draft test parked on a person (hidden from the run listings) no longer raises attention, and a stale open wait for one is closed at boot: the watch and phone badges no longer count a wait nobody can see.
 
 - **Notify me reaches the channels it chose** (framework ADR-0041 follow-up). A published alert's `attention.raised` carries `recipient` (`"me"`; another account is refused: "notifying another account is not available yet") and `channels` (from `tray`, `watch`, `phone`, `email`, `console`; absent = every channel, so older flows behave as before), validated by `record_published` (`channels` without `alert` refused). Every deliverer reads it through `events_stream.alert_asks`: the tray consumer neither shows nor counts an alert that does not list `tray`; the push dispatcher sends only to the listed apps, watch-first among them (`watch` alone never falls back to the phone); the email outbox now mails a Notify me alert (`kind: notify_me`, outbox key `notify_me_key(record_key)`, fixed template "“<flow>” notified you.", the flow's text labelled) when `email` is listed (or nothing is) and a mailbox is usable, queued by the publish host (`wire_publish_event(..., email_plane=)`). The console item is the record itself, always written. `GET /runs/{id}/after` gives a published alert `recipient` and `asked` (`["watch", "phone"]` or `"all"`) and finds its email delivery. Tests: tests/test_notify_me_channels.py (the record, tray, push per channel set, email only when asked, After the run, end to end from a compiled Notify me through the runtime to a fake relay). Docs: api.md (event shapes, After the run).
 
 - **After the run** (framework ADR-0041 "No hidden effects after a flow"): `GET /api/gateway/runs/{run_id}/after` answers what happened after a run in one read: what arrived (count and a line: "4 new emails: “O” from … and 3 more", the mailbox address or connection name), when it started and ended, On Flow End's `response` excerpt and `note`, the alerts it raised (On Flow End's `notify` of older flows, the automation's failure item, Notify me, Publish to channel with Alert on, an approval or a question on the run or one of its sub-runs, "Email me when done") or why nothing rang (`quiet_reason`: empty title, no notify, still running, not recorded yet), and each delivery with its channel, route (`push`, `stream`, `outbox`), device, time and state. Exact reads only (the automation's ledger key, deterministic event ids through the stream index), off the event loop, in the caller's own plane and stream.
 
 - `serve --run-index trusted|verify` (default `verify` in this release): the run listings' in-memory index (AbstractRuntime 09d3b63) runs in shadow mode, its mismatch counters under `run_index` in `/api/health`; `trusted` answers listings from the index.
-
-- Performance (backlog 1054): the routes that read files on the event loop now do it in a worker (same answers): `GET /visualflows` (one folder scan, each flow file parsed once per version, the whole answer kept while no file changed, and its JSON encoded in the worker: Flow's library polls it), `GET /backlog/{kind}` (root discovery, each item parsed once per version, encoding in the worker), `GET /backlog/exec/requests`, artifact export, `POST /artifacts/import`, `POST /attachments/ingest`, admin catalog promote, bundle download, `GET /workflows/{id}/flow`, bug and feature reports and their inbox listings. `GET /runs` reads the session archive and session kinds files from memory (a write through the gateway drops the entry at once; another process's write is seen within 1 s).
-- Performance (backlog 1054): host status for the tray, the Observer and the console computes its expensive parts once per short TTL, single-flight, off the event loop: the GPU probe (`ioreg`/`nvidia-smi` subprocess) 2 s, stamped when it ends (the old 1 s cache was stamped when the probe started, so the tray's 1 Hz poll missed every time); the memory snapshot (`ioreg` + `sysctl`) 2 s keyed on the runtime's client (keyed on the facade object before, which the runtime builds anew per call: it never hit); `/host/state`'s model residency walk and session-cache enumeration 4 s (a load, unload or pin through the gateway drops them) and its install block 10 s; `/host/runner` off the loop. `/host/runs` keeps one set of read-only stores per plane (it built new stores, artifact catalog and a cold run-index scan, per plane per call) and reuses the service's own stores for the default plane; finished rows' step counts are kept while the row is unchanged.
-- Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
-- Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
-- Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
-- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
-- Performance (backlog 1054, round 3): the last blocking calls on the event loop's shared executor run in the work pools: `GET /runs` (the one-time docs-chat migration, the children page, the listing itself) in `heavy`; `POST /host/tray/show`, `GET /host/update` and `POST /host/update/start` in `light`; `POST /host/update/check` (a remote check) in `watchers`. `POST /backlog/exec/requests/{id}/promote` (request and manifest reads, a `git` call per file, the copies and writes) no longer runs on the event loop at all.
-- Performance (backlog 1054, round 3): an account's service is never built on the event loop. A build runs in its own thread, once per service however many requests wait for it, and requests await it; the pre-warm covers every path that can reach a service (not only `/api/gateway`), the single-user service, and the plane an admin is served from for another account's entity. A request that still reaches a service being built answers `503` `service_starting` with `Retry-After: 1` (or the build's own error, once) instead of freezing the gateway; a cached service whose runner needs a restart keeps serving while the restart runs off the loop. Measured: a 5 s build during a request, `/api/health` answering in 2-50 ms throughout (it froze 5 s).
-- Performance (backlog 1054, the 04:07 watchdog exit of 2026-10-26): `GET /discovery/capabilities` (Flow and the console poll it) and `GET /config/capability-defaults` build their answer in the watchers pool. Both reach AbstractCore's capability defaults, whose engine checks ask Python's import system for modules (`find_spec`), which waits on the interpreter's import lock while another thread imports; on the event loop that wait froze the gateway for 31 s until the watchdog restarted it. With the import lock held 2 s by another thread, `/api/health` and `/me/events/stream` answer within 50 ms.
-- Load test in CI (backlog 1054): `.github/workflows/perf.yml` (pull requests touching `src/`, nightly, manual) runs `scripts/perf/ci.sh`: a synthetic fixture (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations with their ledgers, no operator data), a hermetic gateway, 20 probe rounds and a 2-minute idle window; it fails when a p99 is over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or CPU at rest is over `--cpu-max` (5% of a core, 10% on CI runners). `bench_driver.py` gained `--fail-p99 NAME=S` / `--fail-idle-cpu PCT` and reads CPU and threads from `/proc` on Linux; `bench_gateway.sh` gained `--python`, `--perf-dir`, `--driver-arg` and `installed` sources, and exits with the gates' verdict. Tests pin `/api/health`'s `pools`, `run_index` (mode, planes, summed counters) and `gc_tuning`.
-
-### Added
 
 - **Push forwarder: one admin setting, no restart.** The gateway's push forwarder (relay) address is a saved,
   gateway-wide setting with three choices: **Built-in forwarder** (the packaged address; off while none is built
@@ -12751,6 +13892,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner sees the settings file move within 2 s; turning it on never pushes what happened while it was off. The
   web and terminal consoles show one **Push forwarder** row beside Devices (My email → Notifications, admins) in
   words, with *set by the launch flag for this run* when the flag wins, and an **Edit** with the three choices.
+
 - **Triggers: Handled by as a dropdown, and the page laid out on one grid.** The console's Triggers page is a
   table whose cells start on one line: **Connection** (the name, quiet tags *Main mailbox* (your own mailbox
   from My email) / *Read and write* / *Read only* on a mailbox, the trigger as a sentence), **Handled by**,
@@ -12776,6 +13918,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flow** (`f`) with *✓ <flow>* lines carrying Pause / Resume, **Open in Flow** (prints the `?flow=` link with
   Copy) and Remove (Remove / Keep). Automation summaries now carry `target` `{workflow_id, bundle_ref,
   flow_id}` and `flow_name`.
+
 - **Alerts on the Apple Watch and iPhone while the app is closed** (Apple push). The apps register at sign-in with
   `PUT /api/gateway/me/push/devices/{device_id}` `{token, topic, env, app, reg, name?}` (`DELETE` at sign-out,
   `GET /api/gateway/me/push/devices` lists yours, never with the token; a registration expires 7 days after its last
@@ -12789,18 +13932,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with your own Apple key: fixed localized messages, HTTP/2 to Apple, per-token and per-IP limits, `GET /v1/info`;
   install the `push-relay` extra (`httpx[http2]`, `cryptography`) for it. State lives in `<data dir>/push/`. The web
   and terminal consoles list your devices under My email → Notifications → **Devices**. See `docs/push.md`.
+
 - **Well-known feeds for a new feed connection.** The console's Triggers → New connection → Feed starts with **Choose a well-known feed**: 24 open RSS/Atom feeds grouped by category (World news: BBC, The Guardian, NPR, The New York Times, Al Jazeera, Deutsche Welle, Le Monde; Technology: Ars Technica, The Verge, Hacker News, TechCrunch, WIRED; Science: MIT Technology Review, arXiv cs.AI, Quanta Magazine, New Scientist, NASA, Nature, Science news, Science's table of contents; Business and finance: BBC Business, The Guardian Business, CNBC, MarketWatch), plus three you complete (a subreddit, a YouTube channel, a GitHub repository's releases). A pick fills in the name and the address, both editable; **Another address** keeps the free field. The catalogue ships as `abstractgateway/assets/feeds.json` and merges with `<data dir>/catalog/feeds.json` when present (same `id` replaces, a new `id` adds, `"disabled": true` hides); `GET /api/gateway/triggers/feeds/catalog` serves the merged list with `source: shipped | custom` (an administrator also gets `custom_path` and `problems`). The terminal console offers the same list. `scripts/check_feed_catalog.py` re-checks every address live with the runtime's feed reader. Nature's and Science's feeds are RSS 1.0 (RDF): they are read by AbstractRuntime's RSS 1.0 support (its next release; AbstractRuntime 0.12.0 refuses them as unreadable).
+
 - **A well-known feed recommends how often to check it.** Every catalogue entry carries `check_every` (the feed source's duration form; served by `GET /api/gateway/triggers/feeds/catalog`): 15m for world news and business/finance, 10m for Hacker News, 30m for the technology sites, 6h for the science magazines and journals, 12h for arXiv, and for the templates 15m (subreddit), 1h (YouTube channel, GitHub releases). Picking a feed in the web or terminal console sets **Check every** (number and unit) to it, with "Recommended for this feed" under the field; a value changed after a pick is kept on the next pick, one set before any pick is replaced. A custom entry in `<data dir>/catalog/feeds.json` may omit it (the form default stays); a malformed one is skipped and named in `problems`.
+
 - Folder picker: `GET /api/gateway/me/email/folders` and `GET /api/gateway/me/email/accounts/{mailbox_id}/folders` list a mailbox's folders with their role (`special`: inbox, sent, trash, drafts, junk, archive) and message count, on one connection, cached 60 s; another account's mailbox answers 404.
+
 - Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
   (`publish_host.py`), so a flow's *Publish to channel* step lands on the run owner's event stream (and raises
   attention with `alert: true`). Needs AbstractRuntime 0.12.0: the dependency floor moves to `>=0.12.0` in the
   base, `apple` and `gpu` profiles.
 
 - Mailbox rows (`GET /me/email/accounts`, `GET /me/email` `accounts`) carry `can_write` and `access` (`read` | `write`): whether automations may change the mailbox (mark, label, move, delete) and send from it — the person's choice (AbstractCore 2.29's `EmailAccount.access`), the primary always `write`.
+
 - **Read only or Read and write for another mailbox.** Adding a further mailbox takes `write` (default `false`: Read only, IMAP only; `true`: Read and write, its outgoing server given, discovered or the domain's standard one stored and tested); `send` is still accepted as the older name. `PUT /me/email/accounts/{mailbox_id}/access {write, smtp?, test?}` changes it without connecting again: turning it on adds and signs in to an outgoing server with the stored password or Google/Microsoft sign-in (a refusal names its step and changes nothing), turning it off keeps that server unused; 400 for the primary (always read and write); audited `email.access_changed`. The OAuth start of a further mailbox takes `write` the same way. A mailbox kept Read only reads `mailbox.state: connected`; `receive_only` now means Read and write without an outgoing server ("can't send").
+
 - Console, web: the Add mailbox form's switch is **Read and write** (off by default; "Off: automations read this mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it."), the outgoing server (SMTP) shown when it is on; My email rows say *Read only* / *Read and write* and another mailbox's row has a **Read and write** switch; a mailbox's Settings open with its access; Triggers mailbox rows say *When mail arrives in … · Read only* / *· Read and write* and *Can't send* for a read-and-write mailbox without an outgoing server.
+
 - Console, terminal: My email lists your other mailboxes, each with **Active** and **Read and write** switches, and **Add mailbox** connects another mailbox by password (Read and write off by default; the outgoing server only when on); Triggers mailbox rows say *· Read only* / *· Read and write* and `receive_only` reads *Can't send*. Google/Microsoft sign-in for another mailbox is on the web console only.
+
 - **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
   `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
   owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and
@@ -12811,7 +13962,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/events-examples.md` ("Publish to a channel").
 
 - **Run a triggered flow with real data.** `POST /api/gateway/triggers/sample` `{trigger, count?}` answers the inputs a real occurrence of that trigger would receive (`inputs` with `event`, `truncated`, `count`, and a `summary` such as "Last 100 messages of me@example.com"), built read-only from the caller's own mailbox, feed or webhook connection through AbstractRuntime's `sample_occurrence_inputs` (count 1..500, a mailbox read for at most 20 s; another account's mailbox or connection: 404). Flow's Run dialog starts a normal run with them.
+
 - **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
+
 - **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
   used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in
   red (*Can't read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences with
@@ -12820,109 +13973,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the text kept; optional settings under **More options**; **Cancel** and a hint per option; the next step after
   creating; a webhook's test call says *It worked: <name> received the call*; a local webhook address says GitHub can't
   reach it yet, with **Open Network**.
+
 - **My email.** Your own email dialog is titled **My email** (see *Changed* for its tabs and the mailbox form).
+
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
   fetching even when nothing uses it** (`always_listen`). Mailbox rows show the same states with their **Use this
   mailbox** switch. A line under the list explains when a connection fetches.
+
 - **Further mailboxes: app-password links and provider sign-in.** For Gmail and Outlook servers or addresses the form
   says the provider refuses account passwords, with a direct **Create an app password** link (new tab) to paste from;
   **Sign in with Google** / **Sign in with Microsoft** come first when the gateway has that sign-in client, through
   `/me/email/accounts/{mailbox_id}/oauth/*`.
+
 - **Further mailboxes in the console.** My email → **Mailboxes** lists your other mailboxes with an **Active** switch,
   **Test**, **Settings** and **Remove** (asks first), and **Add mailbox** connects another one (the gateway signs in
   before storing); each is Read only or Read and write (see above).
+
 - **Webhook setup panel.** After creating a webhook connection, the console shows the address and the one-time secret
   with copy buttons, a ready-to-copy signed call (bash, `openssl`) with the real address and secret, the GitHub/Zapier
   recipe, and **Send a signed test call** (signed in the browser, posted to the ingress; the HTTP status and the event
   it created are shown).
-
-### Changed
-
-- **Triggers, re-review.** The feed form's **When added** is a choice in words (a source's `enumNames` are accepted;
-  no "Not editable here" with raw JSON), and descriptions that restate the control (a duration's units, a choice's
-  raw values) are not shown; mailbox rows are named like My email (the address, the primary with *Sends as you*); a
-  failing connection that is on shows its red error as its status line; the line under the list reads *Pause it to
-  stop fetching.* The mailbox form opens in a narrow dialog (480 px), its links use the console's link look, and a
-  refused Gmail/Outlook password keeps the provider's help under the field. The terminal console matches (its feed
-  form asks *Check every [15] [minutes]*, required settings first).
-- Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
-  arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
-  `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.
-  `GET /api/gateway/bundles` entrypoints carry `triggerable` (automation defaults with a trigger). The tray's menu
-  says **Conversations ▸**, **Open Conversations in Console** and "Paused — conversations wait until you resume".
-- A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
-  other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
-  line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.
-- **My email, reorganised.** A compact header (*My email* and your address) and three tabs: **Mailboxes** (one list,
-  your primary mailbox first with *Sends as you*, each row one line *address · provider · state* with an **Active**
-  switch and a **…** menu: Test, Settings, Remove), **Notifications** (your address, Job failed, Approval needed) and
-  **Agents** (agent email tools, recipients and limits). No banner; each tab fits a 1440×900 screen. The primary's
-  **Settings** opens its full editor (servers, folder, sign-in app, Test, Disconnect) in a **Mailbox settings** dialog.
-- **One mailbox form, address first.** **Connect** (your primary) and **Add mailbox** (another one) open the same
-  dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
-  **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
-  app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
-  write** (another mailbox, off by default); **Server settings** collapsed and
-  prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
-  asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
-- Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
-  "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
-  open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.
-- **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
-  connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
-- **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
-  (seconds)"); a secret the gateway generates is never asked for.
-
-### Fixed
-
-- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
-  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
-  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
-  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
-  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
-  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
-  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
-  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
-  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
-  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
-  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
-- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
-  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
-  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
-  the red "!" stays for no answer at all (refused, or nothing for 90 s).
-- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
-  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
-  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
-  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
-  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
-  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
-  switch, a change set it cannot name (another process) and at least every 5 minutes.
-- **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
-  and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
-  every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime
-  `JsonFileRunStore.change_token`: one stat, no file read, about 1 µs). An older AbstractRuntime without it keeps the
-  old fingerprint, with a warning at start.
-- **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
-  read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
-  watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that
-  session's candidates through its indexes (AbstractRuntime `list_session_candidates`; same visibility rule) and,
-  like `GET /runs/{id}/artifacts`, `/artifacts/search` and `/artifacts/stats`, builds and renders its page in a
-  worker thread: 2.1 s to 16 ms, with no event-loop step over 1-2 ms. `GET /runs?parent_run_id=` lists children off
-  the loop too. Needs the AbstractRuntime release that carries `list_session_candidates`.
-- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
-  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
-  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
-  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
-  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
-  takes one snapshot per account for the whole page (`connections_usage`), and `GET
-  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
-  AbstractRuntime release that carries the index.
-
-## [0.16.0] - 2026-10-25
-
-### Added
 
 - **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched; a webhook call to an idle connection is accepted and stored (only a paused one answers 409 `connection_disabled`).
 
@@ -12945,32 +14017,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner, a scripted model double deciding through the flow's LLM node, AbstractCore's fake mail servers, a
   recorded Python Insider RSS (plus a live variant run with `--allow-network`), the gateway tray following
   the stream over HTTP on a scratch port.
+
 - Per-user event stream (backlog 1046, `events_stream.py`): one durable, ordered stream per person
   (`user:<tenant>:<user>`, the runtime's `JsonFileEventInbox` in the plane's data folder) holding only what is
   not a step of a run, in CloudEvents 1.0 names (`{specversion, id, type, source, subject?, time, data,
   sequence}`): `trigger.event`, `attention.raised` (the ledger `record_key`, never a body), `attention.seen`,
   `notification.sent|failed` (console, email), and the pointers `run.started|finished {run_id, session_id,
   origin}` written after the run store save, idempotent by id and rebuilt at boot after a crash in between.
+
 - `GET /api/gateway/me/events?after=<sequence>&limit=` (catch-up page `{stream, events, next_after, head, more}`)
   and `GET /api/gateway/me/events/stream` (SSE: `id` = sequence, `event` = type, `Last-Event-ID` honoured when
   `after` is 0, `: keep-alive` every `heartbeat_s`, the `after` semantics of `/runs/{id}/ledger/stream`): the
   caller's own stream only, in the caller's own plane. `POST /api/gateway/me/events/notifications` lets a client
   channel (the tray) record `notification.sent|failed`. Documented in api.md and the OpenAPI document.
+
 - The desktop tray follows the person's event stream (`tray/events.py`): one OS notification per new
   `attention.raised` (the automation's title, a failure said as such), recorded back as `notification.sent|failed`
   with `channel: "tray"`; the tooltip counts the items raised and not yet seen; the Scheduled rows are refetched
   on automation events (and every 5 minutes) instead of the 20-second `GET /automations` poll, which stays for a
   gateway without the stream. Reconnects resume from `Last-Event-ID`.
+
 - The per-user stream carries the waits on a person: a run that stops for a tool approval or a question
   writes `attention.raised {kind: approval|question, run_id, session_id, wait_key, step_id, record_key,
   prompt_ref}` (nothing copied: the prompt is read from the run), and its end `attention.seen {kind, run_id,
   wait_key, step_id, outcome: answered|approved|denied|timed_out|cancelled|failed}`; idempotent ids, open waits
   repaired at boot. The tray announces each one and counts them with the automation items.
+
 - `schedule_run` host (backlog 1045, `wakes_host.py`): every runtime the gateway builds registers the
   `SCHEDULE_RUN` handler. A wake becomes a one-shot automation owned by the plane's account that runs the
   session's own workflow (same provider and model) in the caller's session, under the gateway's workspace guard
   and built-in tool deny; `wake.scheduled` is written to the owner's event stream, and archiving it before it
   fires writes `wake.cancelled`. A session whose workflow is not a bundle workflow is refused with a sentence.
+
 - `POST /api/gateway/me/events/notifications` accepts the channels `tray`, `assistant`, `code`, `watch` and
   `phone` (422 otherwise; a watch or a phone uses its own device id, so it always notifies) and an optional `device`; documented dedupe rule so an approval is notified once per machine
   (an app stays silent when another channel on the same device reported `notification.sent` for the record in
@@ -12982,10 +14060,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chosen source's `connection_schema` as a form; a webhook connection's address and one-time signing secret are
   shown once with copy buttons; administrators switch on **All accounts**. `#triggers?new=<source_id>` opens the
   dialog on a source. The terminal console has the same page (key **V**).
+
 - Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
   `input_data._meta.origin = {kind: "person", actor: "<tenant>:<user>", client: <request interface>, ref: {}}`,
   and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
   replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
+
 - Webhook ingress for trigger connections (backlog 1042): `POST /api/gateway/triggers/webhooks/{connection_id}`,
   public (no bearer token): the Standard Webhooks signature (`webhook-id`, `webhook-timestamp`,
   `webhook-signature`, HMAC-SHA256 with the connection's sealed secret, verified by AbstractRuntime's
@@ -12996,12 +14076,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+
 - Agents can schedule a later run (backlog 1045 wiring): the gateway's ReAct tool registry offers AbstractAgent's
   `schedule_run` beside `delegate_agent` (a run gets it when its allowlist names it). An AbstractAgent without the tool
   keeps every other builtin and logs that `schedule_run` is not offered.
+
 - Feed connections are polled (backlog 1043): each account's worker loop calls AbstractRuntime's
   `poll_feed_connections` over the plane's connection store (the one store its runtime was wired with) and wakes the
   automations that received items. Nothing polls at import.
+
 - Trigger connections API (backlog 1041): `GET/POST /api/gateway/triggers/connections`,
   `GET/PUT/DELETE /api/gateway/triggers/connections/{id}`, `GET …/{id}/events?after=&limit=` (CloudEvents JSON with
   `sequence`), `POST …/{id}/test-fire`. The caller's own connections in their runtime plane (another account's id
@@ -13011,6 +14094,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection source, refused for the others) and in a request, stored as `trigger.config.connection_id`; a connection
   that is not the owner's is refused (404 `connection_not_found`, or 422 `connection_not_yours` when it came from a
   shared workflow's defaults).
+
 - Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
   mailbox of the caller with `can_read` / `can_send` (also as `accounts` in `GET /me/email`);
   `PUT|GET|DELETE /me/email/accounts/{mailbox_id}`, `POST …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`. A further
@@ -13020,6 +14104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the automation is created or revised (422 `email_account_not_found` / `email_account_cannot_read`). A run bound to a
   further mailbox resolves that mailbox. Existing installs migrate without action: the mailbox they have is the primary,
   id `default`, its files unchanged.
+
 - `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
   answers and artifacts (generated media by their prompt, attachments by their file name), with
   AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
@@ -13030,20 +14115,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Dependency floors: `AbstractRuntime>=0.11.0` (trigger connections, the CloudEvents trigger envelope, run origin,
-  `SCHEDULE_RUN`, several mailboxes per user, the run stores' mailbox index) and `abstractagent>=0.4.0` (the
-  `schedule_run` tool), in the base, `apple` and `gpu` profiles.
+- Dependency floors: `AbstractRuntime>=0.14.0` (trigger connections, the CloudEvents trigger envelope, run origin,
+  `SCHEDULE_RUN`, several mailboxes per user, the run stores' mailbox index, the session tool policy, `seq` and
+  `list_after` on every ledger store), `abstractagent>=0.4.0` (the `schedule_run` tool), `abstractcore>=2.30.0` and
+  `abstractvoice>=0.18.2` (personal voices per account need AbstractVoice 0.19.0 or later; install the latest AbstractVoice to get them), in the base, `apple` and `gpu` profiles. AbstractMemory is capped below 0.4
+  (`AbstractMemory[...]>=0.3.0,<0.4`): AbstractMemory 0.4.0 migrates its vector store one way, and the gateway
+  release that raises the cap (0.17.0) is the one that takes that migration.
+
+- Push: a notification is never passive any more (a passive push sits silently in Notification Center): approvals and questions are time-sensitive, every other kind is an ordinary alert with banner and sound; and the dispatcher is phone-first (the iPhone app and the watch app are one family, Apple mirrors the phone's alert to the watch; a watch signed in on its own is pushed directly; "watch" alone in a Notify me node still pushes the watch).
+
+- Performance (backlog 1054): the routes that read files on the event loop now do it in a worker (same answers): `GET /visualflows` (one folder scan, each flow file parsed once per version, the whole answer kept while no file changed, and its JSON encoded in the worker: Flow's library polls it), `GET /backlog/{kind}` (root discovery, each item parsed once per version, encoding in the worker), `GET /backlog/exec/requests`, artifact export, `POST /artifacts/import`, `POST /attachments/ingest`, admin catalog promote, bundle download, `GET /workflows/{id}/flow`, bug and feature reports and their inbox listings. `GET /runs` reads the session archive and session kinds files from memory (a write through the gateway drops the entry at once; another process's write is seen within 1 s).
+
+- Performance (backlog 1054): host status for the tray, the Observer and the console computes its expensive parts once per short TTL, single-flight, off the event loop: the GPU probe (`ioreg`/`nvidia-smi` subprocess) 2 s, stamped when it ends (the old 1 s cache was stamped when the probe started, so the tray's 1 Hz poll missed every time); the memory snapshot (`ioreg` + `sysctl`) 2 s keyed on the runtime's client (keyed on the facade object before, which the runtime builds anew per call: it never hit); `/host/state`'s model residency walk and session-cache enumeration 4 s (a load, unload or pin through the gateway drops them) and its install block 10 s; `/host/runner` off the loop. `/host/runs` keeps one set of read-only stores per plane (it built new stores, artifact catalog and a cold run-index scan, per plane per call) and reuses the service's own stores for the default plane; finished rows' step counts are kept while the row is unchanged.
+
+- Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
+
+- Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
+
+- Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
+
+- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
+
+- Performance (backlog 1054, round 3): the last blocking calls on the event loop's shared executor run in the work pools: `GET /runs` (the one-time docs-chat migration, the children page, the listing itself) in `heavy`; `POST /host/tray/show`, `GET /host/update` and `POST /host/update/start` in `light`; `POST /host/update/check` (a remote check) in `watchers`. `POST /backlog/exec/requests/{id}/promote` (request and manifest reads, a `git` call per file, the copies and writes) no longer runs on the event loop at all.
+
+- Performance (backlog 1054, round 3): an account's service is never built on the event loop. A build runs in its own thread, once per service however many requests wait for it, and requests await it; the pre-warm covers every path that can reach a service (not only `/api/gateway`), the single-user service, and the plane an admin is served from for another account's entity. A request that still reaches a service being built answers `503` `service_starting` with `Retry-After: 1` (or the build's own error, once) instead of freezing the gateway; a cached service whose runner needs a restart keeps serving while the restart runs off the loop. Measured: a 5 s build during a request, `/api/health` answering in 2-50 ms throughout (it froze 5 s).
+
+- Performance (backlog 1054, the 04:07 watchdog exit of 2026-10-26): `GET /discovery/capabilities` (Flow and the console poll it) and `GET /config/capability-defaults` build their answer in the watchers pool. Both reach AbstractCore's capability defaults, whose engine checks ask Python's import system for modules (`find_spec`), which waits on the interpreter's import lock while another thread imports; on the event loop that wait froze the gateway for 31 s until the watchdog restarted it. With the import lock held 2 s by another thread, `/api/health` and `/me/events/stream` answer within 50 ms.
+
+- Load test in CI (backlog 1054): `.github/workflows/perf.yml` (pull requests touching `src/`, nightly, manual) runs `scripts/perf/ci.sh`: a synthetic fixture (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations with their ledgers, no operator data), a hermetic gateway, 20 probe rounds and a 2-minute idle window; it fails when a p99 is over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or CPU at rest is over `--cpu-max` (5% of a core, 10% on CI runners). `bench_driver.py` gained `--fail-p99 NAME=S` / `--fail-idle-cpu PCT` and reads CPU and threads from `/proc` on Linux; `bench_gateway.sh` gained `--python`, `--perf-dir`, `--driver-arg` and `installed` sources, and exits with the gates' verdict. Tests pin `/api/health`'s `pools`, `run_index` (mode, planes, summed counters) and `gc_tuning`.
+
+- **Triggers, re-review.** The feed form's **When added** is a choice in words (a source's `enumNames` are accepted;
+  no "Not editable here" with raw JSON), and descriptions that restate the control (a duration's units, a choice's
+  raw values) are not shown; mailbox rows are named like My email (the address, the primary with *Sends as you*); a
+  failing connection that is on shows its red error as its status line; the line under the list reads *Pause it to
+  stop fetching.* The mailbox form opens in a narrow dialog (480 px), its links use the console's link look, and a
+  refused Gmail/Outlook password keeps the provider's help under the field. The terminal console matches (its feed
+  form asks *Check every [15] [minutes]*, required settings first).
+
+- Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
+  arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
+  `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.
+  `GET /api/gateway/bundles` entrypoints carry `triggerable` (automation defaults with a trigger). The tray's menu
+  says **Conversations ▸**, **Open Conversations in Console** and "Paused — conversations wait until you resume".
+
+- A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
+  other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
+  line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.
+
+- **My email, reorganised.** A compact header (*My email* and your address) and three tabs: **Mailboxes** (one list,
+  your primary mailbox first with *Sends as you*, each row one line *address · provider · state* with an **Active**
+  switch and a **…** menu: Test, Settings, Remove), **Notifications** (your address, Job failed, Approval needed) and
+  **Agents** (agent email tools, recipients and limits). No banner; each tab fits a 1440×900 screen. The primary's
+  **Settings** opens its full editor (servers, folder, sign-in app, Test, Disconnect) in a **Mailbox settings** dialog.
+
+- **One mailbox form, address first.** **Connect** (your primary) and **Add mailbox** (another one) open the same
+  dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
+  **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
+  app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
+  write** (another mailbox, off by default); **Server settings** collapsed and
+  prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
+  asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
+
+- Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
+  "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
+  open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.
+
+- **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
+  connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
+
+- **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
+  (seconds)"); a secret the gateway generates is never asked for.
+
+- Docs: ADR 0001 (AbstractCore is reached through AbstractRuntime's facades, `docs/adr/`); backlog 0943
+  (incident ledger for unavailability, overload and restarts) and 0944 (the OpenAI-compatible endpoint as a
+  separately supervised process), proposed.
 
 ### Fixed
+
+- **Migration keeps the ledger cursor** (backlog 0082). `migrate.py` (file to SQLite) imports each
+  run's records with their order, count and `seq` (`SqliteLedgerStore.import_records`): records
+  read by the JSONL store, concatenated lines recovered, and lines written before `seq` numbered
+  by position. It used to re-append records, which renumbered them. The raw stream's `id:` (the
+  count of records consumed) equals the record's `seq`.
+
+- A flow editor draft test parked on a person (hidden from the run listings) no longer raises attention, and a stale open wait for one is closed at boot: the watch and phone badges no longer count a wait nobody can see.
+
+- **Ledger tail on AbstractRuntime 0.14.0.** Every `LedgerStore` now has `list_after`, so the tail no longer
+  takes its presence as the sign of a seq-native backend: file ledgers keep the JSONL byte tail and only a backend
+  with its own `list_after` uses the seq tail; a pre-`seq` line read by the tail carries its position as `seq`, as
+  `list()` gives it (tail == list()).
+
+- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
+  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
+  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
+  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
+  The host-status TTL tests use a fake clock.
+
+- **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
+  `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
+  and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran
+  `serve` left GC tuning on so later boots `gc.freeze()`d them for good (29-35 M objects late in CI). The
+  conftest now frees the dropped app (`tests/app_reimport.py`) and undoes any GC tuning after each test;
+  `tests/test_harness_reimported_app_is_freed.py` guards both. Full suite on an M-series Mac: 63 -> 24 min,
+  peak RSS 10.1 GB -> 1.2 GB; six timing tests that failed under the GC pauses pass. Four harness waits got
+  shorter, and the apps reaper reads `STOP_TIMEOUT_S` when it runs (a default bound at import ignored a
+  change to it).
+
+- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
+  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
+  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
+  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
+  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
+  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
+  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
+  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
+  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
+  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
+  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
+
+- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
+  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
+  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
+  the red "!" stays for no answer at all (refused, or nothing for 90 s).
+
+- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
+  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
+  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
+  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
+  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
+  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
+  switch, a change set it cannot name (another process) and at least every 5 minutes.
+
+- **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
+  and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
+  every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime
+  `JsonFileRunStore.change_token`: one stat, no file read, about 1 µs). An older AbstractRuntime without it keeps the
+  old fingerprint, with a warning at start.
+
+- **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
+  read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
+  watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that
+  session's candidates through its indexes (AbstractRuntime `list_session_candidates`; same visibility rule) and,
+  like `GET /runs/{id}/artifacts`, `/artifacts/search` and `/artifacts/stats`, builds and renders its page in a
+  worker thread: 2.1 s to 16 ms, with no event-loop step over 1-2 ms. `GET /runs?parent_run_id=` lists children off
+  the loop too. Needs the AbstractRuntime release that carries `list_session_candidates`.
+
+- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
+  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
+  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
+  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
+  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
+  takes one snapshot per account for the whole page (`connections_usage`), and `GET
+  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
+  AbstractRuntime release that carries the index.
 
 - Revising an automation onto a trigger connection (a feed, a webhook) is checked against the automation owner's
   connections: an automation that had none (a schedule) can be moved onto one of its owner's connections, and one
   of another person's is refused (`connection_not_found`).
+
 - Durable `emit_event` reaches every running or waiting run that declares the event's mailbox, however many
   runs are active (it reached the newest 200 only), through the run store's mailbox index (AbstractRuntime
   `list_mailbox_runs`).
+
 - On a file store with more than 200 waiting runs, a due wake fires on time: the scheduler's next deadline comes
   from the store's `next_wait_deadline` over every waiting run (backlog 1046).
+
 ## [0.15.11] - 2026-10-19
 
 ### Added
@@ -15841,6 +17077,17 @@ Notes:
   reason is a collection error, as is a test module that reads the real-home
   path without the marker. `pytest --markers` lists all three.
 
+### Wall-clock budgets never fail a test by default
+
+A test's structural assertions (the work ran off the event loop, the stream closed, nothing was
+dropped) always run. Its latency budgets (`p99 < 500 ms`, "the loop never stalled 50 ms") go through
+`tests/timing.py`: `timing_budget(actual, limit, what)` prints one `[timing] what: actual vs limit`
+line and never fails, because a busy machine or a shared CI runner can pause the whole process for
+seconds. Set `ABSTRACTGATEWAY_TIMING_STRICT=1` to assert the budgets (a quiet machine measuring a
+latency change on purpose): `ABSTRACTGATEWAY_TIMING_STRICT=1 pytest -s tests/test_perf_*.py`.
+`patient(timeout_s)` stretches a wait that only a hang should reach (x5 unless strict). New
+latency checks use the helper, never a bare `assert elapsed < ...`.
+
 ## How to contribute
 
 1. **Open an issue** (or a draft PR) describing what you want to change and why.
@@ -16368,861 +17615,6 @@ curl -sS -X POST -H "$AUTH" -H "Content-Type: application/json" \
 
 The event carries `abstracttest: true`, so a flow can tell a test run from a real one. The sample is
 yours only: another account's mailbox or connection answers 404. Reference: [api.md](docs/api.md#sample-inputs-post-apigatewaytriggerssample).
-
----
-
-## docs/architecture.md
-
-# AbstractGateway — Architecture
-
-AbstractGateway is a **durable run gateway** for AbstractRuntime, and the
-control plane of an AbstractFramework installation:
-
-- clients **start runs**, and create **automations** that run a workflow on
-  a trigger;
-- clients act through **durable commands** (`pause`, `resume`, `cancel`,
-  `emit_event`, …);
-- clients **replay** the durable ledger and optionally **stream** it (SSE);
-- operators manage users, providers, capability defaults, local engines,
-  models, browser apps and network exposure from one place (the web console,
-  the terminal console, the CLI, or the desktop tray).
-
-This page describes the components in this repository and how they connect.
-For the endpoints, see [api.md](docs/api.md); for settings, see
-[configuration.md](docs/configuration.md).
-
-## Ecosystem placement (AbstractFramework)
-
-AbstractGateway sits between **clients** (browser apps, terminal apps, the
-desktop Assistant, scripts) and **AbstractRuntime**:
-
-- **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
-  and the operator control plane.
-- **AbstractRuntime** (required, 0.7.0 or later): run model, tick loop, workflow registry, stores,
-  live token deltas, the workspace-scoped tools, the automation controller and the session history window.
-  The gateway checks the installed runtime when it builds its workflow host and
-  refuses to start on an older one, naming the version to install.
-- **AbstractCore** (required, reached through Runtime facades): providers,
-  tools, media capabilities, capability-route defaults, the model catalog,
-  engine detection and host jobs (downloads, deletes).
-- **AbstractAgent** and **AbstractMemory** (required by the default install):
-  agent nodes and KG memory for bundle execution.
-- Higher-level apps (optional): AbstractFlow (authoring), AbstractCode,
-  AbstractObserver, AbstractContinuum, AbstractEntity and AbstractAssistant.
-
-## System overview
-
-```mermaid
-flowchart LR
-  subgraph Clients["Clients"]
-    Browser["Browser: /console"]
-    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity, Note)"]
-    TUI["Terminal apps: abstractgateway-console, Code"]
-    Asst["Desktop Assistant"]
-    Tray["Desktop tray helper (separate process)"]
-    CLI["abstractgateway CLI"]
-    OAI["OpenAI-compatible apps and SDKs"]
-  end
-
-  subgraph GW["AbstractGateway process (abstractgateway serve)"]
-    Sec["GatewaySecurityMiddleware: auth, origins, limits, audit log"]
-    Same["Same-machine rule: is the caller at this computer?"]
-    Routes["FastAPI routes /api/gateway/*"]
-    Console["/console (web console)"]
-    Handover["Sign-in hand-overs: apps, terminal, desktop"]
-    Principals["Principal routing: one data plane per user"]
-    Defaults["Default agent workflow resolver (@default)"]
-    Browse["Workspace browser: /runs/{id}/workspace/*"]
-    Autom["Automations API: /automations*, /trigger-sources"]
-    Host["Workflow host: .flow bundles + workflow catalog"]
-    Guard["Run workspace guard: a folder and the built-in deny rules for every run"]
-    Hub["Live-delta hub: llm.delta frames per root run"]
-    Runner["GatewayRunner: command inbox + ticks"]
-    Settings["Runtime settings: network, apps.*, agents.*, skills.shelf, workspace, backlog"]
-    Skills["Skills shelf (seeded from AbstractSkill)"]
-    AppsMgr["Apps manager: Node.js, npm installs, app processes"]
-    Jobs["Engine installs and model download jobs"]
-    HostCtl["Host control: pause, restart, update"]
-    V1["OpenAI API /v1: named API keys, Who can connect, request log"]
-    Watchdog["Event-loop watchdog: exits 75 when the loop is blocked"]
-  end
-
-  subgraph Lower["Framework packages"]
-    RT["AbstractRuntime: Runtime.tick, stores, workspace-scoped tools"]
-    Core["AbstractCore: providers, catalog, host jobs"]
-  end
-
-  Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  WS[("Workspaces: private session folders, allowed workspaces (gateway, account, session levels)")]
-  SvcMgr["Service manager: LaunchAgent, systemd unit, local supervisor (restarts serve)"]
-
-  Browser -->|HTTP| Sec
-  Browser -->|app pages| AppSrv
-  AppSrv -->|"same-origin proxy: X-Forwarded-For + X-AbstractFramework-App-Proxy"| Sec
-  TUI -->|HTTP| Sec
-  Asst -->|HTTP, gateway session| Sec
-  CLI -->|HTTP or data dir| Sec
-  Tray -->|loopback HTTP, ephemeral token| Sec
-  OAI -->|"HTTP /v1, named API key"| Sec
-  Sec --> V1
-  V1 -->|serving facade| Core
-  V1 -->|request log| Data
-  Sec --> Routes
-  Sec --> Console
-  Routes -.->|installs, open folder, workspace host| Same
-  Routes --> Principals --> Host
-  Routes --> Defaults --> Host
-  Routes --> Browse --> WS
-  Routes --> Autom --> RT
-  Routes --> Settings
-  Routes --> Skills
-  Routes --> AppsMgr
-  Routes --> Jobs
-  Routes --> HostCtl
-  Host --> Guard --> RT
-  Runner --> Host
-  Runner --> RT
-  RT -->|file tools confined to| WS
-  RT -->|live text of LLM calls| Hub
-  Hub -->|"SSE on /runs/{id}/ledger/stream"| Routes
-  RT --> Data
-  Routes --> Data
-  Jobs --> Core
-  Host --> Core
-  AppsMgr -->|starts and supervises| AppSrv
-  AppsMgr -->|launches with a hand-over file| Asst
-  Handover --> AppSrv
-  Handover --> Asst
-  Watchdog -.->|"exit code 75"| SvcMgr
-```
-
-Browser apps reach the gateway through their own app server on this computer,
-which relays every call with the browser's address (`X-Forwarded-For`) and its
-marker header (`X-AbstractFramework-App-Proxy`), so the gateway can tell a
-browser on this computer from one elsewhere on the network
-([security.md](docs/security.md#callers-on-this-computer)).
-
-## Core components (code-mapped)
-
-- **HTTP app** (`src/abstractgateway/app.py`): mounts the routers under `/api`
-  (`/api/gateway/*` is the main surface), `/api/health`, `/console`,
-  `/docs` (Swagger UI) and the app handover routes.
-- **Security layer** (`src/abstractgateway/security/`): the
-  `GatewaySecurityMiddleware` protects `/api/gateway/*` with user or token
-  auth, an origin allowlist, request limits, auth lockouts and an audit log.
-  Browser sessions, principals and the route-family authorization table live
-  in the same package. See [security.md](docs/security.md).
-- **Composition root** (`src/abstractgateway/service.py`): builds the stores,
-  the workflow host and the runner. With user auth on, each principal is
-  routed to its own service and data plane under
-  `<data dir>/users/<tenant>/<runtime>/`.
-- **Durable stores** (`src/abstractgateway/stores.py`): file-backed (default)
-  or SQLite, using AbstractRuntime's RunStore, LedgerStore, CommandStore and
-  ArtifactStore.
-- **Workflow host** (`src/abstractgateway/hosts/bundle_host.py`): loads `.flow`
-  WorkflowBundles and compiles their VisualFlow JSON with
-  `abstractruntime.visualflow_compiler`. Bundle mode is the only workflow
-  source; store VisualFlows through `/api/gateway/visualflows/*` and publish
-  them as bundles. A publish swaps the compiled workflows onto the running
-  runtime (see [Publishing a workflow](#publishing-a-workflow)).
-- **Workflow catalog** (`src/abstractgateway/workflow_catalog.py`): shared,
-  immutable workflow versions with admin-managed default pointers and ACLs.
-  Catalog runs execute in the caller's runtime; the gateway signs the
-  catalog's workflow policy before Runtime receives it.
-- **Runner** (`src/abstractgateway/runner.py`): polls the durable command
-  inbox, applies commands and ticks RUNNING runs. A filesystem lock
-  (`gateway_runner.lock`) prevents double-ticking when API and runner run as
-  separate processes; lock state is reported on `GET /api/health`. On a file
-  store the scheduling pass sleeps until the earliest wait deadline, which it
-  asks the run store for (`next_wait_deadline`, every waiting run), so a wake
-  parked behind hundreds of automations still fires on time.
-- **Per-user event stream** (`src/abstractgateway/events_stream.py`, backlog
-  1046): one ordered, durable stream per person, `user:<tenant>:<user>`, in
-  the plane's data folder (`<data dir>/events/users/<sha256>/`, the runtime's
-  `JsonFileEventInbox`). It holds only what is not a step of a run:
-  `trigger.event`, `wake.scheduled|cancelled`, `attention.raised|seen`,
-  `notification.sent|failed` and the pointers `run.started|finished
-  {run_id, session_id, origin}`, in CloudEvents 1.0 attribute names. The
-  runner writes the pointers after the run store save (ids like
-  `run.started:<run_id>`, so a repeat appends nothing) and the attention
-  events from the `automation.completed` records it observes (the ledger
-  `record_key`, never a body); a boot pass rebuilds what a crash between a
-  save and its append lost. The seen-cursor store writes `attention.seen`,
-  the email outbox `notification.sent|failed`.
-- **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
-  `<data dir>/config/runtime_config.json`, for the settings the consoles, the
-  tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,
-  `agents.default_workflow.<interface>`, `agents.streaming_default`,
-  `skills.shelf`, `workspace_builtin_deny`, the backlog folder, the backlog
-  exec runner, the process manager and the stop kill switch. A write that
-  names an unknown setting is refused whole; writers take a file lock. See
-  [configuration.md](docs/configuration.md).
-- **Default agent workflows** (`src/abstractgateway/agent_defaults.py`):
-  resolves `flow_id: "@default"` plus an agent `interface` to the workflow
-  saved under `agents.default_workflow.<interface>` (or the built-in default)
-  at every run start, for the HTTP routes, the Telegram bridge and the backlog
-  advisor alike, and records the choice as `resolved_workflow`. See
-  [configuration.md](docs/configuration.md#default-agent-workflow).
-- **Account preferences** (`src/abstractgateway/account_preferences.py`,
-  `routes/account_preferences.py`): each account's default workflow per app,
-  stored in the same settings store under `account_preferences`
-  (`GET`/`PUT /api/gateway/accounts/{me|account}/preferences`). The admin
-  setting above stays the gateway default; an account overrides it for itself,
-  and the Assistant, AbstractCode and the consoles read and write it instead of
-  keeping the choice on the device. See [api.md](docs/api.md#account-preferences).
-- **Run workspace guard** (`src/abstractgateway/run_workspace_guard.py`):
-  called from the workflow host's `start_run` for every run, whatever started
-  it. It gives a run that named no folder its conversation's gateway-made
-  folder, and adds the built-in deny rules (see
-  [Workspace guard](#workspace-guard-every-run-start)).
-- **Workspace browser** (`src/abstractgateway/workspace_browse.py`): lists
-  and serves the files of a run's workspace folder to the person who started
-  the run, confined to that folder, with the built-in deny list applied at
-  every call. See [api.md](docs/api.md#a-runs-workspace-folder-browse-and-preview).
-- **Live replies** (`src/abstractgateway/live_deltas.py`): the sink the
-  gateway registers on every runtime it builds, the in-memory hub keyed by
-  root run, and the file sink and tailer used when API and runner are separate
-  processes (see [Live replies](#live-replies-token-deltas)).
-- **Skills shelf** (`src/abstractgateway/skills_shelf.py`): resolves the
-  folder skills are read from (`skills.shelf`, else the gateway's own copy in
-  `<data dir>/skills/registry`, refreshed from AbstractSkill's curated shelf
-  at each start). See [configuration.md](docs/configuration.md#skills-shelf).
-- **Same-machine rule** (`src/abstractgateway/security/same_machine.py`):
-  one answer to "is this caller sitting at the gateway computer?", used for
-  installs, opening folders and the workspace routes' host facts. See
-  [security.md](docs/security.md#callers-on-this-computer).
-- **Network exposure** (`src/abstractgateway/network_exposure.py`): resolves the
-  bind (`localhost`, `lan`, `internet`) at `serve` time, checks that the auth
-  posture allows it, discovers the addresses, and serves the reverse-proxy
-  settings the security middleware reads per request.
-- **OpenAI API** (`src/abstractgateway/core_endpoint.py`,
-  `routes/core_endpoint.py`): serves the OpenAI-compatible API at `/v1` on the
-  gateway listener. The security middleware resolves the caller's API key
-  (a named key from `openai_keys.py`, found by its fingerprint, or the
-  account's gateway token) to an account and refuses a named key anywhere
-  outside `/v1`; this layer applies the account's **OpenAI API** switch,
-  Open mode (Guest or the chosen account), *Who can connect* and the request
-  log in the audit log, then hands the request to AbstractCore's serving
-  routes through AbstractRuntime's serving facade. See
-  [openai-api.md](docs/openai-api.md).
-- **Event-loop watchdog** (`src/abstractgateway/loop_watchdog.py`): under
-  `serve`, a tick on the event loop and a checker thread; when the loop has
-  not run for `--watchdog-seconds` (default 30) the gateway writes the blocked
-  stacks to its log and to an incident file (`<data dir>/incidents/watchdog-<UTC
-  stamp>.json` + `.threads.txt`) and exits with code 75, so the LaunchAgent,
-  systemd unit or local supervisor restarts it. The next process reads the
-  newest incident; the console's Resources page (Gateway card, "Last restart")
-  shows "Gateway restarted at <time> after a hang —
-  <reason>". `GET /api/health` reports its state. See
-  [deployment.md](docs/deployment.md).
-- **Worker pools by kind of work** (`src/abstractgateway/work_pools.py`): blocking work leaves the
-  event loop through `off_loop(kind, fn, ...)` into one of three bounded pools: `light` (auth, `/me`,
-  live-update streams, one-record reads), `heavy` (run and artifact scans, listings, workflow reloads)
-  and `watchers` (mail, feeds, provider endpoints, model generation), sized by `serve --pool-light`,
-  `--pool-heavy` and `--pool-watchers`. A cached account service is found without the service lock, so
-  a build of another account's service never holds up `/me`. Browser sessions are kept in memory: the
-  sessions file stays the source of truth, this process's own writes apply at once, another
-  process's within 2 s, and `last_seen_at` is written at most once a minute, off the event loop.
-- **Account services built off the event loop** (`src/abstractgateway/service.py`): an account's
-  service (its runtime, stores and runner) is built once in its own thread, however many requests
-  wait for it; requests await the build, and a request that reaches a service still being built
-  answers `503 service_starting` with `Retry-After: 1`. After the boot, `serve --gc-tuning on`
-  freezes the objects the boot built and raises the garbage collector's thresholds.
-- **Reading only what changed**: run listings come from AbstractRuntime's run index
-  (`serve --run-index verify|trusted`); the runner's scan gate and the mail notification check
-  compare the run store's and the ledger's change tokens instead of re-reading the folders; the
-  Triggers page asks AbstractRuntime's active-consumers index who listens to a connection; host
-  status (GPU, memory, model residency) is computed once per short TTL
-  (`src/abstractgateway/host_status_cache.py`). `GET /api/health` reports `pools`, `run_index`
-  and `gc_tuning`.
-- **Push dispatcher** (`src/abstractgateway/push/`): in the process that runs the runner, it turns
-  `attention.raised` into content-free requests to the push relay for registered watches and
-  iPhones ([push.md](docs/push.md)).
-- **Nothing blocks the event loop**: a request body that arrived
-  without a Content-Length (the console's `/apps/<id>/` proxy streams bodies)
-  is buffered by the security middleware and replayed through
-  `asgi_receive.replay_body_receive`, which suspends after the body (a replay
-  that kept answering "empty body" would make every streaming response's
-  disconnect listener a busy loop; the core endpoint's internal sub-requests use
-  the same helper). Streamed speech
-  (`voice_stream.py`) holds one permit of the voice synthesis bound
-  (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) from engine setup until its engine
-  thread ends, sets up and pulls the engine on worker threads, and hands
-  events to the loop through a bounded queue; a busy engine is announced to
-  the client with a `queued` line. Reading a reply aloud is never a wait of
-  the run: the durable child run is recorded completed when the stream ends,
-  and the runner closes any streamed-speech wait an older process left
-  behind.
-- **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
-  `model_download_delete.py`): archive and unarchive a conversation (history
-  kept), and delete a downloaded model's files with the engine's own
-  mechanism, refused while the model is loaded, locked or downloading.
-- **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
-  `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
-  installs are gateway jobs; model downloads, deletes and the catalog come from
-  AbstractCore's host job registry and model catalog, which the gateway serves
-  unchanged and extends with parent jobs, cancel and an event stream. See
-  [engines.md](docs/engines.md) and [model-downloads.md](docs/model-downloads.md).
-- **Apps manager** (`src/abstractgateway/apps_manager.py`, `apps_desktop.py`,
-  `routes/apps.py`): installs Node.js when needed, installs the browser apps
-  from npm, runs them as child processes of the gateway, detects apps started
-  elsewhere, installs Code's terminal app, and opens apps signed in through
-  one-time handover codes; it starts the desktop Assistant signed in through a
-  private hand-over file (see [Desktop hand-over](#desktop-assistant-hand-over)).
-  See [apps.md](docs/apps.md).
-- **Host control** (`src/abstractgateway/host_control.py`,
-  `self_update.py`): process-wide pause, graceful restart, and in-place
-  update checks.
-- **Desktop tray** (`src/abstractgateway/tray_supervisor.py`, `tray/`): a
-  helper process started by `serve` on a desktop session. It talks to the
-  gateway over loopback with a per-process token handed over on stdin. See
-  [tray.md](docs/tray.md).
-- **Login service** (`src/abstractgateway/os_service.py`, `autostart.py`):
-  the per-user LaunchAgent, systemd user unit, XDG autostart entry or Windows
-  Run entry that starts plain `abstractgateway serve` at login. See
-  [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional).
-- **Summoned entities** (`src/abstractgateway/entities.py`,
-  `routes/entities.py`): persistent entity homes and their lifecycle. See
-  [entities.md](docs/entities.md).
-- **Automations API** (`src/abstractgateway/routes/automations.py`,
-  `automation_errors.py`, `automation_attention.py`, `automation_defaults.py`,
-  `automation_command_types.py`): the HTTP projection of AbstractRuntime's
-  automations, the error envelope on those paths, the per-user seen store,
-  `automation_defaults` on flows and bundles, and the one list of command
-  types the command route, the runner and the capabilities document share.
-  See [Automations](#automations) and [automations.md](docs/automations.md).
-- **Operator tooling** (`src/abstractgateway/maintenance/`): reports, triage,
-  backlog browsing, the backlog exec runner and the process manager. See
-  [maintenance.md](docs/maintenance.md).
-
-## Publishing a workflow
-
-A service is one data plane: its stores, its runner and one AbstractRuntime
-`Runtime`, which owns the LLM client and its providers (for an in-process
-engine such as MLX: the loaded weights and the session prompt caches), the
-tool executor, the effect handlers and the memory store. Workflows are only
-the compiled registry the runtime reads. So publishing, promoting or
-uploading a workflow changes the registry and nothing else.
-
-```mermaid
-flowchart LR
-  P["publish / promote / upload"] --> C["compile the changed .flow files<br/>(cached by path, mtime, size)"]
-  C --> Q{"does the runtime serve<br/>everything they need?"}
-  Q -->|yes| S["registry_swap<br/>new registry set on the running runtime"]
-  Q -->|no| R["service_reload<br/>rebuild this service's runtime"]
-  S --> K["models, prompt caches, runs<br/>untouched"]
-```
-
-What a reload does (`WorkflowBundleGatewayHost.reload_bundles_from_disk`):
-
-- **`registry_swap`** (publish, promote, upload, the agent email tools
-  switched): the bundle files are compiled into a new
-  `WorkflowRegistry` — only the files whose path, modification time or size
-  changed; every other workflow keeps its compiled object — and
-  `runtime.set_workflow_registry(...)` puts it on the running runtime. No
-  runtime, LLM client, provider, model weights, prompt cache, tool executor
-  or memory store is created or dropped. A service whose files did not move
-  does nothing. Compilation happens off the event loop and outside the host
-  lock; only the swap itself takes the lock.
-- **`service_reload`**: the new workflows need something this service's
-  runtime was started without — the first LLM, Agent or model-residency
-  workflow on a runtime built without a language model, the first tool
-  workflow on a plain one, or the first `memory_kg_*` workflow (it opens the
-  memory store). Only this service's runtime is rebuilt; its in-process models
-  and prompt caches start empty, and the reload says so.
-- **`full_rebuild`**: only on request, `POST /api/gateway/bundles/reload?full=true`
-  (for example after changing the memory store's configuration on disk).
-
-Archiving a workflow is not a reload either: the file keeps loading and the
-archive record refuses new runs. Changing the default model is not a reload: the console's default routes
-re-point the running client in place (`refresh_capability_defaults`).
-
-**Runs in flight keep their workflow.** A run ticks the spec it resolved. A new
-version is a new workflow id (`bundle@0.0.2:flow`), so runs on `0.0.1` simply
-continue on it while new runs start on `0.0.2`. When a version is replaced in
-place (drafts, `overwrite: true`) or removed, every RUNNING or WAITING run of
-it is pinned to the spec it already had and to the whole registry it resolved
-from (`_pin_in_flight_runs`). Its sub-workflows follow it: a child it starts
-after the overwrite is looked up in that pinned registry (the start-subworkflow
-guard and `_PinnableWorkflowRegistry`), and a child run inherits its parent's
-pin, so the whole run tree finishes on the version it started on. The pin is
-released when the run ends. Automations store their concrete
-`bundle@version:flow`, so a republish never changes them; the automation
-controller's spec never changes, so its later occurrences start on what is
-published then. A pinned run resumed by the runtime itself (an event delivered
-to its listener) resumes on its pinned spec too.
-
-**Where it is reported.** Every publish/promote/upload response carries
-`reload: {kind, services, duration_ms, sentence}` (see
-[api.md](docs/api.md#what-a-publish-reloads)), the audit log line of the request
-carries the same `reload` object next to its `duration_ms`, and a
-`service_reload`/`full_rebuild` writes one warning to the gateway log.
-
-**One service per data directory.** Under user auth the admin's requests own
-the default runtime's service; a caller without a signed-in principal (a
-background thread, a boot step) is given that same service instead of a second
-one built over the same directory.
-
-## Durable contract (replay-first)
-
-The gateway is **replay-first**:
-
-- the **durable ledger** is the source of truth;
-- SSE (`/ledger/stream`) is an optimization; clients reconnect by replaying
-  from their last cursor.
-
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant G as Gateway API
-  participant S as Durable stores
-  participant R as Runner
-  participant RT as AbstractRuntime
-
-  C->>G: POST /api/gateway/runs/start
-  G->>S: create run (RUNNING)
-  G-->>C: run_id
-  C->>G: POST /api/gateway/commands (pause, resume, cancel, emit_event)
-  G->>S: append command to the inbox
-  loop every poll
-    R->>S: read new commands, apply them
-    R->>RT: Runtime.tick(run)
-    RT->>S: append StepRecords to the ledger
-  end
-  C->>G: GET /runs/{run_id}/ledger?after=N (replay)
-  G-->>C: items + next_after
-  C->>G: GET /runs/{run_id}/ledger/stream?after=N (SSE, optional)
-```
-
-Evidence: `src/abstractgateway/routes/gateway.py` (ledger endpoints, SSE,
-commands) and `src/abstractgateway/runner.py` (command application, ticks).
-
-## Automations
-
-An automation is a durable AbstractRuntime root run, the **controller**, whose
-id is the automation id. Every workflow host registers the controller workflow
-that ships with AbstractRuntime
-(`abstractframework.automation-controller@1.0.0:controller`), so the runner
-ticks controllers like any run, also after a restart. When the trigger fires,
-the controller starts an **occurrence**, an ordinary child run of the target
-workflow; a **discussion** is a separate root run in its own session, seeded
-with the automation's conversation, on a read-only folder. The gateway routes
-create, read and command automations; they never schedule or run anything.
-
-```mermaid
-flowchart LR
-  subgraph Apps["Apps"]
-    Asst["Assistant"]
-    Obs["Observer"]
-    Flow["Flow editor: automation_defaults"]
-    Code["Code and other chat lists"]
-  end
-
-  subgraph GW["AbstractGateway"]
-    Env["Error envelope (automation paths)"]
-    ARoutes["/api/gateway/automations*<br/>/trigger-sources"]
-    Cmd["/api/gateway/commands<br/>(automation.* and wait answers)"]
-    Runs["/api/gateway/runs<br/>session_kind, role, turn roots"]
-    Start["/api/gateway/runs/start<br/>(discussion turns re-stamped)"]
-    Defs["/visualflows, /bundles<br/>automation_defaults"]
-    Seen[("Seen store<br/>automations/attention/")]
-    Inbox[("Durable command inbox")]
-    Runner["GatewayRunner"]
-  end
-
-  subgraph RT["AbstractRuntime"]
-    Ctl["Controller run<br/>(automation id)"]
-    Occ["Occurrence runs<br/>(child runs of the target)"]
-    Disc["Discussion runs<br/>(own session, read-only folder)"]
-    Ledger[("Automation ledger:<br/>definition, commands, attention")]
-  end
-
-  Asst --> Env
-  Obs --> Env
-  Flow -->|save, publish| Defs
-  Code --> Runs
-  Env --> ARoutes
-  ARoutes -->|create| Ctl
-  ARoutes -->|discuss| Disc
-  ARoutes -->|defaults at creation| Defs
-  ARoutes -->|commands, revise| Inbox
-  ARoutes --> Seen
-  ARoutes -->|summaries, occurrences, attention| Ledger
-  Cmd --> Inbox
-  Start --> Disc
-  Runner -->|apply commands| Ctl
-  Runner -->|tick| Ctl
-  Runner -->|tick| Occ
-  Runner -->|tick| Disc
-  Inbox --> Runner
-  Ctl -->|trigger fires| Occ
-  Ctl --> Ledger
-  Occ -->|notify, failure| Ledger
-```
-
-- **Door and applier.** The automation routes check what they can at once
-  (unknown automation, stale revision, a state that rules the command out)
-  and queue commands in the durable inbox; the runner hands each one to
-  AbstractRuntime, which records it as applied or rejected in the
-  automation's ledger.
-- **One writer.** v1 supports one process that ticks, resumes and commands
-  runs on a data folder (the runner); in the split shape the API process only
-  creates runs and queues commands.
-- **Turn roots.** Run lists and the session history bloc read turns through
-  AbstractRuntime's one selector: parent-less runs and occurrences, never
-  controllers, so a growing automation reads as one chat.
-- **Strict history.** A turn in an automation or discussion session is seeded
-  from its durable history strictly: when the history cannot be read the start
-  is refused instead of running without its context.
-- **Boot warm-up.** File-backed stores build the run store's session and
-  children indexes at startup (`stores.py`).
-
-See [automations.md](docs/automations.md) for the HTTP contract and operations.
-
-## Triggers, events and attention
-
-Things that happen outside a run start work, and what needs a person reaches
-them through one stream per account:
-
-- **Trigger connections** are one account's instances of a trigger source (a
-  feed URL, a webhook address with its signing secret; mailboxes are the email
-  accounts). Each has an inbox stream, `trigger:<connection_id>`, that the
-  feed poller and the public webhook ingress append to and the bound
-  automations read.
-- **Run origin**: every run records who or what started it,
-  `_meta.origin {kind: person | trigger | agent | system, actor, client, ref}`.
-- **Wakes**: a run's `schedule_run` call becomes a one-shot automation that runs
-  later as a new turn of the caller's session (`wakes_host.py`).
-- **The per-user event stream** (`events_stream.py`) holds what is not a step
-  of a run: run pointers, trigger events, wakes, attention raised and seen
-  (automation items and waits on a person) and notification outcomes. Clients
-  read it with `GET /api/gateway/me/events` and follow it over SSE
-  (`/me/events/stream`); the desktop tray turns attention into OS
-  notifications.
-
-```mermaid
-flowchart LR
-  subgraph Outside["Outside the gateway"]
-    Sender["External system<br/>(signed webhook call)"]
-    Feed["RSS / Atom feed"]
-    Mail["Your mailboxes (IMAP)"]
-  end
-
-  subgraph GW["AbstractGateway (one plane per account)"]
-    Ingress["POST /triggers/webhooks/{id}<br/>signature = auth"]
-    Poller["Plane worker:<br/>feed poller, mail watcher"]
-    TInbox[("Event inbox<br/>trigger:&lt;id&gt;, email:…")]
-    Runner["GatewayRunner<br/>ticks, ledger observer"]
-    Wakes["schedule_run host<br/>(one-shot automation)"]
-    Outbox[("Email outbox")]
-    Publish["Publish host<br/>(PUBLISH_EVENT: Notify me,<br/>Publish to channel)"]
-    UStream[("User stream<br/>user:&lt;tenant&gt;:&lt;user&gt;")]
-    Me["GET /me/events<br/>GET /me/events/stream (SSE)<br/>POST /me/events/notifications"]
-    PushD["Push dispatcher<br/>(runner process)"]
-    After["GET /runs/{id}/after<br/>(what happened after a run)"]
-  end
-
-  Relay["Push relay<br/>(abstractgateway push-relay)"]
-  APNs["Apple push service"]
-
-  subgraph RT["AbstractRuntime"]
-    Ctl["Automation controller"]
-    Occ["Occurrence = new run<br/>(origin: trigger / agent)"]
-    Run["Any run<br/>(asks a person, schedules a wake)"]
-  end
-
-  subgraph Clients["Clients"]
-    Tray["Desktop tray<br/>(default notifier)"]
-    Apps["Assistant, Code, watch, console"]
-  end
-
-  Sender --> Ingress --> TInbox
-  Feed --> Poller
-  Mail --> Poller
-  Poller --> TInbox
-  TInbox -->|wake| Ctl
-  Ctl -->|admit| Occ
-  Run -->|SCHEDULE_RUN| Wakes --> Ctl
-  Run -->|PUBLISH_EVENT| Publish -->|"event + attention.raised<br/>(recipient, channels)"| UStream
-  Publish -->|"email listed"| Outbox
-  Runner -->|run.started / finished, trigger.event,<br/>attention.raised / seen| UStream
-  Wakes -->|wake.scheduled| UStream
-  Outbox -->|notification.sent / failed| UStream
-  UStream --> Me
-  Me --> Tray
-  Me --> Apps
-  Tray -->|notification.sent (tray)| Me
-  UStream -->|attention.raised| PushD -->|"no text: topic, token, kind, seq"| Relay --> APNs --> Apps
-  PushD -->|notification.sent / failed| UStream
-  UStream --> After
-```
-
-- **Pointers, not copies.** The stream never holds a step of a run, a prompt
-  or a result body: `attention.raised` carries the ledger `record_key` or the
-  run id, and a client reads the content from the run or the automation.
-- **Ordered and resumable.** Each account's stream has its own gapless
-  `sequence`; the SSE `id` is that sequence, so a client reconnecting with
-  `Last-Event-ID` misses nothing. Event ids are stable, so a repeated write is
-  stored once, and the runner repairs at start what a crash between a save and
-  its stream write left out.
-- **One notification per machine.** The tray announces each attention item;
-  an app on the same computer stays silent when the tray reported it in the
-  last minute.
-- **Alerts choose their channels.** A flow's *Notify me* (a `PUBLISH_EVENT`
-  with an alert) carries `recipient` and `channels` (`tray`, `watch`,
-  `phone`, `email`, `console`; none = all) on its `attention.raised`; every
-  deliverer reads them before delivering (`events_stream.alert_asks`).
-- **Push carries no content.** The push dispatcher sends the relay only the
-  app topic, the device token, the kind of alert and the event's sequence;
-  the app reads the event from the gateway ([push.md](docs/push.md)).
-- **After the run** (`GET /api/gateway/runs/{run_id}/after`) reads back, for
-  one run and its sub-runs, what arrived, how it ended, the alerts it raised
-  and each delivery, from exact reads of the ledger and the stream.
-
-See [api.md](docs/api.md#your-event-stream-apigatewaymeevents) for the event
-vocabulary and the routes, [api.md](docs/api.md#triggers) for trigger
-connections and the webhook ingress, and
-[events-examples.md](docs/events-examples.md) for end-to-end examples.
-
-## Live replies (token deltas)
-
-A run started with `input_data._runtime.stream: true` (or, for an interactive
-`POST /runs/start` that does not say, with the `agents.streaming_default`
-setting on) also delivers the model's text while it is written. The text is a
-live preview, never a ledger record: the durable `llm_call` record still
-carries the answer, and it is written before the call's `llm.delta_end`.
-
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant G as Gateway API (ledger stream)
-  participant H as Live-delta hub
-  participant RT as AbstractRuntime (LLM call)
-  participant S as Durable stores
-
-  C->>G: POST /runs/start (input_data._runtime.stream: true)
-  C->>G: GET /runs/{run_id}/ledger/stream?after=N
-  G->>H: subscribe to the run and every run below it
-  H-->>G: one snapshot per open call (snapshot: true)
-  G-->>C: event: llm.delta (snapshot)
-  loop while the model writes
-    RT->>H: llm.delta {call_id, seq, text, channel}
-    H-->>G: frames since the subscriber's cursor
-    G-->>C: event: llm.delta (no id: line)
-  end
-  RT->>S: llm_call record with the final answer
-  G-->>C: event: step (id: N+1)
-  RT->>H: llm.delta_end {reason}
-  G-->>C: event: llm.delta_end
-  Note over H: when the run ends with a call still open,<br/>the hub closes it (synthetic: true)
-  G-->>C: event: done
-```
-
-- The hub is keyed by the root run, so a subscription to a root sees the
-  replies of its sub-runs, and a subscription to a child sees that child's
-  subtree. Another user's run answers 404.
-- Each subscriber holds at most one pending entry per call (a cursor into
-  that call's text), so a slow client catches up instead of overflowing a
-  queue; nothing is capped.
-- A run that ends while a call is open (stopped, failed, killed by the stop
-  kill switch, or failed by the runner) gets a synthetic `llm.delta_end` for
-  that call, and its state is freed.
-
-With API and runner in separate processes, the runner's model calls write
-their events to a private file and the API process reads them from there:
-
-```mermaid
-flowchart LR
-  subgraph RunnerP["abstractgateway runner"]
-    Call["LLM call in AbstractRuntime"] --> Sink["file sink"]
-  end
-  Sink --> File[("data dir/live/ROOT_RUN_ID.deltas.jsonl<br/>(0600, deleted when the root run ends)")]
-  subgraph ApiP["abstractgateway serve --no-runner"]
-    Tail["file tailer"] --> Hub2["Live-delta hub"] --> Stream["GET /runs/{run_id}/ledger/stream"]
-  end
-  File --> Tail
-```
-
-The frames, fields and end reasons are in
-[api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream).
-
-## Workspace guard (every run start)
-
-Every run the gateway starts works in a folder, follows its effective
-workspaces (one-off > session > account > gateway, clamped to the gateway's
-eligible set), and its file tools are kept out of the gateway's data folder
-and the account's credential folders:
-
-```mermaid
-flowchart TB
-  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons, automation definitions"] --> Policy["Workspace check: a one-off workspace outside the eligible set or above a cap, a workspace_root the run does not reach, or one inside the data folder (except the caller's own conversation folder), is refused with 400 workspace_refused"]
-  Policy --> Start["Workflow host start_run"]
-  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, automation occurrences"] --> Start
-  Start --> Ensure["No folder named: the conversation's private session folder (or a per-run folder)"]
-  Ensure --> Level["Level: one-off workspace (input_data.workspace) > the session's choice (session_workspaces.json) > the account default > the gateway policy"]
-  Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
-  Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
-  Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
-  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
-```
-
-The rules are whole-folder prefixes, never a listing of a folder's contents,
-so the model's prompt stays the same from turn to turn. An admin can turn the
-run-side rules off (`workspace_builtin_deny`); the workspace browser keeps
-hiding those folders. Shell commands a run may execute are not confined by
-these rules. Details: [configuration.md](docs/configuration.md#workspace-policy-filesystem-scope).
-
-## Desktop Assistant hand-over
-
-Opening the Assistant from the console or the tray starts it on the gateway
-computer already signed in as the person who clicked, without a code or token
-on its command line or in its environment:
-
-```mermaid
-sequenceDiagram
-  participant U as Admin (console Open, tray Launch Assistant)
-  participant G as Gateway
-  participant F as Hand-over file (0600)
-  participant A as Desktop Assistant
-
-  U->>G: POST /api/gateway/apps/assistant/launch
-  G->>F: write {schema, code, base_url, expires_at, user_id}<br/>in the data dir handover folder
-  G->>A: start with --gateway-url URL --gateway-handover-file FILE
-  A->>F: read, then delete
-  A->>G: POST /api/gateway/apps/desktop-handover {code}<br/>(direct loopback call)
-  G-->>A: {base_url, session_id, csrf_token, user_id, expires_at}
-  Note over G,A: single use, two minutes. A relayed call gets 403,<br/>a used or expired code 410
-```
-
-An Assistant that is already running is brought to the front and receives no
-code. See [apps.md](docs/apps.md).
-
-## Thin-client control plane
-
-Higher-level apps use the gateway instead of importing Runtime or Core:
-
-- `GET /api/gateway/discovery/capabilities` exposes a versioned shared
-  contract: run input/history access, media endpoints, voice contracts,
-  prompt-cache surfaces, host state, session caches, model residency, and
-  `common.readiness` (a compact summary of Gateway-owned surface readiness).
-- Provider, model and voice catalogs are routed through the gateway and carry
-  a `gateway_catalog_v1` envelope (`catalog` plus canonical `items`) next to
-  the lower-layer fields.
-- Direct run-scoped media routes cover TTS, STT, image generation, edit and
-  upscale, text-to-video, image-to-video, and music.
-- The voice library (`routes/voice_library.py`: languages, cloned voices,
-  cloning, voice design, the capability catalog) goes through AbstractRuntime's
-  voice library facade, in process or on the configured AbstractCore server;
-  cloned voices live in one AbstractVoice store per machine user, so its
-  changes are admin-only.
-- Voice listen is a host-capture contract: clients capture audio and then
-  upload it or emit an event.
-- Model residency is Runtime/provider-owned and Gateway-normalized:
-  `GET /models/loaded` and `GET /host/state` relay Runtime's host records and
-  add `model_residency_row_v1` rows. The gateway never fabricates residency,
-  memory or GPU facts; unavailable sections degrade in-band.
-- Reads (`/models/loaded`, `/host/state`, `/host/metrics/*`,
-  `GET /sessions/prompt_cache`) serve any authenticated principal; mutations
-  (model load/unload/lock/download, prompt-cache clearing, installs) require an
-  admin.
-
-## Deployment shapes
-
-```mermaid
-flowchart TB
-  subgraph Desktop["Your own computer"]
-    LS["Login service (optional)"] --> Serve1["abstractgateway serve<br/>API + runner + tray"]
-    Serve1 --> AppsLocal["Browser apps on 127.0.0.1"]
-  end
-  subgraph Server["Server or container"]
-    API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
-    Proxy["TLS reverse proxy or tunnel"] --> API
-    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
-    Worker --- ModelHost
-  end
-```
-
-- **Single process**: `abstractgateway serve` starts the HTTP API and the
-  runner. On a desktop session it also starts the tray helper, and it starts
-  the browser apps you enabled.
-- **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
-  (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
-  one data dir, so you can restart the API without pausing durable execution.
-  The runner process ticks every run, holds the one text model, and runs the
-  mail watchers, feed polling, push dispatcher and bridges; the API process
-  only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
-  `/v1` admits each request, then forwards it to a model host the runner
-  serves on `127.0.0.1` (address and per-start secret in
-  `<data dir>/split/model_host.json`), so the model is never loaded twice.
-  Live replies pass through `<data dir>/live/`; events the API delivers reach
-  runs the runner parked (the run store's indexes refresh across processes).
-  The full table of who does what: [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
-- **Container**: the GHCR image runs `serve` with user auth; see
-  [deployment.md](docs/deployment.md).
-
-Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
-(lock file), `src/abstractgateway/split_mode.py` (model host, placement).
-
-## Security model (summary)
-
-`GatewaySecurityMiddleware` applies to paths starting with `/api/gateway`:
-
-- **Authentication**: Gateway user accounts (browser sessions or user bearer
-  tokens), or a shared server/operator token.
-- **Origin allowlist**: the loopback origins, the gateway's own LAN origins in
-  a network mode, and the `allowed_origins` setting.
-- **Abuse resistance**: body size caps, concurrency caps, auth lockouts, audit
-  log.
-- **Callers on this computer**: one rule decides who counts as sitting at the
-  gateway computer (installs, opening folders); a browser that reaches the
-  gateway through an app server counts only when the browser itself is on this
-  computer.
-- **Workspace guard**: every run works in a folder, and its file tools never
-  reach the gateway's data folder or the account's credential folders.
-
-`session_id`, `run_id`, `artifact_id` and memory owner ids are references,
-not authorization proofs. With user auth on, each principal runs on its own
-data plane; browser apps exchange a user token for an HTTP-only session cookie
-plus CSRF token. See [security.md](docs/security.md).
-
-## Evidence (jump-to-code)
-
-- Composition root: `src/abstractgateway/service.py`
-- Publishing without a rebuild: `src/abstractgateway/hosts/bundle_host.py`
-  (`_compile_workflows`, `_build_runtime`, `reload_bundles_from_disk`,
-  `_pin_in_flight_runs`), `src/abstractgateway/workflow_reload.py`,
-  `src/abstractgateway/service.py` (`reload_gateway_workflow_bundles`)
-- API surface: `src/abstractgateway/routes/` (`gateway.py`, `apps.py`,
-  `engines.py`, `network.py`, `entities.py`)
-- Runner: `src/abstractgateway/runner.py`
-- Stores: `src/abstractgateway/stores.py`
-- Automations: `src/abstractgateway/routes/automations.py`,
-  `src/abstractgateway/automation_errors.py`,
-  `src/abstractgateway/automation_attention.py`,
-  `src/abstractgateway/automation_defaults.py`,
-  `src/abstractgateway/automation_command_types.py`,
-  `src/abstractgateway/session_history_bloc.py`
-- Security: `src/abstractgateway/security/`
-- Settings: `src/abstractgateway/runtime_config.py`
-- Default agent workflows: `src/abstractgateway/agent_defaults.py`
-- Live replies: `src/abstractgateway/live_deltas.py`
-- Workspace guard and browser: `src/abstractgateway/run_workspace_guard.py`,
-  `src/abstractgateway/workspace_browse.py`
-- Same-machine rule: `src/abstractgateway/security/same_machine.py`
-- Desktop hand-over: `src/abstractgateway/apps_desktop.py`,
-  `src/abstractgateway/apps_manager.py`, `src/abstractgateway/routes/apps.py`
-- CLI: `src/abstractgateway/cli.py`
-
-## Related docs
-
-- [getting-started.md](docs/getting-started.md): run the gateway and choose stores
-- [configuration.md](docs/configuration.md): every setting and environment variable
-- [api.md](docs/api.md): the client contract
-- [automations.md](docs/automations.md): automations, their routes and operations
-- [security.md](docs/security.md): auth, origins, network exposure
-- [deployment.md](docs/deployment.md): containers and Compose
-- [faq.md](docs/faq.md) and [troubleshooting.md](docs/troubleshooting.md)
 
 ---
 

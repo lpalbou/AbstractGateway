@@ -17,14 +17,12 @@ def test_console_carries_the_test_button_and_result_area() -> None:
     html = gateway_console_html()
     assert 'id="test-default"' in html
     assert 'id="default-modal-test"' in html
-    # Wired, single-flight, and voice/text-only visibility logic present.
+    # Wired, single-flight, and text-only visibility logic present (output.voice
+    # auditions by choosing a voice in the kit picker since 0949).
     assert '$("test-default").onclick = testDefault' in html
     assert "defaultRowTestable" in html
-    # The voice audition rides the production TTS lane with a short deadline.
+    # The voice sample rides the production TTS lane with a short deadline.
     assert "voice/tts" in html and "timeout_s: 25" in html
-    # Failed voice discovery degrades to an honest label, never a stuck
-    # "Loading voices..." (adversary F8).
-    assert "Voice discovery failed" in html
 
 
 def test_voice_tts_request_accepts_clamped_timeout() -> None:

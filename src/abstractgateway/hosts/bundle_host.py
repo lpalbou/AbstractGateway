@@ -2153,6 +2153,14 @@ class WorkflowBundleGatewayHost:
         except Exception:  # pragma: no cover - steering must never block runtime construction
             logger.warning("#FALLBACK could not attach steer sidecar for %s", data_root, exc_info=True)
 
+        # Session tool policy (contract v1, session_tool_policy.py): every runtime that ticks
+        # runs for this data root reads the conversation's standing approve/deny BEFORE it
+        # decides whether a tool batch waits. No try/except: a runtime without it would bring
+        # back the approval flash in every app, and that must fail at boot, not silently.
+        from ..session_tool_policy import attach_session_tool_policy_store
+
+        attach_session_tool_policy_store(runtime, Path(data_root))
+
         # Live token streaming (live_deltas.py): every runtime this host
         # builds publishes its runs' live deltas -- into the in-process hub,
         # or, in a split runner process, into `<data dir>/live/*.deltas.jsonl`

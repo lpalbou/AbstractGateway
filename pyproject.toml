@@ -181,6 +181,7 @@ abstractgateway-config = "abstractgateway.config_cli:main"
 "GitHub" = "https://github.com/lpalbou/abstractgateway"
 "Documentation" = "https://www.lpalbou.info/AbstractGateway/"
 "Changelog" = "https://github.com/lpalbou/abstractgateway/blob/main/CHANGELOG.md"
+"Issues" = "https://github.com/lpalbou/abstractgateway/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/abstractgateway"]

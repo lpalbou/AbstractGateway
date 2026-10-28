@@ -16,36 +16,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/discovery/capabilities` `contracts.common.memory.path` names the caller's plane store (it named the root data folder's to every account); `kg/query`'s session/global owner ids are `memory_store.session_memory_owner_id` / `global_memory_owner_id`, pinned equal to the runtime's `resolve_scope_owner_id` by a test.
 - Requires **AbstractRuntime 0.15.0** (0.14.0 was released without the memory facade) (the memory facade, `LedgerStore.get_record`) and **AbstractMemory 0.4.0** (`abstractmemory.graph`): `pyproject.toml` floors raised. This release waits until both are on PyPI (root ADR-0034).
 
+## [0.16.0] - 2026-10-28
+
+Upgrade notes (one way):
+
+- AbstractRuntime 0.14.0 writes `seq` on every hash-chained JSONL ledger line. A `verify_ledger_chain` from an
+  older AbstractRuntime reports those lines as tampered: upgrade every writer and verifier of a ledger together.
+- Timing budgets in the test suite are reports, not failures, unless `ABSTRACTGATEWAY_TIMING_STRICT=1`
+  (CONTRIBUTING.md); CI keeps structural checks (off-loop, time to first audio) instead of wall-clock budgets.
+
+### Added
+
+- **Replay view** (backlog 0947; framework root 0993; AbstractRuntime 0854 and ADR 0010). There
+  are two new routes. `GET /api/gateway/runs/{run_id}/view` returns the whole view of a run tree:
+  its status, the interaction to answer (a delegated child's approval included), messages with
+  provenance, one activity per node execution, artifacts, usage, the workflow (bundle, version,
+  entrypoint) and the cursor. It has an ETag set to the cursor token, answers 304 on
+  `If-None-Match`, and takes `?at=<token>` for the view as the ledger stood at that point.
+  `GET /api/gateway/runs/{run_id}/view/stream` is SSE: one `view`, then a `delta` per fold, with
+  `Last-Event-ID` resume and `done`.
+  - The view is computed by AbstractRuntime's reducer and served from one cached fold per run
+    tree. Each record is folded once and fanned out to every subscriber.
+  - Streams wake on the ledger append and never re-parse on a timer. A read that changes nothing
+    sends no delta.
+  - Authorization follows `GET /runs/{id}`, and the principal isolation matrix covers the new
+    routes.
+  - `/view/stream` counts in the SSE concurrency pool.
+  - Docs: api.md "Replay view", architecture.md.
+  - Benchmark: `scripts/bench_replay_view.py`.
+
+- **Session tool policy** (backlog 0946): `GET`/`PUT`/`POST`/`DELETE /api/gateway/sessions/{session_id}/tool-policy`, a conversation's standing "approve / deny without asking" (`approve: {tools, kinds, all, max_risk_rank}`, `deny: {tools, kinds}`, `ask`), stored per account beside the run store (`<data dir>/session_tool_policy.sqlite3`) and read by the runtime before any approval wait: an approved call runs with no wait and no interaction in any app, a denied call is refused with no wait, and each decision is an `abstract.tool_policy_decision` ledger record (who set the policy, when, which selector matched). The gateway clamps: approve selectors expand to the tools `GET /discovery/tools` serves the caller as enabled; the rest is listed in `clamped`. Every runtime the host builds gets the store (`hosts/bundle_host.py`); `capabilities.session_tool_policy` on `GET /discovery/capabilities`; a runtime without it is refused at host build. Fixes the approval gate that flashed in every app when a person had approved all tools or a kind of tool (the client answered the wait after it arrived). Requires AbstractRuntime 0.14.0 (the session tool policy, its backlog 0853). Docs: [api.md](docs/api.md#session-tool-policy-approve-or-deny-for-the-whole-conversation). Tests: tests/test_session_tool_policy_routes.py.
+
 - **Voice library** (`routes/voice_library.py`): `GET /api/gateway/voice/languages` (the languages each voice engine accepts), `GET /api/gateway/voice/clones` (cloned voices, designed and built-in included, `?language=` keeps the ones that speak it), `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility` (which engine supports `speed`, `one_shot`, design… and how), and `POST /api/gateway/voice/clones` (a voice from a recording), `PATCH` / `DELETE /api/gateway/voice/clones/{voice_id}` (rename, replace the transcript, delete) and `POST /api/gateway/voice/design` (a voice from a written description). Through AbstractRuntime's voice library facade, locally or on the configured AbstractCore server. See [api.md](docs/api.md#voice-library).
+
 - **Personal voices per account** (backlog 0942): with user accounts on and local voice engines, each account keeps the voices it clones or designs in its own store (`<plane>/voices`), in front of the shared library (the built-in voices and every voice the administrator creates; the administrator's plane is the library). An account creates, renames and deletes its own voices; library voices are read-only to it. Where every account shares one store (single-user mode, an AbstractCore server doing the voice work), voice changes stay admin-only (403). `language` on `POST /api/gateway/voice/clones`; `POST /api/gateway/voice/clones/{voice_id}/deploy` (administrators) shares a voice with every account. A reference recording may be up to 25 MB (the security layer's 10 MB write cap does not apply to it). Requires AbstractRuntime 0.13.0; personal stores need AbstractVoice 0.19.0.
+
 - `GET /api/gateway/voice/voices?language=` filters the voice catalog by language (native speakers first); `compact=true` keeps `tts_languages_by_provider`.
+
 - `GET /api/gateway/vision/provider_models?provider=endpoint:<id>` also reads that endpoint's own catalog: a model it says makes images is listed whatever its name, one it says does not is left out, the others are decided by name as before; an endpoint that does not exist or is disabled answers 404 instead of an empty list. A model id with an organisation prefix (`black-forest-labs/FLUX.1-schnell`) is kept whole; only a routing prefix naming the provider family is dropped.
+
 - `POST /api/gateway/runs/{run_id}/voice/tts` takes `one_shot` (the whole text as one take with one voice); the streamed route refuses it with 422.
 
-- Push: a notification is never passive any more (a passive push sits silently in Notification Center): approvals and questions are time-sensitive, every other kind is an ordinary alert with banner and sound; and the dispatcher is phone-first (the iPhone app and the watch app are one family, Apple mirrors the phone's alert to the watch; a watch signed in on its own is pushed directly; "watch" alone in a Notify me node still pushes the watch).
+- **Console, Multimodal → Edit multimodal capability, `output.voice`** (backlog 0949, root 1055): the dialog uses the kit's voice picker (abstractuic islands `mountVoiceSettings`, ui-kit 0.9.1 vendored), the one the entity tab and the apps render: voices by name (cloned voices no longer show as raw ids), grouped Your voices / Engine voices / Shared voices, with the language filter and search. Choosing a voice plays a short sample at once; one play/stop toggle at the right of the voice row replays from 0 or stops; a newer choice cancels the older sample. The **Test** button and its replay panel are gone for voice routes (Test stays for text routes). The console's own voice list is removed.
+
+- `GET /api/gateway/voice/voices?compact=true` keeps `tts_model_details_by_provider` (AbstractVoice 0.19.2: each model's `role`, `"cloning"` for Qwen3-TTS Base, and its picker `label`).
+
+- `GET /api/gateway/voice/voices` (without `providers_only`) lists the cloud voice providers (`openai`, `openai-compatible`) in `tts_providers`, as `providers_only=true` does: the kit's voice picker reads this call.
 
 - **Split mode works as an opt-in** (backlog 1054, round 3): `abstractgateway runner --data-dir DIR` + `abstractgateway serve --no-runner --data-dir DIR`. The API process loads no text model: its runtime builds the model client at the first call instead of at boot (AbstractRuntime `set_default_model_warmup(False)`), and the OpenAI-compatible `/v1` admits each request as before, then forwards it, streaming both ways, to a model host the runner process serves on `127.0.0.1` (address and a per-start secret in `<data dir>/split/model_host.json`, mode 0600; a request without the secret is refused; no runner = `503 runner_unavailable`, never a local load). Events the API process delivers reach runs the runner parked (AbstractRuntime: the event-wait and mailbox indexes refresh across processes). Mail watchers, feed polling, the notification outbox, the push dispatcher and the Telegram/agora bridges run only in the runner process (they used to start in both). `/api/health` rows carry `mode` (`split`/`combined`), `process` (`api`/`runner`/`combined`) and, in the API process, `runner_process` `{pid, alive, heartbeat_fresh, model_host}`. `runner` takes `--data-dir`. Docs: configuration.md (the two commands, who does what), architecture.md. Tests: `/v1` forwarded with one model load (fake model host), secret refused, no runner = 503, dead address ignored; a hermetic two-process smoke (run started on the API completes in the runner, health, `/v1`, no model built in the API process). Not the default yet.
-
-- A flow editor draft test parked on a person (hidden from the run listings) no longer raises attention, and a stale open wait for one is closed at boot: the watch and phone badges no longer count a wait nobody can see.
 
 - **Notify me reaches the channels it chose** (framework ADR-0041 follow-up). A published alert's `attention.raised` carries `recipient` (`"me"`; another account is refused: "notifying another account is not available yet") and `channels` (from `tray`, `watch`, `phone`, `email`, `console`; absent = every channel, so older flows behave as before), validated by `record_published` (`channels` without `alert` refused). Every deliverer reads it through `events_stream.alert_asks`: the tray consumer neither shows nor counts an alert that does not list `tray`; the push dispatcher sends only to the listed apps, watch-first among them (`watch` alone never falls back to the phone); the email outbox now mails a Notify me alert (`kind: notify_me`, outbox key `notify_me_key(record_key)`, fixed template "“<flow>” notified you.", the flow's text labelled) when `email` is listed (or nothing is) and a mailbox is usable, queued by the publish host (`wire_publish_event(..., email_plane=)`). The console item is the record itself, always written. `GET /runs/{id}/after` gives a published alert `recipient` and `asked` (`["watch", "phone"]` or `"all"`) and finds its email delivery. Tests: tests/test_notify_me_channels.py (the record, tray, push per channel set, email only when asked, After the run, end to end from a compiled Notify me through the runtime to a fake relay). Docs: api.md (event shapes, After the run).
 
 - **After the run** (framework ADR-0041 "No hidden effects after a flow"): `GET /api/gateway/runs/{run_id}/after` answers what happened after a run in one read: what arrived (count and a line: "4 new emails: “O” from … and 3 more", the mailbox address or connection name), when it started and ended, On Flow End's `response` excerpt and `note`, the alerts it raised (On Flow End's `notify` of older flows, the automation's failure item, Notify me, Publish to channel with Alert on, an approval or a question on the run or one of its sub-runs, "Email me when done") or why nothing rang (`quiet_reason`: empty title, no notify, still running, not recorded yet), and each delivery with its channel, route (`push`, `stream`, `outbox`), device, time and state. Exact reads only (the automation's ledger key, deterministic event ids through the stream index), off the event loop, in the caller's own plane and stream.
 
 - `serve --run-index trusted|verify` (default `verify` in this release): the run listings' in-memory index (AbstractRuntime 09d3b63) runs in shadow mode, its mismatch counters under `run_index` in `/api/health`; `trusted` answers listings from the index.
-
-- Performance (backlog 1054): the routes that read files on the event loop now do it in a worker (same answers): `GET /visualflows` (one folder scan, each flow file parsed once per version, the whole answer kept while no file changed, and its JSON encoded in the worker: Flow's library polls it), `GET /backlog/{kind}` (root discovery, each item parsed once per version, encoding in the worker), `GET /backlog/exec/requests`, artifact export, `POST /artifacts/import`, `POST /attachments/ingest`, admin catalog promote, bundle download, `GET /workflows/{id}/flow`, bug and feature reports and their inbox listings. `GET /runs` reads the session archive and session kinds files from memory (a write through the gateway drops the entry at once; another process's write is seen within 1 s).
-- Performance (backlog 1054): host status for the tray, the Observer and the console computes its expensive parts once per short TTL, single-flight, off the event loop: the GPU probe (`ioreg`/`nvidia-smi` subprocess) 2 s, stamped when it ends (the old 1 s cache was stamped when the probe started, so the tray's 1 Hz poll missed every time); the memory snapshot (`ioreg` + `sysctl`) 2 s keyed on the runtime's client (keyed on the facade object before, which the runtime builds anew per call: it never hit); `/host/state`'s model residency walk and session-cache enumeration 4 s (a load, unload or pin through the gateway drops them) and its install block 10 s; `/host/runner` off the loop. `/host/runs` keeps one set of read-only stores per plane (it built new stores, artifact catalog and a cold run-index scan, per plane per call) and reuses the service's own stores for the default plane; finished rows' step counts are kept while the row is unchanged.
-- Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
-- Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
-- Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
-- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
-- Performance (backlog 1054, round 3): the last blocking calls on the event loop's shared executor run in the work pools: `GET /runs` (the one-time docs-chat migration, the children page, the listing itself) in `heavy`; `POST /host/tray/show`, `GET /host/update` and `POST /host/update/start` in `light`; `POST /host/update/check` (a remote check) in `watchers`. `POST /backlog/exec/requests/{id}/promote` (request and manifest reads, a `git` call per file, the copies and writes) no longer runs on the event loop at all.
-- Performance (backlog 1054, round 3): an account's service is never built on the event loop. A build runs in its own thread, once per service however many requests wait for it, and requests await it; the pre-warm covers every path that can reach a service (not only `/api/gateway`), the single-user service, and the plane an admin is served from for another account's entity. A request that still reaches a service being built answers `503` `service_starting` with `Retry-After: 1` (or the build's own error, once) instead of freezing the gateway; a cached service whose runner needs a restart keeps serving while the restart runs off the loop. Measured: a 5 s build during a request, `/api/health` answering in 2-50 ms throughout (it froze 5 s).
-- Performance (backlog 1054, the 04:07 watchdog exit of 2026-10-26): `GET /discovery/capabilities` (Flow and the console poll it) and `GET /config/capability-defaults` build their answer in the watchers pool. Both reach AbstractCore's capability defaults, whose engine checks ask Python's import system for modules (`find_spec`), which waits on the interpreter's import lock while another thread imports; on the event loop that wait froze the gateway for 31 s until the watchdog restarted it. With the import lock held 2 s by another thread, `/api/health` and `/me/events/stream` answer within 50 ms.
-- Load test in CI (backlog 1054): `.github/workflows/perf.yml` (pull requests touching `src/`, nightly, manual) runs `scripts/perf/ci.sh`: a synthetic fixture (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations with their ledgers, no operator data), a hermetic gateway, 20 probe rounds and a 2-minute idle window; it fails when a p99 is over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or CPU at rest is over `--cpu-max` (5% of a core, 10% on CI runners). `bench_driver.py` gained `--fail-p99 NAME=S` / `--fail-idle-cpu PCT` and reads CPU and threads from `/proc` on Linux; `bench_gateway.sh` gained `--python`, `--perf-dir`, `--driver-arg` and `installed` sources, and exits with the gates' verdict. Tests pin `/api/health`'s `pools`, `run_index` (mode, planes, summed counters) and `gc_tuning`.
-
-### Added
 
 - **Push forwarder: one admin setting, no restart.** The gateway's push forwarder (relay) address is a saved,
   gateway-wide setting with three choices: **Built-in forwarder** (the packaged address; off while none is built
@@ -58,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner sees the settings file move within 2 s; turning it on never pushes what happened while it was off. The
   web and terminal consoles show one **Push forwarder** row beside Devices (My email → Notifications, admins) in
   words, with *set by the launch flag for this run* when the flag wins, and an **Edit** with the three choices.
+
 - **Triggers: Handled by as a dropdown, and the page laid out on one grid.** The console's Triggers page is a
   table whose cells start on one line: **Connection** (the name, quiet tags *Main mailbox* (your own mailbox
   from My email) / *Read and write* / *Read only* on a mailbox, the trigger as a sentence), **Handled by**,
@@ -83,6 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flow** (`f`) with *✓ <flow>* lines carrying Pause / Resume, **Open in Flow** (prints the `?flow=` link with
   Copy) and Remove (Remove / Keep). Automation summaries now carry `target` `{workflow_id, bundle_ref,
   flow_id}` and `flow_name`.
+
 - **Alerts on the Apple Watch and iPhone while the app is closed** (Apple push). The apps register at sign-in with
   `PUT /api/gateway/me/push/devices/{device_id}` `{token, topic, env, app, reg, name?}` (`DELETE` at sign-out,
   `GET /api/gateway/me/push/devices` lists yours, never with the token; a registration expires 7 days after its last
@@ -96,18 +122,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with your own Apple key: fixed localized messages, HTTP/2 to Apple, per-token and per-IP limits, `GET /v1/info`;
   install the `push-relay` extra (`httpx[http2]`, `cryptography`) for it. State lives in `<data dir>/push/`. The web
   and terminal consoles list your devices under My email → Notifications → **Devices**. See `docs/push.md`.
+
 - **Well-known feeds for a new feed connection.** The console's Triggers → New connection → Feed starts with **Choose a well-known feed**: 24 open RSS/Atom feeds grouped by category (World news: BBC, The Guardian, NPR, The New York Times, Al Jazeera, Deutsche Welle, Le Monde; Technology: Ars Technica, The Verge, Hacker News, TechCrunch, WIRED; Science: MIT Technology Review, arXiv cs.AI, Quanta Magazine, New Scientist, NASA, Nature, Science news, Science's table of contents; Business and finance: BBC Business, The Guardian Business, CNBC, MarketWatch), plus three you complete (a subreddit, a YouTube channel, a GitHub repository's releases). A pick fills in the name and the address, both editable; **Another address** keeps the free field. The catalogue ships as `abstractgateway/assets/feeds.json` and merges with `<data dir>/catalog/feeds.json` when present (same `id` replaces, a new `id` adds, `"disabled": true` hides); `GET /api/gateway/triggers/feeds/catalog` serves the merged list with `source: shipped | custom` (an administrator also gets `custom_path` and `problems`). The terminal console offers the same list. `scripts/check_feed_catalog.py` re-checks every address live with the runtime's feed reader. Nature's and Science's feeds are RSS 1.0 (RDF): they are read by AbstractRuntime's RSS 1.0 support (its next release; AbstractRuntime 0.12.0 refuses them as unreadable).
+
 - **A well-known feed recommends how often to check it.** Every catalogue entry carries `check_every` (the feed source's duration form; served by `GET /api/gateway/triggers/feeds/catalog`): 15m for world news and business/finance, 10m for Hacker News, 30m for the technology sites, 6h for the science magazines and journals, 12h for arXiv, and for the templates 15m (subreddit), 1h (YouTube channel, GitHub releases). Picking a feed in the web or terminal console sets **Check every** (number and unit) to it, with "Recommended for this feed" under the field; a value changed after a pick is kept on the next pick, one set before any pick is replaced. A custom entry in `<data dir>/catalog/feeds.json` may omit it (the form default stays); a malformed one is skipped and named in `problems`.
+
 - Folder picker: `GET /api/gateway/me/email/folders` and `GET /api/gateway/me/email/accounts/{mailbox_id}/folders` list a mailbox's folders with their role (`special`: inbox, sent, trash, drafts, junk, archive) and message count, on one connection, cached 60 s; another account's mailbox answers 404.
+
 - Flows publish to a channel: every runtime the gateway builds registers the `PUBLISH_EVENT` handler
   (`publish_host.py`), so a flow's *Publish to channel* step lands on the run owner's event stream (and raises
   attention with `alert: true`). Needs AbstractRuntime 0.12.0: the dependency floor moves to `>=0.12.0` in the
   base, `apple` and `gpu` profiles.
 
 - Mailbox rows (`GET /me/email/accounts`, `GET /me/email` `accounts`) carry `can_write` and `access` (`read` | `write`): whether automations may change the mailbox (mark, label, move, delete) and send from it — the person's choice (AbstractCore 2.29's `EmailAccount.access`), the primary always `write`.
+
 - **Read only or Read and write for another mailbox.** Adding a further mailbox takes `write` (default `false`: Read only, IMAP only; `true`: Read and write, its outgoing server given, discovered or the domain's standard one stored and tested); `send` is still accepted as the older name. `PUT /me/email/accounts/{mailbox_id}/access {write, smtp?, test?}` changes it without connecting again: turning it on adds and signs in to an outgoing server with the stored password or Google/Microsoft sign-in (a refusal names its step and changes nothing), turning it off keeps that server unused; 400 for the primary (always read and write); audited `email.access_changed`. The OAuth start of a further mailbox takes `write` the same way. A mailbox kept Read only reads `mailbox.state: connected`; `receive_only` now means Read and write without an outgoing server ("can't send").
+
 - Console, web: the Add mailbox form's switch is **Read and write** (off by default; "Off: automations read this mailbox and never change it or send from it. On: they can mark, move, label, delete and send as it."), the outgoing server (SMTP) shown when it is on; My email rows say *Read only* / *Read and write* and another mailbox's row has a **Read and write** switch; a mailbox's Settings open with its access; Triggers mailbox rows say *When mail arrives in … · Read only* / *· Read and write* and *Can't send* for a read-and-write mailbox without an outgoing server.
+
 - Console, terminal: My email lists your other mailboxes, each with **Active** and **Read and write** switches, and **Add mailbox** connects another mailbox by password (Read and write off by default; the outgoing server only when on); Triggers mailbox rows say *· Read only* / *· Read and write* and `receive_only` reads *Can't send*. Google/Microsoft sign-in for another mailbox is on the web console only.
+
 - **Publish to a channel.** The host side of a flow's `PUBLISH_EVENT` (`publish_host.py`,
   `events_stream.record_published`): `{channel, type?, title, body?, subject?, data?, alert?}` lands on the run
   owner's event stream as an event of your type on your channel (id `publish:<run_id>:<step_id>`, idempotent), and
@@ -118,7 +152,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/events-examples.md` ("Publish to a channel").
 
 - **Run a triggered flow with real data.** `POST /api/gateway/triggers/sample` `{trigger, count?}` answers the inputs a real occurrence of that trigger would receive (`inputs` with `event`, `truncated`, `count`, and a `summary` such as "Last 100 messages of me@example.com"), built read-only from the caller's own mailbox, feed or webhook connection through AbstractRuntime's `sample_occurrence_inputs` (count 1..500, a mailbox read for at most 20 s; another account's mailbox or connection: 404). Flow's Run dialog starts a normal run with them.
+
 - **Mailbox autodiscovery from an address.** `GET /api/gateway/me/email/autodiscover?address=` answers the provider (google, microsoft, yahoo, icloud, fastmail or other) and its name, the IMAP and SMTP servers, the login, how one signs in (`oauth`, `password`, `app_password`, and whether this gateway can do the OAuth sign-in), the provider's app-password page and where the answer came from (preset, autoconfig, srv or none), through AbstractCore's discovery cached per domain for a day. `PUT /me/email/accounts/{mailbox_id}` accepts an optional `name` for the mailbox; the login defaults to the address.
+
 - **Triggers page, UX review.** Unused connections read *Waiting for an automation to use it*; used ones *Listening ·
   used by Release digest* (your automations' names); one **Listening** switch label on every row; recorded problems in
   red (*Can't read the feed: the address answered 404 (not found). Check the feed address.*); events as sentences with
@@ -127,123 +163,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the text kept; optional settings under **More options**; **Cancel** and a hint per option; the next step after
   creating; a webhook's test call says *It worked: <name> received the call*; a local webhook address says GitHub can't
   reach it yet, with **Open Network**.
+
 - **My email.** Your own email dialog is titled **My email** (see *Changed* for its tabs and the mailbox form).
+
 - **Triggers: what each connection is doing.** The **Listening** switch is yours and the only control (`PUT
   /api/gateway/triggers/connections/{id}` with `paused`); rows say *Listening · used by N automations*, *Listening ·
   nothing uses it yet, so nothing is fetched until an automation does* or *Paused*. **When nothing uses it** (collapsed) has **Keep
   fetching even when nothing uses it** (`always_listen`). Mailbox rows show the same states with their **Use this
   mailbox** switch. A line under the list explains when a connection fetches.
+
 - **Further mailboxes: app-password links and provider sign-in.** For Gmail and Outlook servers or addresses the form
   says the provider refuses account passwords, with a direct **Create an app password** link (new tab) to paste from;
   **Sign in with Google** / **Sign in with Microsoft** come first when the gateway has that sign-in client, through
   `/me/email/accounts/{mailbox_id}/oauth/*`.
+
 - **Further mailboxes in the console.** My email → **Mailboxes** lists your other mailboxes with an **Active** switch,
   **Test**, **Settings** and **Remove** (asks first), and **Add mailbox** connects another one (the gateway signs in
   before storing); each is Read only or Read and write (see above).
+
 - **Webhook setup panel.** After creating a webhook connection, the console shows the address and the one-time secret
   with copy buttons, a ready-to-copy signed call (bash, `openssl`) with the real address and secret, the GitHub/Zapier
   recipe, and **Send a signed test call** (signed in the browser, posted to the ingress; the HTTP status and the event
   it created are shown).
-
-### Changed
-
-- **Triggers, re-review.** The feed form's **When added** is a choice in words (a source's `enumNames` are accepted;
-  no "Not editable here" with raw JSON), and descriptions that restate the control (a duration's units, a choice's
-  raw values) are not shown; mailbox rows are named like My email (the address, the primary with *Sends as you*); a
-  failing connection that is on shows its red error as its status line; the line under the list reads *Pause it to
-  stop fetching.* The mailbox form opens in a narrow dialog (480 px), its links use the console's link look, and a
-  refused Gmail/Outlook password keeps the provider's help under the field. The terminal console matches (its feed
-  form asks *Check every [15] [minutes]*, required settings first).
-- Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
-  arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
-  `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.
-  `GET /api/gateway/bundles` entrypoints carry `triggerable` (automation defaults with a trigger). The tray's menu
-  says **Conversations ▸**, **Open Conversations in Console** and "Paused — conversations wait until you resume".
-- A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
-  other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
-  line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.
-- **My email, reorganised.** A compact header (*My email* and your address) and three tabs: **Mailboxes** (one list,
-  your primary mailbox first with *Sends as you*, each row one line *address · provider · state* with an **Active**
-  switch and a **…** menu: Test, Settings, Remove), **Notifications** (your address, Job failed, Approval needed) and
-  **Agents** (agent email tools, recipients and limits). No banner; each tab fits a 1440×900 screen. The primary's
-  **Settings** opens its full editor (servers, folder, sign-in app, Test, Disconnect) in a **Mailbox settings** dialog.
-- **One mailbox form, address first.** **Connect** (your primary) and **Add mailbox** (another one) open the same
-  dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
-  **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
-  app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
-  write** (another mailbox, off by default); **Server settings** collapsed and
-  prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
-  asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
-- Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
-  "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
-  open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.
-- **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
-  connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
-- **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
-  (seconds)"); a secret the gateway generates is never asked for.
-
-### Fixed
-
-- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
-  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
-  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
-  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
-  The host-status TTL tests use a fake clock.
-- **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
-  `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
-  and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran
-  `serve` left GC tuning on so later boots `gc.freeze()`d them for good (29-35 M objects late in CI). The
-  conftest now frees the dropped app (`tests/app_reimport.py`) and undoes any GC tuning after each test;
-  `tests/test_harness_reimported_app_is_freed.py` guards both. Full suite on an M-series Mac: 63 -> 24 min,
-  peak RSS 10.1 GB -> 1.2 GB; six timing tests that failed under the GC pauses pass. Four harness waits got
-  shorter, and the apps reaper reads `STOP_TIMEOUT_S` when it runs (a default bound at import ignored a
-  change to it).
-- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
-  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
-  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
-  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
-  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
-  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
-  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
-  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
-  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
-  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
-  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
-- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
-  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
-  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
-  the red "!" stays for no answer at all (refused, or nothing for 90 s).
-- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
-  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
-  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
-  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
-  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
-  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
-  switch, a change set it cannot name (another process) and at least every 5 minutes.
-- **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
-  and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
-  every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime
-  `JsonFileRunStore.change_token`: one stat, no file read, about 1 µs). An older AbstractRuntime without it keeps the
-  old fingerprint, with a warning at start.
-- **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
-  read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
-  watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that
-  session's candidates through its indexes (AbstractRuntime `list_session_candidates`; same visibility rule) and,
-  like `GET /runs/{id}/artifacts`, `/artifacts/search` and `/artifacts/stats`, builds and renders its page in a
-  worker thread: 2.1 s to 16 ms, with no event-loop step over 1-2 ms. `GET /runs?parent_run_id=` lists children off
-  the loop too. Needs the AbstractRuntime release that carries `list_session_candidates`.
-- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
-  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
-  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
-  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
-  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
-  takes one snapshot per account for the whole page (`connections_usage`), and `GET
-  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
-  AbstractRuntime release that carries the index.
-
-## [0.16.0] - 2026-10-25
-
-### Added
 
 - **Connections listen only while something uses them.** Connection rows carry `listening` (listening | idle | paused), `used_by` (the active automations reading it), `paused` and `always_listen`; `PUT /api/gateway/triggers/connections/{id}` accepts `paused` and `always_listen`. Idle feeds are not fetched; a webhook call to an idle connection is accepted and stored (only a paused one answers 409 `connection_disabled`).
 
@@ -266,32 +207,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner, a scripted model double deciding through the flow's LLM node, AbstractCore's fake mail servers, a
   recorded Python Insider RSS (plus a live variant run with `--allow-network`), the gateway tray following
   the stream over HTTP on a scratch port.
+
 - Per-user event stream (backlog 1046, `events_stream.py`): one durable, ordered stream per person
   (`user:<tenant>:<user>`, the runtime's `JsonFileEventInbox` in the plane's data folder) holding only what is
   not a step of a run, in CloudEvents 1.0 names (`{specversion, id, type, source, subject?, time, data,
   sequence}`): `trigger.event`, `attention.raised` (the ledger `record_key`, never a body), `attention.seen`,
   `notification.sent|failed` (console, email), and the pointers `run.started|finished {run_id, session_id,
   origin}` written after the run store save, idempotent by id and rebuilt at boot after a crash in between.
+
 - `GET /api/gateway/me/events?after=<sequence>&limit=` (catch-up page `{stream, events, next_after, head, more}`)
   and `GET /api/gateway/me/events/stream` (SSE: `id` = sequence, `event` = type, `Last-Event-ID` honoured when
   `after` is 0, `: keep-alive` every `heartbeat_s`, the `after` semantics of `/runs/{id}/ledger/stream`): the
   caller's own stream only, in the caller's own plane. `POST /api/gateway/me/events/notifications` lets a client
   channel (the tray) record `notification.sent|failed`. Documented in api.md and the OpenAPI document.
+
 - The desktop tray follows the person's event stream (`tray/events.py`): one OS notification per new
   `attention.raised` (the automation's title, a failure said as such), recorded back as `notification.sent|failed`
   with `channel: "tray"`; the tooltip counts the items raised and not yet seen; the Scheduled rows are refetched
   on automation events (and every 5 minutes) instead of the 20-second `GET /automations` poll, which stays for a
   gateway without the stream. Reconnects resume from `Last-Event-ID`.
+
 - The per-user stream carries the waits on a person: a run that stops for a tool approval or a question
   writes `attention.raised {kind: approval|question, run_id, session_id, wait_key, step_id, record_key,
   prompt_ref}` (nothing copied: the prompt is read from the run), and its end `attention.seen {kind, run_id,
   wait_key, step_id, outcome: answered|approved|denied|timed_out|cancelled|failed}`; idempotent ids, open waits
   repaired at boot. The tray announces each one and counts them with the automation items.
+
 - `schedule_run` host (backlog 1045, `wakes_host.py`): every runtime the gateway builds registers the
   `SCHEDULE_RUN` handler. A wake becomes a one-shot automation owned by the plane's account that runs the
   session's own workflow (same provider and model) in the caller's session, under the gateway's workspace guard
   and built-in tool deny; `wake.scheduled` is written to the owner's event stream, and archiving it before it
   fires writes `wake.cancelled`. A session whose workflow is not a bundle workflow is refused with a sentence.
+
 - `POST /api/gateway/me/events/notifications` accepts the channels `tray`, `assistant`, `code`, `watch` and
   `phone` (422 otherwise; a watch or a phone uses its own device id, so it always notifies) and an optional `device`; documented dedupe rule so an approval is notified once per machine
   (an app stays silent when another channel on the same device reported `notification.sent` for the record in
@@ -303,10 +250,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chosen source's `connection_schema` as a form; a webhook connection's address and one-time signing secret are
   shown once with copy buttons; administrators switch on **All accounts**. `#triggers?new=<source_id>` opens the
   dialog on a source. The terminal console has the same page (key **V**).
+
 - Run origin (backlog 1038): every run started through `POST /runs/start` records who started it,
   `input_data._meta.origin = {kind: "person", actor: "<tenant>:<user>", client: <request interface>, ref: {}}`,
   and the `POST /runs/schedule` wrapper `kind: "system"`. The gateway writes it (a client-sent origin is
   replaced); `GET /runs/{run_id}` answers it as `origin` (null for older runs).
+
 - Webhook ingress for trigger connections (backlog 1042): `POST /api/gateway/triggers/webhooks/{connection_id}`,
   public (no bearer token): the Standard Webhooks signature (`webhook-id`, `webhook-timestamp`,
   `webhook-signature`, HMAC-SHA256 with the connection's sealed secret, verified by AbstractRuntime's
@@ -317,12 +266,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   413, a body neither JSON nor UTF-8 text 415, more than 60 calls a minute per connection
   (120 per client address) 429. Refusals are recorded on the connection and the audit line. Every runtime the
   gateway builds now gets its plane's trigger connection store (`<runtime data dir>/triggers/connections/`).
+
 - Agents can schedule a later run (backlog 1045 wiring): the gateway's ReAct tool registry offers AbstractAgent's
   `schedule_run` beside `delegate_agent` (a run gets it when its allowlist names it). An AbstractAgent without the tool
   keeps every other builtin and logs that `schedule_run` is not offered.
+
 - Feed connections are polled (backlog 1043): each account's worker loop calls AbstractRuntime's
   `poll_feed_connections` over the plane's connection store (the one store its runtime was wired with) and wakes the
   automations that received items. Nothing polls at import.
+
 - Trigger connections API (backlog 1041): `GET/POST /api/gateway/triggers/connections`,
   `GET/PUT/DELETE /api/gateway/triggers/connections/{id}`, `GET …/{id}/events?after=&limit=` (CloudEvents JSON with
   `sequence`), `POST …/{id}/test-fire`. The caller's own connections in their runtime plane (another account's id
@@ -332,6 +284,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection source, refused for the others) and in a request, stored as `trigger.config.connection_id`; a connection
   that is not the owner's is refused (404 `connection_not_found`, or 422 `connection_not_yours` when it came from a
   shared workflow's defaults).
+
 - Several mailboxes per user, read-only at minimum (backlog 1044): `GET /api/gateway/me/email/accounts` lists every
   mailbox of the caller with `can_read` / `can_send` (also as `accounts` in `GET /me/email`);
   `PUT|GET|DELETE /me/email/accounts/{mailbox_id}`, `POST …/{mailbox_id}/test`, `PUT …/{mailbox_id}/enabled`. A further
@@ -341,6 +294,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the automation is created or revised (422 `email_account_not_found` / `email_account_cannot_read`). A run bound to a
   further mailbox resolves that mailbox. Existing installs migrate without action: the mailbox they have is the primary,
   id `default`, its files unchanged.
+
 - `GET /api/gateway/sessions/search?q=…`: keyword search over the caller's conversations: their questions,
   answers and artifacts (generated media by their prompt, attachments by their file name), with
   AbstractRuntime's `ConversationSearch` (words and parts of words, case and accents ignored, a typo
@@ -351,20 +305,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Dependency floors: `AbstractRuntime>=0.11.0` (trigger connections, the CloudEvents trigger envelope, run origin,
-  `SCHEDULE_RUN`, several mailboxes per user, the run stores' mailbox index) and `abstractagent>=0.4.0` (the
-  `schedule_run` tool), in the base, `apple` and `gpu` profiles.
+- Dependency floors: `AbstractRuntime>=0.14.0` (trigger connections, the CloudEvents trigger envelope, run origin,
+  `SCHEDULE_RUN`, several mailboxes per user, the run stores' mailbox index, the session tool policy, `seq` and
+  `list_after` on every ledger store), `abstractagent>=0.4.0` (the `schedule_run` tool), `abstractcore>=2.30.0` and
+  `abstractvoice>=0.18.2` (personal voices per account need AbstractVoice 0.19.0 or later; install the latest AbstractVoice to get them), in the base, `apple` and `gpu` profiles. AbstractMemory is capped below 0.4
+  (`AbstractMemory[...]>=0.3.0,<0.4`): AbstractMemory 0.4.0 migrates its vector store one way, and the gateway
+  release that raises the cap (0.17.0) is the one that takes that migration.
+
+- Push: a notification is never passive any more (a passive push sits silently in Notification Center): approvals and questions are time-sensitive, every other kind is an ordinary alert with banner and sound; and the dispatcher is phone-first (the iPhone app and the watch app are one family, Apple mirrors the phone's alert to the watch; a watch signed in on its own is pushed directly; "watch" alone in a Notify me node still pushes the watch).
+
+- Performance (backlog 1054): the routes that read files on the event loop now do it in a worker (same answers): `GET /visualflows` (one folder scan, each flow file parsed once per version, the whole answer kept while no file changed, and its JSON encoded in the worker: Flow's library polls it), `GET /backlog/{kind}` (root discovery, each item parsed once per version, encoding in the worker), `GET /backlog/exec/requests`, artifact export, `POST /artifacts/import`, `POST /attachments/ingest`, admin catalog promote, bundle download, `GET /workflows/{id}/flow`, bug and feature reports and their inbox listings. `GET /runs` reads the session archive and session kinds files from memory (a write through the gateway drops the entry at once; another process's write is seen within 1 s).
+
+- Performance (backlog 1054): host status for the tray, the Observer and the console computes its expensive parts once per short TTL, single-flight, off the event loop: the GPU probe (`ioreg`/`nvidia-smi` subprocess) 2 s, stamped when it ends (the old 1 s cache was stamped when the probe started, so the tray's 1 Hz poll missed every time); the memory snapshot (`ioreg` + `sysctl`) 2 s keyed on the runtime's client (keyed on the facade object before, which the runtime builds anew per call: it never hit); `/host/state`'s model residency walk and session-cache enumeration 4 s (a load, unload or pin through the gateway drops them) and its install block 10 s; `/host/runner` off the loop. `/host/runs` keeps one set of read-only stores per plane (it built new stores, artifact catalog and a cold run-index scan, per plane per call) and reuses the service's own stores for the default plane; finished rows' step counts are kept while the row is unchanged.
+
+- Performance (backlog 1054, gateway load 2026-10-26): a cached account service answers without the service lock, so `GET /me` and the live-update stream no longer wait on the event loop while the boot builds another account's service (two of the night's three watchdog restarts); blocking work runs in three bounded pools by kind, `light` (sign-in, `/me`, live-update streams, one-record reads), `heavy` (scans, listings, reloads) and `watchers` (mail, provider endpoints, model generation), sized by `serve --pool-light/--pool-heavy/--pool-watchers N` (defaults 8/4/16, no environment variable) and reported by `GET /api/health` under `pools`; browser sessions are kept in memory with the file as the source of truth (own writes at once, another process's within 2 s, `last_seen_at` written at most once a minute off the loop), and the users file and session secret are re-read only when they change.
+
+- Performance (backlog 1054): the mail notification check's full pass (every 5 minutes, after another process's change, after a restart) reads the run index rows (status, updated_at, wait reason; no vars) instead of loading up to 200 completed + 200 failed + 200 waiting full runs; a run is loaded only when its row is new since the collector last decided it (kept per process under the same switches, plus a persisted `jobs.through` cursor trailing the newest decided finish by 120 s for the pass after a restart); same notices and idempotency keys. 400 finished runs, one change: one load (incremental or full).
+
+- Push: the packaged app topics are the merged AbstractAssistant family, `ai.abstractframework.assistant` (iPhone) and `ai.abstractframework.assistant.watchkitapp` (its watch companion); the old `.watch` and `.iphone` ids are no longer accepted.
+
+- Performance (backlog 1054): once the boot is done, `serve` freezes the objects it built (`gc.freeze()`) and raises the garbage collector's thresholds to 50000/50/100, so a full collection over a large heap no longer pauses the whole gateway for seconds; logged at boot (`[INFO] gc: ...`); `serve --gc-tuning off` keeps Python's defaults (no environment variable). `scripts/perf/` holds the benchmark fixture (`clone_runtime.sh`: a scrubbed APFS clone of a data dir) and `bench_gateway.sh` (a hermetic gateway on it, probe p50/p99, CPU at rest, GC pauses, outbound-network guard).
+
+- Performance (backlog 1054, round 3): the last blocking calls on the event loop's shared executor run in the work pools: `GET /runs` (the one-time docs-chat migration, the children page, the listing itself) in `heavy`; `POST /host/tray/show`, `GET /host/update` and `POST /host/update/start` in `light`; `POST /host/update/check` (a remote check) in `watchers`. `POST /backlog/exec/requests/{id}/promote` (request and manifest reads, a `git` call per file, the copies and writes) no longer runs on the event loop at all.
+
+- Performance (backlog 1054, round 3): an account's service is never built on the event loop. A build runs in its own thread, once per service however many requests wait for it, and requests await it; the pre-warm covers every path that can reach a service (not only `/api/gateway`), the single-user service, and the plane an admin is served from for another account's entity. A request that still reaches a service being built answers `503` `service_starting` with `Retry-After: 1` (or the build's own error, once) instead of freezing the gateway; a cached service whose runner needs a restart keeps serving while the restart runs off the loop. Measured: a 5 s build during a request, `/api/health` answering in 2-50 ms throughout (it froze 5 s).
+
+- Performance (backlog 1054, the 04:07 watchdog exit of 2026-10-26): `GET /discovery/capabilities` (Flow and the console poll it) and `GET /config/capability-defaults` build their answer in the watchers pool. Both reach AbstractCore's capability defaults, whose engine checks ask Python's import system for modules (`find_spec`), which waits on the interpreter's import lock while another thread imports; on the event loop that wait froze the gateway for 31 s until the watchdog restarted it. With the import lock held 2 s by another thread, `/api/health` and `/me/events/stream` answer within 50 ms.
+
+- Load test in CI (backlog 1054): `.github/workflows/perf.yml` (pull requests touching `src/`, nightly, manual) runs `scripts/perf/ci.sh`: a synthetic fixture (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations with their ledgers, no operator data), a hermetic gateway, 20 probe rounds and a 2-minute idle window; it fails when a p99 is over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or CPU at rest is over `--cpu-max` (5% of a core, 10% on CI runners). `bench_driver.py` gained `--fail-p99 NAME=S` / `--fail-idle-cpu PCT` and reads CPU and threads from `/proc` on Linux; `bench_gateway.sh` gained `--python`, `--perf-dir`, `--driver-arg` and `installed` sources, and exits with the gates' verdict. Tests pin `/api/health`'s `pools`, `run_index` (mode, planes, summed counters) and `gc_tuning`.
+
+- **Triggers, re-review.** The feed form's **When added** is a choice in words (a source's `enumNames` are accepted;
+  no "Not editable here" with raw JSON), and descriptions that restate the control (a duration's units, a choice's
+  raw values) are not shown; mailbox rows are named like My email (the address, the primary with *Sends as you*); a
+  failing connection that is on shows its red error as its status line; the line under the list reads *Pause it to
+  stop fetching.* The mailbox form opens in a narrow dialog (480 px), its links use the console's link look, and a
+  refused Gmail/Outlook password keeps the provider's help under the field. The terminal console matches (its feed
+  form asks *Check every [15] [minutes]*, required settings first).
+
+- Every automation's trigger in words: summaries carry `trigger_text` ("When Python news has a new item", "When mail
+  arrives in me@example.org", "When Orders is called", "By hand", or the schedule sentence) next to the unchanged
+  `schedule_text`/`schedule_rule_text`; the tray shows it on its rows and submenus and says **Pause** / **Resume**.
+  `GET /api/gateway/bundles` entrypoints carry `triggerable` (automation defaults with a trigger). The tray's menu
+  says **Conversations ▸**, **Open Conversations in Console** and "Paused — conversations wait until you resume".
+
+- A test gateway never shows a tray icon: besides `serve --no-tray`, a start with `--host 127.0.0.1`, a `--port`
+  other than the configured one and `--print-token` (the hermetic test shape) starts no tray and says why in one
+  line (tray reason `test_gateway`). The test harnesses that start `serve` pass `--no-tray`.
+
+- **My email, reorganised.** A compact header (*My email* and your address) and three tabs: **Mailboxes** (one list,
+  your primary mailbox first with *Sends as you*, each row one line *address · provider · state* with an **Active**
+  switch and a **…** menu: Test, Settings, Remove), **Notifications** (your address, Job failed, Approval needed) and
+  **Agents** (agent email tools, recipients and limits). No banner; each tab fits a 1440×900 screen. The primary's
+  **Settings** opens its full editor (servers, folder, sign-in app, Test, Disconnect) in a **Mailbox settings** dialog.
+
+- **One mailbox form, address first.** **Connect** (your primary) and **Add mailbox** (another one) open the same
+  dialog: **Email address** alone, then one line saying what the gateway found (`GET /me/email/autodiscover`), then
+  **Sign in with Google/Microsoft** when the gateway has that client or a **Password** with the provider's direct
+  app-password link; a Microsoft-only mailbox on a gateway without a Microsoft client is said plainly. **Read and
+  write** (another mailbox, off by default); **Server settings** collapsed and
+  prefilled (open by itself when nothing was found), with **Sign-in name** prefilled with the address. No name is
+  asked: another mailbox is named by its address. Refusals show in red in the form with what you typed kept.
+
+- Tray notifications name where to go: "<automation title> has a new result — open it in the Assistant.",
+  "<title> failed after its retries — see Automations in the Assistant.", "A conversation waits for your approval —
+  open the Assistant." The title is read from `GET /automations/{id}` when the menu has not listed it yet.
+
+- **Triggers page: mailboxes are rows, not connections.** "When an email arrives" is no longer offered in **New
+  connection**; your mailboxes are listed as rows of that source with **Manage under Account → My email**.
+
+- **Readable connection forms.** Settings show labels and help ("Subject (path in the JSON body)", "Accepted clock skew
+  (seconds)"); a secret the gateway generates is never asked for.
+
+- Docs: ADR 0001 (AbstractCore is reached through AbstractRuntime's facades, `docs/adr/`); backlog 0943
+  (incident ledger for unavailability, overload and restarts) and 0944 (the OpenAI-compatible endpoint as a
+  separately supervised process), proposed.
 
 ### Fixed
+
+- **Migration keeps the ledger cursor** (backlog 0082). `migrate.py` (file to SQLite) imports each
+  run's records with their order, count and `seq` (`SqliteLedgerStore.import_records`): records
+  read by the JSONL store, concatenated lines recovered, and lines written before `seq` numbered
+  by position. It used to re-append records, which renumbered them. The raw stream's `id:` (the
+  count of records consumed) equals the record's `seq`.
+
+- A flow editor draft test parked on a person (hidden from the run listings) no longer raises attention, and a stale open wait for one is closed at boot: the watch and phone badges no longer count a wait nobody can see.
+
+- **Ledger tail on AbstractRuntime 0.14.0.** Every `LedgerStore` now has `list_after`, so the tail no longer
+  takes its presence as the sign of a seq-native backend: file ledgers keep the JSONL byte tail and only a backend
+  with its own `list_after` uses the seq tail; a pre-`seq` line read by the tail carries its position as `seq`, as
+  `list()` gives it (tail == list()).
+
+- **Tests: a wall-clock budget never fails a test by default.** Every latency assertion in the
+  suite (52 checks in 27 files: health p99 and worst case, loop stalls, TTFA, kill/cancel times, per-pass
+  benchmarks) goes through `tests/timing.py`: it prints a `[timing]` line, and asserts only with
+  `ABSTRACTGATEWAY_TIMING_STRICT=1` (CONTRIBUTING.md). The structural assertions stay unconditional.
+  The host-status TTL tests use a fake clock.
+
+- **The test suite no longer keeps every app it builds** (backlog 0945). The harness re-imports
+  `abstractgateway.app` for each test; FastAPI's endpoint memo caches (keyed by the endpoints `app.py` defines)
+  and the package attribute kept every one of those apps alive, ~13,500 objects per test, and a test that ran
+  `serve` left GC tuning on so later boots `gc.freeze()`d them for good (29-35 M objects late in CI). The
+  conftest now frees the dropped app (`tests/app_reimport.py`) and undoes any GC tuning after each test;
+  `tests/test_harness_reimported_app_is_freed.py` guards both. Full suite on an M-series Mac: 63 -> 24 min,
+  peak RSS 10.1 GB -> 1.2 GB; six timing tests that failed under the GC pauses pass. Four harness waits got
+  shorter, and the apps reaper reads `STOP_TIMEOUT_S` when it runs (a default bound at import ignored a
+  change to it).
+
+- **`GET /automations` costs the automations, not their history, and never piles up.** Each row used to re-read the
+  automation's whole past (every occurrence tree, the full controller ledger, every past prompt artifact, every
+  artifact of the last answer) and the list ran four run-index scans: 2.4 s cold / 1.6 s warm on a copy of the
+  operator's data uncontended, 10 s to no answer in 240 s on the busy gateway, and the tray's retries stacked 14 copies.
+  Now a row reads the waits from the run index's WAITING rows (one read per page), the last occurrence from the tail
+  of the controller ledger, the attention items only when something is unseen (kept per seen/latest pair), and only
+  the answer's own values; the controller and legacy rows are listed once and refreshed from the live runs on an
+  automation change or every 30 s (a full listing at most every 10 minutes). Same answer, byte for byte: 0.22–0.28 s
+  cold, 15–24 ms warm on that copy. Identical concurrent requests share one computation (a waiter holds no worker
+  thread), its answer is kept 3 s and dropped at once by a ledger append on the plane, a command, a create or a seen
+  cursor. An abandoned computation cannot be stopped (a worker thread), but it is cheap and serves the retry.
+
+- **Tray: a slow gateway is "slow to answer", not "Not responding".** A failed `/automations` fetch is retried after
+  10 s, then 20, 40, 80 and 120 s (reset by any answer) instead of on every pass; a probe that times out while the
+  gateway answered in the last 90 s shows *The gateway is slow to answer* (menu header detail, Scheduled line), and
+  the red "!" stays for no answer at all (refused, or nothing for 90 s).
+
+- **The mail notification check reads only what changed.** Every 15 s it listed every automation, read each
+  automation's whole ledger, walked the active automations' occurrence trees and listed completed and failed runs
+  (two more full scans): 7-25% of a core on the operator's idle gateway, 0.97 s a pass on an 11,500-run copy with no
+  automation at all. A pass whose run-store and ledger change tokens did not move now reads no store (1.2 ms, the
+  preference and mailbox checks); after a change it reads only the changed runs and ledgers (AbstractRuntime
+  `changed_run_ids`). Same notices, same idempotency keys. The full read stays for the first pass, a changed
+  switch, a change set it cannot name (another process) and at least every 5 minutes.
+
+- **The runner stops stat-ing every run file twice a second.** Its scan gate asked "did anything change?" by globbing
+  and stat-ing all 11,500 run files every 0.5 s (0.18 s each on the operator's folder, 13-36% of a core while idle,
+  every stat a GIL hand-off). It now compares the run store's own change token (AbstractRuntime
+  `JsonFileRunStore.change_token`: one stat, no file read, about 1 µs). An older AbstractRuntime without it keeps the
+  old fingerprint, with a warning at start.
+
+- **Opening a conversation's attachments no longer stalls the gateway.** `GET /api/gateway/sessions/{id}/artifacts`
+  read all 106k artifacts of the operator's catalog on the event loop (2-3 s each call, more under load): both
+  watchdog restarts of 2026-10-26, and the watch's "Connecting...". It now asks the artifact store for that
+  session's candidates through its indexes (AbstractRuntime `list_session_candidates`; same visibility rule) and,
+  like `GET /runs/{id}/artifacts`, `/artifacts/search` and `/artifacts/stats`, builds and renders its page in a
+  worker thread: 2.1 s to 16 ms, with no event-loop step over 1-2 ms. `GET /runs?parent_run_id=` lists children off
+  the loop too. Needs the AbstractRuntime release that carries `list_session_candidates`.
+
+- **The Triggers page answers in milliseconds; idle polling stops re-reading run files.** `GET /api/gateway/triggers/connections`
+  took 15 s to 200 s on the operator's gateway, which sat at 190% CPU while idle (slowing every other request,
+  `GET /automations` at 10 s among them): every connection row, feed poll, mailbox poll and wake listed the whole
+  run index and re-read every automation's run file to learn who listens. AbstractRuntime now
+  answers from its active-consumers index (rebuilt once per automation change, at most every 30 s); the listing
+  takes one snapshot per account for the whole page (`connections_usage`), and `GET
+  /api/gateway/triggers/connections/{id}` builds its row off the event loop like the other routes. Needs the
+  AbstractRuntime release that carries the index.
 
 - Revising an automation onto a trigger connection (a feed, a webhook) is checked against the automation owner's
   connections: an automation that had none (a schedule) can be moved onto one of its owner's connections, and one
   of another person's is refused (`connection_not_found`).
+
 - Durable `emit_event` reaches every running or waiting run that declares the event's mailbox, however many
   runs are active (it reached the newest 200 only), through the run store's mailbox index (AbstractRuntime
   `list_mailbox_runs`).
+
 - On a file store with more than 200 waiting runs, a due wake fires on time: the scheduler's next deadline comes
   from the store's `next_wait_deadline` over every waiting run (backlog 1046).
+
 ## [0.15.11] - 2026-10-19
 
 ### Added

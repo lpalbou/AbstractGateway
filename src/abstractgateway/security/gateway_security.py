@@ -1501,7 +1501,7 @@ class GatewaySecurityMiddleware:
                     buffered_body = b"".join(chunks)
 
             # Concurrency limits: separate pool for SSE streams.
-            is_sse = path.endswith("/ledger/stream") or path.endswith("/voice/tts/stream")
+            is_sse = path.endswith("/ledger/stream") or path.endswith("/view/stream") or path.endswith("/voice/tts/stream")
             sem = self._sse_sema if is_sse else self._sema
             acquired = await self._try_acquire(sem)
             if not acquired:

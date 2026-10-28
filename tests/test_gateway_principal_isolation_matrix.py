@@ -181,6 +181,15 @@ def test_alice_bob_runs_ledgers_and_artifacts_are_isolated(tmp_path: Path, monke
         assert bob_input.status_code == 404
         assert bob_ledger.status_code == 404
         assert bob_ledger_stream.status_code == 404
+        # The replay view follows the rule of /runs/{id}: the caller's own plane only.
+        bob_view = client.get(f"/api/gateway/runs/{alice_run_id}/view", headers=bob_headers)
+        bob_view_stream = client.get(f"/api/gateway/runs/{alice_run_id}/view/stream?heartbeat_s=0.2", headers=bob_headers)
+        assert bob_view.status_code == 404
+        assert bob_view_stream.status_code == 404
+        alice_view = client.get(f"/api/gateway/runs/{alice_run_id}/view", headers=alice_headers)
+        assert alice_view.status_code == 200, alice_view.text
+        assert alice_view.json()["root_run_id"] == alice_run_id
+        assert alice_view.json()["workflow"]["bundle_id"] == "iso-bundle"
 
         batch = client.post(
             "/api/gateway/runs/ledger/batch",

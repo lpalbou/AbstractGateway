@@ -38,6 +38,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
+| `/api/gateway/runs/{run_id}/view`, `/view/stream` | the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client) | [below](#replay-view-runsrun_idview) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](./push.md) |
 | `/api/gateway/push/settings` | the gateway's Push forwarder address (admins) | [below](#push-forwarder-apigatewaypushsettings), [push.md](./push.md#your-own-forwarder) |
@@ -513,7 +514,8 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
 Each ledger record arrives as `event: step` with an `id:` line (the records
-consumed so far); a reconnect sends `Last-Event-ID` (or `?after=`) and
+consumed so far, which is also the record's `seq`: every ledger store numbers a run's
+records 1, 2, 3, …); a reconnect sends `Last-Event-ID` (or `?after=`) and
 resumes there. `event: done` closes the stream once the run is finished and
 everything was sent.
 
@@ -591,6 +593,97 @@ of several megabytes in `<data dir>/live` while it runs.
 Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gateway.py`
 (`stream_ledger`, `_apply_run_stream_switch`, `discovery_capabilities`),
 `src/abstractgateway/hosts/bundle_host.py` (`install_live_delta_sink`).
+
+## Replay view (`/runs/{run_id}/view`)
+
+The replay view is what a client shows for a run: its status, the approval or question it is
+waiting on, the replies, the tool calls and the steps. AbstractRuntime computes it once, server
+side (`abstractruntime.replay`, its ADR 0009), and every client renders the same thing. The view
+covers the run **tree**, meaning the run and the runs it delegated to. An approval asked by a
+delegated child run is the view's interaction, wherever it waits. Storage encodings never reach
+the client: `$slim` pointers are resolved, and a windowed history is named in `warnings`. A
+client acts through `POST /api/gateway/commands` and `/runs/start`, and the view stream shows
+the result. A client never derives run state from raw ledger records.
+
+### Read: `GET /api/gateway/runs/{run_id}/view`
+
+```bash
+curl -sS -H "$AUTH" -i "$BASE_URL/api/gateway/runs/<run_id>/view"
+# ETag: "9d79f0a7:5.23a34aeb:6.ce182561:1131"
+curl -sS -H "$AUTH" -H 'If-None-Match: "9d79f0a7:5.23a34aeb:6.ce182561:1131"' -i "$BASE_URL/api/gateway/runs/<run_id>/view"
+# 304 Not Modified while nothing was appended
+```
+
+The body is the view, `replay_view_v1`:
+
+| Field | Meaning |
+|---|---|
+| `version` | `"replay_view_v1"` |
+| `root_run_id`, `session_id` | the run asked for, and its session |
+| `workflow` | what the run executes: `{id, bundle_id, bundle_version, flow_id, entrypoint}` (`basic-agent@0.0.5:81795ea9` gives bundle `basic-agent`, version `0.0.5`, entrypoint flow `81795ea9`); `bundle_id` is `null` for a workflow that is not bundled |
+| `status`, `display_status` | `running`, `waiting`, `completed`, `failed`, `cancelled`; the run's own status line (`abstract.status`) |
+| `cursor` | `{token, records, runs}`: the last folded `seq` of each run of the tree (`runs`: run id → seq); `token` is the ETag and the SSE event id |
+| `runs[]` | the tree, root first: `run_id`, `parent_run_id`, `depth`, `workflow`, `status`, `waiting` (kind, wait key, child run), `holds_interaction`, `records`, `first_seq`, `last_seq` |
+| `interaction` | the person-facing wait or `null`: `kind` (`tool_approval`, `ask_user`, `event`), `run_id` (the run that waits, often a child), `wait_key`, `prompt`, `choices`, `tool_calls` (resolved), and `command`, the resume to send through `/commands` |
+| `open_waits[]` | every open wait of the tree, `person_facing` or not (a delegation, a timer, a pause) |
+| `messages[]` | verbatim turns (`role`, `kind`: prompt, answer, question, final, event; `text`) with their provenance: `run_id`, `step_ids`, `seqs`, `artifact_ids`, `source` |
+| `activities[]` | one row per node execution (an Agent node's phases are one row): `kind` (llm, tool, subworkflow, timer, ask_user, tool_policy (a call a conversation's tool policy allowed or denied without asking; never an interaction), …), `name`, `status`, `tool_calls[]` (each call with its status and output), `wait.ended_by` (`resume`, `later_step`, `terminal`), `usage`, `child_run_id` |
+| `artifacts[]` | every `$artifact` reference, with the run, step and seq that produced it |
+| `usage` | tokens and LLM calls, summed over the tree |
+| `warnings[]` | what could not be shown (a `$slim` pointer to a record that was not folded, records before a window) |
+
+`GET /api/gateway/runs/{run_id}/view?at=<cursor token>` returns the view as the ledger stood at
+that cursor. Use it to open a push or a link at the event it names. An unknown token returns 404.
+
+### Follow: `GET /api/gateway/runs/{run_id}/view/stream`
+
+```bash
+curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/view/stream"
+```
+
+Server-sent events:
+
+- `event: view`: the whole view, with `id:` set to its cursor token.
+- `event: delta`: one per fold, with `id:` set to the new token. A delta carries the scalars
+  whole (`status`, `display_status`, `interaction`, `open_waits`, `usage`, `warnings`, `cursor`,
+  `workflow`, `session_id`). It also carries the items that changed in `runs`, `messages`,
+  `activities` and `artifacts`, keyed by `id` (`run_id` for runs). An item is never removed, only
+  updated. `changes[]` names each change with its kind, id, run and seq, which is enough for a
+  push dispatcher to subscribe to it. Applying a delta means: replace the scalars, upsert the
+  items by id, and re-sort each list by its `order`. That is `abstractruntime.replay.apply_delta`,
+  about 40 lines to port.
+- `: keep-alive` comments, every `heartbeat_s` seconds (default 5).
+- `event: done` once the tree is terminal and every record was sent.
+
+**To open a run, read the view with a GET, then follow the stream from its token:**
+`GET /view` (gzip-compressed, cacheable with its ETag), then
+`GET /view/stream?after=<cursor.token>`. A stream joined this way sends nothing until the next
+change. A stream opened without a token starts with the whole view as its first event, and SSE
+frames are not compressed. On a 3,000-record run that frame is about 1 MB, against about 60 KB
+for the compressed GET.
+
+To reconnect, send `Last-Event-ID` (or `?after=`) with the last id you received:
+
+- the current token: nothing is sent until the next change;
+- an older token of this view: one `delta` from there to now;
+- anything else: a new `view`.
+
+Every client following a run tree shares one cached view. The gateway folds each appended record
+once and sends the same delta to every subscriber. The stream wakes on the ledger append itself.
+The ledger is never re-parsed on a timer. Two periodic checks remain, each run once per view
+however many streams follow it:
+- a `list_after` check every 0.25 s when the runner is another process (split mode), which reads
+  no bytes while nothing was appended;
+- a re-read of the open runs' snapshots every 5 s. A pause, for instance, changes a snapshot
+  without writing a record.
+
+A change that comes only from a snapshot also changes the cursor token: the token ends with a
+`~<digest>` of the snapshots' contribution, so the ETag and a reconnect see it.
+
+Authorization follows `GET /runs/{run_id}`. A run outside the caller's own plane returns 404.
+
+Evidence: `src/abstractgateway/routes/replay_view.py`, `src/abstractgateway/replay_view.py`;
+AbstractRuntime `abstractruntime.replay` and its `docs/replay.md`.
 
 ## A run's workspace folder (browse and preview)
 
@@ -1615,6 +1708,92 @@ is cancelled without executing its tools. Managed visits are bound to their
 authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
 remain deprecated compatibility aliases. Gateways without entity session-tool
 support still support the established Assistant tool-control contract.
+
+### Session tool policy (approve or deny for the whole conversation)
+
+A person's standing tool decision for one conversation ("approve all", "approve all web tools",
+"deny `execute_command`", reset) is held by the gateway, not by the client. The runtime reads it
+before it decides whether a tool batch waits: a covered call runs with **no approval wait and no
+interaction**, a denied call is refused with no wait, and each decision is an
+`abstract.tool_policy_decision` record in the run's ledger. It applies to every run of the session
+(the run tree's root session): each turn's root run, delegated agent child runs, runs resumed after
+a restart. Approvals do not reach automation runs, runs that read text other people wrote
+(untrusted input), entity visits or runs started without a `session_id`; a deny reaches every run of
+the session, and also wins over an approval that was shown before the deny and answered after it.
+Every answer carries `scope`, which says so in words.
+
+| Method | Path | Meaning |
+|---|---|---|
+| GET | `/api/gateway/sessions/{session_id}/tool-policy` | `{session_id, policy, revision}` (`policy: null` when none) |
+| PUT | same | replace the policy |
+| POST | same | merge: adds the new selectors' tools to the stored ones (never narrows, never re-expands an earlier `all`/`kinds`); guarded by the revision it read, so a concurrent reset or deny is never undone |
+| DELETE | same (`?if_revision=`) | reset: later calls follow the normal defaults |
+
+Body (PUT, POST):
+
+```json
+{"approve": {"tools": ["fetch_url"], "kinds": ["web"], "all": false, "max_risk_rank": 3},
+ "deny": {"tools": ["execute_command"], "kinds": []},
+ "ask": ["send_email"], "client": "panel-chat", "if_revision": 4}
+```
+
+- `kinds` are the `toolset` values of `GET /api/gateway/discovery/tools` rows (`files`, `web`,
+  `system`, `email`, `mcp:<server>`…); `all` means every tool the gateway authorizes for the
+  caller; `max_risk_rank` (1–4) limits what `kinds` and `all` expand to by the row's `risk_rank`.
+- **The gateway clamps**: approve selectors expand, at write time, to the `enabled` rows
+  `GET /discovery/tools` serves the caller (email tools only when the account's agent email tools
+  are on, MCP tools only for servers offered to agents). Anything else is listed in `clamped`
+  (`not_authorized`, `unknown_kind`). A tool enabled later is not covered by an earlier `all`.
+  The run's own `allowed_tools` still blocks any tool outside it.
+- `deny` wins over `approve`; `ask` keeps names asking under `approve`.
+- `all` and `kinds` include the tools whose destination the model chooses (`fetch_url`,
+  `browser_probe`, `send_email` when email is on): "allow all" is the person's explicit word for this
+  conversation, unlike the gateway's default tier ceiling, which never auto-approves them. A client
+  that wants them to keep asking lists them in `ask` (or narrows with `max_risk_rank`).
+- `if_revision` (body of PUT/POST; query `?if_revision=` on DELETE): a mismatch answers `409`
+  `{"detail": {"reason_code": "revision_conflict", "message", "revision": <current>}}`. The
+  gateway never retries a client-sent `if_revision`. Without one, a POST guards itself with the
+  revision it read and re-reads and re-merges on a conflict (up to 5 tries, then the same 409
+  without `revision`); a PUT without one is last-writer-wins.
+- Malformed body or session id: `422 {"detail": {"reason_code": "invalid_request", "message"}}`.
+  When the caller's tool inventory cannot be built, writes answer
+  `503 {"detail": {"reason_code": "tool_inventory_unavailable", "message"}}` (no policy is written
+  that the gateway cannot clamp).
+
+Answers. PUT and POST: `{session_id, policy, scope}`, where `policy` is
+`{version, session_id, revision, approve: {name: selector}, deny: {name: selector}, ask, request,
+clamped, set_by: {tenant_id, user_id, client}, set_at}`. GET: `{session_id, policy, revision,
+scope}`; the top-level `revision` is the session's current revision also when `policy` is `null`
+(0 for a session never written, the reset's revision after a DELETE), the value to send as
+`if_revision`. DELETE: `{session_id, policy: null, revision, scope}`. `scope` is on all four
+answers, an object of two sentences:
+
+```json
+{"approve": "every run of this conversation (turns and their delegated child runs), except automation runs, runs that read text other people wrote, and entity visits",
+ "deny": "every run of this conversation, automation runs and untrusted-input runs included"}
+```
+
+Writes and resets are audited (`session.tool_policy_set`, `session.tool_policy_reset`).
+
+Ledger record (an activity; there is no wait, waiting record or resume for these calls):
+
+```json
+{"effect": {"type": "emit_event", "payload": {"name": "abstract.tool_policy_decision", "scope": "run",
+  "payload": {"decision": "auto_approved", "source": "session_policy", "session_id": "s-123",
+              "node_id": "agent", "tool_calls": [{"call_id": "c1", "name": "fetch_url", "matched": "kind:web"}],
+              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "laurent", "client": "panel-chat"},
+                         "set_at": "2026-10-27T10:00:00+00:00"}}}},
+ "status": "completed"}
+```
+
+`decision` is `auto_approved` or `denied`. Clients feature-gate on
+`GET /api/gateway/discovery/capabilities` → `capabilities.session_tool_policy.supported`: `true`
+with `{version, endpoint, methods, approve, deny, ask, record}`, or
+`{supported: false, reason: "abstractruntime has no session tool policy"}` when the installed
+runtime lacks it; an older gateway has no key at all.
+To offer "approve all" on an approval a client is showing: write the policy first, then answer
+that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
+already exist.
 
 ## Beyond the core
 

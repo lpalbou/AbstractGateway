@@ -362,6 +362,13 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # (test_session_archive.py pins it) --------------------------------------
     ("POST", "/api/gateway/sessions/{session_id}/archive"),
     ("POST", "/api/gateway/sessions/{session_id}/unarchive"),
+    # A conversation's tool policy (session_tool_policy.py): read and written in
+    # the caller's own plane (per-principal data root), so another account's
+    # session is a different, empty row; approve selectors are clamped to the
+    # caller's own authorized tools (GET /discovery/tools), deny only narrows.
+    ("PUT", "/api/gateway/sessions/{session_id}/tool-policy"),
+    ("POST", "/api/gateway/sessions/{session_id}/tool-policy"),
+    ("DELETE", "/api/gateway/sessions/{session_id}/tool-policy"),
     # --- entity interaction surfaces (chat class) --------------------------
     # The richer rationale lives in test_gateway_entities_admin_gate.py;
     # entity MUTATION routes (state/substrate/skills/voice/...) are policy-
