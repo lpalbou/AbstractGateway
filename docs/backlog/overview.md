@@ -21,10 +21,10 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 13
+- Planned: 15
 - Proposed: 46
-- Completed: 31
-- Deprecated: 1
+- Completed: 33
+- Deprecated: 2
 - Recurrent: 0
 
 <!-- Counts recomputed from the directories on 2026-08-29 while filing
@@ -55,7 +55,10 @@ can trust without importing local gateway packages.
      Same day: +1 planned for 0955 (TTS model not downloaded answers 500, E2E defect D5): planned 13.
      Same day (0.17.1): 0956 filed and completed directly (console islands resync): completed 31.
      Same day: +4 planned for 0957-0960 (fresh-Linux release test: linger hint, setup engine pick,
-     default voice at first use, llama.cpp card copy): planned 17. -->
+     default voice at first use, llama.cpp card copy): planned 17.
+     Same day (0.17.2): 0961 filed and completed directly (fresh-Linux fixes): completed 32; 0960 completed
+     by it (completed 33); 0959 deprecated as merged into 0955 (operator rule: no auto-download, no 500);
+     recounted from the directories: planned 15, proposed 46, completed 33, deprecated 2. -->
 
 ## Priority Bands
 
@@ -126,8 +129,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0955_tts_model_not_downloaded_typed_answer.md](planned/0955_tts_model_not_downloaded_typed_answer.md) | P1. A TTS model whose engine is installed but whose files are not downloaded (fresh-install default `supertonic-3`) answers a typed 409 `model_not_downloaded` with the model id and the `POST /models/download` action instead of HTTP 500; catalog marks `downloaded`; red test; E2E defect D5 on 0.17.0. |
 | [0957_service_enable_says_when_linger_is_off.md](planned/0957_service_enable_says_when_linger_is_off.md) | P1. On Linux, `service enable` drops the linger note: with `Linger=no` the user service stops at SSH logout and never starts at boot; print `sudo loginctl enable-linger <user>` when lingering is off, and show it under the consoles' switch. |
 | [0958_setup_recommends_an_installed_text_engine.md](planned/0958_setup_recommends_an_installed_text_engine.md) | P1. The setup guide recommends LM Studio (not installed, no desktop) on a Linux/NVIDIA server where llama.cpp and vLLM are Ready; recommend the installed engine (core seam). |
-| [0959_default_voice_downloads_at_first_use.md](planned/0959_default_voice_downloads_at_first_use.md) | P1. The default voice (Supertonic) downloads at first use with a clear "downloading" status instead of a 500; needs an operator decision against 0955's Out line. |
-| [0960_llamacpp_card_says_cpu_on_linux_with_the_cuda_build.md](planned/0960_llamacpp_card_says_cpu_on_linux_with_the_cuda_build.md) | P2. The llama.cpp card says "CPU on Linux" when the CUDA build is installed; say what is installed. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
@@ -177,6 +178,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Fresh-Linux fixes: apps follow the release matrix, network status auth, llama.cpp card (completed 2026-10-28, 0.17.2) | (filed completed) | [completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md](completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md) | Install installs the release's app pins (newer offered, never auto-installed); `network status` reports loopback user auth; the llama.cpp card names the Linux CUDA build | 4 tests red without the fixes, green with them |
 | Console islands resynced from ui-kit 0.9.4 (completed 2026-10-28, 0.17.1) | (filed completed) | [completed/0956_console_islands_resync_ui_kit_0_9_4.md](completed/0956_console_islands_resync_ui_kit_0_9_4.md) | The console vendors the released kit (AbstractUIC 0.8.2): the voice picker lists each Qwen3-TTS voice once (the kit's Create-a-voice, approval-card and duration polish ride in the bundle, not yet rendered by the console) | islands/theme drift pins 8 passed against tag `v0.8.2`; old module mutation-checked red |
 | Memory graph routes over the runtime facade (completed 2026-10-28, 0.17.0) | `planned/0948_memory_graph_routes_over_the_runtime_facade.md` | [completed/0948_memory_graph_routes_over_the_runtime_facade.md](completed/0948_memory_graph_routes_over_the_runtime_facade.md) | `/api/gateway/memory/*` (query, history, sources, reconstruct, derived) over AbstractRuntime's memory facade; strict owner rule shared with `/kg/query`; direct AbstractMemory imports 34 -> 0. | `tests/test_gateway_memory_routes.py`, the import-boundary test; PR #7 CI green. |
 | Console adopts the shared voice section (completed 2026-10-28, 0.16.0) | `planned/0949_console_adopts_the_shared_voice_section.md` | [completed/0949_console_adopts_the_shared_voice_section.md](completed/0949_console_adopts_the_shared_voice_section.md) | The capability editor's `output.voice` mounts the kit's voice picker (ui-kit 0.9.1): voices by name, grouped, language filter, search; choosing a voice plays it (play/stop). PR #12. | PR #12 checks green. |

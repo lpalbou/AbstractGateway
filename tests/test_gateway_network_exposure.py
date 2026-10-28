@@ -520,3 +520,27 @@ def test_routes_read_is_user_level_writes_are_admin(tmp_path, monkeypatch) -> No
         # Not started by `serve` here: the restart route refuses and says how.
         rs = client.post("/api/gateway/network/restart", headers=admin, json={"force": True})
         assert rs.status_code == 409 and rs.json()["refused_reason"]
+
+
+def test_status_of_a_loopback_gateway_started_unconfigured_says_user_auth_on(tmp_path) -> None:
+    """A `serve` with no auth posture on loopback turns user auth on itself AFTER writing its run
+    record (posture: nothing configured). `network status` from another shell read that record as
+    "user auth off, token unset" while every token-less call got 401 (fresh-Linux test, 2026-10-28)."""
+    import os
+
+    ne.write_run_record(tmp_path, {
+        "schema": ne.RUN_RECORD_SCHEMA, "pid": os.getpid(), "host": "127.0.0.1", "port": 18843,
+        "host_source": "default", "port_source": "default", "mode": "localhost", "blocked_reason": None,
+        "posture": ne.auth_posture({}), "exports": [], "proxy_env": ne.proxy_env_facts({}), "started_at": "2026-10-28T00:00:00Z",
+    })
+    s = ne.network_status(tmp_path, env={}, in_process=False, discover=_discover)
+    assert s["auth"]["evaluated_from"].startswith("the running gateway")
+    assert s["auth"]["user_auth"] is True and s["auth"]["token_auth"] is False
+    # The same unconfigured posture recorded by a gateway bound to every address did NOT get
+    # user auth (a non-loopback bind without auth refuses or falls back): it stays off.
+    ne.write_run_record(tmp_path, {
+        "schema": ne.RUN_RECORD_SCHEMA, "pid": os.getpid(), "host": "0.0.0.0", "port": 18843,
+        "host_source": "cli", "port_source": "cli", "mode": "lan", "blocked_reason": None,
+        "posture": ne.auth_posture({}), "exports": [], "proxy_env": ne.proxy_env_facts({}), "started_at": "2026-10-28T00:00:00Z",
+    })
+    assert ne.network_status(tmp_path, env={}, in_process=False, discover=_discover)["auth"]["user_auth"] is False

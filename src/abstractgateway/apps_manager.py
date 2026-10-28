@@ -2410,6 +2410,70 @@ class AppsManager:
         except AppsError as exc:
             return None, exc.message
 
+    def release_app_versions(self, *, use_cache: bool = True) -> Dict[str, Any]:
+        """The browser-app versions of the AbstractFramework RELEASE this gateway was installed
+        as: the installer records the release in `<data dir>/bootstrap.env`
+        (`FRAMEWORK_VERSION`); that release's `install-manifest.json` (at the immutable tag
+        `v<version>` of the framework repo) pins each app (`npm_apps`). An install without a
+        version installs that pin, so the installed set is the tested matrix, never whatever npm
+        published since; a newer version is offered as an update, never installed by itself.
+
+        `{"framework_version", "apps": {id: version}, "manifest_url", "error"}`. Not an installer
+        release install (no `bootstrap.env`, or `--pin` / `--from`: `FRAMEWORK_VERSION` empty):
+        `framework_version` None and no pins (the newest is installed). A release install whose
+        manifest cannot be read: `error` says why (`start_install` then refuses, loud)."""
+        from .self_update import FRAMEWORK_MANIFEST_PATH, FRAMEWORK_RAW, read_installer_state
+
+        state = read_installer_state(self.data_dir) or {}
+        fv = str(state.get("FRAMEWORK_VERSION") or "").strip()
+        out: Dict[str, Any] = {"framework_version": fv or None, "apps": {}, "manifest_url": None, "error": None}
+        if not fv:
+            return out
+        url = f"{FRAMEWORK_RAW}/v{fv}/{FRAMEWORK_MANIFEST_PATH}"
+        out["manifest_url"] = url
+        def _fetch() -> Any:
+            try:
+                return self._get_json(url, timeout=REGISTRY_TIMEOUT_S)
+            except ValueError as exc:  # not JSON (a captive portal's page): an answer, cached as a failure
+                raise AppsError(f"{url} did not answer JSON ({exc})") from exc
+
+        try:
+            manifest = self._registry_cached("framework-manifest:" + fv, _fetch, use_cache=use_cache)
+        except AppsError as exc:
+            out["error"] = f"the app versions of AbstractFramework {fv} could not be read ({exc.message})"
+            return out
+        got = str(((manifest or {}).get("framework") or {}).get("version") or "") if isinstance(manifest, dict) else ""
+        if got != fv:
+            out["error"] = f"{url} names AbstractFramework {got or '(no version)'}, not {fv}"
+            return out
+        out["apps"] = {
+            str(a["id"]): str(a["version"])
+            for a in manifest.get("npm_apps") or []
+            if isinstance(a, dict) and a.get("id") and a.get("version")
+        }
+        return out
+
+    def _release_pinned_version(self, job: Job, spec: AppSpec, version: Optional[str]) -> Optional[str]:
+        """The version a fresh install without a version installs: the release's pin
+        (`release_app_versions`), said in the job's log. An update without a version is the
+        person's explicit "Update to <newest>" and never comes here."""
+        release = self.release_app_versions(use_cache=False)
+        fv = release["framework_version"]
+        if release["error"]:
+            raise AppsError(
+                f"{spec.name} was not installed: {release['error']}.",
+                hint=f"Check this machine's connection to github.com and try again, or install a version explicitly (`abstractgateway apps install {spec.id} --version <x.y.z>`).",
+            )
+        pin = release["apps"].get(spec.id) if fv else None
+        if pin:
+            job.log(f"AbstractFramework {fv} pins {spec.name} {pin} ({release['manifest_url']}); a newer version is offered as an update, never installed by itself.")
+            return pin
+        if fv:
+            job.log(f"AbstractFramework {fv} does not pin {spec.name}: installing the newest.")
+        else:
+            job.log("This gateway was not installed as an AbstractFramework release (no FRAMEWORK_VERSION in bootstrap.env): installing the newest.")
+        return version
+
     # -- Node runtime ------------------------------------------------------------
     def _managed_node(self) -> Optional[Dict[str, Any]]:
         try:
@@ -2759,9 +2823,12 @@ class AppsManager:
         spec = spec_for(app_id)
         self._require_install_allowed(same_machine=same_machine)
         tui = self.install_includes_terminal(spec.id) if (with_terminal and not update) else None
-
         def work(job: Job) -> Dict[str, Any]:
             job.same_machine = bool(same_machine)
+            # The release pin applies to a FRESH install only: an installed app is never moved to an
+            # older version by an install without a version (that stays "reinstall the newest").
+            fresh = version is None and not update and not self.installed_version(spec.id)
+            want = self._release_pinned_version(job, spec, version) if fresh else version
             web_hi = 100.0 if tui is None else 65.0
             if tui is not None:
                 job.parts = [
@@ -2778,7 +2845,7 @@ class AppsManager:
             # running too: an update replaces it with the new version (launch
             # stops it), instead of leaving the old copy on the port.
             was_running = proc_running or (update and self.leftover(spec, refresh=True) is not None)
-            res = self._install_app(job, spec, version, _Phase(job, lo, web_hi * 0.9 if (launch or was_running) else web_hi))
+            res = self._install_app(job, spec, want, _Phase(job, lo, web_hi * 0.9 if (launch or was_running) else web_hi))
             if launch or (update and was_running):
                 job.step("launch", f"Starting {spec.name}…")
                 if proc_running:
@@ -4163,6 +4230,7 @@ class AppsManager:
         caller: Optional[Dict[str, Any]] = None,
         tui_release: Optional[Dict[str, Any]] = None,
         tui_release_error: Optional[str] = None,
+        release_version: Optional[str] = None,
     ) -> Dict[str, Any]:
         st = self.app_state(spec.id)
         installed = self.installed_version(spec.id)
@@ -4207,6 +4275,9 @@ class AppsManager:
             "installed": bool(installed),
             "version": installed,
             "latest_version": latest,
+            # The version this AbstractFramework release pins (what Install installs); None when
+            # the gateway was not installed as a release or the pins could not be read.
+            "release_version": release_version,
             "update_available": update_available,
             "update_label": upd_label,
             "update_tip": upd_tip,
@@ -4267,11 +4338,13 @@ class AppsManager:
         from .apps_desktop import DESKTOP_APPS
 
         desk_latest: Dict[str, Tuple[Optional[str], Optional[str]]] = {d.id: (None, None) for d in DESKTOP_APPS}
+        release: Dict[str, Any] = {"framework_version": None, "apps": {}, "manifest_url": None, "error": None}
         if check_latest:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(APPS) + len(TUI_BY_APP) + len(DESKTOP_APPS)) as ex:
                 futs = {spec.id: ex.submit(self.latest_version, spec) for spec in APPS}
                 dfuts = {d.id: ex.submit(self.latest_version, d) for d in DESKTOP_APPS}
                 rfuts = {app_id: ex.submit(_release, tui) for app_id, tui in TUI_BY_APP.items()}
+                release_fut = ex.submit(self.release_app_versions)
                 for app_id, fut in futs.items():
                     try:
                         latest[app_id] = fut.result(timeout=REGISTRY_TIMEOUT_S + 2)
@@ -4287,6 +4360,10 @@ class AppsManager:
                         desk_latest[app_id] = fut.result(timeout=REGISTRY_TIMEOUT_S + 2)
                     except Exception as exc:  # noqa: BLE001
                         desk_latest[app_id] = (None, f"{type(exc).__name__}: {exc}")
+                try:
+                    release = release_fut.result(timeout=REGISTRY_TIMEOUT_S + 2)
+                except Exception as exc:  # noqa: BLE001
+                    release = dict(release, error=f"{type(exc).__name__}: {exc}")
         errors = [e for (_, e) in latest.values() if e]
         reachable: Optional[bool] = None if not check_latest else (not errors or len(errors) < len(APPS))
         rows = [
@@ -4298,6 +4375,7 @@ class AppsManager:
                 caller=caller,
                 tui_release=(releases.get(spec.id) or (None, None))[0],
                 tui_release_error=(releases.get(spec.id) or (None, None))[1],
+                release_version=release["apps"].get(spec.id),
             )
             for spec in APPS
         ]
@@ -4317,6 +4395,8 @@ class AppsManager:
             "apps": rows,
             "install_allowed": self.install_allowed(same_machine=same_machine),
             "registry": {"url": self.registry_url, "reachable": reachable, "error": errors[0] if errors else None},
+            # The AbstractFramework release whose app versions Install follows (`release_app_versions`).
+            "release": {k: release.get(k) for k in ("framework_version", "apps", "manifest_url", "error")},
             "gateway_url": self.resolve_gateway_url(),
             "console_tui": self.console_tui_interface(caller=caller),
             "apps_host": self.bind_host,

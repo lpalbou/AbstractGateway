@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (engines catalog copy)
 > Type: bug
-> Status: planned (not implemented)
+> Status: completed (2026-10-28, 0.17.2): fixed with [0961](0961_fresh_linux_fixes_app_matrix_and_auth_status.md); `engines_install.py` names the Linux CUDA build (gpu setting, NVIDIA GPU), else the CPU build
 > Created: 2026-10-28
 > Priority: P2
 > Labels: copy, engines, linux, gpu

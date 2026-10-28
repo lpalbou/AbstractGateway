@@ -2,7 +2,9 @@
 
 > Package: abstractgateway (voice routes, model downloads); abstractvoice (availability check, seam)
 > Type: feature
-> Status: planned (not implemented); needs an operator decision against 0955's "Out" line
+> Status: deprecated (2026-10-28): merged into 0955. Operator decision: NO silent automatic download and NO 500; the
+> TTS route answers 409 `model_not_downloaded` (model, size, command, download route) and the voice pickers offer
+> "Download the default voice (xx MB)" after the person's click. Tracked in [0955](../planned/0955_tts_model_not_downloaded_typed_answer.md).
 > Created: 2026-10-28
 > Priority: P1
 > Labels: voice, tts, first-run

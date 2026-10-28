@@ -1467,7 +1467,13 @@ def network_status(
     else:
         posture = dict(rec.get("posture") or auth_posture(env))
         posture_source = f"the running gateway (pid {rec.get('pid')})"
-        live_user = bool(posture.get("user_auth")) or "ABSTRACTGATEWAY_USER_AUTH" in (rec.get("exports") or [])
+        # A gateway started with no auth posture on a loopback address turned user auth on itself
+        # (first_run.apply_loopback_auth_default, after its run record was written): the record's
+        # posture says "nothing configured", which on loopback IS user auth on. Read as "off",
+        # `network status` contradicted the 401 every token-less call gets (fresh-Linux test).
+        loopback_auto = (not posture.get("explicit")) and is_loopback_host(str(rec.get("host") or ""))
+        live_user = (bool(posture.get("user_auth")) or "ABSTRACTGATEWAY_USER_AUTH" in (rec.get("exports") or [])
+                     or loopback_auto)
         live_token = bool(posture.get("token_auth"))
         proxy_facts = rec.get("proxy_env") if isinstance(rec.get("proxy_env"), dict) else None
         if proxy_facts is None:
