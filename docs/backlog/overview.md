@@ -23,7 +23,7 @@ can trust without importing local gateway packages.
 
 - Planned: 15
 - Proposed: 46
-- Completed: 35
+- Completed: 36
 - Deprecated: 2
 - Recurrent: 0
 
@@ -60,7 +60,8 @@ can trust without importing local gateway packages.
      by it (completed 33); 0959 deprecated as merged into 0955 (operator rule: no auto-download, no 500);
      recounted from the directories: planned 15, proposed 46, completed 33, deprecated 2.
      Same day (0.17.3): 0962 (`/v1` reuses the pool's resident model, Core 2.31.1) and 0963 (flaky archive test
-     races the boot index warm-up, fixed in AbstractRuntime 0.15.2) filed and completed directly: completed 35. -->
+     races the boot index warm-up, fixed in AbstractRuntime 0.15.2) filed and completed directly: completed 35.
+     Same day (0.17.3): 0966 (CI-stable suite: three more flaky tests, two product races) filed and completed: completed 36. -->
 
 ## Priority Bands
 
@@ -181,6 +182,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
 | `/v1` reuses the model the runtime pool holds (completed 2026-10-28, 0.17.3) | (filed completed) | [completed/0962_v1_reuses_the_pools_resident_model.md](completed/0962_v1_reuses_the_pools_resident_model.md) | Core floor `>=2.31.1` (Core 0859 lends the resident huggingface instance); gateway-level `/v1` test | `tests/test_v1_reuses_resident_model.py` red against Core 2.31.0 ("3 second copies"); Metal holders stay 1 |
+| CI-stable suite: push dispatcher token race, post-start run update race, benchmark counter (completed 2026-10-28, 0.17.3) | (filed completed) | [completed/0966_ci_stable_gateway_test_suite.md](completed/0966_ci_stable_gateway_test_suite.md) | Tokens taken before the reads; post-start updates under the run's mutation lock; the probe counts its own thread | each new test red without its fix; 4 flaky tests 0/20 plain and under load |
 | Flaky archive test raced the boot index warm-up (completed 2026-10-28, 0.17.3) | (filed completed) | [completed/0963_flaky_archive_test_races_the_boot_index_warm.md](completed/0963_flaky_archive_test_races_the_boot_index_warm.md) | Test writes its runs before boot; the index race fixed in AbstractRuntime 0.15.2 (floor raised) | widened-window repro: old 5/5 failed, new 25/25 passed |
 | Fresh-Linux fixes: apps follow the release matrix, network status auth, llama.cpp card (completed 2026-10-28, 0.17.2) | (filed completed) | [completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md](completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md) | Install installs the release's app pins (newer offered, never auto-installed); `network status` reports loopback user auth; the llama.cpp card names the Linux CUDA build | 4 tests red without the fixes, green with them |
 | Console islands resynced from ui-kit 0.9.4 (completed 2026-10-28, 0.17.1) | (filed completed) | [completed/0956_console_islands_resync_ui_kit_0_9_4.md](completed/0956_console_islands_resync_ui_kit_0_9_4.md) | The console vendors the released kit (AbstractUIC 0.8.2): the voice picker lists each Qwen3-TTS voice once (the kit's Create-a-voice, approval-card and duration polish ride in the bundle, not yet rendered by the console) | islands/theme drift pins 8 passed against tag `v0.8.2`; old module mutation-checked red |

@@ -314,7 +314,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.15.2` (a run written while the gateway boots is indexed at once, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.15.3` (a run written while the gateway boots is indexed at once, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.31.1` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, the voice library: languages, cloned voices, voice design, the capability catalog, and `/v1` chat reusing the model the runtime pool already holds)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -12495,7 +12495,7 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 **What's new in 0.17.3** ([CHANGELOG](CHANGELOG.md)): `/v1/chat/completions` uses the
 model the gateway already holds instead of loading a second copy per request (needs
 AbstractCore 2.31.1, now the floor); a run written while the gateway boots is listed at once
-(AbstractRuntime 0.15.2, now the floor).
+(AbstractRuntime 0.15.3, now the floor); four flaky tests are root-caused, three of them product races.
 
 **What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
@@ -13972,7 +13972,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.3] - 2026-10-28
 
-Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.2 (backlog 0963). No route removed, no gateway code change.
+Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.3 (backlogs 0963, 0966). No route removed.
 
 ### Fixed
 
@@ -13988,8 +13988,19 @@ Requires AbstractCore 2.31.1 (backlog 0962) and AbstractRuntime 0.15.2 (backlog 
   gateway starts (backlog 0963). The underlying race was AbstractRuntime's (`JsonFileRunStore`: a run created
   between its journal line and its file's publication while another store object builds its index was missed
   until the next full reconciliation, up to 10 minutes; a split-mode runner creating a run while the API process
-  boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863), now the gateway's floor
-  (`AbstractRuntime>=0.15.2`, `[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
+  boots hit it too). It is fixed in AbstractRuntime 0.15.2 (its backlog 0863); 0.15.3 (its 0864) stops that fix's
+  replay from signalling every recent run as changed (the mail notifications re-loaded 400 finished runs). The
+  gateway's floor is `AbstractRuntime>=0.15.3` (`[apple]`/`[gpu]` too, `live_deltas.ABSTRACTRUNTIME_FLOOR`).
+- **A forwarder setting saved during a push pass is no longer missed** (`push/dispatcher.py`, backlog 0966): the
+  dispatcher started its wait with change tokens taken after it had read the setting, so a save in between never
+  ended the wait (the flaky `test_a_split_runner_sees_the_settings_file_move`). The tokens are now taken before each
+  read.
+- **A run's workflow snapshot ref can no longer be lost to the runner's first tick** (`hosts/bundle_host.py`,
+  backlog 0966): the post-start load-add-save of the run (snapshot ref, default session id) now holds the run's
+  mutation lock, as the tick does, instead of racing it (the flaky history-bundle test; a finished run could go
+  back to its first state). The start waits at most 0.5 s for it.
+- **The change-token benchmark counts only its own thread's file access** (backlog 0966): another thread's `os.stat`
+  read as the probe's (`assert 202 <= 200`).
 
 ## [0.17.2] - 2026-10-28
 

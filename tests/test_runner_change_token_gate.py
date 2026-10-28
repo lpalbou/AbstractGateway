@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -72,10 +73,15 @@ def test_benchmark_11500_quiet_runs_probe_under_1ms_and_reads_no_file(tmp_path: 
     _probe(r)
     calls = {"open": 0, "scandir": 0, "stat": 0}
     real_open, real_scandir, real_stat = builtins.open, os.scandir, os.stat
+    prober = threading.get_ident()
 
     def counting(name, real):
+        # Only the probing thread's file access counts (backlog 0966): the patch is process-wide, and a
+        # thread left by another test (or the store's background reconciliation) stat-ing at the same time
+        # made this read 202 <= 200 on a CI job. What it pins is that the PROBE reads no file.
         def f(*a, **k):
-            calls[name] += 1
+            if threading.get_ident() == prober:
+                calls[name] += 1
             return real(*a, **k)
         return f
 
@@ -83,9 +89,20 @@ def test_benchmark_11500_quiet_runs_probe_under_1ms_and_reads_no_file(tmp_path: 
     monkeypatch.setattr(os, "scandir", counting("scandir", real_scandir))
     monkeypatch.setattr(os, "stat", counting("stat", real_stat))
     passes = 200
+    noise_stop = threading.Event()
+
+    def other_thread_stats() -> None:  # another thread's file access, as on a busy CI process
+        while not noise_stop.is_set():
+            os.stat(tmp_path)
+            time.sleep(0.0005)
+
+    noise = threading.Thread(target=other_thread_stats, daemon=True)
+    noise.start()
     t = time.perf_counter()
     due = [_probe(r) for _ in range(passes)]
     per_pass = (time.perf_counter() - t) / passes
+    noise_stop.set()
+    noise.join(5)
     monkeypatch.undo()
     assert not any(due)
     assert calls["open"] == 0 and calls["scandir"] == 0

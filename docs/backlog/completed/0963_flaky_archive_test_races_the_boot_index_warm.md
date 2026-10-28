@@ -35,7 +35,7 @@ objects on one folder, the boot warm-up run between the foreign `+` line and its
 
 ## What changed
 
-- Floor `AbstractRuntime>=0.15.2` (`pyproject.toml` base, `[apple]`, `[gpu]`; `live_deltas.ABSTRACTRUNTIME_FLOOR`,
+- Floor `AbstractRuntime>=0.15.3` (0.15.2 holds the fix; 0.15.3 its follow-up, runtime 0864) (`pyproject.toml` base, `[apple]`, `[gpu]`; `live_deltas.ABSTRACTRUNTIME_FLOOR`,
   which the install-profile test pins and the startup "runtime too old" message names; that check probes
   features, so only the pip floor keeps a 0.15.1 install out).
 - The test writes its runs before the gateway boots (the boot warm-up then indexes them), and checks the first

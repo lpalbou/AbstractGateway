@@ -25,7 +25,7 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 **What's new in 0.17.3** ([CHANGELOG](CHANGELOG.md)): `/v1/chat/completions` uses the
 model the gateway already holds instead of loading a second copy per request (needs
 AbstractCore 2.31.1, now the floor); a run written while the gateway boots is listed at once
-(AbstractRuntime 0.15.2, now the floor).
+(AbstractRuntime 0.15.3, now the floor); four flaky tests are root-caused, three of them product races.
 
 **What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,

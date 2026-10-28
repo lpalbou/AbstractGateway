@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from abstractruntime import EffectType, Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot
+from abstractruntime import EffectType, Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot, run_mutation_lock
 from abstractruntime.core.runtime import EffectOutcome
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
@@ -63,6 +63,30 @@ _TERMINAL_RUN_STATUSES = frozenset({"completed", "failed", "cancelled"})
 def _run_is_terminal(run: Any) -> bool:
     status = getattr(run, "status", None)
     return str(getattr(status, "value", status) or "").lower() in _TERMINAL_RUN_STATUSES
+
+
+#: How long a run start waits for its own post-start update (snapshot ref, session id) before letting it
+#: finish in the background: the lock is free in the common case (milliseconds); when the runner is
+#: already ticking the run, the update lands after that tick instead of delaying the start's answer.
+POST_START_UPDATE_WAIT_S = 0.5
+
+
+def _update_run_under_its_lock(run_id: str, update: Any, *, wait_s: float = POST_START_UPDATE_WAIT_S) -> None:
+    """Run `update()` (a load-modify-save of the run) under `run_mutation_lock(run_id)` on a short-lived
+    thread; wait at most `wait_s` for it. Best-effort like the steps it serves: a failure is logged."""
+    done = threading.Event()
+
+    def work() -> None:
+        try:
+            with run_mutation_lock(run_id):
+                update()
+        except Exception:  # noqa: BLE001 - best-effort post-start bookkeeping
+            logger.debug("post-start update of run %s failed", run_id, exc_info=True)
+        finally:
+            done.set()
+
+    threading.Thread(target=work, name=f"run-post-start-{run_id[:8]}", daemon=True).start()
+    done.wait(max(0.0, float(wait_s)))
 
 
 @dataclass(frozen=True)
@@ -3440,13 +3464,24 @@ class WorkflowBundleGatewayHost:
 
         # Default session_id to the root run_id for durable session-scoped behavior
         # (matches VisualSessionRunner semantics).
+        # The run is runnable from `start` on: the runner may be ticking it already. Every load-modify-save
+        # of it here runs under the per-run mutation lock (`_update_run_under_its_lock`; a tick holds it for
+        # its whole pass), or this save and the tick's overwrite each other: the snapshot ref was lost
+        # (gateway backlog 0966, a CI flake of test_history_bundle_endpoint_includes_snapshot_and_replays_
+        # after_restart), or a finished run went back to its first state.
         effective_session_id = sid
         if effective_session_id is None:
             try:
                 state = self.runtime.get_state(run_id)
                 if not getattr(state, "session_id", None):
-                    state.session_id = run_id  # type: ignore[attr-defined]
-                    self.runtime.run_store.save(state)
+
+                    def _set_session_id(rid: str = run_id) -> None:
+                        fresh = self.runtime.get_state(rid)
+                        if not getattr(fresh, "session_id", None):
+                            fresh.session_id = rid  # type: ignore[attr-defined]
+                            self.runtime.run_store.save(fresh)
+
+                    _update_run_under_its_lock(run_id, _set_session_id)
                 effective_session_id = str(getattr(state, "session_id", None) or run_id).strip() or run_id
             except Exception:
                 effective_session_id = run_id
@@ -3479,13 +3514,16 @@ class WorkflowBundleGatewayHost:
                                 "flow_id": str(inner),
                                 "visualflow": namespaced_raw,
                             }
-                            persist_workflow_snapshot(
-                                run_store=self.run_store,
-                                artifact_store=self.artifact_store,
-                                run_id=str(run_id),
-                                workflow_id=str(workflow_id),
-                                snapshot=snapshot,
-                                format="visualflow_json",
+                            _update_run_under_its_lock(  # see the session id above
+                                str(run_id),
+                                lambda rid=str(run_id), wid=str(workflow_id), snap=snapshot: persist_workflow_snapshot(
+                                    run_store=self.run_store,
+                                    artifact_store=self.artifact_store,
+                                    run_id=rid,
+                                    workflow_id=wid,
+                                    snapshot=snap,
+                                    format="visualflow_json",
+                                ),
                             )
         except Exception:
             pass

@@ -49,7 +49,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from .store import WATCH_FRESH_S, DeviceStore, Outbox, read_cursor, write_cursor
 
@@ -223,6 +223,11 @@ class PushDispatcher:
         self._last_log = float("-inf")
         self._last_purge = float("-inf")
         self.ticks = 0  # passes that did work (the idle tests read it)
+        # The change tokens as they were BEFORE the last read of the setting / the registrations
+        # (backlog 0966): a wait compares against these, so a save that lands between the read and
+        # the wait still ends the wait (a token taken when the wait starts would already include it).
+        self._settings_seen: Any = None
+        self._devices_seen: Any = None
 
     # -- lifecycle ---------------------------------------------------------------------------
 
@@ -262,6 +267,7 @@ class PushDispatcher:
         """Re-read the effective forwarder address; a change replaces the relay client. Returns it."""
         if self.resolve_relay is None:
             return self.relay_url
+        self._settings_seen = self.settings_token()
         try:
             url = self.resolve_relay()
         except Exception:  # noqa: BLE001 - an unreadable setting keeps the address in use
@@ -289,7 +295,16 @@ class PushDispatcher:
             off()
 
     def _devices(self, now: float) -> List[Dict[str, Any]]:
+        self._devices_seen = self.store.change_token()
         return self.store.active(principal=self.owner, now=now)
+
+    def _seen_tokens(self) -> Tuple[Any, Any]:
+        """(registrations, setting) tokens taken before their last read, consumed by the wait that asks;
+        a fresh one for a value this pass did not read (nothing to race with)."""
+        devices = self._devices_seen if self._devices_seen is not None else self.store.change_token()
+        settings = self._settings_seen if self._settings_seen is not None else self.settings_token()
+        self._devices_seen = self._settings_seen = None
+        return devices, settings
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -312,7 +327,7 @@ class PushDispatcher:
             self._wake.wait()
             self._wake.clear()
             return
-        token = (self.store.change_token(), self.settings_token())
+        token = self._seen_tokens()
         while not self._stop.is_set():
             if self._wake.wait(POLL_S) or (self.store.change_token(), self.settings_token()) != token:
                 self._wake.clear()
@@ -320,8 +335,7 @@ class PushDispatcher:
 
     def _wait_active(self, next_due: Optional[float]) -> None:
         stream_token = self.stream.change_token()
-        devices_token = self.store.change_token()
-        settings_token = self.settings_token()
+        devices_token, settings_token = self._seen_tokens()
         while not self._stop.is_set():
             now = self.clock()
             timeout = POLL_S if next_due is None else max(0.05, min(POLL_S, next_due - now))
