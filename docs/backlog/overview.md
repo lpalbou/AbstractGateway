@@ -21,8 +21,8 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 15
-- Proposed: 46
+- Planned: 16
+- Proposed: 47
 - Completed: 33
 - Deprecated: 2
 - Recurrent: 0
@@ -129,6 +129,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0955_tts_model_not_downloaded_typed_answer.md](planned/0955_tts_model_not_downloaded_typed_answer.md) | P1. A TTS model whose engine is installed but whose files are not downloaded (fresh-install default `supertonic-3`) answers a typed 409 `model_not_downloaded` with the model id and the `POST /models/download` action instead of HTTP 500; catalog marks `downloaded`; red test; E2E defect D5 on 0.17.0. |
 | [0957_service_enable_says_when_linger_is_off.md](planned/0957_service_enable_says_when_linger_is_off.md) | P1. On Linux, `service enable` drops the linger note: with `Linger=no` the user service stops at SSH logout and never starts at boot; print `sudo loginctl enable-linger <user>` when lingering is off, and show it under the consoles' switch. |
 | [0958_setup_recommends_an_installed_text_engine.md](planned/0958_setup_recommends_an_installed_text_engine.md) | P1. The setup guide recommends LM Studio (not installed, no desktop) on a Linux/NVIDIA server where llama.cpp and vLLM are Ready; recommend the installed engine (core seam). |
+| [0964_first_connection_sets_the_admin_password.md](planned/0964_first_connection_sets_the_admin_password.md) | P1. A fresh install's first connection asks the person to set the admin password (recovery shown); later sign-in by account + password or token; the installer summary names the console URL instead of printing the token; lockout, no default password, last-admin rule; client sign-in forms (console, desktop, iPhone, watch, web apps). Root 1060. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
@@ -138,6 +139,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [0965_device_management_per_account.md](proposed/0965_device_management_per_account.md) | Discussion: a Devices page per account (console web + TUI) listing where the account is used from (device, app, version, last seen, push, address) with revoke/block, rename, push test; questions on what a device is, session-to-device mapping, block vs revoke, address privacy. Root 1060, 1049; gateway 0940. |
 | [0939_sessions_index_with_exact_counts.md](proposed/0939_sessions_index_with_exact_counts.md) | A sessions index (one row per conversation with exact turn and tool-call counts, kept as runs end) so no client groups capped run pages; the iPhone's "1+" and the watch's undercount go away. Promote when the gateway seat picks the aggregate's home. |
 | [0938_ai_identity_presentation_avatar_voice_image.md](proposed/0938_ai_identity_presentation_avatar_voice_image.md) | One presentation record per AI (avatar design, voice, optional image) held by the runtime and served by the gateway, so every client shows and speaks the same identity. Promote when the runtime and gateway seats agree on the record's home and the two routes. |
 | [0937_session_titles_written_by_the_model.md](proposed/0937_session_titles_written_by_the_model.md) | A session title written by the model after its first answer, into the existing `title` tag; clients change nothing. Promote when the operator asks or assistant 0006 needs it. |
