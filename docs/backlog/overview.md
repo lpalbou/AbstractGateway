@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 11
+- Planned: 12
 - Proposed: 46
 - Completed: 30
 - Deprecated: 1
@@ -50,7 +50,8 @@ can trust without importing local gateway packages.
      2026-10-28 (backlog wave follow-ups): recounted from the directories: completed 30
      (one more than the note above); +3 planned for 0951 (typed runs, root 1063), 0952
      (concurrency suite and benchmark, root 1064) and 0953 (service lifecycle, from
-     0945's follow-up note): planned 11, proposed 46, completed 30, deprecated 1. -->
+     0945's follow-up note): planned 11, proposed 46, completed 30, deprecated 1.
+     Same day: +1 planned for 0954 (live token text on the replay view stream): planned 12. -->
 
 ## Priority Bands
 
@@ -117,6 +118,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0951_typed_runs_listing_filters_and_migration.md](planned/0951_typed_runs_listing_filters_and_migration.md) | P1. Every gateway start path stamps the runtime's `run_type` + `origin.surface`; `/runs` and search filter on them; `session_kinds.json` folded into the index; one resumable backfill; root 1063, runtime 0858. |
 | [0952_concurrency_correctness_suite_and_benchmark.md](planned/0952_concurrency_correctness_suite_and_benchmark.md) | P1. N users x M sessions on a real server: no cross-talk, gap-free `seq`, complete SSE, tool-policy isolation, each red under an injected fault; p50/p95/p99 + throughput + memory benchmark with a CI smoke gate; root 1064. |
 | [0953_service_lifecycle_stop_entity_threads_and_gc_freeze.md](planned/0953_service_lifecycle_stop_entity_threads_and_gc_freeze.md) | P1. A stopped service stops and joins its entity chat/visit/repair threads; re-freeze after eviction so evicted services are collected; flat threads/RSS over 20 rebuilds (0945 follow-up). |
+| [0954_live_token_text_on_the_replay_view_stream.md](planned/0954_live_token_text_on_the_replay_view_stream.md) | P1. `/view/stream` carries ephemeral `text` frames from `LiveDeltaHub` (not persisted, superseded by the committed message), or clients keep `/ledger/stream` alongside until then; regression found by the Assistant desktop migration; root 0993, runtime 0854/0859. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
