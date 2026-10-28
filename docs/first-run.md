@@ -104,10 +104,10 @@ set:
 Setting, changing or removing a password signs that account's other browsers
 out. Ten wrong passwords from one address lock that address for 15 minutes;
 five wrong passwords in a row for one account from one address lock that
-address out of that account for 30 seconds, doubling up to 15 minutes; fifty
-for one account from all addresses lock the account for 15 minutes. Every
-lock ends (a quiet 15 minutes resets the counters), and the account's token
-keeps working. See
+address out of that account for 30 seconds, doubling up to 15 minutes; every
+20 for one account from all addresses lock it for 15 minutes, doubling up to
+24 hours, except for addresses that signed it in before. Every lock ends, and
+the account's token keeps working. See
 [security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window).
 
 ## 2. The first-run guide

@@ -32,8 +32,9 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
   it (the code itself stays out of service logs).
 - **Password sign-in.** `POST /api/gateway/session/login` takes `{user_id, password}` as well as
   `{user_id, token}` (exactly one); `user_id` may also be the account's display name. scrypt hashes on the
-  account record; decaying attempt limits per address (10 / 15 min), per account from one address (5 in a row,
-  30 s doubling to 15 min) and per account from all addresses (50 / 15 min); the token keeps working. The console's sign-in form asks for the password first; **Sign in with a
+  account record; decaying attempt limits per address (10 / 15 min; IPv6 per /64), per account from one address
+  (5 in a row, 30 s doubling to 15 min) and per account from all addresses (every 20 / 15 min: 15 min doubling to
+  24 h, addresses that signed the account in before are not held); the token keeps working. The console's sign-in form asks for the password first; **Sign in with a
   token instead** switches to the token.
 - **Setting passwords.** `PUT /api/gateway/me/password` (anyone, the current password once one is set),
   `PUT|DELETE /api/gateway/admin/accounts/{id}/password` (admins), and an optional `password` on

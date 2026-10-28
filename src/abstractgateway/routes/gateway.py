@@ -318,7 +318,7 @@ class GatewayRuntimeReservationTransferRequest(BaseModel):
 class GatewaySessionLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(..., min_length=1, description="The account id (with a password: or the account's display name).")
+    user_id: str = Field(..., min_length=1, max_length=200, description="The account id (with a password: or the account's display name).")
     token: Optional[str] = Field(default=None, min_length=1, description="The account's gateway token. Exactly one of token / password.")
     password: Optional[str] = Field(default=None, min_length=1, max_length=1024, description="The account's password (0.18.0).")
     tenant_id: str = Field(default="default", min_length=1, max_length=200)

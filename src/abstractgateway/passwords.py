@@ -23,7 +23,7 @@ import hmac
 import secrets
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 SCRYPT_N = 2**16
 SCRYPT_R = 8
@@ -134,22 +134,43 @@ def burn_equivalent_time(password: str) -> None:
     verify_password(password, _DUMMY_HASH)
 
 
-class SignInLimiter:
-    """Refused-attempt counters, checked before verifying. Every counter DECAYS: failures older
-    than `window_s` stop counting, so nobody can keep a lock alive forever with one guess per
-    window (review finding, 0.18.0).
+def address_key(ip: str) -> str:
+    """The unit an address limit counts: an IPv4 address, or an IPv6 /64 (one customer's block;
+    counting single IPv6 addresses gave an attacker unlimited addresses, review finding)."""
+    import ipaddress
 
-    - address: `ip_failures` refusals from one address in `window_s` lock that address for `ip_lock_s`;
-    - account from ONE address: from the `account_after`-th consecutive refusal (with no quiet
-      `window_s` in between) that (account, address) pair is locked `account_base_s * 2**(n -
-      account_after)` seconds, capped at `account_max_s`. Keyed on the pair, so a stranger guessing
-      from elsewhere does not lock the owner out;
-    - account from ALL addresses: `account_total` refusals in `window_s` lock the account for
-      `ip_lock_s` (the backstop against guessing from many addresses; the account's token still
-      signs in);
-    - `global_failures` > 0: that many refusals in `window_s` across all addresses lock the door for
-      everyone except callers that pass `exempt_global=True` (a direct local request).
-    A success clears the address's and the pair's counters."""
+    text = str(ip or "unknown").strip().strip("[]")
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        return text[:64]
+    if addr.version == 6:
+        if addr.ipv4_mapped:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
+
+
+def _account_key(account: str) -> str:
+    # Hashed and fixed-size: a flood of made-up account names costs 16 bytes per entry.
+    return hashlib.sha256(str(account or "").encode("utf-8", errors="ignore")).hexdigest()[:24] if account else ""
+
+
+class SignInLimiter:
+    """Refused-attempt counters, checked before verifying. Every counter DECAYS: refusals older
+    than `window_s` stop counting, so a lock never lasts forever.
+
+    - address (IPv4, or IPv6 /64): `ip_failures` refusals in `window_s` lock it for `ip_lock_s`;
+    - (account, address): from the `account_after`-th consecutive refusal (no quiet `window_s` in
+      between) the pair is locked `account_base_s * 2**(n - account_after)` s, capped at
+      `account_max_s`; a stranger guessing elsewhere does not lock the owner out this way;
+    - account from ALL addresses: every `account_total` refusals in `window_s` lock the account,
+      for `ip_lock_s` doubling at each further lock (capped at `account_total_max_s`); the level
+      falls back after a quiet `2 * window_s`. An address that signed this account in within
+      `trusted_s` is not held by this lock (so a distributed guesser cannot lock the owner out);
+    - `global_failures` > 0: that many refusals in `window_s` across all addresses lock the door
+      for everyone except callers that pass `exempt_global=True` (a direct local request).
+    Memory stays bounded: expired entries go first, a locked entry is never dropped."""
 
     def __init__(
         self,
@@ -160,9 +181,11 @@ class SignInLimiter:
         account_after: int = 5,
         account_base_s: float = 30.0,
         account_max_s: float = 900.0,
-        account_total: int = 50,
+        account_total: int = 20,
+        account_total_max_s: float = 86400.0,
+        trusted_s: float = 30 * 86400.0,
         global_failures: int = 0,
-        max_entries: int = 10_000,
+        max_entries: int = 20_000,
     ) -> None:
         self.ip_failures = max(1, int(ip_failures))
         self.window_s = float(window_s)
@@ -171,92 +194,115 @@ class SignInLimiter:
         self.account_base_s = float(account_base_s)
         self.account_max_s = float(account_max_s)
         self.account_total = max(1, int(account_total))
+        self.account_total_max_s = float(account_total_max_s)
+        self.trusted_s = float(trusted_s)
         self.global_failures = max(0, int(global_failures))
         self._max_entries = int(max_entries)
         self._lock = threading.Lock()
-        self._ip: Dict[str, List[float]] = {}
-        self._ip_locked: Dict[str, float] = {}
-        self._pair: Dict[Tuple[str, str], Tuple[int, float, float]] = {}  # (acct, ip) -> (n, locked until, last)
-        self._acct: Dict[str, List[float]] = {}
-        self._acct_locked: Dict[str, float] = {}
+        self._ip: Dict[str, Tuple[List[float], float]] = {}  # addr -> (refusal times, locked until)
+        self._pair: Dict[Tuple[str, str], Tuple[int, float, float]] = {}  # (acct, addr) -> (n, locked until, last)
+        self._acct: Dict[str, Tuple[List[float], float, int, float]] = {}  # acct -> (times, locked until, level, last)
+        self._trusted: Dict[Tuple[str, str], float] = {}  # (acct, addr) -> last success
         self._global: List[float] = []
         self._global_locked = 0.0
 
     def reset(self) -> None:
         with self._lock:
-            for d in (self._ip, self._ip_locked, self._pair, self._acct, self._acct_locked):
+            for d in (self._ip, self._pair, self._acct, self._trusted):
                 d.clear()
             self._global.clear()
             self._global_locked = 0.0
 
-    def _prune(self) -> None:
-        for d in (self._ip, self._ip_locked, self._pair, self._acct, self._acct_locked):
+    def _prune(self, now: float) -> None:
+        """Expired first; never a locked entry; then the oldest unlocked ones."""
+        def shrink(d: dict, live) -> None:
+            if len(d) <= self._max_entries:
+                return
+            for k in [k for k, v in d.items() if not live(v)]:
+                d.pop(k, None)
             if len(d) > self._max_entries:
-                for k in list(d)[: self._max_entries // 10]:
+                for k in [k for k, v in d.items() if not self._locked(v, now)][: len(d) - self._max_entries]:
                     d.pop(k, None)
+
+        w = self.window_s
+        shrink(self._ip, lambda v: v[1] > now or any(now - t < w for t in v[0]))
+        shrink(self._pair, lambda v: v[1] > now or now - v[2] < w)
+        shrink(self._acct, lambda v: v[1] > now or now - v[3] < 2 * w)
+        shrink(self._trusted, lambda v: now - v < self.trusted_s)
+
+    @staticmethod
+    def _locked(v: Any, now: float) -> bool:
+        return isinstance(v, tuple) and len(v) > 1 and isinstance(v[1], float) and v[1] > now
 
     def check(self, *, ip: str, account: str = "", exempt_global: bool = False) -> Optional[Tuple[str, int]]:
         """(`"address"` | `"account"` | `"everyone"`, seconds to wait) when locked, else None."""
         now = time.time()
+        addr, acct = address_key(ip), _account_key(account)
         with self._lock:
             if not exempt_global and self._global_locked > now:
                 return ("everyone", int(self._global_locked - now) + 1)
-            until = self._ip_locked.get(ip, 0.0)
+            _rows, until = self._ip.get(addr, ([], 0.0))
             if until > now:
                 return ("address", int(until - now) + 1)
-            if account:
-                n, p_until, _last = self._pair.get((account, ip), (0, 0.0, 0.0))
+            if acct:
+                _n, p_until, _last = self._pair.get((acct, addr), (0, 0.0, 0.0))
                 if p_until > now:
                     return ("account", int(p_until - now) + 1)
-                a_until = self._acct_locked.get(account, 0.0)
-                if a_until > now:
+                _t, a_until, _lvl, _l = self._acct.get(acct, ([], 0.0, 0, 0.0))
+                trusted = now - self._trusted.get((acct, addr), -1e18) < self.trusted_s
+                if a_until > now and not trusted:
                     return ("account", int(a_until - now) + 1)
         return None
 
     def failure(self, *, ip: str, account: str = "") -> None:
         now = time.time()
+        addr, acct = address_key(ip), _account_key(account)
         with self._lock:
-            self._prune()
-            rows = [t for t in self._ip.get(ip, []) if now - t < self.window_s]
-            rows.append(now)
-            self._ip[ip] = rows
+            self._prune(now)
+            rows, until = self._ip.get(addr, ([], 0.0))
+            rows = [t for t in rows if now - t < self.window_s] + [now]
             if len(rows) >= self.ip_failures:
-                self._ip_locked[ip] = now + self.ip_lock_s
-                self._ip[ip] = []
-            if account:
-                n, _until, last = self._pair.get((account, ip), (0, 0.0, 0.0))
+                until, rows = now + self.ip_lock_s, []
+            self._ip[addr] = (rows, until)
+            if acct:
+                n, _until, last = self._pair.get((acct, addr), (0, 0.0, 0.0))
                 if last and now - last >= self.window_s:
                     n = 0  # a quiet window resets the ratchet
                 n += 1
                 lock_until = 0.0
                 if n >= self.account_after:
                     lock_until = now + min(self.account_max_s, self.account_base_s * (2 ** (n - self.account_after)))
-                self._pair[(account, ip)] = (n, lock_until, now)
-                arows = [t for t in self._acct.get(account, []) if now - t < self.window_s]
-                arows.append(now)
-                self._acct[account] = arows
-                if len(arows) >= self.account_total:
-                    self._acct_locked[account] = now + self.ip_lock_s
-                    self._acct[account] = []
+                self._pair[(acct, addr)] = (n, lock_until, now)
+                times, a_until, level, a_last = self._acct.get(acct, ([], 0.0, 0, 0.0))
+                if a_last and now - max(a_last, a_until) >= 2 * self.window_s:
+                    level = 0  # a quiet stretch AFTER the last lock lowers the escalation back
+                times = [t for t in times if now - t < self.window_s] + [now]
+                if len(times) >= self.account_total:
+                    a_until = now + min(self.account_total_max_s, self.ip_lock_s * (2 ** level))
+                    level, times = level + 1, []
+                self._acct[acct] = (times, a_until, level, now)
             if self.global_failures:
-                self._global = [t for t in self._global if now - t < self.window_s]
-                self._global.append(now)
+                self._global = [t for t in self._global if now - t < self.window_s] + [now]
                 if len(self._global) >= self.global_failures:
                     self._global_locked = now + self.ip_lock_s
                     self._global = []
 
     def success(self, *, ip: str, account: str = "") -> None:
+        now = time.time()
+        addr, acct = address_key(ip), _account_key(account)
         with self._lock:
-            self._ip.pop(ip, None)
-            self._ip_locked.pop(ip, None)
-            if account:
-                self._pair.pop((account, ip), None)
+            self._ip.pop(addr, None)
+            if acct:
+                self._pair.pop((acct, addr), None)
+                self._trusted[(acct, addr)] = now
+                self._prune(now)
 
 
 #: Password sign-in (`POST /session/login` with a password) and password changes that check
-#: the current password: 10 refusals per address per 15 minutes; 5 in a row for one account from
-#: one address lock that pair 30 s, doubling to 15 minutes; 50 for one account from all addresses
-#: lock the account 15 minutes.
+#: the current password: 10 refusals per address (IPv6: per /64) per 15 minutes; 5 in a row for
+#: one account from one address lock that pair 30 s, doubling to 15 minutes; every 20 for one
+#: account from all addresses lock the account 15 minutes, doubling to 24 hours (an address that
+#: signed the account in within 30 days is not held).
 PASSWORD_LIMITER = SignInLimiter()
 
 #: The first-run onboarding form: 5 refused setup codes per address per 15 minutes, and 20

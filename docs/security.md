@@ -471,11 +471,15 @@ constant time. No password is ever written, logged or returned. The strength rul
 well-known password.
 
 **Attempt limits** (process-local; a restart clears them, like the token lockout below;
-every counter decays: refusals older than 15 minutes stop counting). Ten refused passwords
-from one address in 15 minutes lock that address for 15 minutes. Five refused passwords in a
-row for one account FROM ONE ADDRESS lock that (account, address) pair for 30 seconds,
-doubling up to 15 minutes, so a guesser elsewhere does not lock the owner out. Fifty refused
-passwords for one account from all addresses in 15 minutes lock the account for 15 minutes.
+every counter decays: refusals older than 15 minutes stop counting; an IPv6 address counts
+as its /64). Ten refused passwords from one address in 15 minutes lock that address for 15
+minutes. Five refused passwords in a row for one account FROM ONE ADDRESS lock that (account,
+address) pair for 30 seconds, doubling up to 15 minutes. Every 20 refused passwords for one
+account from all addresses within 15 minutes lock the account for 15 minutes, doubling at each
+further lock up to 24 hours (back to 15 minutes after a quiet 30 minutes past the last lock);
+an address that signed this account in during the last 30 days is not held by that lock, so a
+distributed guesser cannot lock the owner out. Counters are kept per hashed account name and
+never dropped while locked, so a flood of made-up names cannot reset them.
 A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
 account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
 trust on (or behind a proxy that passes the header through), the address is the left-most

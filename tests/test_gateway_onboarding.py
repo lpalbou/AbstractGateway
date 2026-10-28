@@ -437,3 +437,42 @@ def test_a_shared_token_deployment_switching_to_accounts_is_not_fresh(tmp_path: 
     reset_gateway_boot_state()
     ensure_bootstrap_admin_user()
     assert first_run.read_onboarding(data) is None
+
+
+def test_limiter_counts_ipv6_per_64_and_survives_a_flood_of_made_up_accounts() -> None:
+    from abstractgateway.passwords import SignInLimiter, address_key
+
+    assert address_key("2001:db8:1:2::5") == address_key("2001:db8:1:2:ffff::9") == "2001:db8:1:2::/64"
+    assert address_key("::ffff:198.51.100.7") == "198.51.100.7" and address_key("198.51.100.7") == "198.51.100.7"
+    lim = SignInLimiter(max_entries=100)
+    # One /64 is one address: 10 refusals from rotating IPv6 addresses inside it lock the block.
+    for i in range(10):
+        lim.failure(ip=f"2001:db8:1:2::{i + 1:x}", account=f"user{i}")
+    assert lim.check(ip="2001:db8:1:2::abcd") is not None
+    # Lock the admin account from many addresses, then flood with junk names: the lock survives.
+    for i in range(20):
+        lim.failure(ip=f"10.0.{i}.1", account="admin")
+    assert lim.check(ip="10.9.9.9", account="admin")[0] == "account"
+    for i in range(5000):
+        lim.failure(ip=f"10.{1 + i // 250}.{i % 250}.2", account="x" * 150 + str(i))
+    assert lim.check(ip="10.9.9.9", account="admin")[0] == "account"
+
+
+def test_the_account_lock_escalates_and_spares_an_address_that_signed_in_before(monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.passwords as pw
+
+    clock = {"t": 1_000_000.0}
+    monkeypatch.setattr(pw.time, "time", lambda: clock["t"])
+    lim = pw.SignInLimiter()
+    lim.success(ip="203.0.113.1", account="admin")  # the owner's usual address
+    waits = []
+    for _round in range(3):
+        for i in range(20):
+            lim.failure(ip=f"10.1.{_round}.{i + 1}", account="admin")
+        waits.append(lim.check(ip="10.9.9.9", account="admin")[1])
+        clock["t"] += waits[-1] + 1
+    assert waits[0] < waits[1] < waits[2]  # 15 min, 30 min, 60 min
+    for i in range(20):
+        lim.failure(ip=f"10.2.0.{i + 1}", account="admin")
+    assert lim.check(ip="10.9.9.9", account="admin") is not None
+    assert lim.check(ip="203.0.113.1", account="admin") is None  # the owner is not held
