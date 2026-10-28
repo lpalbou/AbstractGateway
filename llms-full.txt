@@ -489,7 +489,10 @@ account from all addresses within 15 minutes lock the account for 15 minutes, do
 further lock up to 24 hours (back to 15 minutes after a quiet 30 minutes past the last lock);
 an address that signed this account in during the last 30 days is not held by that lock, so a
 distributed guesser cannot lock the owner out. Counters are kept per hashed account name and
-never dropped while locked, so a flood of made-up names cannot reset them.
+never dropped while locked, so a flood of made-up names cannot reset them. Residual: the
+"signed in before" exemption is per address, so callers sharing the owner's address (a shared
+NAT, the same IPv6 /64) share it too and fall back to the per-address limits (never for a
+loopback address, which every caller behind a header-less proxy has).
 A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
 account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
 trust on (or behind a proxy that passes the header through), the address is the left-most

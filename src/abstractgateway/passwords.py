@@ -151,6 +151,15 @@ def address_key(ip: str) -> str:
     return str(addr)
 
 
+def _is_loopback_key(addr: str) -> bool:
+    import ipaddress
+
+    try:
+        return ipaddress.ip_network(addr, strict=False).network_address.is_loopback
+    except ValueError:
+        return False
+
+
 def _account_key(account: str) -> str:
     # Hashed and fixed-size: a flood of made-up account names costs 16 bytes per entry.
     return hashlib.sha256(str(account or "").encode("utf-8", errors="ignore")).hexdigest()[:24] if account else ""
@@ -249,7 +258,8 @@ class SignInLimiter:
                 if p_until > now:
                     return ("account", int(p_until - now) + 1)
                 _t, a_until, _lvl, _l = self._acct.get(acct, ([], 0.0, 0, 0.0))
-                trusted = now - self._trusted.get((acct, addr), -1e18) < self.trusted_s
+                # Never for loopback: behind a proxy that adds no forwarding headers every caller is 127.0.0.1.
+                trusted = not _is_loopback_key(addr) and now - self._trusted.get((acct, addr), -1e18) < self.trusted_s
                 if a_until > now and not trusted:
                     return ("account", int(a_until - now) + 1)
         return None

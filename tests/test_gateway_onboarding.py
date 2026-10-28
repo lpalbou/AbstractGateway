@@ -476,3 +476,13 @@ def test_the_account_lock_escalates_and_spares_an_address_that_signed_in_before(
         lim.failure(ip=f"10.2.0.{i + 1}", account="admin")
     assert lim.check(ip="10.9.9.9", account="admin") is not None
     assert lim.check(ip="203.0.113.1", account="admin") is None  # the owner is not held
+
+
+def test_loopback_is_never_a_trusted_address() -> None:
+    from abstractgateway.passwords import SignInLimiter
+
+    lim = SignInLimiter()
+    lim.success(ip="127.0.0.1", account="admin")
+    for i in range(20):
+        lim.failure(ip=f"10.3.0.{i + 1}", account="admin")
+    assert lim.check(ip="127.0.0.1", account="admin") is not None
