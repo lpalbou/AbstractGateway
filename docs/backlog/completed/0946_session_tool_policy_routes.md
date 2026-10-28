@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (routes, host wiring); abstractruntime (the store and the decision, its 0853)
 > Type: feature
-> Status: planned (implemented on branch `feat/session-tool-policy`; ships with the next release)
+> Status: completed (2026-10-27, 0.16.0)
 > Created: 2026-10-27
 > Priority: P1
 > Labels: tool-approval, sessions, ledger, multi-client
@@ -53,6 +53,11 @@ Before: the gateway injected only a start-time `_runtime.tool_policy` (`tool_gra
   rendering of `abstract.tool_policy_decision`).
 
 ## Acceptance criteria
+
+Completed 2026-10-27 (gateway part): PR #9 merged (`88fa1d88`), review fixes `046b0ff6`, host-build
+refusal `3fa449a5`; released in 0.16.0. The live multi-client check and the client follow-ups (root 1061)
+belong to the client repositories and stay open there.
+
 
 - [x] Routes, clamp, store attach, capability, docs, tests.
 - [x] Runtime floor raised to 0.14.0.

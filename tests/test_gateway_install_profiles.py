@@ -50,7 +50,7 @@ def test_base_install_is_remote_light_server() -> None:
     assert "abstractcore>=2.30.0" in deps
     assert "abstractvoice>=0.18.2" in deps
     assert "abstractagent>=0.4.0" in deps
-    assert "AbstractMemory[lancedb]>=0.3.0" in deps
+    assert "AbstractMemory[lancedb]>=0.3.0,<0.4" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
@@ -152,7 +152,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert f"AbstractRuntime[apple]>={ABSTRACTRUNTIME_FLOOR}" in apple
     assert "abstractagent[apple]>=0.4.0" in apple
     assert "abstractagent[all-apple]" not in apple
-    assert "AbstractMemory[all-apple]>=0.3.0" in apple
+    assert "AbstractMemory[all-apple]>=0.3.0,<0.4" in apple
     assert "abstractcore[" not in apple
     assert "abstractvision" not in apple
     assert "abstractvoice" not in apple
@@ -160,7 +160,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     gpu = "\n".join(extras["gpu"])
     assert f"AbstractRuntime[gpu]>={ABSTRACTRUNTIME_FLOOR}" in gpu
     assert "abstractagent[gpu]>=0.4.0" in gpu
-    assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
+    assert "AbstractMemory[all-gpu]>=0.3.0,<0.4" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
     assert "abstractvoice" not in gpu

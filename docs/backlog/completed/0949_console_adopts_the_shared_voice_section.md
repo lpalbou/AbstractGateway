@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (consumer); abstractuic ui-kit 0.9.1 (the picker, its backlog 0035)
 > Type: improvement
-> Status: planned — implemented on branch `feat/console-voice-select-plays` (PR open, not merged)
+> Status: completed (2026-10-28, 0.16.0)
 > Created: 2026-10-27
 > Priority: P1
 > Labels: console, voice, ui-kit, islands
@@ -59,6 +59,10 @@ console's own list showed cloned voices by raw 32-hex ids in one flat list, whil
   changed here (operator: report only).
 
 ## Validation
+
+Completed 2026-10-28: PR #12 merged (`6bb79359`) with every check green; released in 0.16.0. The findings
+left open above stay open.
+
 
 - `tests/test_gateway_console_voice_preview.py` (sample call + cancel, mount / update / unmount,
   no-bundle message, no native list, vendored kit >= 0.9.1); `test_gateway_console.py` (the VM drives
