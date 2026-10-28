@@ -101,4 +101,5 @@ leak is the harness's.
   `test_untrusted_input_run_is_never_offered_an_mcp_tool` read a parked root run as done before the
   agent's model call.
 - **Service lifecycle (product, operator-approved for 0.16.0, not started):** the entity thread leak and the
-  `gc.freeze` finding above, with a live-thread and RSS measurement over 20 service rebuilds.
+  `gc.freeze` finding above, with a live-thread and RSS measurement over 20 service rebuilds. Filed as planned
+  [0953](../planned/0953_service_lifecycle_stop_entity_threads_and_gc_freeze.md) (2026-10-28).
