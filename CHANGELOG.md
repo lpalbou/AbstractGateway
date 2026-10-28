@@ -44,6 +44,14 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".
 
+- **First-run guide: "Default models"** (root backlog 1069). The model step opens on one row per capability in
+  the framework's vocabulary (Text, Image, Video, Voice out, Voice in, Music, 3D, Embeddings, Rankers) with what goes
+  in and what comes out, the model set now and AbstractCore's pick for this computer (engine, model, memory tier,
+  downloaded or not); per row **Use recommended** (`apply-recommended` `{only, force}`), **Download** and **Choose…**
+  (the Multimodal route editor); **Use recommended for all**; and **Use a subscription for text** (an OpenAI or
+  Anthropic key becomes a gateway-wide provider connection, one of its models the text default). The picks stay
+  AbstractCore's; first-run.md has the rule per memory band, today's and the operator's target (root backlog 1072).
+
 ### Changed
 
 - **First-run guide: Apps after a model.** The Apps step proposes apps only once a default text model exists;

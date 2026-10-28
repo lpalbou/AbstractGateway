@@ -133,6 +133,12 @@ async function fetch(path, options = {}) {
     loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard";
     return res(200, Object.assign({ ok: true, claimed: true, principal: { admin: true } }, scenario.createdBy ? { claim: { created_by: scenario.createdBy } } : {}));
   }
+  if (path === "/api/gateway/config/provider-endpoint-profiles" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    return res(200, { ok: true, profile: { id: body.id, provider_family: body.provider_family, display_name: body.display_name } });
+  }
+  if (path === "/api/gateway/config/provider-endpoint-profiles/discover-models") return res(200, { ok: true, models: ["claude-small", "claude-large"] });
+  if (path === "/api/gateway/config/capability-defaults/apply-recommended") return res(200, { applied_recommended: { routes: [{ route: "input.text", action: "applied" }] } });
   if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
   if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
   if (path === "/api/gateway/session/onboarding" && method === "POST") {
@@ -204,7 +210,7 @@ async function fetch(path, options = {}) {
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
@@ -505,6 +511,39 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+if (scenario.name === "default-models") {
+  // 1069: one row per capability with in -> out, now, AbstractCore's pick, and the actions.
+  context.firstRunGoto("model"); await settle();
+  const html = el("first-run-default-models").innerHTML;
+  const rows = (html.match(/data-dm-row="/g) || []).length;
+  if (rows !== 9) fail("expected 9 capability rows, got " + rows);
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="text"', "Use recommended for all", "Choose…"]) {
+    if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
+  }
+  const click = async (dataset) => { el("first-run-default-models").onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
+  await click({ dmUse: "text" });
+  const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
+  if (!apply) fail("Use recommended did not call apply-recommended");
+  const ab = JSON.parse(apply.body);
+  if (JSON.stringify(ab.only) !== '["text"]' || ab.force !== true) fail("Use recommended body: " + apply.body);
+  await click({ dmDownload: "1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit" });
+  const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
+  if (!dl || JSON.parse(dl.body).artifact !== "qwen/qwen3.5-9b@4bit") fail("Download did not start the recommended artifact");
+  // A subscription for text: connect (profile + model list), choose, use.
+  if (!el("first-run-subscription").innerHTML.includes("Use a subscription for text")) fail("no subscription panel");
+  el("sub-family").value = "anthropic";
+  el("sub-key").value = "sk-ant-test-key";
+  await context.connectSubscription(); await settle();
+  const prof = calls.find((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST");
+  const pb = JSON.parse(prof.body);
+  if (pb.provider_family !== "anthropic" || pb.api_key !== "sk-ant-test-key" || pb.id !== "anthropic-subscription") fail("profile body: " + prof.body);
+  if (!el("first-run-subscription").innerHTML.includes("claude-large")) fail("discovered models not offered");
+  if (el("sub-key").value) fail("the API key stayed in the field");
+  el("sub-model").value = "claude-large";
+  await context.useSubscriptionModel(); await settle();
+  const puts = calls.filter((c) => c.method === "PUT" && /capability-defaults\/(input|output)\/text$/.test(c.path)).map((c) => [c.path, JSON.parse(c.body)]);
+  if (puts.length !== 2 || puts.some(([, b]) => b.provider !== "endpoint:anthropic-subscription" || b.model !== "claude-large")) fail("text default not set to the subscription: " + JSON.stringify(puts));
+}
 if (scenario.name === "apps-gate") {
   // No default text model yet: the Apps step proposes no app and points back to the model step.
   await context.openFirstRunWizard("apps"); await settle();
@@ -570,6 +609,12 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
                   "password_rule": "At least 10 characters.", "password_min_length": 10}
     result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
                    "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_step_lists_every_capability_and_sets_them() -> None:
+    result = _run({"name": "default-models", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 

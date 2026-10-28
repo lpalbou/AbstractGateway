@@ -3205,6 +3205,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
 	              <div id="first-run-model-body" class="first-run-panel">
+	                <!-- 1069: one row per capability (the framework's modality vocabulary), AbstractCore's
+	                     pick for this computer, Use recommended / Choose per row, and a subscription
+	                     path for text. The download cards below stay the place downloads run. -->
+	                <div id="first-run-default-models" class="first-run-panel"></div>
+	                <div id="first-run-subscription" class="first-run-panel"></div>
 	                <div id="first-run-model-recommended" class="first-run-panel"></div>
 	                <div class="ui-section-title"><h3>Or choose any model that fits this computer</h3><span class="ui-sub">The same catalog as the Models tab, filtered to what fits. Download a model, then use it as your default text model.</span></div>
 	                <div id="first-run-model-catalog"></div>
@@ -15109,14 +15114,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
       engines: "Local engines",
-      model: "Default model",
+      model: "Default models",
       apps: "Apps",
       done: "Done",
     };
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
-      model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
+      model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, pick your own, or use a subscription for text." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
@@ -15411,9 +15416,185 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const pair = [row.route_unavailable.provider, row.route_unavailable.model].filter(Boolean).join(" / ");
       return `<div class="ui-alert tone-warn capability-route-unavailable" role="note"><span>Configured now${pair ? ` (${esc(pair)})` : ""} but cannot run on this computer: ${esc(reason)}</span></div>`;
     }
+    // ---- Default models (backlog 1069): one row per capability in the framework's vocabulary,
+    // with what goes in and what comes out, the model set now, AbstractCore's pick for THIS
+    // computer (GET /models/availability `recommended`: engine, model, memory tier, whether it is
+    // downloaded) and per row: Use recommended (POST .../apply-recommended {only, force}), Download,
+    // Choose (the Multimodal tab's route editor). AbstractCore owns the picks; the gateway holds no
+    // list of models (docs/first-run.md "What recommended means").
+    const DEFAULT_MODEL_ROWS = [
+      { id: "text", label: "Text", route: "input.text", alt: "output.text", inputs: ["text", "image"], outputs: ["text"], selector: "text", what: "Chat, agents and workflows" },
+      { id: "image", label: "Image", route: "output.image", inputs: ["text", "image"], outputs: ["image"], selector: "image", what: "Pictures from a description, and edits" },
+      { id: "video", label: "Video", route: "output.video", inputs: ["text", "image"], outputs: ["video"], selector: "video", what: "Short clips from a description or a picture" },
+      { id: "voice_out", label: "Voice out", route: "output.voice", inputs: ["text"], outputs: ["speech"], selector: "voice", what: "Reads answers aloud" },
+      { id: "voice_in", label: "Voice in", route: "input.voice", inputs: ["speech"], outputs: ["text"], selector: "stt", what: "Turns speech into text" },
+      { id: "music", label: "Music", route: "output.music", inputs: ["text"], outputs: ["music"], selector: null, what: "Songs and soundtracks" },
+      { id: "3d", label: "3D", route: "output.scene3d", inputs: ["text", "image"], outputs: ["3D scene"], selector: null, what: "3D scenes from a description or a picture" },
+      { id: "embeddings", label: "Embeddings", route: "embedding.text", inputs: ["text"], outputs: ["vectors"], selector: null, what: "Search and memory" },
+      { id: "rankers", label: "Rankers", route: "rerank.text", inputs: ["query", "texts"], outputs: ["scores"], selector: null, what: "Orders search results by relevance" },
+    ];
+    function dmCaps(list) { return list.map((c) => `<span class="chip">${esc(c)}</span>`).join(" "); }
+    function dmRecommended(route, alt) {
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      return rows.find((r) => r && r.route === route) || (alt ? rows.find((r) => r && r.route === alt) : null) || null;
+    }
+    function dmRowMarkup(m) {
+      const row = findDefaultRow(state.defaults, m.route) || (m.alt ? findDefaultRow(state.defaults, m.alt) : null);
+      const now = row && rowHasProviderModel(row)
+        ? `<b>${esc(state.providerLabels.get(row.provider) || row.provider)}</b> · <span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>`
+        : `<span class="muted">Not set</span>`;
+      const rec = dmRecommended(m.route, m.alt);
+      let recCell;
+      if (rec) {
+        const engine = typeof rec.route_provider === "string" ? rec.route_provider : rec.provider;
+        const model = typeof rec.route_model === "string" ? rec.route_model : rec.artifact;
+        const pill = rec.status === "installed" ? uiPill("Downloaded", "ok") : rec.status === "absent" ? uiPill("Not downloaded", "muted") : uiPill(firstRunCap(rec.status || "unknown"), "muted");
+        const same = row && row.provider === engine && row.model === model;
+        recCell = `<b>${esc(state.providerLabels.get(engine) || engine)}</b> · <span class="ui-ellip" title="${esc(model)}">${esc(model)}</span> ${pill}`
+          + (rec.tier ? `<div class="muted">Chosen by memory: ${esc(rec.tier)}</div>` : "")
+          + (same ? `<div class="muted">In use.</div>` : "");
+      } else {
+        const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
+        recCell = `<span class="muted">${esc(why || "AbstractCore recommends no model for this on this computer; choose one.")}</span>`;
+      }
+      const actions = [];
+      if (rec && m.selector) actions.push(`<button type="button" class="ui-btn is-primary" data-dm-use="${esc(m.selector)}">Use recommended</button>`);
+      if (rec && rec.status === "absent") actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-download="1" data-provider="${esc(rec.provider)}" data-artifact="${esc(rec.artifact)}">Download</button>`);
+      if (row && !defaultRowReadOnly(row)) actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-choose="${esc(defaultRowKey(row))}">Choose…</button>`);
+      return `<tr data-dm-row="${esc(m.id)}"><td><b>${esc(m.label)}</b><div class="muted">${esc(m.what)}</div></td>`
+        + `<td>${dmCaps(m.inputs)} → ${dmCaps(m.outputs)}</td><td>${now}</td><td>${recCell}</td>`
+        + `<td class="actions"><div class="dm-actions">${actions.join("")}</div></td></tr>`;
+    }
+    function renderFirstRunDefaultModels() {
+      const box = $("first-run-default-models");
+      if (!box) return;
+      box.innerHTML = `<div class="ui-section-title"><h3>Default models</h3><span class="ui-sub">One model per capability. Recommendations follow this computer's GPU memory (or unified memory on a Mac) and the engines that run here.</span></div>`
+        + `<div class="table-wrap"><table class="first-run-default-models"><thead><tr><th>Capability</th><th>In → out</th><th>Now</th><th>Recommended here</th><th><span class="sr-only">Actions</span></th></tr></thead>`
+        + `<tbody>${DEFAULT_MODEL_ROWS.map(dmRowMarkup).join("")}</tbody></table></div>`
+        + `<div class="ui-toolbar"><button id="dm-apply-all" type="button" class="ui-btn is-primary">Use recommended for all</button>`
+        + `<span>Sets every recommended model this computer can run and keeps the choices you already made.</span></div>`;
+      $("dm-apply-all").onclick = async () => {
+        await applyRecommendedDefaults($("dm-apply-all"), false);
+        $("first-run-message").textContent = $("defaults-message").textContent;
+        $("first-run-message").className = $("defaults-message").className;
+        renderFirstRunModel();
+      };
+      box.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-use], [data-dm-download], [data-dm-choose]") : null;
+        if (!b || b.disabled) return;
+        if (b.dataset.dmUse) return dmUseRecommended(b);
+        if (b.dataset.dmDownload) return dmDownload(b);
+        if (b.dataset.dmChoose) {
+          const row = findDefaultRow(state.defaults, b.dataset.dmChoose);
+          if (!row) throw new Error(`GET /config/capability-defaults has no ${b.dataset.dmChoose} row (capability-defaults seam).`);
+          return openDefaultModal(row);
+        }
+      };
+    }
+    async function dmUseRecommended(b) {
+      b.disabled = true;
+      b.textContent = "Setting…";
+      try {
+        // `force`: this row's button IS the person's choice for this capability.
+        const res = await api("/api/gateway/config/capability-defaults/apply-recommended", { slow: true, method: "POST", body: JSON.stringify({ only: [b.dataset.dmUse], force: true }) });
+        $("first-run-message").textContent = describeAppliedRecommended(res.applied_recommended || {});
+        $("first-run-message").className = "message ok";
+        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
+        await refreshAvailability({ rerender: false });
+      } catch (err) {
+        $("first-run-message").textContent = String(err.message || err);
+        $("first-run-message").className = "message error";
+      }
+      renderFirstRunModel();
+    }
+    async function dmDownload(b) {
+      b.disabled = true;
+      b.textContent = "Starting…";
+      try {
+        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider: b.dataset.provider, artifact: b.dataset.artifact }) });
+        trackDownloadJob(res.job);
+        $("first-run-message").textContent = "Download started: its progress is on its card below.";
+        $("first-run-message").className = "message ok";
+      } catch (err) {
+        $("first-run-message").textContent = String(err.message || err);
+        $("first-run-message").className = "message error";
+      }
+      renderFirstRunModel();
+    }
+    // ---- A subscription for text (1069): OpenAI or Anthropic. The key becomes a gateway-wide
+    // provider connection (POST /config/provider-endpoint-profiles, the Providers tab's lane, stored
+    // in AbstractCore's provider profiles), its models are listed (discover-models), and the chosen one
+    // becomes the text default (PUT input/text and output/text, provider `endpoint:<id>`).
+    const SUBSCRIPTION_FAMILIES = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }];
+    const subscriptionUi = { open: false, profile: null, models: [] };
+    function renderFirstRunSubscription() {
+      const box = $("first-run-subscription");
+      if (!box) return;
+      const models = subscriptionUi.models;
+      box.innerHTML = `<details class="first-run-subscription"${subscriptionUi.open ? " open" : ""}><summary>Use a subscription for text (OpenAI or Anthropic)</summary>`
+        + `<div class="af-form"><div class="af-form__field"><label class="af-form__label" for="sub-family">Provider</label>`
+        + `<select id="sub-family">${SUBSCRIPTION_FAMILIES.map((f) => `<option value="${f.id}"${subscriptionUi.profile && subscriptionUi.profile.provider_family === f.id ? " selected" : ""}>${f.label}</option>`).join("")}</select></div>`
+        + `<div class="af-form__field"><label class="af-form__label" for="sub-key">API key</label><input id="sub-key" type="password" autocomplete="off" spellcheck="false">`
+        + `<p class="af-form__help">Kept by the gateway as a provider connection for everyone on it (Providers tab); never shown again.</p></div>`
+        + `<div class="modal-actions"><button id="sub-connect" type="button" class="secondary">Connect and list models</button></div>`
+        + (models.length ? `<div class="af-form__field"><label class="af-form__label" for="sub-model">Text model</label><select id="sub-model">${models.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select></div>`
+          + `<div class="modal-actions"><button id="sub-use" type="button">Use for text</button></div>` : "")
+        + `<p id="sub-message" class="inline-state" role="status" aria-live="polite"></p></div></details>`;
+      const det = box.querySelector ? box.querySelector("details") : null;
+      if (det && det.addEventListener) det.addEventListener("toggle", () => { subscriptionUi.open = det.open; });
+      $("sub-connect").onclick = connectSubscription;
+      if (models.length) $("sub-use").onclick = useSubscriptionModel;
+    }
+    function subMessage(text, tone) { const el = $("sub-message"); if (el) { el.textContent = text; el.className = `inline-state ${tone || ""}`; } }
+    async function connectSubscription() {
+      const family = $("sub-family").value;
+      const key = String($("sub-key").value || "").trim();
+      if (!key) { subMessage("Paste the API key first.", "error"); return; }
+      const label = (SUBSCRIPTION_FAMILIES.find((f) => f.id === family) || { label: family }).label;
+      $("sub-connect").disabled = true;
+      subMessage("Connecting…");
+      try {
+        const id = `${family}-subscription`;
+        const res = await api("/api/gateway/config/provider-endpoint-profiles", { method: "POST", body: JSON.stringify({
+          id, display_name: `${label} (subscription)`, provider_family: family, api_key: key, scope: "gateway", capabilities: ["text"] }) });
+        subscriptionUi.profile = res.profile || { id, provider_family: family };
+        const found = await api("/api/gateway/config/provider-endpoint-profiles/discover-models", { method: "POST", body: JSON.stringify({ profile_id: id }) });
+        subscriptionUi.models = parseModelItems(found);
+        subscriptionUi.open = true;
+        renderFirstRunSubscription();
+        $("sub-key").value = "";
+        subMessage(subscriptionUi.models.length ? `Connected: ${subscriptionUi.models.length} models. Choose the text model.` : (found.error || "Connected, but the provider listed no models: check the key."), subscriptionUi.models.length ? "ok" : "error");
+      } catch (err) {
+        subMessage(`Not connected: ${String(err.message || err)}`, "error");
+      } finally {
+        const b = $("sub-connect"); if (b) b.disabled = false;
+      }
+    }
+    async function useSubscriptionModel() {
+      const p = subscriptionUi.profile;
+      const model = $("sub-model").value;
+      if (!p || !model) return;
+      const provider = `endpoint:${p.id}`;
+      $("sub-use").disabled = true;
+      try {
+        for (const modality of ["input/text", "output/text"]) {
+          await api(`/api/gateway/config/capability-defaults/${modality}`, { slow: true, method: "PUT", body: JSON.stringify({ provider, model }) });
+        }
+        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
+        await refreshAvailability({ rerender: false });
+        renderFirstRunModel();
+        subMessage(`Text now uses ${model} through your ${p.provider_family === "anthropic" ? "Anthropic" : "OpenAI"} subscription.`, "ok");
+      } catch (err) {
+        subMessage(`Not set: ${String(err.message || err)}`, "error");
+        const b = $("sub-use"); if (b) b.disabled = false;
+      }
+    }
     function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
+      renderFirstRunDefaultModels();
+      if (!$("first-run-subscription").innerHTML) renderFirstRunSubscription();
       const box = $("first-run-model-recommended");
       const plan = state.availabilityPlan || {};
       const rows = Array.isArray(plan.recommended) ? plan.recommended : [];

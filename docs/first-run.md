@@ -118,13 +118,36 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, transcription (speech input), images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Default models | One row per capability: **Text**, **Image**, **Video**, **Voice out**, **Voice in**, **Music**, **3D**, **Embeddings**, **Rankers**, each with what goes in and what comes out (text → text, speech → text, ...), the model set now, and AbstractCore's pick for this computer (engine, model, the memory tier that chose it, downloaded or not). Per row: **Use recommended** (sets that capability to the pick, replacing what was there), **Download** (when the pick is not on this computer yet), **Choose…** (the Multimodal tab's route editor: any provider and model). **Use recommended for all** sets every pick this computer can run and keeps the choices you already made. **Use a subscription for text** connects an OpenAI or Anthropic API key (kept as a gateway-wide provider connection, the Providers tab's) and makes one of its models the text model. Below: the recommended downloads with progress (**Download all**), a card with the reason for each capability this computer cannot run, and the Models tab's catalog cards with **Fits this computer** on. Admins only, like the whole guide |
 | Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
 **What "recommended" means on this computer.** AbstractCore picks the
-recommended text model; the gateway shows that pick and holds no list of its
-own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+recommended model for each capability (`recommended_models(host)`, see
+AbstractCore's `docs/recommended-models.md`); the gateway shows those picks and
+holds no list of its own.
+
+The rule per memory band. "Memory" is the GPU's memory on an NVIDIA computer
+and the unified memory on a Mac. The **Today** column is what AbstractCore
+answers now; the **Target** column is the operator's table (2026-10-28), which
+AbstractCore adopts once each pick is measured on real hardware (root backlog
+1072); until then the guide shows the **Today** pick.
+
+| Capability | Band | Today (AbstractCore) | Target |
+|---|---|---|---|
+| Text | Mac, below 24 GB | Qwen3.5 9B, MLX 4-bit | the 8–14B class, or a lower quant of Qwen3.8 27B that fits whole |
+| Text | Mac, 24 to 128 GB | Qwen3.8 27B, MLX 4-bit (128 GB and up: Qwen3.8 Flash-Next) | Qwen3.8 27B 4-bit on MLX (24–64 GB) |
+| Text | NVIDIA, 24 to 64 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B 4-bit: `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` (16.5 GB) on llama.cpp |
+| Text | NVIDIA, 16 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B `UD-Q3_K_XL` (13.1 GB, fits whole), or the 8–14B class |
+| Image (text to image, image to image) | 12 GB and up | FLUX.2 klein 4B (MLX-Gen 8-bit on a Mac, Diffusers on NVIDIA) | FLUX.2 klein 4B |
+| Voice out | every computer | Supertonic 3 | Supertonic 3; Qwen3-TTS when 8 GB are free and voice cloning is wanted |
+| Voice in | every computer | Whisper base on faster-whisper (an Apple silicon Mac with MLX: MLX Whisper large-v3) | Whisper large-v3-turbo from 6 GB, else Whisper small |
+| Video | Mac | Wan2.2 TI2V 5B, MLX-Gen 8-bit | Wan 2.2 TI2V 5B from 16 GB, 14B from 32 GB, MiniMax H3 from 64 GB |
+| Video | NVIDIA | none | as above, on Diffusers (`Wan-AI/Wan2.2-TI2V-5B-Diffusers`, `Wan-AI/Wan2.2-T2V-A14B-Diffusers`) |
+| Music | every computer | ACE-Step 1.5 XL turbo (opt-in: Choose…) | (no target given) |
+| 3D, Embeddings, Rankers | every computer | none: Choose… | (no target given) |
+
+The Apple text tiers in detail: on a Mac with Apple silicon the pick is an MLX build chosen by the
 computer's memory:
 
 | Memory | Recommended text model |
