@@ -40,6 +40,13 @@ Three defects the fresh-Linux test of the released stack found in the gateway, f
   `apps_manager.py`, 3 failed.
 - `tests/test_gateway_network_exposure.py::test_status_of_a_loopback_gateway_started_unconfigured_says_user_auth_on`:
   passed; red with the previous `network_exposure.py`.
+- Adversarial review (Opus, read-only): found the 0.17.1 CHANGELOG heading dropped by the bump and an install
+  without a version DOWNGRADING an installed app to the release pin (probe: Flow 0.12.0 -> 0.11.0); both fixed
+  (the pin applies to a fresh install only; the test now covers an installed app), plus a non-JSON manifest
+  answer (captive portal) now cached as a failure with its reason. Verified by the reviewer: bootstrap.env is
+  read from the installer's data dir, tags v0.6.2..v0.11.17 exist with matching manifests, no fetch on the
+  event loop, the installer's update paths pass explicit versions, the auth rule holds for security-off,
+  token-only, `::1` and `localhost`.
 - Full suite: see the 0.17.2 PR.
 
 ## Findings left open

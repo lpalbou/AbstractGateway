@@ -2431,8 +2431,14 @@ class AppsManager:
             return out
         url = f"{FRAMEWORK_RAW}/v{fv}/{FRAMEWORK_MANIFEST_PATH}"
         out["manifest_url"] = url
+        def _fetch() -> Any:
+            try:
+                return self._get_json(url, timeout=REGISTRY_TIMEOUT_S)
+            except ValueError as exc:  # not JSON (a captive portal's page): an answer, cached as a failure
+                raise AppsError(f"{url} did not answer JSON ({exc})") from exc
+
         try:
-            manifest = self._registry_cached("framework-manifest:" + fv, lambda: self._get_json(url, timeout=REGISTRY_TIMEOUT_S), use_cache=use_cache)
+            manifest = self._registry_cached("framework-manifest:" + fv, _fetch, use_cache=use_cache)
         except AppsError as exc:
             out["error"] = f"the app versions of AbstractFramework {fv} could not be read ({exc.message})"
             return out
@@ -2819,7 +2825,10 @@ class AppsManager:
         tui = self.install_includes_terminal(spec.id) if (with_terminal and not update) else None
         def work(job: Job) -> Dict[str, Any]:
             job.same_machine = bool(same_machine)
-            want = self._release_pinned_version(job, spec, version) if (version is None and not update) else version
+            # The release pin applies to a FRESH install only: an installed app is never moved to an
+            # older version by an install without a version (that stays "reinstall the newest").
+            fresh = version is None and not update and not self.installed_version(spec.id)
+            want = self._release_pinned_version(job, spec, version) if fresh else version
             web_hi = 100.0 if tui is None else 65.0
             if tui is not None:
                 job.parts = [

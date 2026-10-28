@@ -816,6 +816,9 @@ def test_install_follows_the_release_matrix_and_offers_the_newer_version(manager
     # The person's explicit Update installs the newest.
     job, _ = manager.start_install("flow", update=True, run_inline=True)
     assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"
+    # An install without a version on an installed app never moves it back to the release pin.
+    job, _ = manager.start_install("flow", run_inline=True)
+    assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"
 
 
 def test_install_without_a_release_installs_the_newest(manager: am.AppsManager) -> None:
@@ -842,6 +845,11 @@ def test_an_unreadable_release_matrix_refuses_instead_of_installing_the_newest(m
     manager.net.routes[url] = json.dumps({"framework": {"version": "0.11.18"}, "npm_apps": []}).encode()  # type: ignore[attr-defined]
     job, _ = manager.start_install("flow", run_inline=True)
     assert job.to_dict()["state"] == "failed" and manager.installed_version("flow") is None
+    # A page that is not JSON (a captive portal) is refused the same way, with the reason.
+    manager.net.routes[url] = b"<html>sign in to the hotel wifi</html>"  # type: ignore[attr-defined]
+    job, _ = manager.start_install("flow", run_inline=True)
+    d = job.to_dict()
+    assert d["state"] == "failed" and "did not answer JSON" in d["message"] and manager.installed_version("flow") is None
     # An explicit version is the person's choice: installed as asked.
     job, _ = manager.start_install("flow", version="0.12.0", run_inline=True)
     assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"

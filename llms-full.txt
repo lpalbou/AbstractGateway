@@ -13987,6 +13987,7 @@ Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dep
 - **The llama.cpp engine card** said "CPU on Linux" on a machine where the installer put the CUDA build in; it now
   names the Linux CUDA build (gpu setting, NVIDIA GPU) and the CPU build otherwise.
 
+## [0.17.1] - 2026-10-28
 
 Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956), and a truthful "why nothing rang" for a run whose On Flow End
 wrote `notify: null`. No route, schema or dependency change.
