@@ -15559,11 +15559,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function gatewayBaseUrl() {
       return String(location.origin);
     }
-    function renderFirstRunApps() {
+    async function renderFirstRunApps() {
       // Install / Open / Start / Stop through the gateway's apps service
       // (routes/apps.py): cards with one primary action each, Node.js
       // installed for the user, the npx line only behind "Technical details".
-      mountAppCards("first-run", $("first-run-apps-body"));
+      // Operator QA (0.18.0): apps are proposed only once a default text model exists (an app
+      // with no model answers nothing); until then the step points back to the Model step.
+      const box = $("first-run-apps-body");
+      let routes = [];
+      try {
+        const payload = await api("/api/gateway/config/capability-defaults");
+        routes = Array.isArray(payload && payload.routes) ? payload.routes : [];
+      } catch { routes = null; }
+      const hasText = routes === null || routes.some((r) => r && (defaultRowKey(r) === "output.text" || defaultRowKey(r) === "input.text") && rowHasProviderModel(r));
+      if (!hasText) {
+        unmountAppCards("first-run");
+        box.innerHTML = `<div class="first-run-panel" data-apps-gate="no-text-model"><p><strong>Choose a default text model first.</strong></p>
+          <p class="muted">The apps talk to your models through this gateway; without a default text model they have nothing to answer with.</p>
+          <div class="modal-actions"><button type="button" id="first-run-apps-to-model">Back to the model step</button></div></div>`;
+        const back = $("first-run-apps-to-model");
+        if (back) back.onclick = () => firstRunGoto("model");
+        return;
+      }
+      mountAppCards("first-run", box);
     }
     function renderFirstRunDone() {
       const box = $("first-run-done-body");

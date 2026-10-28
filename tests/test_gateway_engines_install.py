@@ -729,3 +729,31 @@ def test_the_gateways_host_table_is_abstractcores(os_id, arch) -> None:
 def test_the_gateways_unavailable_sentence_is_abstractcores() -> None:
     install_settings = pytest.importorskip("abstractcore.utils.install_settings")
     assert ei._not_available_here("X") == install_settings.not_available_here("X")
+
+
+def test_linux_lmstudio_without_libatomic_stops_before_the_installer_and_resumes(tmp_path) -> None:
+    # Operator QA (OVH test server, 2026-10-28): LM Studio's Linux installer died half-way on a
+    # missing libatomic1. The plan says so up front; the job pauses in needs_tools with the
+    # exact apt line BEFORE the vendor script runs, and a re-check resumes it.
+    host = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False)
+    sysd = FakeSystem(tmp_path)
+    lib = {"present": False}
+    sysd.on(lambda a: a[:2] == ["ldconfig", "-p"],
+            lambda a: (0, "\tlibc.so.6 (libc6,x86-64) => /lib/x86_64-linux-gnu/libc.so.6\n"
+                          + ("\tlibatomic.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libatomic.so.1\n" if lib["present"] else "")))
+    inst = _installer(tmp_path, sysd, host=host)
+    plan = inst.plan("lmstudio").public(None)
+    assert plan["needs_tools"] is True and "libatomic1" in plan["notes"]
+    assert plan["tools_action"]["command"].startswith("sudo apt-get install -y libatomic1")
+    reg = _registry(inst, tmp_path)
+    snap, _ = reg.start("lmstudio", run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "needs_tools" and "libatomic1" in job["message"]
+    assert job["tools_prompt"]["action"]["available"] is False
+    assert not any(c[:2] == ["bash", "-c"] for c in sysd.calls)  # the vendor installer never ran
+    lib["present"] = True  # the admin ran the apt line
+    sysd.whiches["lms"] = str(tmp_path / "home" / ".lmstudio" / "bin" / "lms")
+    reg.continue_job(job["job_id"], "recheck", run_inline=True)
+    after = reg.get(job["job_id"]).snapshot()
+    assert after["state"] != "needs_tools", after["message"]
+    assert inst.plan("lmstudio").public(None)["needs_tools"] is False

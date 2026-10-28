@@ -456,6 +456,75 @@ Catalog mutation routes are admin-only under
 `/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
 available at `GET /api/gateway/workflow-catalog`.
 
+## Sign-in: passwords, tokens and the first-run window
+
+Since 0.18.0 an account signs in with its **account id and a password** or with its
+**gateway token**; both open the same browser session (`POST /api/gateway/session/login`
+with `{user_id, password}` or `{user_id, token}`, exactly one of the two). Tokens stay
+for apps, scripts and the OpenAI-compatible API (`/v1` takes named API keys).
+
+**Password storage.** The hash is on the account's registry record
+(`<data dir>/auth/users.json`, `password_hash`): `hashlib.scrypt` (N=2^16, r=8, p=1,
+16-byte salt, 32-byte key) in the self-describing form `scrypt$N$r$p$salt$key`, compared in
+constant time. No password is ever written, logged or returned. The strength rule: at least
+10 characters with at least 5 different ones, not built around the account name, not a
+well-known password.
+
+**Attempt limits** (process-local; a restart clears them, like the token lockout below).
+Ten refused passwords from one address in 15 minutes lock that address for 15 minutes.
+Five refused passwords in a row for one account lock the account for 30 seconds, doubling
+up to 15 minutes. A locked address or account answers 429 `too_many_attempts` with
+`retry_after_s`, even for the right password; the account's TOKEN still signs in, so a
+guesser cannot lock automation out. Every refusal is the same sentence (`password_refused`:
+"That account and password don't match.") whether the account is unknown, has no password,
+is deactivated or the password is wrong, and an unknown account costs the same scrypt time.
+
+**Sessions follow credentials.** A browser session is bound to the account's credentials
+(token hash, and the password hash once one is set): changing either signs the account's
+other browsers out. `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
+give the browser that made the change a fresh session.
+
+**Who sets passwords.** Anyone signed in sets their own (`PUT /me/password`, current password
+required once one exists, under the attempt limits). Admins set or remove anyone's
+(`PUT|DELETE /admin/accounts/{id}/password`) and may give one at creation
+(`POST /admin/users` `password`). Entities never have a password. The last-admin rule is
+unchanged.
+
+**Where tokens come from (automation).** `POST /api/gateway/admin/users` answers the new
+account's token once; an admin rotates another account's token with
+`PATCH /api/gateway/admin/users/{id}` `{"rotate_token": true}` (answered once); anyone rotates
+their own with `POST /api/gateway/me/token/rotate`. The bootstrap admin's token is in
+`<data dir>/auth/bootstrap-admin-token` (0600).
+
+### The first-run window (an unclaimed gateway)
+
+A fresh data folder (the bootstrap admin was just created, with a generated token, on an
+empty registry) is **unclaimed** until an admin signs in or the admin gets a password. While
+unclaimed, `GET /api/gateway/session/onboarding` (public) answers `unclaimed: true` and
+`POST /api/gateway/session/onboarding` sets the admin password and signs the browser in.
+That window is the risk, and it is fenced:
+
+- **browser only**: the POST needs an `Origin` header, and the security middleware has
+  already refused any Origin the gateway does not accept;
+- **the setup code** (six words from a list of 273, about 48 bits, stored in
+  `<data dir>/auth/onboarding.json`, 0600) is required unless the request comes straight
+  from the gateway's own machine: a loopback socket peer and none of `X-Forwarded-For`,
+  `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`, `Forwarded`. This is deliberately
+  stricter than "internet mode or proxy trust on": a gateway behind `tailscale serve`/Funnel,
+  a container's port mapping or a shared LAN looks private to itself and is still reachable
+  by strangers;
+- **limits**: 5 refused setup codes per address and 20 across all addresses per 15 minutes
+  (then 429 for 15 minutes);
+- **logged**: a warning log line and the audit line's `onboarding` detail with the client
+  address, and `claimed_at / claimed_via / claimed_from` in `onboarding.json`;
+- **closes for good** on the first admin sign-in of any kind (password, token, one-time
+  link, email code) or when the admin gets a password; pending one-time links are deleted
+  then. A data folder that was not fresh when 0.18.0 first ran never has the record, so an
+  upgrade never opens the window.
+
+The one-time claim link (`abstractgateway claim`) stays the loopback-only path: it is
+refused from any non-loopback peer or through a proxy.
+
 ## Origin allowlist (browser/origin defense)
 
 If the request includes an `Origin` header, the middleware allows it only when

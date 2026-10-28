@@ -20,7 +20,7 @@ serve:
 
 | Routes | Purpose | Reference |
 |---|---|---|
-| `/api/gateway/session/login`, `/session/logout`, `/session/claim`, `/me` | browser sessions, one-time sign-in links, the current principal | [security.md](./security.md), [first-run.md](./first-run.md) |
+| `/api/gateway/session/login` (`{user_id, password}` or `{user_id, token}`), `/session/logout`, `/session/claim`, `/session/onboarding`, `/me`, `/me/password`, `/admin/accounts/{id}/password` | browser sessions, password sign-in, first-run onboarding ("Set up your gateway"), one-time sign-in links, the current principal, passwords | [security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window), [first-run.md](./first-run.md) |
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |

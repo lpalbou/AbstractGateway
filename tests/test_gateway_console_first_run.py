@@ -118,6 +118,8 @@ const location = { hash: scenario.hash, pathname: "/console", search: "", origin
 const history = { calls: [], replaceState(_s, _t, url) { this.calls.push({ url, hashAtCall: location.hash, claimCallsSoFar: calls.filter((c) => c.path.endsWith("/session/claim")).length }); location.hash = (String(url).match(/#.*$/) || [""])[0]; } };
 let loggedIn = Boolean(scenario.loggedIn);
 let firstRunCompleted = scenario.completed;
+// The Apps step is gated on a default text model (0.18.0): set by "Use as default" (PUT), or up front.
+let textDefaultSet = !scenario.noTextModel && Boolean(scenario.textDefault || scenario.catalogFail);
 const calls = [];
 const res = (status, payload) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) });
 async function fetch(path, options = {}) {
@@ -196,12 +198,13 @@ async function fetch(path, options = {}) {
     return res(200, CATALOG);
   }
   if (path === "/api/gateway/models/delete") return res(409, { ok: false, status: "refused", message: "refusing to delete: loaded (send force=true to override)", delete_blockers: ["loaded"], error: { message: "refusing to delete: loaded (send force=true to override)", type: "host_action_refused" } });
-  if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") return res(200, { ok: true });
+  if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") { textDefaultSet = true; return res(200, { ok: true }); }
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: [] });
+  // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
@@ -502,6 +505,13 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+if (scenario.name === "apps-gate") {
+  // No default text model yet: the Apps step proposes no app and points back to the model step.
+  await context.openFirstRunWizard("apps"); await settle();
+  const body = el("first-run-apps-body").innerHTML;
+  if (!body.includes("Choose a default text model first")) fail("apps proposed without a default text model: " + body.slice(0, 200));
+  if (body.includes("@abstractframework/")) fail("app cards rendered behind the gate");
+}
 if (scenario.name === "signin-password") {
   // A claimed gateway: Password first, Token behind the link.
   if (el("onboarding-form").hidden !== true) fail("onboarding form shown on a claimed gateway");
@@ -560,6 +570,12 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
                   "password_rule": "At least 10 characters.", "password_min_length": 10}
     result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
                    "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_apps_step_waits_for_a_default_text_model() -> None:
+    result = _run({"name": "apps-gate", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "noTextModel": True})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 
