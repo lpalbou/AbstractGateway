@@ -108,6 +108,19 @@ def test_a_run_with_a_tray_and_a_push_delivery_answers_both(tmp_path: Path) -> N
     assert "quiet_reason" not in out
 
 
+def test_a_null_notify_is_no_notify_not_an_empty_title(tmp_path: Path) -> None:
+    """An unwired On Flow End `notify` pin writes `notify: null`: Notify me never ran, so the
+    reason is "no notify", never "empty title" (operator's email-triage flow, 2026-10-28)."""
+    stream = stream_for(tmp_path, "default", "alice")
+    done = _Ledger({AID: [_completed(15, None, None)]})
+    for end in ({"response": "ok", "notify": None, "success": True}, {"response": "ok", "notify": "", "success": True}):
+        assert build_after(_occurrence(end), run_store=_Runs(_controller()), ledger_store=done, stream=stream)["quiet_reason"] == "no notify"
+    # A notify object whose title is blank (whitespace, or no title key) is the flow's quiet decision.
+    for notify in ({"title": "   ", "body": "x"}, {"body": ""}):
+        run = _occurrence({"response": "ok", "notify": notify, "success": True})
+        assert build_after(run, run_store=_Runs(_controller()), ledger_store=done, stream=stream)["quiet_reason"] == "empty title"
+
+
 def test_an_empty_title_answers_quiet_reason(tmp_path: Path) -> None:
     stream = stream_for(tmp_path, "default", "alice")
     run = _occurrence({"response": "Nothing worth your time.", "notify": {"title": "", "body": ""}, "success": True})

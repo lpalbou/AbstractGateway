@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.17.1] - 2026-10-28
 
-Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956). No route, schema or dependency change.
+Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956), and a truthful "why nothing rang" for a run whose On Flow End
+wrote `notify: null`. No route, schema or dependency change.
 
 ### Changed
 
@@ -20,6 +21,14 @@ Console: ui-kit islands 0.9.1 -> 0.9.4 (backlog 0956). No route, schema or depen
   tool approval card and duration-format polish, but the console does not render those surfaces today (its voice
   pickers pass no `creation` / `voiceLibrary`, its Sandbox chat has no approval card or tool rows and formats its own
   duration chip). `console_themes.py` records the new `theme.css` hash (the 21 theme blocks are unchanged).
+
+### Fixed
+
+- **`GET .../after` no longer says "empty title" when Notify me never ran** (`run_after.py`, backlog 0956). An unwired
+  On Flow End `notify` pin writes `notify: null`; the run's `quiet_reason` was `empty title` (shown as "Nothing to
+  notify: the title was empty") although no notification was ever decided. `empty title` is now reported only when
+  `notify` is an object with a blank title; a null or absent `notify` is `no notify` (the run reached no Notify me
+  step). Found on the operator's email-triage flow; `tests/test_run_after.py` covers both shapes.
 
 ## [0.17.0] - 2026-10-28
 

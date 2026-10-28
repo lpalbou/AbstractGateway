@@ -355,7 +355,10 @@ def build_after(
         elif aid and completion is None:
             # The run ended; the automation has not recorded its decision yet.
             out["quiet_reason"] = "not recorded yet"
-        elif "notify" in end:
+        elif isinstance(end.get("notify"), Mapping) and not str(end["notify"].get("title") or "").strip():
+            # On Flow End's notify object with a blank title: the flow chose to stay quiet. A null
+            # notify (an unwired On Flow End pin writes `notify: null`) is not a decision: the run
+            # never reached a Notify me step, so it falls through to "no notify".
             out["quiet_reason"] = "empty title"
         else:
             out["quiet_reason"] = "no notify"

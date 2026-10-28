@@ -1,4 +1,4 @@
-# 0956-gateway: [MAINTENANCE] The console's ui-kit islands resynced from the released kit 0.9.4
+# 0956-gateway: [MAINTENANCE] The console's ui-kit islands resynced from the released kit 0.9.4 (and a null notify is "no notify")
 
 > Package: abstractgateway (consumer); abstractuic 0.8.2 (ui-kit 0.9.4, panel-chat 0.6.2)
 > Type: maintenance
@@ -27,7 +27,16 @@ voice twice in the voice picker. Re-vendored from the released source; no consol
   tag: only `theme_css_sha256` changes (the kit's `theme.css` gained component rules; the 21 per-theme
   blocks and `THEME_SPECS` are unchanged).
 
+- `run_after.py` (added to this release on the lead's request, found by the Flow worker on the
+  operator's email-triage flow): `quiet_reason` is `empty title` only when `notify` is an object with
+  a blank title; a null or absent `notify` (an unwired On Flow End pin writes `notify: null`) is
+  `no notify`. `docs/api.md` says so.
+
 ## Evidence
+
+- `tests/test_run_after.py::test_a_null_notify_is_no_notify_not_an_empty_title` (null / "" notify ->
+  `no notify`; blank-title / title-less object -> `empty title`): 7 passed; RED (1 failed) with the
+  previous `run_after.py`.
 
 - The tag is the published kit: the npm tarballs `@abstractframework/ui-kit@0.9.4` and
   `@abstractframework/panel-chat@0.6.2` carry `src/theme.css` and `src/panel_chat.css` byte-identical
@@ -42,6 +51,10 @@ voice twice in the voice picker. Re-vendored from the released source; no consol
 - Full suite: see the 0.17.1 PR.
 
 ## Findings left open
+
+- AbstractObserver's `after_the_run.tsx` renders `no notify` as "Nothing to notify: this flow has no
+  Notify me step." A flow that has a Notify me step the run did not reach reads wrong; "this run did
+  not reach a Notify me step" would hold in both cases (AbstractObserver follow-up).
 
 - The bundle now carries the kit's Create-a-voice / Manage-voices styling, the panel-chat tool approval
   card and the shared duration format, but the console renders none of them: its voice pickers

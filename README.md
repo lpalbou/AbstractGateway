@@ -24,7 +24,9 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 
 **What's new in 0.17.1** ([CHANGELOG](CHANGELOG.md)): the console's ui-kit islands
 are resynced from the released kit (ui-kit 0.9.1 -> 0.9.4): the console's voice
-picker lists each Qwen3-TTS voice once instead of once per model.
+picker lists each Qwen3-TTS voice once instead of once per model. A run whose
+On Flow End wrote `notify: null` now reports `quiet_reason: "no notify"`, not
+"empty title".
 
 **What's new in 0.17.0**: memory graph routes
 (`/api/gateway/memory/*`: query, history, sources, source reconstruction,
