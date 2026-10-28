@@ -4608,8 +4608,8 @@ run</strong>.</p>
   (the gateway's push dispatcher), <code>outbox</code> (email) or <code>stream</code> (an app read your stream and showed
   it; the console lists the item). <code>device_name</code> when the device registered one; <code>reason</code> on a
   failure.</li>
-<li><code>quiet_reason</code> (only when there is no alert): <code>empty title</code> (On Flow End's notify had no title),
-  <code>no notify</code> (nothing in the flow notifies), <code>still running</code>, <code>not recorded yet</code> (the run ended,
+<li><code>quiet_reason</code> (only when there is no alert): <code>empty title</code> (On Flow End's notify object had a
+  blank title), <code>no notify</code> (the run reached no Notify me step; a null <code>notify</code> counts as none), <code>still running</code>, <code>not recorded yet</code> (the run ended,
   the automation has not recorded its decision yet). Deliveries are recorded after the run ends:
   clients read again for a few seconds.</li>
 <li><code>tree</code>: the runs looked at, the run and its sub-runs (<code>parent_run_id</code> links, at most 200).</li>
