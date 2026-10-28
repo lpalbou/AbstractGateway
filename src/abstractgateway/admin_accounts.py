@@ -52,6 +52,7 @@ REASON_ENTITY_ROTATE = (
     "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."
 )
 REASON_USER_MANAGE = "Only entities have a management page."
+REASON_ENTITY_PASSWORD = "An entity has no password: it acts through its door, never through a sign-in form."
 REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so it can't be managed here."
 REASON_LAST_ADMIN = "This is the last active admin account; make another account admin first."
 # The "OpenAI API" switch (round 5): who may call /v1 with their own key.
@@ -216,6 +217,9 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
         "archived_at": rec.archived_at or None,
         # May this account call the OpenAI API at /v1 with its key (Accounts row switch)?
         "openai_api": rec.openai_api_allowed(),
+        # 0.18.0: can this person sign in with a password (set from this row's key action)?
+        "password_set": bool(rec.password_hash),
+        "display_name": rec.display_name or None,
         "actions": {
             "openai_api": _act(not archived, REASON_ARCHIVED),
             "email": _act(not archived, REASON_ARCHIVED),
@@ -224,6 +228,9 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
             # Round 14: default workflow per app (GET/PUT /accounts/{id}/preferences).
             "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(not archived, REASON_ARCHIVED),
+            # 0.18.0: set the account's password (PUT /admin/accounts/{id}/password; your own row:
+            # PUT /me/password).
+            "password": _act(not archived, REASON_ARCHIVED),
             "manage": _act(False, REASON_USER_MANAGE),
             "configure": _act(False, REASON_USER_MANAGE),
             "archive": archive,
@@ -264,6 +271,8 @@ def _entity_row(
         # recorded (admins only see those).
         "created_by": created_by,
         "openai_api": False,
+        "password_set": False,
+        "display_name": None,
         "actions": {
             "openai_api": _act(False, REASON_ENTITY_OPENAI),
             "email": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
@@ -272,6 +281,7 @@ def _entity_row(
             # Round 14: an entity's preferences are set by admins and its creator (like workspaces).
             "preferences": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(False, REASON_ENTITY_ROTATE),
+            "password": _act(False, REASON_ENTITY_PASSWORD),
             "manage": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             # R16.5: may the caller change its settings (mind, voice, tools, instructions, skills)?
             # Rows are listed to admins (/admin/accounts) and to the entity's creator

@@ -287,6 +287,10 @@ app.include_router(triggers_router, prefix="/api")
 # Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
 # /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
 app.include_router(email_router, prefix="/api")
+# First-run onboarding and password sign-in (0.18.0): routes/session_passwords.py.
+from .routes.session_passwords import router as session_passwords_router  # noqa: E402
+
+app.include_router(session_passwords_router, prefix="/api")
 # The caller's own event stream (framework backlog 1046): /gateway/me/events (catch-up),
 # /gateway/me/events/stream (SSE), /gateway/me/events/notifications; literal paths.
 from .routes.me_events import router as me_events_router  # noqa: E402
