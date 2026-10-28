@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -1048,19 +1048,23 @@ tray icon.</p>
 </tr>
 <tr>
 <td><a href="getting-started/">getting-started.md</a></td>
-<td>explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores</td>
+<td>explicit setup: bundles, starting and scheduling runs, split API and runner (opt-in), file vs SQLite stores</td>
 </tr>
 <tr>
 <td><a href="architecture/">architecture.md</a></td>
-<td>components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes</td>
+<td>components, diagrams, the replay-first durable contract, worker pools and off-loop service builds, automations, triggers, events and attention (alerts with their channels, push), live replies, the workspace guard, the desktop hand-over, deployment shapes (split mode)</td>
+</tr>
+<tr>
+<td><a href="https://github.com/lpalbou/AbstractGateway/tree/main/docs/adr">adr/</a></td>
+<td>the architectural decision records: the durable rules the design follows (AbstractCore access only through AbstractRuntime facades)</td>
 </tr>
 <tr>
 <td><a href="api/">api.md</a></td>
-<td>the client contract with curl examples: the gateway default workflow (<code>@default</code>), live replies, a run's workspace folder, durable commands, the automation routes, discovery, media, models, host state, <code>/about</code>; map of every route family</td>
+<td>the client contract with curl examples: the gateway default workflow (<code>@default</code>), live replies, a run's workspace folder, durable commands, the automation routes, trigger connections, the well-known feed catalogue, sample inputs and the signed webhook ingress, your event stream (<code>/me/events</code>, its vocabulary, published alerts with <code>recipient</code> and <code>channels</code>, the one-notification-per-machine rule), After the run (<code>/runs/{run_id}/after</code>), push devices and the push forwarder setting, discovery, media, models, host state, <code>/about</code>; map of every route family</td>
 </tr>
 <tr>
 <td><a href="configuration/">configuration.md</a></td>
-<td>every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags</td>
+<td>every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, split mode (API and runner in two processes), CLI flags (worker pools, run index, GC tuning, push relay) and the load test</td>
 </tr>
 <tr>
 <td><a href="faq/">faq.md</a></td>
@@ -1068,7 +1072,7 @@ tray icon.</p>
 </tr>
 <tr>
 <td><a href="troubleshooting/">troubleshooting.md</a></td>
-<td>symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service</td>
+<td>symptoms, causes and fixes: sign-in, network modes, runs, automations and mail steps, installs, downloads, <code>503 service_starting</code>, a slow gateway, split mode, watch and iPhone alerts, tray, login service</td>
 </tr>
 </tbody>
 </table>
@@ -1083,11 +1087,19 @@ tray icon.</p>
 <tbody>
 <tr>
 <td><a href="email/">email.md</a></td>
-<td>per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables</td>
+<td>per-user email: connecting your own mailbox and further mailboxes, each Read only or Read and write (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables</td>
 </tr>
 <tr>
 <td><a href="automations/">automations.md</a></td>
-<td>automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and <code>/seen</code>, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1</td>
+<td>automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and <code>/seen</code>, wakes an agent schedules (<code>schedule_run</code>), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1</td>
+</tr>
+<tr>
+<td><a href="events-examples/">events-examples.md</a></td>
+<td>events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream</td>
+</tr>
+<tr>
+<td><a href="push/">push.md</a></td>
+<td>alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the Push forwarder setting and the <code>--push-relay</code> flag, alerts that choose their channels, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages</td>
 </tr>
 <tr>
 <td><a href="openai-api/">openai-api.md</a></td>
@@ -1095,7 +1107,7 @@ tray icon.</p>
 </tr>
 <tr>
 <td><a href="console/">console.md</a></td>
-<td>the web console at <code>/console</code> (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the <code>abstractgateway-console</code> terminal app (its screens and keys)</td>
+<td>the web console at <code>/console</code> (the grouped sidebar and every tab, including Accounts, My email (mailboxes, notifications, watch and iPhone devices, the push forwarder), Workflows and Triggers (well-known feeds, Handled by); responsive layout on phones and tablets) and the <code>abstractgateway-console</code> terminal app (its screens and keys)</td>
 </tr>
 <tr>
 <td><a href="apps/">apps.md</a></td>
@@ -1111,7 +1123,7 @@ tray icon.</p>
 </tr>
 <tr>
 <td><a href="tray/">tray.md</a></td>
-<td>the desktop tray icon: apps, models, pause, start at login, network, restart and update</td>
+<td>the desktop tray icon: sessions, automation and approval notifications, apps, models, pause, start at login, network, restart and update</td>
 </tr>
 <tr>
 <td><a href="security/">security.md</a></td>
@@ -1216,10 +1228,10 @@ tray icon.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

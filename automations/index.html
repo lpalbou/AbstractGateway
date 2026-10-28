@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -889,6 +889,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#wakes-work-a-run-schedules-for-later" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wakes: work a run schedules for later
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#automations-in-run-lists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1405,6 +1416,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#wakes-work-a-run-schedules-for-later" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wakes: work a run schedules for later
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#automations-in-run-lists" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1749,7 +1771,31 @@ they apply.</p>
   before the automation existed, or while it was paused, is not processed. The
   occurrence receives the messages under <code>trigger.emails</code>, marked
   <code>content_trust: "untrusted"</code>. The gateway's mail watcher reads the mailbox
-  only while such an automation is active.</p>
+  only while such an automation is active. With several mailboxes,
+  <code>"account": "&lt;mailbox_id&gt;"</code> chooses the one to watch (no value = your
+  primary mailbox; see <a href="../email/#several-mailboxes">email.md</a>).
+- <strong><code>feed.item@1</code></strong> runs when a feed you follow (RSS 2.0, RSS 1.0 (RDF) or Atom 1.0) has new
+  items. The automation names one of your <strong>trigger connections</strong>
+  (<code>connection_id</code>); the connection holds the feed URL and how often it is
+  read (<code>every</code>, default <code>15m</code>, at least <code>60s</code>). The items of one read become
+  one run, under <code>input_data.event.data.events</code>, marked untrusted. The console's
+  <strong>New connection</strong> proposes well-known public feeds (news, technology,
+  science, business, a subreddit, a YouTube channel, GitHub releases) and
+  accepts any other address (<a href="../console/#triggers">console.md</a>).
+  A pick also sets <strong>Check every</strong> to the feed's recommended interval (its
+  <code>check_every</code>: 10m for Hacker News, 15m for news and finance, 30m for
+  technology sites, 6h for science magazines and journals, 12h for arXiv),
+  still editable; a custom catalogue entry may omit it and keep the default.
+- <strong><code>webhook.received@1</code></strong> runs when an external system calls your signed
+  webhook address (<code>POST /api/gateway/triggers/webhooks/{connection_id}</code>,
+  <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> signature). The
+  automation names the webhook connection; each call becomes one event of the
+  run's <code>input_data.event</code> (<code>event.data.events[0].data.body</code>, the webhook id as
+  its <code>subject</code>), marked untrusted.</p>
+<p>Trigger connections are yours alone: create them with the
+<a href="../api/#trigger-connections">connections API</a> or the console's <strong>Triggers</strong>
+page, and see <a href="../events-examples/">events-examples.md</a> for a feed digest and
+a signed webhook call end to end.</p>
 <p>An automation with <code>"notify": {"channels": ["console", "email"]}</code> emails every
 completed run’s full result, even when the model does not request a notification.
 <code>notify.recipients</code> selects the destinations (default <code>["self"]</code>). Mailbox availability, recipient policy and send limits still apply. The separate
@@ -1898,6 +1944,11 @@ editor stores the suggestion in the VisualFlow document as
   120 characters, or a trigger config its source refuses answer 422 with
   <code>reason_code</code> and <code>field</code>. <code>context</code> defaults to <code>{"mode": "independent"}</code>
   and <code>input_data</code> to <code>{}</code>.</li>
+<li>A growing workflow can carry its history budget:
+  <code>"context": {"mode": "growing", "growing": {"max_tokens": 20000}}</code>
+  (a positive whole number; refused for the independent mode). It is stored,
+  published, and copied into every automation created from the defaults.
+  Without it, the gateway's default applies (below).</li>
 <li><code>PUT</code> with <code>"automation_defaults": null</code> removes it; leaving the field out
   keeps it. <code>PUT</code> and <code>GET</code> return the stored value.</li>
 <li>Publishing writes it into the bundle manifest as
@@ -1906,6 +1957,19 @@ editor stores the suggestion in the VisualFlow document as
   <code>automation_defaults</code> keyed by entrypoint flow id.</li>
 <li>At creation the defaults are checked again with the same rules; invalid
   published defaults answer 422 with the offending <code>field</code>.</li>
+<li>A trigger whose source listens to a <strong>connection</strong> (<code>needs_connection</code> with
+  the <code>trigger_connections</code> provider: <code>webhook.received@1</code>, <code>feed.item@1</code>)
+  carries <code>"connection_id": "&lt;id&gt;"</code> in <code>trigger</code> (or in <code>trigger.config</code>);
+  it is required for those sources (422 <code>connection_required</code>) and refused for
+  the others. A connection belongs to one person: an automation created from
+  defaults that name someone else's connection is refused with 422
+  <code>connection_not_yours</code> ("choose one of your own connections"), and a request
+  naming a connection that is not yours answers 404 <code>connection_not_found</code>.
+  The automation stores it as <code>trigger.config.connection_id</code>. Connections are
+  managed with the <a href="../api/#trigger-connections">connections API</a> and the
+  console's Triggers page, which also says which automations handle each
+  connection and mailbox (<strong>Handled by</strong>) and turns one of your triggered flows
+  on for it (<strong>Use in a flow</strong>, <a href="../console/#triggers">console.md</a>).</li>
 </ul>
 <h2 id="tool-approval-and-consent">Tool approval and consent<a class="headerlink" href="#tool-approval-and-consent" title="Permanent link">&para;</a></h2>
 <p>An automation runs unattended, so it cannot stop to ask before every tool call.
@@ -1987,12 +2051,15 @@ for a trigger with no clock time (manual, email).</p>
 <div class="highlight"><pre><span></span><code>{"automation_id": "…", "title": "…",
  "status": "active",                  // active | paused | completed | failed | archived
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
+ "target": {"workflow_id": "digest@1.2.0:digest", "bundle_ref": "digest@1.2.0", "flow_id": "digest"},
+ "flow_name": "Release digest",
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
  "next_run_at": "2026-10-09T06:00:00+00:00", "next_run_local": "2026-10-09T08:00:00+02:00",
  "time_zone": "Europe/Paris",
  "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
+ "trigger_text": "Every day at 08:00 (Europe/Paris)",
  "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
@@ -2014,6 +2081,17 @@ for a trigger with no clock time (manual, email).</p>
   absent when <code>next_fire_at</code> is.</li>
 <li><code>time_zone</code> is a <code>schedule@2</code> automation's zone; for any other trigger it is
   the owner's account time zone.</li>
+<li><code>target</code> is the workflow the automation runs (<code>{workflow_id, bundle_ref,
+  flow_id}</code>; its <code>input_data</code> stays in the definition, <code>GET
+  /automations/{id}</code>), and <code>flow_name</code> that entrypoint's name in the bundle
+  version it runs (null when this gateway does not have that version loaded).
+  The console's Triggers page lists <em><title> · <flow_name></em> under each trigger
+  (<strong>Handled by</strong>). A legacy row has neither.</li>
+<li><code>trigger_text</code> is the trigger of ANY automation in words, the line a client
+  shows next to the title: the schedule sentence (<code>schedule_rule_text</code>) for a
+  schedule, "By hand", "When mail arrives in <address>" (the watched mailbox),
+  "When <connection name> has a new item" (a feed), "When <connection name> is
+  called" (a webhook), else "When &lt;the source's label&gt;".</li>
 <li><code>schedule_text</code> is the one sentence every client shows for the schedule,
   verbatim: the rule (<code>schedule_rule_text</code>) and, when a next run exists,
   " · next <day> <date> <time>" in <code>time_zone</code> (the year is added when it is
@@ -2276,6 +2354,24 @@ provided by the gateway, so a request that sends <code>context.messages</code> i
 discussion session is refused (400); a session whose discussion cannot be
 resolved answers 409 <code>session_attribution_failed</code>. These answers come from
 <code>/runs/start</code> and use its ordinary error shape.</p>
+<h2 id="wakes-work-a-run-schedules-for-later">Wakes: work a run schedules for later<a class="headerlink" href="#wakes-work-a-run-schedules-for-later" title="Permanent link">&para;</a></h2>
+<p>A run can ask for work later: an agent's <code>schedule_run</code> tool (or the <code>SCHEDULE_RUN</code> effect of a
+flow) with <code>after_s</code>, <code>at</code> or <code>on</code> (a trigger), and a <code>task</code> or a <code>note</code> ("ping me in 5 minutes
+about X"). AbstractRuntime plans it (at most the caller's tools, never <code>schedule_run</code> itself, a
+note gets none); the gateway creates it as a <strong>one-shot automation</strong> owned by the run's account:</p>
+<ul>
+<li>it runs the session's own workflow (its turn root's bundle and flow, same provider and model),
+  under the gateway's workspace guard and built-in tool deny for the session it will run in;</li>
+<li>by default the new run is a turn of the <strong>caller's session</strong> (<code>mode: same_session</code>), with the
+  <code>[Trigger schedule@2 · occurrence 1 · …]</code> header, so the conversation shows it and the model's
+  replay sees it; <code>mode: independent</code> runs it in the automation's own session;</li>
+<li>your event stream records <code>wake.scheduled {automation_id, session_id, origin_run_id, at | on}</code>,
+  then, when it fires, <code>trigger.event</code> and the new run's <code>run.started</code> (origin <code>kind: "agent"</code>);</li>
+<li>cancel = archive the automation (<code>automation.archive</code>) before it fires: <code>wake.cancelled</code> is
+  recorded and nothing runs. It is listed with your other automations meanwhile.</li>
+</ul>
+<p>Evidence: <code>src/abstractgateway/wakes_host.py</code> (<code>GatewayScheduleRun</code>, wired on every runtime the
+host builds), <code>src/abstractgateway/runner.py</code> (<code>_stream_wake_cancelled</code>).</p>
 <h2 id="automations-in-run-lists">Automations in run lists<a class="headerlink" href="#automations-in-run-lists" title="Permanent link">&para;</a></h2>
 <p><code>GET /api/gateway/runs</code> rows carry the fields that say how a run belongs to an
 automation:</p>
@@ -2346,7 +2442,7 @@ appear on the last page of <code>GET /api/gateway/automations</code> with <code>
 runs, resumes them and applies commands on a data folder: the runner. Run
 either <code>abstractgateway serve</code> (API and runner in one process) or the split
 shape, <code>abstractgateway runner</code> plus <code>abstractgateway serve --no-runner</code>, on
-one data folder (<a href="../getting-started/#3-split-api-vs-runner-recommended-for-upgrades">getting-started.md</a>).
+one data folder (<a href="../getting-started/#3-split-api-and-runner-opt-in">getting-started.md</a>).
 In the split shape the API process only creates automations and discussions
 and queues commands; the runner does the rest. The lock that serializes an
 automation's steps and commands works inside one process, so do not point a
@@ -2401,8 +2497,9 @@ against a gateway it starts and stops itself:</p>
 <li>Schedules are fixed UTC intervals (<code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, at most <code>366d</code>) or
   daily, weekly and monthly rules at a wall time in an IANA time zone
   (<code>schedule@2</code>); there are no cron expressions.</li>
-<li>The trigger sources are <code>schedule@1</code>, <code>schedule@2</code>, <code>manual@1</code> and
-  <code>email.received@1</code>; there are no other external triggers.</li>
+<li>The trigger sources are <code>schedule@1</code>, <code>schedule@2</code>, <code>manual@1</code>,
+  <code>email.received@1</code>, <code>feed.item@1</code> and <code>webhook.received@1</code>, plus sources
+  installed by other packages.</li>
 <li>Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.</li>
 <li>Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
@@ -2434,7 +2531,9 @@ The limit is hidden for <strong>Independent</strong> runs. Changing it affects s
 already admitted occurrences retain their history for retries. History retains whole turns,
 including the newest turn even when that turn alone exceeds the budget.</p>
 <p>The API field is <code>context.growing.max_tokens</code>, a positive integer. Existing definitions
-that omit it retain the 50,000-token default.</p>
+that omit it retain the gateway's default, which <code>GET /api/gateway/automations/defaults</code>
+serves as <code>{"growing_max_tokens": 50000}</code>: clients show and pre-fill that value rather than a
+number of their own.</p>
 
 
 
@@ -2490,10 +2589,10 @@ that omit it retain the 50,000-token default.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

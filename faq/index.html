@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -1102,6 +1102,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#can-something-other-than-a-schedule-start-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can something other than a schedule start an automation?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-do-my-apps-learn-that-something-needs-me" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do my apps learn that something needs me?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-an-agent-remind-me-later" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can an agent remind me later?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-does-growing-context-do" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1211,6 +1244,17 @@
     <span class="md-ellipsis">
       
         What is voice.listen in the capabilities contract?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-each-account-have-its-own-voices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can each account have its own voices?
       
     </span>
   </a>
@@ -1762,6 +1806,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#can-something-other-than-a-schedule-start-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can something other than a schedule start an automation?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-do-my-apps-learn-that-something-needs-me" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do my apps learn that something needs me?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-an-agent-remind-me-later" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can an agent remind me later?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-does-growing-context-do" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1871,6 +1948,17 @@
     <span class="md-ellipsis">
       
         What is voice.listen in the capabilities contract?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-each-account-have-its-own-voices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can each account have its own voices?
       
     </span>
   </a>
@@ -2247,9 +2335,29 @@ wait in both modes. See <a href="../automations/#tool-approval-and-consent">auto
 <code>notify: true</code> or <code>notify: {title, body}</code>, when it fails after its last retry,
 or while it waits for a person. See <a href="../automations/#attention-and-seen">automations.md</a>.</p>
 <h3 id="can-an-automation-run-daily-at-0800">Can an automation run daily at 08:00?<a class="headerlink" href="#can-an-automation-run-daily-at-0800" title="Permanent link">&para;</a></h3>
-<p>Not in v1. Schedules are fixed UTC intervals ("every 24 hours" from a start
-time), with no cron expressions, time zones or daylight-saving rules. See
-<a href="../automations/#limits-in-v1">automations.md</a>.</p>
+<p>Yes. The <code>schedule@2</code> trigger runs daily, weekly or monthly rules at a wall
+time in an IANA time zone (<code>{"kind": "daily", "at": "08:00", "time_zone":
+"Europe/Paris"}</code>), daylight saving included; there are no cron expressions.
+See <a href="../automations/#trigger-sources">automations.md</a>.</p>
+<h3 id="can-something-other-than-a-schedule-start-an-automation">Can something other than a schedule start an automation?<a class="headerlink" href="#can-something-other-than-a-schedule-start-an-automation" title="Permanent link">&para;</a></h3>
+<p>Yes: new mail in one of your mailboxes (<code>email.received@1</code>), new items in a
+feed (<code>feed.item@1</code>) and a signed call to your webhook address
+(<code>webhook.received@1</code>). The feed and the webhook are trigger connections you
+create on the console's <strong>Triggers</strong> page. See
+<a href="../events-examples/">events-examples.md</a>.</p>
+<h3 id="how-do-my-apps-learn-that-something-needs-me">How do my apps learn that something needs me?<a class="headerlink" href="#how-do-my-apps-learn-that-something-needs-me" title="Permanent link">&para;</a></h3>
+<p>Every account has one event stream: <code>GET /api/gateway/me/events</code> to catch up
+and <code>GET /api/gateway/me/events/stream</code> (server-sent events) to stay live. It
+announces runs starting and finishing, automation results, failures, a session
+waiting for your approval or your answer, scheduled wakes, and which
+notifications were shown where. What needs you is each <code>attention.raised</code> without
+its <code>attention.seen</code>. The desktop tray follows it and shows one notification per
+item. See <a href="../api/#your-event-stream-apigatewaymeevents">api.md</a>.</p>
+<h3 id="can-an-agent-remind-me-later">Can an agent remind me later?<a class="headerlink" href="#can-an-agent-remind-me-later" title="Permanent link">&para;</a></h3>
+<p>Yes, when its workflow offers the <code>schedule_run</code> tool: "remind me in 5
+minutes about X" becomes a one-time automation that runs later as a new turn
+of the same conversation, with at most the agent's own tools. Archive the
+automation to cancel it. See <a href="../automations/#wakes-work-a-run-schedules-for-later">automations.md</a>.</p>
 <h3 id="what-does-growing-context-do">What does growing context do?<a class="headerlink" href="#what-does-growing-context-do" title="Permanent link">&para;</a></h3>
 <p>In <code>growing</code> mode each run receives the previous runs as conversation
 history (the most recent 50,000 tokens of whole turns; no message is cut), and the
@@ -2359,6 +2467,14 @@ higher-app contract that tells clients how to handle local capture:</p>
 </ul>
 <p>This keeps live capture UX owned by higher apps such as Assistant or Observer
 while Gateway stays responsible for durable runs, artifacts, and transcription.</p>
+<h3 id="can-each-account-have-its-own-voices">Can each account have its own voices?<a class="headerlink" href="#can-each-account-have-its-own-voices" title="Permanent link">&para;</a></h3>
+<p>Yes, with user accounts on and the voice engines running in the gateway. Each account keeps
+the voices it clones or designs in its own store and nobody else sees them; it also lists and
+speaks with the library: the built-in voices and every voice the administrator creates (the
+administrator's account works on the library itself, so creating a voice there deploys it to
+everyone). Library voices are read-only to accounts. In single-user mode, or when an AbstractCore
+server does the voice work, there is one shared store and voice changes are an administrator's
+act. See <a href="../api/#voice-library">api.md</a>.</p>
 <h3 id="are-catalog-responses-normalized-by-gateway">Are catalog responses normalized by Gateway?<a class="headerlink" href="#are-catalog-responses-normalized-by-gateway" title="Permanent link">&para;</a></h3>
 <p>Catalog routes carry a Gateway-owned envelope: <code>catalog</code> (contract
 <code>gateway_catalog_v1</code>, version, kind, scope and source) plus a canonical
@@ -2392,7 +2508,8 @@ gateway with <code>abstractgateway serve</code> on a desktop session. The icon h
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says <code>Desktop tray: started (pid …)</code> or names the reason
 it is absent (<code>missing_dependency</code>, <code>headless</code>, <code>dev_reload</code>, <code>runner_only</code>,
-<code>no_tray_flag</code> for <code>serve --no-tray</code>);
+<code>no_tray_flag</code> for <code>serve --no-tray</code>, <code>test_gateway</code> for a test start on
+another loopback port with <code>--print-token</code>);
 the console's <strong>Resources</strong> tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 <a href="../tray/">tray.md</a> and
@@ -2406,10 +2523,14 @@ restarts until you resume (tray, console banner, or
 <code>POST /api/gateway/host/resume</code>).</p>
 <h2 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h2>
 <h3 id="how-do-i-run-api-and-runner-as-separate-processes">How do I run API and runner as separate processes?<a class="headerlink" href="#how-do-i-run-api-and-runner-as-separate-processes" title="Permanent link">&para;</a></h3>
-<p>Run:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>runner
-abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+<p>Split mode is opt-in. Run both with the same data dir:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>runner<span class="w"> </span>--data-dir<span class="w"> </span>/path/to/data
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--data-dir<span class="w"> </span>/path/to/data<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
+<p>The runner process ticks the runs, holds the one text model (the API process forwards <code>/v1</code> to
+it), and runs the mail watchers, feed polling, push and bridges; the API process serves HTTP,
+creates runs and queues commands. The full table is in
+<a href="../configuration/#split-mode-api-and-runner-in-two-processes-opt-in">configuration.md</a>.</p>
 <p>The runner uses a lock file (<code>gateway_runner.lock</code>) to prevent double-ticking on the same data dir. A locked-out runner keeps retrying acquisition in the background; a newly started process asks a live holder to yield (newest process wins), and the holder heartbeats the lock file so <code>GET /api/health</code> can report whether anyone is actually ticking the data dir (<code>runner.runners[].status</code>).</p>
 <p>Evidence: CLI flag <code>--no-runner</code> in <code>src/abstractgateway/cli.py</code>, lock lifecycle (<code>_run</code>/<code>_acquire_singleton_lock</code>/<code>runner_status</code>) in <code>src/abstractgateway/runner.py</code>.</p>
 <h3 id="what-happens-when-the-gateway-hangs">What happens when the gateway hangs?<a class="headerlink" href="#what-happens-when-the-gateway-hangs" title="Permanent link">&para;</a></h3>
@@ -2513,10 +2634,10 @@ back inactive. See <a href="../console/#accounts">console.md</a>.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

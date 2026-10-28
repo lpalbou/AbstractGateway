@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -804,6 +804,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#split-mode-api-and-runner-in-two-processes-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Split mode: API and runner in two processes (opt-in)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1793,6 +1804,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#split-mode-api-and-runner-in-two-processes-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Split mode: API and runner in two processes (opt-in)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cli-flags" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1869,11 +1891,11 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.8.5</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
-- <code>abstractcore&gt;=2.24.0</code> (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
-- <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
-- <code>abstractagent&gt;=0.3.18</code> (Python execution inside the run's command sandbox, round 12)
-- <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
+- <code>AbstractRuntime&gt;=0.14.0</code> (the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- <code>abstractcore&gt;=2.30.0</code> (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- <code>abstractvoice&gt;=0.18.2</code> (the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
+- <code>abstractagent&gt;=0.4.0</code> (the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
+- <code>AbstractMemory[lancedb]&gt;=0.3.0,&lt;0.4</code> (AbstractMemory 0.4.0 migrates its vector store one way; a later gateway release raises the cap)</p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -3663,24 +3685,143 @@ then the final artifact.</p>
   This is separate from Gateway auth.</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: catalog proxy timeout (default <code>3.0</code> seconds).</li>
 </ul>
+<h2 id="split-mode-api-and-runner-in-two-processes-opt-in">Split mode: API and runner in two processes (opt-in)<a class="headerlink" href="#split-mode-api-and-runner-in-two-processes-opt-in" title="Permanent link">&para;</a></h2>
+<p>By default one <code>abstractgateway serve</code> process does everything. Split mode puts the runs and the
+model in their own process, so a long generation never shares a Python interpreter with the API
+(<code>/me</code>, the console, live streams). It is opt-in and not the default yet. Run these two commands
+with the same data dir (the runner first, or in either order):</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>runner<span class="w"> </span>--data-dir<span class="w"> </span>/path/to/data
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--data-dir<span class="w"> </span>/path/to/data
+</code></pre></div>
+<p>Both take their usual flags (<code>runner</code> takes <code>--data-dir</code>, <code>--unsandboxed-commands</code> and
+<code>--push-relay</code>; <code>serve --no-runner</code> takes every <code>serve</code> flag). Who does what:</p>
+<table>
+<thead>
+<tr>
+<th>Work</th>
+<th><code>serve</code> alone</th>
+<th><code>serve --no-runner</code> (API process)</th>
+<th><code>runner</code> (runner process)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HTTP API, console, apps, live streams, <code>/api/health</code></td>
+<td>yes</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Run ticking: starts, waits, commands, schedules (every account's plane)</td>
+<td>yes</td>
+<td>no: it creates runs and queues commands</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Text model: runs and the OpenAI-compatible <code>/v1</code></td>
+<td>yes</td>
+<td>no model loaded: <code>/v1</code> is forwarded to the runner</td>
+<td>yes, one copy</td>
+</tr>
+<tr>
+<td>Mail watchers, feed polling, notification outbox</td>
+<td>yes</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Push dispatcher (watch and iPhone alerts)</td>
+<td>yes</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Telegram and agora bridges</td>
+<td>yes</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong><code>/v1</code> in split mode.</strong> The API process checks the caller (key, Who can connect, Guest) as
+  usual, then forwards the request, streaming both ways, to a model host the runner process
+  serves on <code>127.0.0.1</code> (a port the system picks). The runner records its address in
+  <code>&lt;data dir&gt;/split/model_host.json</code> (mode 0600) with a secret made at each start; the model host
+  refuses any request without it, so another program on the machine cannot use the port to skip
+  the API's checks. No runner answering: <code>/v1</code> answers <code>503</code> with code <code>runner_unavailable</code>. The
+  API process never loads the default text model (its runtime builds the model client at the
+  first call instead of at boot).</li>
+<li><strong>Events.</strong> An event delivered by the API process reaches runs the runner process parked: the
+  run store's event-wait and mailbox indexes re-read what another process changed before every
+  lookup (at the latest 2 s after the change).</li>
+<li><strong>Health.</strong> In <code>GET /api/health</code>, each row of <code>runner.runners</code> carries <code>mode</code> (<code>split</code> or
+  <code>combined</code>) and <code>process</code> (<code>api</code>, <code>runner</code> or <code>combined</code>); in the API process, <code>status</code> is
+  <code>disabled</code> and <code>runner_process</code> says <code>{pid, alive, heartbeat_fresh, model_host: up|down}</code>.</li>
+<li><strong>Not yet in split mode:</strong> the API process's own model calls (Ask on a run, run summaries, the
+  console sandbox, entity chat) still build a model client in the API process when used; the
+  backlog exec runner (opt-in) follows its own setting in both processes.</li>
+</ul>
+<p>Evidence: <code>src/abstractgateway/split_mode.py</code>, <code>src/abstractgateway/cli.py</code> (<code>runner</code>,
+<code>serve --no-runner</code>), <code>src/abstractgateway/core_endpoint.py</code> (<code>serve_core</code>),
+<code>tests/test_split_mode_two_process_smoke.py</code>.</p>
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]</code>
-  (<code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch
-  gateway next to your usual one; <code>--watchdog-seconds N</code>, default 30, <code>0</code> = off:
-  a gateway whose event loop stays blocked for N seconds writes the blocked
-  stacks to its log and exits with code 75 so its service manager restarts it,
-  see <a href="../deployment/">deployment.md</a>; <code>--unsandboxed-commands</code>, off by
-  default and with no environment variable: on a host with no command sandbox
-  (no macOS <code>sandbox-exec</code>, no Linux bubblewrap/Landlock), let commands run
-  unsandboxed instead of refusing them. It is audited at boot and shown on the
-  console. The split <code>abstractgateway runner</code> takes the same flag. See
-  <a href="../security/#command-sandbox">security.md</a>)
-  (host/port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
-  setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is
-  configured, else <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.)
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
+  Host and port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
+  setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is configured, else
+  <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.
+  <code>--unsandboxed-commands</code>, <code>--push-relay</code>, <code>--pool-*</code>, <code>--run-index</code> and <code>--gc-tuning</code> have no
+  environment variable.
+  - <code>--no-runner</code>: serve the HTTP API only, next to <code>abstractgateway runner</code>
+    (<a href="#split-mode-api-and-runner-in-two-processes-opt-in">split mode</a>).
+  - <code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch gateway next to your
+    usual one. A start with <code>--host 127.0.0.1</code>, a <code>--port</code> other than the configured one and
+    <code>--print-token</code> is treated as a test gateway and shows no icon either.
+  - <code>--watchdog-seconds N</code> (default 30, <code>0</code> = off): a gateway whose event loop stays blocked for N
+    seconds writes the blocked stacks to its log and exits with code 75 so its service manager
+    restarts it; see <a href="../deployment/">deployment.md</a>.
+  - <code>--unsandboxed-commands</code> (off by default): on a host with no command sandbox (no macOS
+    <code>sandbox-exec</code>, no Linux bubblewrap/Landlock), let commands run unsandboxed instead of refusing
+    them. It is audited at boot and shown on the console. The split <code>abstractgateway runner</code> takes
+    the same flag. See <a href="../security/#command-sandbox">security.md</a>.
+  - <code>--push-relay &lt;URL|off&gt;</code>: the push forwarder this gateway sends Apple push requests to for the
+    watch and iPhone apps, for this run; it wins over the saved Push forwarder setting. The split
+    <code>abstractgateway runner</code> takes it too. See <a href="../push/">push.md</a>.
+  - <code>--pool-light N</code>, <code>--pool-heavy N</code>, <code>--pool-watchers N</code> (defaults 8, 4 and 16, from 1 to 256):
+    the threads for quick work (sign-in, <code>/me</code>, live-update streams, one-record reads), for scans
+    and listings of runs and artifacts and workflow reloads, and for long waits outside the gateway
+    (mail, feeds, provider endpoints, model generation). Quick work never waits behind a scan; more
+    scans than <code>--pool-heavy</code> wait their turn. <code>GET /api/health</code> reports each pool's <code>size</code>,
+    <code>threads</code> and <code>queued</code> under <code>pools</code>. Evidence: <code>src/abstractgateway/work_pools.py</code>.
+  - <code>--run-index trusted|verify</code> (default <code>verify</code>): how run listings are answered. <code>verify</code> lets
+    the folder scan answer and compares AbstractRuntime's in-memory run index with it; <code>trusted</code>
+    answers from the index with no scan. <code>GET /api/health</code> reports <code>run_index</code>: the mode, the planes
+    counted and the summed counters of every plane's run store (<code>shadow_mismatches</code> counts the
+    listings where the index and the scan differed; 0 means the index would have answered every
+    listing the same). Evidence: <code>src/abstractgateway/stores.py</code>.
+  - <code>--gc-tuning on|off</code> (default <code>on</code>): once the boot is done, freeze the objects it built and
+    raise the garbage collector's thresholds, so a full collection no longer pauses the gateway for
+    seconds; <code>off</code> keeps Python's defaults. <code>GET /api/health</code> reports what was applied under
+    <code>gc_tuning</code>. Evidence: <code>src/abstractgateway/service.py</code>.</p>
+<p>An account's service (built at the first request of that account, and again when its runner
+  restarts) is built in its own thread: requests wait for it without holding the event loop,
+  <code>GET /api/health</code> keeps answering, and a route that reaches it any other way answers <code>503</code>
+  <code>service_starting</code> with <code>Retry-After: 1</code>.
   Evidence: <code>src/abstractgateway/cli.py</code>
+- <code>abstractgateway runner [--data-dir DIR] [--unsandboxed-commands] [--push-relay URL|off]</code>: the
+  runner process of <a href="#split-mode-api-and-runner-in-two-processes-opt-in">split mode</a> (runs, the
+  model and the <code>/v1</code> model host, mail, feeds, push, bridges)
+- <code>abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]</code>:
+  run the stateless Apple push relay with your own key (extra <code>push-relay</code>; <a href="../push/#run-your-own-relay">push.md</a>)
+- <code>scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]</code> (from a checkout): the
+  load test CI runs on pull requests and every night (<code>.github/workflows/perf.yml</code>). It builds a synthetic
+  data folder (<code>scripts/perf/make_fixture.py</code>: 10k runs, 100k artifacts, 50 automations, no real data),
+  starts a hermetic gateway on it (<code>--no-tray</code>, scratch home, empty environment, outbound network refused,
+  paused) and fails when a p99 goes over its bound (<code>/me</code> 50 ms, <code>/triggers/connections</code> 100 ms, session
+  artifacts 100 ms, <code>/runs?limit=20</code> 200 ms, <code>/automations</code> 500 ms), a probe answers anything but 200, or
+  CPU at rest over 2 minutes goes over <code>--cpu-max</code> (default 5% of a core, 10% on CI runners)
 - <code>abstractgateway network status|set|addresses|restart</code>: who can reach the
   gateway and the URLs to copy (<a href="#network-exposure-localhost--local-network--internet">network exposure</a>)
 - <code>abstractgateway claim [--open] [--port P | --url URL] [--json]</code>: one-time
@@ -3692,7 +3833,6 @@ then the final artifact.</p>
   registration runs plain <code>serve</code>; <code>--host/--port</code> are written into the
   <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting, or onto the command line with <code>--pin-command-line</code>
-- <code>abstractgateway runner</code> (worker only)
 - <code>abstractgateway config status --json</code>
 - <code>abstractgateway config get [KEY] [--json]</code>, <code>config set KEY VALUE</code>, <code>config unset KEY</code>:
   runtime settings from a terminal (<a href="#backlog-folder-exec-runner-and-process-manager-continuum">backlog folder, exec runner, process
@@ -3767,10 +3907,10 @@ then the final artifact.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

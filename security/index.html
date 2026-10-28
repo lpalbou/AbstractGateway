@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -930,6 +930,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#trigger-webhooks-signed-not-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger webhooks: signed, not signed in
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1388,6 +1399,17 @@
     <span class="md-ellipsis">
       
         Desktop Assistant sign-in
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trigger-webhooks-signed-not-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger webhooks: signed, not signed in
       
     </span>
   </a>
@@ -2182,6 +2204,17 @@ otherwise), once, within two minutes (410 after). The resulting session is a
 remembered session (30 days) of the user who clicked Open. See
 <a href="../apps/">apps.md</a> and
 <a href="../architecture/#desktop-assistant-hand-over">architecture.md</a>.</p>
+<h3 id="trigger-webhooks-signed-not-signed-in">Trigger webhooks: signed, not signed in<a class="headerlink" href="#trigger-webhooks-signed-not-signed-in" title="Permanent link">&para;</a></h3>
+<p><code>POST /api/gateway/triggers/webhooks/{connection_id}</code> is the one public write
+that is not a sign-in step: an external system delivers an event to a trigger
+connection without a gateway token. The Standard Webhooks signature with the
+connection's secret (sealed with the data folder's key, shown to its owner once)
+is the auth: an unsigned or tampered call is 401, a timestamp more than five
+minutes off (the connection's window) or a webhook id already accepted is 409 (a
+sender treats a replayed id as delivered), a body over 512 KiB is 413,
+and calls are limited per connection and per client address (429). It can only
+append to that connection's inbox stream and wake the automations bound to it;
+the event body reaches them as untrusted data. See <a href="../api/#triggers">api.md</a>.</p>
 <h2 id="workspaces-three-levels">Workspaces: three levels<a class="headerlink" href="#workspaces-three-levels" title="Permanent link">&para;</a></h2>
 <p>Thin clients (browser apps, bridges, the Assistant) start runs whose file tools
 (<code>list_files</code>, <code>read_file</code>, <code>write_file</code>, …) touch the gateway's computer. A
@@ -2606,10 +2639,10 @@ AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</cod
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

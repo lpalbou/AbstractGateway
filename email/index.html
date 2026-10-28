@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -68,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#email-one-user-one-runtime-one-mailbox" class="md-skip">
+        <a href="#email-your-address-and-your-mailboxes" class="md-skip">
           Skip to content
         </a>
       
@@ -750,6 +750,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#several-mailboxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several mailboxes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#automations-on-new-mail" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1101,6 +1112,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#several-mailboxes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several mailboxes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#automations-on-new-mail" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1214,7 +1236,7 @@
   
 
 
-<h1 id="email-one-user-one-runtime-one-mailbox">Email: one user, one runtime, one mailbox<a class="headerlink" href="#email-one-user-one-runtime-one-mailbox" title="Permanent link">&para;</a></h1>
+<h1 id="email-your-address-and-your-mailboxes">Email: your address and your mailboxes<a class="headerlink" href="#email-your-address-and-your-mailboxes" title="Permanent link">&para;</a></h1>
 <p>Two things carry the word "email", and the gateway names them differently everywhere:</p>
 <ul>
 <li>your <strong>email address</strong> — where sign-in codes, "Forgot your token?" and notifications go, and the
@@ -1235,8 +1257,9 @@ encrypted in that user's data home and is used for:</p>
 </ul>
 <p>Nothing reads your mail by default: no watcher runs until you create an email-triggered
 automation, and your agents get no email tools until you switch <strong>Agent email tools</strong> on. Without an account there is no sending and no
-email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
-deletes them.</p>
+email notification; the gateway has no shared "system" sender. The mail watcher only reads: it never marks messages read,
+moves or deletes them. Only a flow's own mail steps (mark, label, move, delete, send, reply, forward) change a mailbox or send
+from it, and only a mailbox you keep <strong>Read and write</strong> (<a href="#several-mailboxes">Several mailboxes</a>).</p>
 <p>This page is the user and operator guide. The HTTP surface is listed in <a href="../api/#email">api.md</a>,
 the security model in <a href="../security/#per-user-email">security.md</a>, and the consoles in
 <a href="../console/">console.md</a>.</p>
@@ -1427,9 +1450,54 @@ address for the operator), else the connected mailbox's own address.</p>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "always_allow": ["mycompany.com"], "always_deny": ["xxx.gov"]}'</span>
 curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 100, "per_day": 1000}'</span>
 </code></pre></div>
+<h2 id="several-mailboxes">Several mailboxes<a class="headerlink" href="#several-mailboxes" title="Permanent link">&para;</a></h2>
+<p>Besides your primary mailbox you can connect further ones, each with an
+id of your choice (<code>work</code>, <code>support</code>: 1 to 32 lowercase letters, digits, <code>_</code> or <code>-</code>):</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"address":"me@work.example","password":"app-password"}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/accounts/work"</span>
+</code></pre></div>
+<ul>
+<li>Gmail (and other providers that refuse account passwords) signs in with OAuth2 instead:
+  <code>POST /me/email/accounts/&lt;id&gt;/oauth/start</code> with the same body as the primary's sign-in
+  (<code>{"address": "me@gmail.com", "provider": "google"}</code>), then <code>…/oauth/finish</code> with the <code>flow_id</code>.
+  A password refused by Gmail's servers answers "Gmail refuses account passwords: use an app
+  password or Sign in with Google."</li>
+<li>Each further mailbox has an <strong>access</strong> you choose: <strong>Read only</strong> (the default, <code>"write": false</code>)
+  or <strong>Read and write</strong> (<code>"write": true</code>). Read only stores and tests only its incoming server
+  (IMAP): automations watch and read it, and a flow's mark, label, move, delete, send, reply or
+  forward on it is refused ("This mailbox is read-only: automations only read it.", with the fix
+  "In My email, turn on Read and write for <address> to change it or send from it."). Read and
+  write also stores and tests its outgoing server (SMTP: the one you give, else the provider's or
+  the domain's standard one), so automations can change it and send as it. Your primary mailbox is
+  always read and write. (<code>"send": true</code> is accepted as the older name of <code>"write": true</code>.) A
+  Read and write mailbox whose outgoing server is missing reads <em>Can't send</em> (<code>mailbox.state:
+  receive_only</code>): a flow's send, reply or forward on it is refused with <code>email_mailbox_cannot_send</code>
+  ("This mailbox can't send: it has no outgoing server."), while mark, label, move and delete work.</li>
+<li>Change the access of a connected mailbox without adding it again: <code>PUT
+  /me/email/accounts/&lt;id&gt;/access</code> with <code>{"write": true}</code> or <code>{"write": false}</code> (in the console: the
+  row's <strong>Read and write</strong> switch). Turning it on adds and signs in to its outgoing server with the
+  stored password or Google/Microsoft sign-in; a refusal names its step and changes nothing.
+  Turning it off keeps that server, unused.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"write": true}'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/accounts/work/access"</span>
+</code></pre></div>
+<ul>
+<li><code>GET /me/email/accounts</code> lists them all with <code>can_read</code> / <code>can_send</code> / <code>can_write</code> and <code>access</code>
+  (<code>read</code> | <code>write</code>), the primary (id <code>default</code>) first. Your email address, notifications and Agent email tools switch stay yours, not per mailbox;
+  runs and notifications keep using the primary mailbox.</li>
+<li>An automation watches one mailbox: <code>email.received@1</code> with <code>"account": "&lt;mailbox_id&gt;"</code> (<code>self</code>,
+  <code>default</code> or no value = the primary). The gateway refuses, when the automation is saved, a
+  mailbox you have not connected (<code>email_account_not_found</code>) or one without IMAP
+  (<code>email_account_cannot_read</code>). Each mailbox has its own watcher, cursor and status, and is read
+  only while an automation watches it.</li>
+<li>A single-mailbox install needs no migration: the existing mailbox is the primary, id <code>default</code>,
+  its files where they were.</li>
+</ul>
 <h2 id="automations-on-new-mail">Automations on new mail<a class="headerlink" href="#automations-on-new-mail" title="Permanent link">&para;</a></h2>
-<p>The mail watcher reads your mailbox only while at least one of your automations is active on the
-<code>email.received@1</code> trigger, checking every 60 seconds. It is read-only (IMAP <code>EXAMINE</code> and
+<p>The mail watcher reads a mailbox only while at least one of your automations is active on the
+<code>email.received@1</code> trigger for that mailbox, checking every 60 seconds. It is read-only (IMAP <code>EXAMINE</code> and
 <code>BODY.PEEK</code>), keeps a durable cursor, survives a server rebuilding the folder (UIDVALIDITY change:
 it re-reads by date and passes messages it already has), and moves the cursor past a message only
 after that message is durably stored in your runtime's event inbox. A message that cannot be read
@@ -1497,6 +1565,10 @@ Set them on your account page or with <code>PUT /api/gateway/me/email/notificati
 <td>a run's <strong>email me when done</strong> (<code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code>)</td>
 <td>that run finished or failed, as asked</td>
 </tr>
+<tr>
+<td>a flow's <strong>Notify me</strong> alert (a <em>Publish to channel</em> with an alert) whose <code>channels</code> list <code>email</code>, or that lists no channels</td>
+<td>the flow raised that alert: "“<flow>” notified you." with the flow's own title and text below it, labelled as written by the flow</td>
+</tr>
 </tbody>
 </table>
 <p><code>GET/PUT /api/gateway/me/notifications</code> keep working: the earlier five-event body is accepted,
@@ -1504,6 +1576,10 @@ Set them on your account page or with <code>PUT /api/gateway/me/email/notificati
 as preferences (the per-automation and per-run options above decide). Saved preferences carry
 over the same way: <code>job_failed</code> is on when <code>job_failed</code> or <code>automation_failed</code> was on,
 <code>approval_needed</code> keeps its value, and preferences never saved take the new defaults.</p>
+<p>The check runs with the mail worker (every 15 s). It reads nothing while no run and no ledger
+changed (the run store's and ledger's change tokens), and after a change it reads only the runs
+and ledgers that changed. A first pass, a changed switch, a change it cannot name (another
+process wrote the run folder) and at least every 5 minutes, it reads everything again.</p>
 <p>Notices go to your registered address (else your mailbox address), except automation results
 with explicit <code>notify.recipients</code>. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked <code>unknown</code> and never resent automatically. Temporary SMTP refusals are
@@ -1534,7 +1610,8 @@ Send an email</code>, <code>… asked you a question</code>, <code>… finished<
   a readable summary of its arguments (the URL of <code>fetch_url</code>, the recipient and subject of
   <code>send_email</code>, each value shown whole); for a question, the
   question and its choices as a numbered list; for a finished or failed run or automation, the
-  cause and the fix, and an automation's own <code>notify</code> title and body, labelled as model-written.</li>
+  cause and the fix, and an automation's own <code>notify</code> title and body, labelled as model-written; for a
+  flow's <strong>Notify me</strong> step, its title and body, labelled as written by the flow.</li>
 <li><strong>Buttons</strong>: <strong>Open in the console</strong> opens that exact run in the console (<code>/apps/observer/#run/&lt;run id&gt;</code>,
   signed in through the console when needed); when the run belongs to a session and the
   AbstractCode app is installed, <strong>Open in AbstractCode</strong> opens that session (<code>/apps/code/#session=&lt;id&gt;</code>).
@@ -1688,6 +1765,10 @@ account is copied once into the gateway settings (the consoles say which account
 <td><code>&lt;plane&gt;/email/watcher.json</code>; the cursor and received mail in <code>&lt;runtime data dir&gt;/event_inbox/</code></td>
 </tr>
 <tr>
+<td>A further mailbox <code>&lt;id&gt;</code></td>
+<td><code>&lt;plane&gt;/email/accounts/&lt;id&gt;/abstractcore.json</code>, its credentials in <code>…/accounts/&lt;id&gt;/email/secret.enc</code>, its watcher state in <code>…/accounts/&lt;id&gt;/watcher.json</code>; its mail in the same event inbox, stream <code>email:&lt;tenant&gt;:&lt;user&gt;:&lt;id&gt;:&lt;folder&gt;</code></td>
+</tr>
+<tr>
 <td>Notification preferences and outbox</td>
 <td><code>&lt;plane&gt;/email/notifications.json</code>, <code>&lt;plane&gt;/email/outbox.sqlite3</code> (created with the first notice)</td>
 </tr>
@@ -1807,10 +1888,10 @@ administrator's own account, and will be removed in a later minor release; use <
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

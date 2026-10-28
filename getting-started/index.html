@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -415,10 +415,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-split-api-vs-runner-recommended-for-upgrades" class="md-nav__link">
+  <a href="#3-split-api-and-runner-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3) Split API vs runner (recommended for upgrades)
+        3) Split API and runner (opt-in)
       
     </span>
   </a>
@@ -1116,10 +1116,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-split-api-vs-runner-recommended-for-upgrades" class="md-nav__link">
+  <a href="#3-split-api-and-runner-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3) Split API vs runner (recommended for upgrades)
+        3) Split API and runner (opt-in)
       
     </span>
   </a>
@@ -1340,21 +1340,29 @@ and pause, resume, run now or archive it with
 <code>POST /api/gateway/automations/{automation_id}/commands</code>. Tools run without
 asking by default (creating the automation is the consent). See
 <a href="../automations/">automations.md</a>.</p>
+<p>An automation can also start on new mail, a feed item or a signed webhook
+call, and you can follow what needs you on your event stream
+(<code>GET /api/gateway/me/events/stream</code>): see
+<a href="../events-examples/">events-examples.md</a>.</p>
 <p>For a plain <strong>scheduled parent run</strong> without these controls, use <code>POST /api/gateway/runs/schedule</code>:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token"</span><span class="k">)</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Ping"},"start_at":"now","interval":"1h","repeat_count":3}'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/runs/schedule"</span>
 </code></pre></div>
 <p>Tip: to stop a schedule, cancel the scheduled parent run (<code>POST /api/gateway/commands</code>, type <code>cancel</code>).</p>
-<h2 id="3-split-api-vs-runner-recommended-for-upgrades">3) Split API vs runner (recommended for upgrades)<a class="headerlink" href="#3-split-api-vs-runner-recommended-for-upgrades" title="Permanent link">&para;</a></h2>
-<p>By default, <code>abstractgateway serve</code> starts the HTTP API <strong>and</strong> the runner loop in the same process.</p>
-<p>To restart the HTTP API without pausing durable execution, run two processes sharing the same <code>ABSTRACTGATEWAY_DATA_DIR</code>:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Process 1 (runner worker, no HTTP deps needed):</span>
-abstractgateway<span class="w"> </span>runner
+<h2 id="3-split-api-and-runner-opt-in">3) Split API and runner (opt-in)<a class="headerlink" href="#3-split-api-and-runner-opt-in" title="Permanent link">&para;</a></h2>
+<p>By default, <code>abstractgateway serve</code> starts the HTTP API <strong>and</strong> the runner in the same process.
+Split mode puts runs and the model in their own process, so a long generation never shares an
+interpreter with the API, and you can restart the API without pausing durable execution. Run two
+processes on the same data dir:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Process 1: runs, the model (and the OpenAI API's model host), mail, feeds, push, bridges</span>
+abstractgateway<span class="w"> </span>runner<span class="w"> </span>--data-dir<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">"</span>
 
-<span class="c1"># Process 2 (HTTP API only):</span>
-abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
+<span class="c1"># Process 2: the HTTP API, console and live streams only</span>
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<span class="w"> </span>--data-dir<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">"</span><span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
 </code></pre></div>
+<p>The API process loads no text model: <code>/v1</code> is forwarded to the runner process. Who does what, and
+the health fields that show it: <a href="../configuration/#split-mode-api-and-runner-in-two-processes-opt-in">configuration.md</a>.</p>
 <h2 id="3b-docker-compose">3b) Docker / Compose<a class="headerlink" href="#3b-docker-compose" title="Permanent link">&para;</a></h2>
 <p>For a containerized remote-light deployment with
 <code>AbstractRuntime</code>, Runtime-owned provider/tool and
@@ -1505,10 +1513,10 @@ settings and the request log.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

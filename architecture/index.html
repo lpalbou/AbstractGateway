@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -768,6 +768,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Durable contract (replay-first)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-durable-cursor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The durable cursor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-replay-view-one-reconstruction-every-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The replay view: one reconstruction, every client
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -775,6 +803,17 @@
     <span class="md-ellipsis">
       
         Automations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggers-events-and-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggers, events and attention
       
     </span>
   </a>
@@ -1091,6 +1130,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Durable contract (replay-first)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-durable-cursor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The durable cursor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-replay-view-one-reconstruction-every-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The replay view: one reconstruction, every client
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1098,6 +1165,17 @@
     <span class="md-ellipsis">
       
         Automations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#triggers-events-and-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggers, events and attention
       
     </span>
   </a>
@@ -1364,7 +1442,23 @@ browser on this computer from one elsewhere on the network
 <li><strong>Runner</strong> (<code>src/abstractgateway/runner.py</code>): polls the durable command
   inbox, applies commands and ticks RUNNING runs. A filesystem lock
   (<code>gateway_runner.lock</code>) prevents double-ticking when API and runner run as
-  separate processes; lock state is reported on <code>GET /api/health</code>.</li>
+  separate processes; lock state is reported on <code>GET /api/health</code>. On a file
+  store the scheduling pass sleeps until the earliest wait deadline, which it
+  asks the run store for (<code>next_wait_deadline</code>, every waiting run), so a wake
+  parked behind hundreds of automations still fires on time.</li>
+<li><strong>Per-user event stream</strong> (<code>src/abstractgateway/events_stream.py</code>, backlog
+  1046): one ordered, durable stream per person, <code>user:&lt;tenant&gt;:&lt;user&gt;</code>, in
+  the plane's data folder (<code>&lt;data dir&gt;/events/users/&lt;sha256&gt;/</code>, the runtime's
+  <code>JsonFileEventInbox</code>). It holds only what is not a step of a run:
+  <code>trigger.event</code>, <code>wake.scheduled|cancelled</code>, <code>attention.raised|seen</code>,
+  <code>notification.sent|failed</code> and the pointers <code>run.started|finished
+  {run_id, session_id, origin}</code>, in CloudEvents 1.0 attribute names. The
+  runner writes the pointers after the run store save (ids like
+  <code>run.started:&lt;run_id&gt;</code>, so a repeat appends nothing) and the attention
+  events from the <code>automation.completed</code> records it observes (the ledger
+  <code>record_key</code>, never a body); a boot pass rebuilds what a crash between a
+  save and its append lost. The seen-cursor store writes <code>attention.seen</code>,
+  the email outbox <code>notification.sent|failed</code>.</li>
 <li><strong>Runtime settings</strong> (<code>src/abstractgateway/runtime_config.py</code>): one store,
   <code>&lt;data dir&gt;/config/runtime_config.json</code>, for the settings the consoles, the
   tray and the CLI change: network exposure, <code>apps.*</code>, <code>allow_engine_install</code>,
@@ -1431,6 +1525,29 @@ browser on this computer from one elsewhere on the network
   shows "Gateway restarted at <time> after a hang —
   <reason>". <code>GET /api/health</code> reports its state. See
   <a href="../deployment/">deployment.md</a>.</li>
+<li><strong>Worker pools by kind of work</strong> (<code>src/abstractgateway/work_pools.py</code>): blocking work leaves the
+  event loop through <code>off_loop(kind, fn, ...)</code> into one of three bounded pools: <code>light</code> (auth, <code>/me</code>,
+  live-update streams, one-record reads), <code>heavy</code> (run and artifact scans, listings, workflow reloads)
+  and <code>watchers</code> (mail, feeds, provider endpoints, model generation), sized by <code>serve --pool-light</code>,
+  <code>--pool-heavy</code> and <code>--pool-watchers</code>. A cached account service is found without the service lock, so
+  a build of another account's service never holds up <code>/me</code>. Browser sessions are kept in memory: the
+  sessions file stays the source of truth, this process's own writes apply at once, another
+  process's within 2 s, and <code>last_seen_at</code> is written at most once a minute, off the event loop.</li>
+<li><strong>Account services built off the event loop</strong> (<code>src/abstractgateway/service.py</code>): an account's
+  service (its runtime, stores and runner) is built once in its own thread, however many requests
+  wait for it; requests await the build, and a request that reaches a service still being built
+  answers <code>503 service_starting</code> with <code>Retry-After: 1</code>. After the boot, <code>serve --gc-tuning on</code>
+  freezes the objects the boot built and raises the garbage collector's thresholds.</li>
+<li><strong>Reading only what changed</strong>: run listings come from AbstractRuntime's run index
+  (<code>serve --run-index verify|trusted</code>); the runner's scan gate and the mail notification check
+  compare the run store's and the ledger's change tokens instead of re-reading the folders; the
+  Triggers page asks AbstractRuntime's active-consumers index who listens to a connection; host
+  status (GPU, memory, model residency) is computed once per short TTL
+  (<code>src/abstractgateway/host_status_cache.py</code>). <code>GET /api/health</code> reports <code>pools</code>, <code>run_index</code>
+  and <code>gc_tuning</code>.</li>
+<li><strong>Push dispatcher</strong> (<code>src/abstractgateway/push/</code>): in the process that runs the runner, it turns
+  <code>attention.raised</code> into content-free requests to the push relay for registered watches and
+  iPhones (<a href="../push/">push.md</a>).</li>
 <li><strong>Nothing blocks the event loop</strong>: a request body that arrived
   without a Content-Length (the console's <code>/apps/&lt;id&gt;/</code> proxy streams bodies)
   is buffered by the security middleware and replayed through
@@ -1578,6 +1695,56 @@ one built over the same directory.</p>
 </code></pre></div>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (ledger endpoints, SSE,
 commands) and <code>src/abstractgateway/runner.py</code> (command application, ticks).</p>
+<h3 id="the-durable-cursor">The durable cursor<a class="headerlink" href="#the-durable-cursor" title="Permanent link">&para;</a></h3>
+<p>Every ledger store numbers a run's records 1, 2, 3, … (<code>seq</code>). JSONL persists the number on each
+line, allocated under an advisory file lock, and SQLite allocates it in the same transaction as
+the insert. The raw stream's cursor is that number. <code>migrate.py</code> (file to SQLite) keeps it, so a
+cursor a client holds stays valid across a reconnect and a migration (AbstractRuntime ADR 0009,
+backlog 0082).</p>
+<h3 id="the-replay-view-one-reconstruction-every-client">The replay view: one reconstruction, every client<a class="headerlink" href="#the-replay-view-one-reconstruction-every-client" title="Permanent link">&para;</a></h3>
+<p>What a client shows for a run comes from one reducer, AbstractRuntime's <code>abstractruntime.replay</code>:</p>
+<ul>
+<li>the tree of runs, through delegation waits;</li>
+<li>the status;</li>
+<li>the person-facing interaction (a child's approval included);</li>
+<li>messages with provenance;</li>
+<li>one activity per node execution;</li>
+<li>artifacts and usage.</li>
+</ul>
+<p>The gateway serves that view (<code>GET /runs/{id}/view</code>, <code>/view/stream</code>, see
+<a href="../api/#replay-view-runsrun_idview">api.md</a>) and adds no rule of its own:</p>
+<div class="highlight"><pre><span></span><code>flowchart LR
+  RT[Runner: Runtime.tick] --&gt;|append| L[(Ledger store: seq per run)]
+  L --&gt;|subscribe: a coalescing wake-up| E[ViewEntry per run tree]
+  E --&gt;|list_after: new records only| L
+  E --&gt;|ReplayView.apply: one fold| V[(cached view + JSON per cursor token)]
+  V --&gt;|delta, same bytes| S1[client 1]
+  V --&gt;|delta| S2[client 2]
+  V --&gt;|delta| SN[client N]
+  C[Client] --&gt;|POST /commands: interaction.command| G[Gateway]
+</code></pre></div>
+<ul>
+<li><strong>One fold per record.</strong> <code>ViewHub</code> (<code>src/abstractgateway/replay_view.py</code>) keeps one
+  <code>ViewEntry</code> per (plane, root run), in an LRU of 64. An entry with live subscribers is never
+  evicted. A refresh reads only the records after each run's folded seq: an indexed read on
+  SQLite, a seek to the remembered byte offset on JSONL. It folds them once and hands the same
+  delta to every subscriber. N clients cost one fold, not N.</li>
+<li><strong>Cache.</strong> The view's JSON is cached per cursor token, so a GET with nothing new costs one
+  <code>list_after</code> check per run, and a 304 sends no body. A read that changes nothing (an unchanged
+  snapshot) produces no delta.</li>
+<li><strong>Wake-ups, not timers.</strong> In-process appends wake the streams through
+  <code>ObservableLedgerStore.subscribe</code>. In split mode, where the runner is another process, a
+  <code>list_after</code> check runs every 0.25 s and reads no bytes while nothing was appended. A 5 s
+  safety check re-reads open runs' snapshots, for legacy ledgers without terminal records. An
+  idle stream parses nothing.</li>
+<li><strong>Reconnect.</strong> The SSE id is the cursor token. An older token gets one delta, computed as the
+  difference between a rebuild at that token and now. <code>?at=&lt;token&gt;</code> serves the view as the
+  ledger stood at that point, which is how a push opens at its event.</li>
+<li><strong>Authorization.</strong> The entry is keyed by the caller's own plane (its service's stores), with
+  the same rule as <code>GET /runs/{id}</code>.</li>
+</ul>
+<p>Evidence: <code>src/abstractgateway/replay_view.py</code>, <code>src/abstractgateway/routes/replay_view.py</code>,
+<code>tests/test_gateway_replay_view.py</code>, <code>scripts/bench_replay_view.py</code> (numbers in backlog 0947).</p>
 <h2 id="automations">Automations<a class="headerlink" href="#automations" title="Permanent link">&para;</a></h2>
 <p>An automation is a durable AbstractRuntime root run, the <strong>controller</strong>, whose
 id is the automation id. Every workflow host registers the controller workflow
@@ -1656,6 +1823,108 @@ create, read and command automations; they never schedule or run anything.</p>
   children indexes at startup (<code>stores.py</code>).</li>
 </ul>
 <p>See <a href="../automations/">automations.md</a> for the HTTP contract and operations.</p>
+<h2 id="triggers-events-and-attention">Triggers, events and attention<a class="headerlink" href="#triggers-events-and-attention" title="Permanent link">&para;</a></h2>
+<p>Things that happen outside a run start work, and what needs a person reaches
+them through one stream per account:</p>
+<ul>
+<li><strong>Trigger connections</strong> are one account's instances of a trigger source (a
+  feed URL, a webhook address with its signing secret; mailboxes are the email
+  accounts). Each has an inbox stream, <code>trigger:&lt;connection_id&gt;</code>, that the
+  feed poller and the public webhook ingress append to and the bound
+  automations read.</li>
+<li><strong>Run origin</strong>: every run records who or what started it,
+  <code>_meta.origin {kind: person | trigger | agent | system, actor, client, ref}</code>.</li>
+<li><strong>Wakes</strong>: a run's <code>schedule_run</code> call becomes a one-shot automation that runs
+  later as a new turn of the caller's session (<code>wakes_host.py</code>).</li>
+<li><strong>The per-user event stream</strong> (<code>events_stream.py</code>) holds what is not a step
+  of a run: run pointers, trigger events, wakes, attention raised and seen
+  (automation items and waits on a person) and notification outcomes. Clients
+  read it with <code>GET /api/gateway/me/events</code> and follow it over SSE
+  (<code>/me/events/stream</code>); the desktop tray turns attention into OS
+  notifications.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>flowchart LR
+  subgraph Outside["Outside the gateway"]
+    Sender["External system&lt;br/&gt;(signed webhook call)"]
+    Feed["RSS / Atom feed"]
+    Mail["Your mailboxes (IMAP)"]
+  end
+
+  subgraph GW["AbstractGateway (one plane per account)"]
+    Ingress["POST /triggers/webhooks/{id}&lt;br/&gt;signature = auth"]
+    Poller["Plane worker:&lt;br/&gt;feed poller, mail watcher"]
+    TInbox[("Event inbox&lt;br/&gt;trigger:&amp;lt;id&amp;gt;, email:…")]
+    Runner["GatewayRunner&lt;br/&gt;ticks, ledger observer"]
+    Wakes["schedule_run host&lt;br/&gt;(one-shot automation)"]
+    Outbox[("Email outbox")]
+    Publish["Publish host&lt;br/&gt;(PUBLISH_EVENT: Notify me,&lt;br/&gt;Publish to channel)"]
+    UStream[("User stream&lt;br/&gt;user:&amp;lt;tenant&amp;gt;:&amp;lt;user&amp;gt;")]
+    Me["GET /me/events&lt;br/&gt;GET /me/events/stream (SSE)&lt;br/&gt;POST /me/events/notifications"]
+    PushD["Push dispatcher&lt;br/&gt;(runner process)"]
+    After["GET /runs/{id}/after&lt;br/&gt;(what happened after a run)"]
+  end
+
+  Relay["Push relay&lt;br/&gt;(abstractgateway push-relay)"]
+  APNs["Apple push service"]
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Automation controller"]
+    Occ["Occurrence = new run&lt;br/&gt;(origin: trigger / agent)"]
+    Run["Any run&lt;br/&gt;(asks a person, schedules a wake)"]
+  end
+
+  subgraph Clients["Clients"]
+    Tray["Desktop tray&lt;br/&gt;(default notifier)"]
+    Apps["Assistant, Code, watch, console"]
+  end
+
+  Sender --&gt; Ingress --&gt; TInbox
+  Feed --&gt; Poller
+  Mail --&gt; Poller
+  Poller --&gt; TInbox
+  TInbox --&gt;|wake| Ctl
+  Ctl --&gt;|admit| Occ
+  Run --&gt;|SCHEDULE_RUN| Wakes --&gt; Ctl
+  Run --&gt;|PUBLISH_EVENT| Publish --&gt;|"event + attention.raised&lt;br/&gt;(recipient, channels)"| UStream
+  Publish --&gt;|"email listed"| Outbox
+  Runner --&gt;|run.started / finished, trigger.event,&lt;br/&gt;attention.raised / seen| UStream
+  Wakes --&gt;|wake.scheduled| UStream
+  Outbox --&gt;|notification.sent / failed| UStream
+  UStream --&gt; Me
+  Me --&gt; Tray
+  Me --&gt; Apps
+  Tray --&gt;|notification.sent (tray)| Me
+  UStream --&gt;|attention.raised| PushD --&gt;|"no text: topic, token, kind, seq"| Relay --&gt; APNs --&gt; Apps
+  PushD --&gt;|notification.sent / failed| UStream
+  UStream --&gt; After
+</code></pre></div>
+<ul>
+<li><strong>Pointers, not copies.</strong> The stream never holds a step of a run, a prompt
+  or a result body: <code>attention.raised</code> carries the ledger <code>record_key</code> or the
+  run id, and a client reads the content from the run or the automation.</li>
+<li><strong>Ordered and resumable.</strong> Each account's stream has its own gapless
+  <code>sequence</code>; the SSE <code>id</code> is that sequence, so a client reconnecting with
+  <code>Last-Event-ID</code> misses nothing. Event ids are stable, so a repeated write is
+  stored once, and the runner repairs at start what a crash between a save and
+  its stream write left out.</li>
+<li><strong>One notification per machine.</strong> The tray announces each attention item;
+  an app on the same computer stays silent when the tray reported it in the
+  last minute.</li>
+<li><strong>Alerts choose their channels.</strong> A flow's <em>Notify me</em> (a <code>PUBLISH_EVENT</code>
+  with an alert) carries <code>recipient</code> and <code>channels</code> (<code>tray</code>, <code>watch</code>,
+  <code>phone</code>, <code>email</code>, <code>console</code>; none = all) on its <code>attention.raised</code>; every
+  deliverer reads them before delivering (<code>events_stream.alert_asks</code>).</li>
+<li><strong>Push carries no content.</strong> The push dispatcher sends the relay only the
+  app topic, the device token, the kind of alert and the event's sequence;
+  the app reads the event from the gateway (<a href="../push/">push.md</a>).</li>
+<li><strong>After the run</strong> (<code>GET /api/gateway/runs/{run_id}/after</code>) reads back, for
+  one run and its sub-runs, what arrived, how it ended, the alerts it raised
+  and each delivery, from exact reads of the ledger and the stream.</li>
+</ul>
+<p>See <a href="../api/#your-event-stream-apigatewaymeevents">api.md</a> for the event
+vocabulary and the routes, <a href="../api/#triggers">api.md</a> for trigger
+connections and the webhook ingress, and
+<a href="../events-examples/">events-examples.md</a> for end-to-end examples.</p>
 <h2 id="live-replies-token-deltas">Live replies (token deltas)<a class="headerlink" href="#live-replies-token-deltas" title="Permanent link">&para;</a></h2>
 <p>A run started with <code>input_data._runtime.stream: true</code> (or, for an interactive
 <code>POST /runs/start</code> that does not say, with the <code>agents.streaming_default</code>
@@ -1764,6 +2033,11 @@ code. See <a href="../apps/">apps.md</a>.</p>
   the lower-layer fields.</li>
 <li>Direct run-scoped media routes cover TTS, STT, image generation, edit and
   upscale, text-to-video, image-to-video, and music.</li>
+<li>The voice library (<code>routes/voice_library.py</code>: languages, cloned voices,
+  cloning, voice design, the capability catalog) goes through AbstractRuntime's
+  voice library facade, in process or on the configured AbstractCore server;
+  cloned voices live in one AbstractVoice store per machine user, so its
+  changes are admin-only.</li>
 <li>Voice listen is a host-capture contract: clients capture audio and then
   upload it or emit an event.</li>
 <li>Model residency is Runtime/provider-owned and Gateway-normalized:
@@ -1782,24 +2056,34 @@ code. See <a href="../apps/">apps.md</a>.</p>
     Serve1 --&gt; AppsLocal["Browser apps on 127.0.0.1"]
   end
   subgraph Server["Server or container"]
-    API["abstractgateway serve --no-runner"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner"] --- DD
+    API["abstractgateway serve --no-runner&lt;br/&gt;HTTP API, console, streams"] --- DD[("shared data dir")]
+    Worker["abstractgateway runner&lt;br/&gt;runs, model, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --&gt; API
+    API --&gt;|"/v1 forwarded&lt;br/&gt;(127.0.0.1, per-start secret)"| ModelHost["Model host&lt;br/&gt;(in the runner process)"]
+    Worker --- ModelHost
   end
 </code></pre></div>
 <ul>
 <li><strong>Single process</strong>: <code>abstractgateway serve</code> starts the HTTP API and the
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.</li>
-<li><strong>Split API and runner</strong>: <code>abstractgateway runner</code> (worker) and
-  <code>abstractgateway serve --no-runner</code> (API) share one data dir, so you can
-  restart the API without pausing durable execution. Live replies pass through
-  <code>&lt;data dir&gt;/live/</code> in this shape.</li>
+<li><strong>Split API and runner</strong> (opt-in): <code>abstractgateway runner --data-dir DIR</code>
+  (worker) and <code>abstractgateway serve --no-runner --data-dir DIR</code> (API) share
+  one data dir, so you can restart the API without pausing durable execution.
+  The runner process ticks every run, holds the one text model, and runs the
+  mail watchers, feed polling, push dispatcher and bridges; the API process
+  only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
+  <code>/v1</code> admits each request, then forwards it to a model host the runner
+  serves on <code>127.0.0.1</code> (address and per-start secret in
+  <code>&lt;data dir&gt;/split/model_host.json</code>), so the model is never loaded twice.
+  Live replies pass through <code>&lt;data dir&gt;/live/</code>; events the API delivers reach
+  runs the runner parked (the run store's indexes refresh across processes).
+  The full table of who does what: <a href="../configuration/#split-mode-api-and-runner-in-two-processes-opt-in">configuration.md</a>.</li>
 <li><strong>Container</strong>: the GHCR image runs <code>serve</code> with user auth; see
   <a href="../deployment/">deployment.md</a>.</li>
 </ul>
 <p>Evidence: <code>src/abstractgateway/cli.py</code> (flags), <code>src/abstractgateway/runner.py</code>
-(lock file).</p>
+(lock file), <code>src/abstractgateway/split_mode.py</code> (model host, placement).</p>
 <h2 id="security-model-summary">Security model (summary)<a class="headerlink" href="#security-model-summary" title="Permanent link">&para;</a></h2>
 <p><code>GatewaySecurityMiddleware</code> applies to paths starting with <code>/api/gateway</code>:</p>
 <ul>
@@ -1913,10 +2197,10 @@ plus CSRF token. See <a href="../security/">security.md</a>.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>

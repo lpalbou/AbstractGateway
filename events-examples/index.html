@@ -1,0 +1,1350 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/events-examples/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Events and triggers: examples - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#events-and-triggers-examples" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Events and triggers: examples
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-pieces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The pieces
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-watch-a-mailbox-and-tell-me-when-something-important-arrives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Watch a mailbox and tell me when something important arrives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-a-digest-of-a-news-feed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. A digest of a news feed
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-run-this-flow-when-an-external-system-calls-my-webhook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Run this flow when an external system calls my webhook
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Run this flow when an external system calls my webhook">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#3a-set-it-up" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3a. Set it up
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3b-try-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3b. Try it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-services-can-call-it-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which services can call it directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#following-your-stream-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Following your stream live
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Following your stream live">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#showing-a-notification-without-doubling-the-tray" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Showing a notification without doubling the tray
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#publish-to-a-channel-for-application-authors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Publish to a channel (for application authors)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trying-it-by-hand-without-a-model-or-a-mailbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trying it by hand without a model or a mailbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-a-triggered-flow-with-real-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test a triggered flow with real data
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="events-and-triggers-examples">Events and triggers: examples<a class="headerlink" href="#events-and-triggers-examples" title="Permanent link">&para;</a></h1>
+<p>Three end-to-end examples of events and attention: something
+happens outside (a mail, a feed post, a call to a webhook), an automation runs a workflow on it, the
+workflow's model decides whether you need to know, and you are told on your event stream, in the
+gateway tray, the Assistant, Code, the watch and the phone.</p>
+<p>Each example is also a hermetic test under <code>tests/e2e_events/</code> (scratch data folder and HOME, no
+provider, fake mail servers, nothing on port 8080):</p>
+<div class="highlight"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>abstractgateway
+python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests<span class="w"> </span>-q<span class="w"> </span>-k<span class="w"> </span>e2e_events<span class="w">                    </span><span class="c1"># the three examples</span>
+python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>tests/e2e_events<span class="w"> </span>-q<span class="w"> </span>--allow-network<span class="w">      </span><span class="c1"># + the live Python Insider feed</span>
+</code></pre></div>
+<h2 id="the-pieces">The pieces<a class="headerlink" href="#the-pieces" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A <strong>trigger connection</strong> is one instance of a source that needs your settings: a feed URL
+  (<code>feed.item@1</code>), a webhook secret (<code>webhook.received@1</code>). A mailbox is the connection of
+  <code>email.received@1</code> (<code>config.account</code>; <code>self</code> is your primary mailbox). Connections are yours: list,
+  create, test-fire and delete them with <code>/api/gateway/triggers/connections</code> or the console's
+  <strong>Triggers</strong> page (<code>/console#triggers</code>).</li>
+<li>An <strong>automation</strong> binds a workflow to a trigger (<code>POST /api/gateway/automations</code>, or Flow's
+  Automation dialog). Each occurrence runs the workflow with the trigger's event: as
+  <code>input_data.event</code> (CloudEvents 1.0: <code>type</code>, <code>subject</code>, <code>time</code>, <code>data</code>) and, for a string <code>prompt</code>,
+  framed as untrusted content appended to it. Connection sources deliver a batch:
+  <code>event.data.count</code> and <code>event.data.events[i].data</code>.</li>
+<li><strong>Attention</strong>: an occurrence whose output carries <code>notify: {title, body}</code> (or <code>notify: true</code>) raises
+  an attention item; one that fails after its retries raises a failure item. Ordinary results are
+  quiet.</li>
+<li><strong>Your event stream</strong> (<code>GET /api/gateway/me/events?after=&lt;sequence&gt;</code>, live:
+  <code>GET /api/gateway/me/events/stream</code>) carries <code>trigger.event</code>, <code>run.started</code>, <code>run.finished</code>,
+  <code>attention.raised</code>, <code>attention.seen</code> and <code>notification.sent|failed</code>. The tray, the Assistant (desktop
+  and watch) and Code follow it.
+  A closed watch or iPhone app learns about new attention items through Apple push
+  (<a href="../push/">push.md</a>).</li>
+</ul>
+<p>The workflow the examples use, "judge", is three nodes (its JSON is <code>judge_flow()</code> in
+<code>tests/e2e_events/e2e_support.py</code>; build the same in Flow):</p>
+<div class="highlight"><pre><span></span><code>On Flow Start (prompt) ──▶ LLM Call  prompt ◀── start.prompt
+                                     system  "If it needs the person's attention, answer a short title
+                                              and a body; otherwise an empty title and body."
+                                     response schema {title: string, body: string}
+                           ──▶ On Flow End  notify ◀── LLM data
+                                            response ◀── LLM response
+</code></pre></div>
+<p>The model decides; an empty title and body is quiet, anything else raises attention. No keyword
+rule is involved.</p>
+<p>In the commands below, replace <code>&lt;token&gt;</code> with your gateway token (the console's <strong>Account</strong> page)
+and <code>http://127.0.0.1:8080</code> with your gateway's address. <code>jq</code> reads the answers.</p>
+<h2 id="1-watch-a-mailbox-and-tell-me-when-something-important-arrives">1. Watch a mailbox and tell me when something important arrives<a class="headerlink" href="#1-watch-a-mailbox-and-tell-me-when-something-important-arrives" title="Permanent link">&para;</a></h2>
+<p>Connect the mailbox (a further read-only mailbox is <code>PUT /api/gateway/me/email/accounts/&lt;id&gt;</code>, IMAP
+only; see <a href="../email/">email.md</a>):</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>http://127.0.0.1:8080/api/gateway/me/email<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"address": "me@example.org", "password": "&lt;app password&gt;",</span>
+<span class="s1">       "imap": {"host": "imap.example.org", "port": 993, "security": "ssl"},</span>
+<span class="s1">       "smtp": {"host": "smtp.example.org", "port": 587, "security": "starttls"}}'</span>
+</code></pre></div>
+<p>Create the automation on new mail, running your judge workflow:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8080/api/gateway/automations<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"request_id": "mailbox-watch-1", "title": "Mailbox watch",</span>
+<span class="s1">       "target": {"bundle_ref": "&lt;your bundle&gt;@&lt;version&gt;", "flow_id": "judge",</span>
+<span class="s1">                  "input_data": {"prompt": "A new mail arrived. Tell me only if it needs me today."}},</span>
+<span class="s1">       "trigger": {"source_id": "email.received", "source_version": 1,</span>
+<span class="s1">                   "config": {"uses_model": true, "every": "60s"}},</span>
+<span class="s1">       "context": {"mode": "independent"}}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.automation_id
+</code></pre></div>
+<p>The mailbox is read from the moment the automation exists (mail already there is history). When a
+mail arrives, one occurrence runs with it framed in its prompt; when the model says it matters, the
+attention item lands on your stream:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events?after=0&amp;limit=100"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.events[] | select(.type == "attention.raised")'</span>
+</code></pre></div>
+<p>and the gateway tray shows one notification ("Mailbox watch has a new result — open it in the Assistant."), recorded on
+the stream as <code>notification.sent {channel: "tray"}</code>. Opening the automation marks it seen
+(<code>attention.seen</code>), which lowers every badge.</p>
+<p>A second mailbox (<code>config.account: "&lt;id&gt;"</code>) is accepted by the gateway but not yet by AbstractRuntime's
+<code>email.received@1</code> (it reads only <code>self</code> today); that form is a pending test in
+<code>tests/e2e_events/test_e2e_mailbox_watch.py</code>.</p>
+<h2 id="2-a-digest-of-a-news-feed">2. A digest of a news feed<a class="headerlink" href="#2-a-digest-of-a-news-feed" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="nv">CID</span><span class="o">=</span><span class="k">$(</span>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8080/api/gateway/triggers/connections<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source_id": "feed.item", "source_version": 1, "label": "Python Insider",</span>
+<span class="s1">       "config": {"url": "https://blog.python.org/feeds/posts/default", "every": "1h",</span>
+<span class="s1">                  "initial_items": "deliver", "max_items": 5}}'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span>.connection_id<span class="k">)</span>
+
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8080/api/gateway/automations<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s2">"{\"request_id\": \"feed-digest-1\", \"title\": \"Python news digest\",</span>
+<span class="s2">       \"target\": {\"bundle_ref\": \"&lt;your bundle&gt;@&lt;version&gt;\", \"flow_id\": \"judge\",</span>
+<span class="s2">                    \"input_data\": {\"prompt\": \"New posts on a feed I follow. Write me a short digest if any of them matters.\"}},</span>
+<span class="s2">       \"trigger\": {\"source_id\": \"feed.item\", \"source_version\": 1, \"config\": {}, \"connection_id\": \"</span><span class="nv">$CID</span><span class="s2">\"},</span>
+<span class="s2">       \"context\": {\"mode\": \"independent\"}}"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>.automation_id
+</code></pre></div>
+<p>The gateway polls each feed at its <code>every</code> (at least 60 s; 15 minutes by default), with conditional
+GET. <code>initial_items: "deliver"</code> makes the posts already there the first digest (<code>"skip"</code>, the default,
+starts from the next post). All new posts of one poll are ONE occurrence: <code>event.data.count</code> and each
+post at <code>event.data.events[i].data</code> (<code>title</code>, <code>link</code>, <code>summary</code>, <code>published</code>). See the posts the
+connection received:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span><span class="s2">"http://127.0.0.1:8080/api/gateway/triggers/connections/</span><span class="nv">$CID</span><span class="s2">/events?limit=20"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span><span class="s1">'.events[].data.title'</span>
+</code></pre></div>
+<p>On your stream: <code>trigger.event</code>, <code>run.started</code>, <code>run.finished</code> for the occurrence and, when the model
+wrote a digest, <code>attention.raised</code>.</p>
+<h2 id="3-run-this-flow-when-an-external-system-calls-my-webhook">3. Run this flow when an external system calls my webhook<a class="headerlink" href="#3-run-this-flow-when-an-external-system-calls-my-webhook" title="Permanent link">&para;</a></h2>
+<p>A webhook is an address on your gateway that another system calls (an HTTP <code>POST</code>) when something
+happens on its side. Each call that carries a valid signature starts one run of your flow, with the
+call's JSON body as input. Nobody without the secret can start it.</p>
+<h3 id="3a-set-it-up">3a. Set it up<a class="headerlink" href="#3a-set-it-up" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Create the webhook connection.</strong> In the web console, open <strong>Triggers</strong> (sidebar, <em>Work</em>) and
+   press <strong>New connection</strong>. Under <strong>Source</strong> choose <strong>When a webhook is called</strong>, type a <strong>Name</strong>
+   (for example <code>Orders</code>), and press <strong>Create</strong>.</li>
+<li><strong>Copy the address and the secret.</strong> The dialog shows the <strong>Webhook address</strong>
+   (<code>https://&lt;your gateway&gt;/api/gateway/triggers/webhooks/&lt;connection id&gt;</code>) and the <strong>Signing
+   secret</strong> (<code>whsec_…</code>), each with a copy button. The secret is shown <strong>once</strong>: store it where the sender
+   will read it (a password manager, the sender's settings). The address stays visible later under
+   the connection's row (<strong>Events</strong>).</li>
+<li><strong>Let your flow receive the event.</strong> In AbstractFlow, open the flow, select its <strong>On Flow Start</strong>
+   node and press <strong>Add trigger event</strong> (Properties). The node gets an <code>event</code> output and a
+   <strong>Trigger event</strong> node is wired to it. Save the flow.</li>
+<li><strong>Attach the webhook to the flow.</strong> In AbstractFlow, open the <strong>Flow Library</strong>, select the flow,
+   and press the edit button next to <strong>Automation</strong>. Set <strong>Trigger</strong> to <strong>When a webhook is
+   called</strong>, pick your connection under <strong>Connection</strong> (press <strong>Refresh connections</strong> if you just
+   created it), and press <strong>Save</strong>. Then <strong>Publish</strong> the flow.</li>
+<li><strong>Create the automation.</strong> One request creates it from the flow's saved defaults (the trigger,
+   the connection, the title and the inputs come from step 4):</li>
+</ol>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://127.0.0.1:8080/api/gateway/automations<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"request_id": "orders-webhook-1", "title": "Orders webhook",</span>
+<span class="s1">       "target": {"bundle_ref": "&lt;your bundle&gt;@&lt;version&gt;", "flow_id": "&lt;flow id&gt;"}}'</span>
+</code></pre></div>
+<p>Without AbstractFlow, put the trigger in the same request:
+   <code>"trigger": {"source_id": "webhook.received", "source_version": 1, "config": {}, "connection_id": "&lt;connection id&gt;"}</code>
+   instead.</p>
+<p>What the flow receives: each call is one event under <code>event.data.events</code>, oldest first; the JSON
+body is at <code>event.data.events[0].data.body</code> and the sender's message id at
+<code>event.data.events[0].subject</code>. For a call whose body is <code>{"order": 42, "state": "payment_refused"}</code>
+the run's <code>event</code> input reads (other envelope fields left out):</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"specversion"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.0"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abstract.webhook.received.v1"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"count"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">      </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">"subject"</span><span class="p">:</span><span class="w"> </span><span class="s2">"msg_1761390000"</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">          </span><span class="nt">"webhook_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"msg_1761390000"</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">"content_type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"application/json"</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"order"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span><span class="w"> </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"payment_refused"</span><span class="p">}</span>
+<span class="w">        </span><span class="p">}</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>A body that is not JSON arrives as <code>body_text</code>. The body is written by someone else: the gateway marks
+it untrusted, so a run treats it as data, never as instructions.</p>
+<h3 id="3b-try-it">3b. Try it<a class="headerlink" href="#3b-try-it" title="Permanent link">&para;</a></h3>
+<p>Paste this block in a terminal, after setting <code>CID</code> (the last part of the address) and <code>SECRET</code>
+(the <code>whsec_…</code> value). It sends one signed call, exactly as a sender does:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">CID</span><span class="o">=</span><span class="s2">"tc_REPLACE_ME"</span>
+<span class="nv">SECRET</span><span class="o">=</span><span class="s2">"whsec_REPLACE_ME"</span>
+<span class="nv">GATEWAY</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080"</span>
+
+<span class="nv">BODY</span><span class="o">=</span><span class="s1">'{"order": 42, "state": "payment_refused"}'</span>
+<span class="nv">ID</span><span class="o">=</span><span class="s2">"msg_</span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span><span class="s2">"</span>
+<span class="nv">TS</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span><span class="s2">"</span>
+<span class="nv">KEY</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span>%s<span class="w"> </span><span class="s2">"</span><span class="si">${</span><span class="nv">SECRET</span><span class="p">#whsec_</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="w"> </span>-d<span class="w"> </span><span class="p">|</span><span class="w"> </span>xxd<span class="w"> </span>-p<span class="w"> </span>-c<span class="w"> </span><span class="m">256</span><span class="k">)</span><span class="s2">"</span>
+<span class="nv">SIG</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span>%s<span class="w"> </span><span class="s2">"</span><span class="nv">$ID</span><span class="s2">.</span><span class="nv">$TS</span><span class="s2">.</span><span class="nv">$BODY</span><span class="s2">"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>openssl<span class="w"> </span>dgst<span class="w"> </span>-sha256<span class="w"> </span>-mac<span class="w"> </span>HMAC<span class="w"> </span>-macopt<span class="w"> </span><span class="s2">"hexkey:</span><span class="nv">$KEY</span><span class="s2">"</span><span class="w"> </span>-binary<span class="w"> </span><span class="p">|</span><span class="w"> </span>base64<span class="k">)</span><span class="s2">"</span>
+
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$GATEWAY</span><span class="s2">/api/gateway/triggers/webhooks/</span><span class="nv">$CID</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"webhook-id: </span><span class="nv">$ID</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"webhook-timestamp: </span><span class="nv">$TS</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"webhook-signature: v1,</span><span class="nv">$SIG</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--data<span class="w"> </span><span class="s2">"</span><span class="nv">$BODY</span><span class="s2">"</span>
+</code></pre></div>
+<p>No bearer token: the signature is the authentication. What you should see:</p>
+<ul>
+<li>the answer <code>202</code> with <code>{"accepted": true, "connection_id": "…", "webhook_id": "msg_…", "event_id": "…", "seq": …, "woken": 1}</code>
+  (<code>woken</code> counts the automations the call woke);</li>
+<li>in the console, <strong>Triggers</strong> → the connection's <strong>Events</strong>: the call, its body under <code>data.body</code>;</li>
+<li>on your event stream (<code>GET /api/gateway/me/events</code>): <code>trigger.event</code>, then <code>run.started</code> and
+  <code>run.finished</code> of the run the call started;</li>
+<li>in the desktop tray: a notification when that run has something for you (its flow ends with
+  <code>notify</code>) or fails; a run that only does its work stays quiet.</li>
+</ul>
+<p>The other answers: <code>401 webhook_signature_invalid</code> (the body is not the one signed, or the secret is
+wrong), <code>401 webhook_unsigned</code> (a <code>webhook-*</code> header is missing), <code>409 webhook_stale</code> (the timestamp
+is more than 5 minutes away from the gateway's clock), <code>409 webhook_replayed</code> (this <code>webhook-id</code> was
+already accepted: a retry of a delivered call; treat it as delivered), <code>404</code> (unknown connection).
+Run the block again for a second call: it uses a new id.</p>
+<h3 id="which-services-can-call-it-directly">Which services can call it directly<a class="headerlink" href="#which-services-can-call-it-directly" title="Permanent link">&para;</a></h3>
+<p>The gateway accepts the <a href="https://www.standardwebhooks.com/">Standard Webhooks</a> format: the headers
+<code>webhook-id</code>, <code>webhook-timestamp</code> and <code>webhook-signature</code> (<code>v1,&lt;base64 HMAC-SHA256 of
+"&lt;id&gt;.&lt;timestamp&gt;.&lt;body&gt;"&gt;</code>, keyed with the secret). Any sender that implements it can call the
+address directly, as can your own scripts and automation tools that compute an HMAC (as in 3b).</p>
+<ul>
+<li><strong>Services built on Svix</strong> (for example Clerk and Resend) sign the same way but name the headers
+  <code>svix-id</code>, <code>svix-timestamp</code> and <code>svix-signature</code>. The gateway reads only the <code>webhook-*</code> names, so
+  these need a small relay that renames the three headers and forwards the body unchanged.</li>
+<li><strong>GitHub</strong> (Settings → Webhooks → Add webhook: Payload URL, Content type <code>application/json</code>,
+  Secret) signs differently: one <code>X-Hub-Signature-256</code> header, an HMAC-SHA256 of the body alone with
+  the secret as typed. The gateway does not accept that header, so a GitHub webhook pointed at the
+  address answers <code>401 webhook_unsigned</code>. Use a relay that verifies GitHub's signature and re-signs
+  the call in the Standard Webhooks format with your connection's secret.</li>
+</ul>
+<h2 id="following-your-stream-live">Following your stream live<a class="headerlink" href="#following-your-stream-live" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sN<span class="w"> </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events/stream?heartbeat_s=15"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Last-Event-ID: &lt;last sequence you read&gt;"</span>
+</code></pre></div>
+<p>Each event is <code>id: &lt;sequence&gt;</code>, <code>event: &lt;type&gt;</code>, <code>data: &lt;the event JSON&gt;</code>; reconnecting with the last
+<code>id</code> you read gets exactly what came after it.</p>
+<h3 id="showing-a-notification-without-doubling-the-tray">Showing a notification without doubling the tray<a class="headerlink" href="#showing-a-notification-without-doubling-the-tray" title="Permanent link">&para;</a></h3>
+<p>An app that notifies (the Assistant desktop, Code) follows one rule so an approval is announced
+once per machine: on <code>attention.raised</code>, wait a moment, read the last events, and stay silent if a
+<code>notification.sent</code> for the same <code>record_key</code> from another channel with the same <code>device</code> is less
+than a minute old. Otherwise notify, then report it:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events/notifications"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"channel":"assistant","outcome":"sent","record_key":"&lt;record_key&gt;","device":"&lt;this machine id&gt;"}'</span>
+</code></pre></div>
+<p>The machine id is the first 16 hex characters of the sha256 of the lower-cased host name (what
+the gateway tray sends). <code>channel</code> is one of <code>tray</code>, <code>assistant</code>, <code>code</code>, <code>watch</code>, <code>phone</code>; a watch
+or a phone sends its own device id, so it always notifies.</p>
+<h2 id="publish-to-a-channel-for-application-authors">Publish to a channel (for application authors)<a class="headerlink" href="#publish-to-a-channel-for-application-authors" title="Permanent link">&para;</a></h2>
+<p>A flow can push a message to the person on a <strong>channel</strong> of your choosing, and any application (a
+dashboard, a phone app, a script, a desktop widget) can follow that channel. Nothing in the gateway
+knows your application: you pick a name, the flow publishes to it, your app subscribes to it.</p>
+<ol>
+<li><strong>Pick a channel name</strong>: lowercase letters, digits, <code>.</code>, <code>_</code> or <code>-</code>, at most 64 (<code>orders</code>,
+   <code>home.alarm</code>). <code>attention</code> is reserved: it is where every "this needs you" event already goes.</li>
+<li><strong>Publish from the flow.</strong> The flow's publish step (the <code>PUBLISH_EVENT</code> effect) takes
+   <code>{channel, type?, title, body?, subject?, data?, alert?}</code>. It lands on the stream of the person
+   who owns the run as</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"specversion"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"publish:&lt;run_id&gt;:&lt;step_id&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"orders.paid"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"channel"</span><span class="p">:</span><span class="w"> </span><span class="s2">"orders"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/abstractgateway/runs/&lt;run_id&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"subject"</span><span class="p">:</span><span class="w"> </span><span class="s2">"42"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"time"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-10-25T17:00:00+00:00"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Order 42 paid"</span><span class="p">,</span><span class="w"> </span><span class="nt">"body"</span><span class="p">:</span><span class="w"> </span><span class="s2">"12.00 EUR"</span><span class="p">,</span><span class="w"> </span><span class="nt">"amount"</span><span class="p">:</span><span class="w"> </span><span class="mi">12</span><span class="p">},</span>
+<span class="w"> </span><span class="nt">"sequence"</span><span class="p">:</span><span class="w"> </span><span class="mi">87</span><span class="p">}</span>
+</code></pre></div>
+<p><code>type</code> defaults to <code>&lt;channel&gt;.message</code>. The id is stable: a step that runs again publishes
+   nothing twice. With <code>"alert": true</code> the person is also told: an <code>attention.raised</code> on the
+   <code>attention</code> channel, announced by the tray (and the Assistant and the watch); your app marks it
+   seen with <code>POST /api/gateway/me/events/seen {"record_key": "publish:&lt;run_id&gt;:&lt;step_id&gt;"}</code>.
+3. <strong>Subscribe from your application</strong>, with the person's token (or a browser session):</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># live: server-sent events, only your channel</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-N<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"</span>
+<span class="c1"># after a disconnect: resume exactly where you were</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-N<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Last-Event-ID: 87"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events/stream?channel=orders"</span>
+<span class="c1"># or poll: one page at a time, keep next_after as your cursor</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;token&gt;"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/me/events?channel=orders&amp;after=0&amp;limit=100"</span>
+</code></pre></div>
+<p>Each SSE frame is <code>id: &lt;sequence&gt;</code>, <code>event: &lt;type&gt;</code>, <code>data: &lt;the event JSON&gt;</code>; store the last
+   <code>id</code> you handled and send it back as <code>Last-Event-ID</code>. <code>GET /api/gateway/me/events/channels</code>
+   lists the channels the person's stream holds, with counts and the last time each was used.</p>
+<p>The stream is per person: an application only ever reads the stream of the account whose token it
+uses. It is made for clients that hold a connection (a browser page, an app, a desktop helper). For
+a server that wants the gateway to call it instead, outbound webhooks (the gateway POSTing each
+event to your URL) are a planned addition; until then, run a small subscriber next to your server
+that follows the SSE route and forwards each event.</p>
+<h2 id="trying-it-by-hand-without-a-model-or-a-mailbox">Trying it by hand without a model or a mailbox<a class="headerlink" href="#trying-it-by-hand-without-a-model-or-a-mailbox" title="Permanent link">&para;</a></h2>
+<p>The console's <strong>Triggers</strong> page has <strong>Test</strong> on each connection: it appends a synthetic event
+(<code>data.test: true</code>) and wakes the bound automations, so an automation, its occurrence and your stream
+can be checked before any real mail, post or call.</p>
+<h2 id="test-a-triggered-flow-with-real-data">Test a triggered flow with real data<a class="headerlink" href="#test-a-triggered-flow-with-real-data" title="Permanent link">&para;</a></h2>
+<p>You do not have to wait for the trigger to see what a flow does with it. <strong>Run</strong> on a flow that an
+automation triggers (Flow's Run dialog) asks the gateway for a sample built from your own data, the
+exact inputs a real occurrence would receive, and starts a normal run with them:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"trigger":{"source_id":"email.received","source_version":1,"config":{"account":"self"}},"count":20}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/triggers/sample"</span>
+<span class="c1"># {"inputs": {"messages": [...], "mailbox": "me@example.com", "event": {..., "abstracttest": true}},</span>
+<span class="c1">#  "truncated": false, "count": 20, "summary": "Last 20 messages of me@example.com"}</span>
+</code></pre></div>
+<ul>
+<li><strong>Mailbox</strong> (<code>email.received@1</code>): the newest messages that pass the trigger's filters, read-only
+  (nothing marked read, the watcher's cursor untouched), at most 20 seconds of reading.</li>
+<li><strong>Feed</strong> (<code>feed.item@1</code>): the latest items of the connection's feed (one fetch, nothing stored).</li>
+<li><strong>Webhook</strong> (<code>webhook.received@1</code>): the last calls the connection received, or one sample call
+  when it has not received any yet.</li>
+<li><strong>Schedule</strong>: one occurrence as if it fired now.</li>
+</ul>
+<p>The event carries <code>abstracttest: true</code>, so a flow can tell a test run from a real one. The sample is
+yours only: another account's mailbox or connection answers 404. Reference: <a href="../api/#sample-inputs-post-apigatewaytriggerssample">api.md</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

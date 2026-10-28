@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -466,6 +466,34 @@
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Triggers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-mailbox-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The mailbox form
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -1140,6 +1168,34 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#triggers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Triggers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-mailbox-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The mailbox form
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#memory-figures-on-resources" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1323,6 +1379,11 @@ You can also sign in with a user id and token (the admin's first token is in
 </tr>
 <tr>
 <td>Work</td>
+<td><strong>Triggers</strong></td>
+<td>your trigger connections (a mailbox, a feed, a webhook) that automations and flows listen to: recent events, a test event, delete, <strong>New connection</strong> from the source's settings; administrators see <strong>All accounts</strong> (<a href="#triggers">below</a>)</td>
+</tr>
+<tr>
+<td>Work</td>
 <td><strong>Skills &amp; MCP</strong></td>
 <td>administrators: <strong>Skills</strong> — the skills shelf setting and every skill (curated and imported, <strong>Show archived</strong>) with View, Export and Archive, import a <code>.zip</code> or folder, Duplicate to edit a curated one; <strong>MCP servers</strong> — whether agents are offered tools, an <strong>Enabled for agents</strong> switch per server, add, edit, test and archive (<a href="../configuration/#skills-shelf">configuration.md</a>)</td>
 </tr>
@@ -1405,6 +1466,20 @@ sign-in code</strong> requests a code and opens the code step in place
 provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
 one under <strong>Providers</strong>.</p>
+<p><strong>Edit multimodal capability</strong> (a route's <strong>Edit</strong>) sets the route's provider
+and model, an optional <strong>Base URL</strong> and <strong>Options</strong> (JSON); text routes add the
+reasoning effort and MTP, and <strong>Test</strong> sends a one-word probe. For voice output
+(<code>output.voice</code>) the provider, model and voice are the shared voice picker of
+every app (abstractuic <code>VoiceSettings</code>): voices by name under <strong>Your voices</strong>,
+<strong>Engine voices</strong> and <strong>Shared voices</strong>, a language filter when the engine
+speaks several, and search. <strong>Choosing a voice plays it</strong> — a short sample
+through the gateway's speech route — so you can go from voice to voice and keep
+the one you like. The button at the right of the voice row plays the sample
+again from the start or stops it (Space toggles it when focused); while a
+sample is on its way it shows a spinner and a click cancels it, and choosing
+another voice cancels the previous sample. A sample that fails says why in one
+line under the row. Choosing a cloned voice also selects the model it was
+cloned with. <strong>Save</strong> stores the voice in the route's options.</p>
 <p>The <strong>Technical details</strong> switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the <strong>Docs assistant</strong> (book icon: the same chat as every app — your question on the right, the answer on the left with Markdown, code and links, copy, attachments, live streaming, an icon-only New conversation; answers come from this gateway's llms.txt through the docs-qa workflow, as its one-line footer says; <strong>Past conversations</strong> reopens or archives an earlier docs chat, and docs chats never appear in the conversation lists),
@@ -1517,15 +1592,23 @@ default and your browser remembers it.</p>
 <li><strong>Active</strong> for an entity: off suspends it (it stops acting and its gateway
   credential is switched off) after "Suspend castor? It stops acting until you
   turn Active back on."; on resumes it in the state it had before.</li>
-<li><strong>Email</strong> opens a dialog. On your own row it holds your email settings: your
-  email address, your mailbox, the <strong>Job failed</strong> and <strong>Approval needed</strong>
-  notifications, <strong>Agent email tools</strong> and <strong>Recipients and limits</strong> (<a href="../email/">email.md</a>).
-  A connected mailbox offers <strong>Test / Configure / Disconnect</strong>. <strong>Configure</strong> opens its saved
-  connection settings; for IMAP, <strong>Save changes</strong> tests both servers before replacing the
-  connection, and <strong>Cancel changes</strong> discards the draft. IMAP updates require re-entering the password.
-  An administrator's own row adds one sentence: the address also receives the
-  administrator's sign-in codes and notifications, and the mailbox serves the
-  administrator's own agents. On another user's row it holds only that user's
+<li><strong>Email</strong> opens a dialog. On your own row it is <strong>My email</strong>: a compact header
+  (your address) and three tabs (<a href="../email/">email.md</a>). <strong>Mailboxes</strong>: one list,
+  your primary mailbox first (badge <em>Sends as you</em>), then your other mailboxes;
+  each row is one line, <em>address · provider · state · access</em> (<em>Read only</em> or
+  <em>Read and write</em>), with an <strong>Active</strong> switch, on another mailbox a <strong>Read and
+  write</strong> switch (on: automations may change it and send from it; turning it on
+  adds and checks its outgoing server, keeping its sign-in; your primary mailbox
+  is always read and write), and a <strong>…</strong> menu (<strong>Test</strong>, <strong>Settings</strong>, <strong>Remove</strong>); <strong>Add mailbox</strong> opens the
+  mailbox form (<a href="#the-mailbox-form">below</a>) in its own dialog. <strong>Notifications</strong>:
+  your email address (the one inline <strong>Save</strong>), <strong>Job failed</strong> and <strong>Approval
+  needed</strong>. <strong>Agents</strong>: <strong>Agent email tools</strong> and <strong>Recipients and limits</strong>.
+  The primary's <strong>Settings</strong> opens its full editor in a dialog, <strong>Mailbox
+  settings</strong>: <strong>Test / Configure / Disconnect</strong>; <strong>Configure</strong> opens its saved
+  connection settings (servers, folder, the Google or Microsoft sign-in app); for
+  IMAP, <strong>Save changes</strong> tests both servers before replacing the connection, and
+  <strong>Cancel changes</strong> discards the draft. IMAP updates require re-entering the
+  password. On another user's row it holds only that user's
   <strong>Email address</strong> (with <strong>Save address</strong>), its mailbox status and diagnostic reason, and
   instructions to sign in as that user to configure the mailbox. Saving an address leaves
   the mailbox connection unchanged.
@@ -1779,6 +1862,198 @@ and entities always get whole replies. The switch applies at once
 does not have this setting says so. The same setting is in the terminal console
 (Runtimes → <em>Runtime knobs</em> → <em>Edit stream replies</em>) and in
 <code>abstractgateway config set agents.streaming_default true|false</code>.</p>
+<h3 id="triggers">Triggers<a class="headerlink" href="#triggers" title="Permanent link">&para;</a></h3>
+<p>The <strong>Triggers</strong> page (sidebar <em>Work</em>, <code>/console#triggers</code>) lists your trigger
+<strong>connections</strong>. A connection is something of yours the gateway listens to: a
+mailbox, a feed, a webhook address; flows and automations use it by name. You
+create feeds and webhooks here, once, and every automation of yours can use
+them (AbstractFlow's automation dialog offers them). Your <strong>mailboxes</strong> are
+listed here too (<em>When mail arrives in …</em>, tagged <em>Read only</em> or <em>Read and
+write</em> as in My email; <em>Can't send</em> when a read-and-write mailbox has no
+outgoing server); you add and manage them in <strong>My email</strong> (Accounts → your row
+→ Email), which the row's envelope button opens. With nothing
+yet, the page says <em>Nothing to listen to yet.</em> with <strong>Add a mailbox (My
+email)</strong>, <strong>Add a feed</strong> and <strong>Add a webhook</strong>.</p>
+<p>The list is one grid, every cell's first line on the same line: <strong>Connection</strong>
+· <strong>Handled by</strong> · <strong>Status</strong> · <strong>Last event</strong> · actions. Below 768 px wide a row
+becomes a card: name, sentence, Handled by, status, last event, actions.</p>
+<ul>
+<li><strong>Connection</strong>: your label (for example <em>bbc-feed</em> or <em>My GitHub hook</em>), with
+  quiet tags beside it on a mailbox (<em>Main mailbox</em> on your own mailbox, the
+  primary one from My email; <em>Read and write</em> or <em>Read only</em>), and the trigger under it in the same words as
+  AbstractFlow: <em>When bbc-feed has a new item</em>, <em>When My GitHub hook is called</em>,
+  <em>When mail arrives in me@example.org</em>. A mailbox row is named like My email
+  (its name or address).</li>
+<li><strong>Status</strong>: the <strong>Listening</strong> switch is yours and the only control. On (the
+  default for a new connection), the line under it says <em>Used by 2 automations</em>
+  (your active automations on it; their flows are under <strong>Handled by</strong>) or
+  <em>Waiting for an automation to use it</em>; off, it says <em>Paused</em>. Whether an
+  automation uses it never moves the switch. <strong>When nothing uses it</strong> (a quiet
+  disclosure under it) has <strong>Keep fetching even when nothing uses it</strong>. A
+  mailbox row has the same switch (it is the mailbox's <strong>Active</strong> switch in My
+  email → Mailboxes). A problem the gateway recorded replaces the line, in red,
+  while the connection is on (for example <em>Can't read the feed: the address
+  answered 404 (not found). Check the feed address.</em>); a paused one says
+  <em>Paused</em> with the problem under its name. The line under the list: <em>A
+  connection only fetches while an automation uses it. Pause it to stop
+  fetching.</em></li>
+<li><strong>Handled by</strong> (feeds, webhooks and mailboxes of yours) is one dropdown, as
+  wide as its column. Its face names the flow that handles the trigger
+  (<em>Judge what arrived</em>; <em>Judge what arrived +1</em> when several, a muted <em>paused</em>
+  after the name when the only one is paused), or says <em>Choose a flow…</em>.
+  Several automations on one trigger are normal: each runs its flow on every
+  event.</li>
+<li>The flow's name is a link: it opens that flow in Flow, signed in, at
+    <code>/apps/flow/?flow=&lt;flow id&gt;</code> (the app door, <code>POST /api/gateway/apps/flow/open</code>).
+    The id is the Flow library flow the workflow was published from: a
+    workflow published from Flow keeps it in its manifest
+    (<code>metadata.source.root_flow_id</code>, listed by <code>GET /api/gateway/bundles</code>). A
+    workflow that ships with the gateway, or one imported as a <code>.flow</code>, has no
+    library flow: its name is plain text with the tooltip <em>Not in the Flow
+    library (ADR-0040)</em>.</li>
+<li>With one flow, an <strong>×</strong> beside its name (tooltip <em>Stop handling this
+    trigger</em>) asks, in the menu: <em>Remove Judge what arrived from this trigger?
+    Its runs stay in Observer.</em> with <strong>Remove</strong> and <strong>Keep</strong>.</li>
+<li>A click anywhere else on the face (or <strong>Enter</strong>, or <strong>↓</strong> on it) opens the
+  menu. <strong>New flow for this trigger…</strong> opens Flow on this trigger at
+  <code>/apps/flow/?trigger=&lt;connection id&gt;</code> (a mailbox:
+  <code>/apps/flow/?trigger=mail:&lt;mailbox id&gt;</code>; Flow's docs, <em>Open Flow from a
+  trigger</em>). Under it, <strong>Or let one of your triggered flows handle it</strong> lists
+  your published flows that have a trigger, a checkmark on those already
+  handling this one (one entry per automation: <em>Handles it</em> or <em>Paused</em>, with
+  the automation's title when it is not the flow's name; a flow that handles it
+  but is no longer published is listed too).</li>
+<li>Picking an unchecked flow turns it on for this trigger at once: an
+    automation named after the flow, with the flow's saved inputs and context
+    (and, for a flow made for the same kind of trigger, its other trigger
+    settings, such as mail filters), listening to THIS connection or mailbox
+    (<code>POST /api/gateway/automations</code>, the creation Observer and Flow use). The
+    face names it and the row says <em><flow> now handles <name>. It is on.</em></li>
+<li>A checked entry carries, on its own row, <strong>Pause</strong> (<strong>Resume</strong> when
+    paused), <strong>Runs</strong> (Observer's Automations page, tooltip <em>Its runs in
+    Observer</em>) and <strong>×</strong> (<em>Stop handling this trigger</em>, asked first: <em>Remove
+    <flow> from this trigger? Its runs stay in Observer.</em> <strong>Remove</strong> /
+    <strong>Keep</strong>). Picking the checked entry again moves to its Pause. They are the
+    automation's own commands (<code>POST /api/gateway/automations/{id}/commands</code>,
+    <code>automation.pause</code>, <code>automation.resume</code>, <code>automation.archive</code>: removing
+    archives the automation, its runs stay readable in Observer); the row then
+    says <em><title> is paused.</em>, <em><title> is on again.</em> or <em><title> no longer
+    handles <name>.</em> once the gateway has applied it.</li>
+<li>A refusal is said under the face, for example <em>Triage cannot read Work:
+    it has no incoming server. Connect it again with its incoming server (My
+    email).</em> The arrow keys, <strong>Home</strong> and <strong>End</strong> move in the menu, <strong>Enter</strong>
+    picks; <strong>Esc</strong> or a click elsewhere closes it.</li>
+<li>The actions are icon buttons, their words in the tooltip: <strong>Events</strong> opens
+  the 20 most recent events under the row, each a sentence
+  (<em>Test event · just now</em>, <em>New item: Release 0.13 · 09:00</em>, <em>Call received ·
+  09:00</em>) with its full JSON behind <strong>Details</strong> (the CloudEvents envelope your
+  flow receives as <code>input_data.event</code>). <strong>Test</strong> sends a test event and says the
+  result under the last event. <strong>Delete</strong> asks under the row first: automations
+  that listen to a deleted connection stop receiving its events. A mailbox row
+  has <strong>Manage in My email</strong> instead.</li>
+<li><strong>New connection</strong> opens a dialog: pick <strong>What to listen to</strong> (a feed or a
+  webhook, each with a one-line hint; never a mailbox), give it a name, and fill
+  its settings: a feed asks for its address, <strong>Check every</strong> <em>[15] [minutes]</em>
+  and <strong>When added</strong> (<em>Ignore what is already there</em> or <em>Also deliver the latest
+  items</em>, the names the source gives its choices); a webhook asks for nothing
+  else. A setting's description is not shown when the control already says it
+  (a duration's units, a choice's values). Optional settings (a webhook's
+  <em>Subject (path in the JSON body)</em> and <em>Accepted clock skew (seconds)</em>, a feed's
+  items per check) are under <strong>More options</strong>. A refusal shows in red beside its
+  field and keeps what you typed. <strong>Cancel</strong> closes the dialog. After <strong>Create</strong>
+  the dialog says the next step: <em>Next: in Flow, + → When something arrives →
+  <name>.</em></li>
+<li>For a feed, <strong>Choose a well-known feed</strong> comes first: public feeds grouped by
+  category (World news, Technology, Science, Business and finance), each with its
+  site. Picking one fills in the <strong>Name</strong> and the <strong>Feed address</strong>; both stay
+  editable, and a name you wrote yourself is kept. Under <strong>Fill in your own</strong>,
+  <em>Reddit · A subreddit</em>, <em>YouTube · A channel</em> and <em>GitHub · Releases of a
+  repository</em> ask for one value (the subreddit, the channel id starting with <code>UC</code>,
+  <code>owner/name</code>) and build the address as you type. <strong>Another address</strong> is the free
+  field for any RSS or Atom address. X (Twitter) has no open feed, so it is not
+  offered.</li>
+<li>The list is the gateway's catalogue merged with your own file
+  <code>&lt;data dir&gt;/catalog/feeds.json</code>, when it exists (the data dir: on macOS
+  <code>~/Library/Application Support/AbstractGateway</code> by default;
+  <code>abstractgateway-config status</code> prints yours, see
+  <a href="../configuration/#paths--workflow-source">configuration.md</a>): an entry with a shipped <code>id</code>
+  replaces it, a new <code>id</code> adds a feed (<code>category</code> defaults to <em>My feeds</em>), and
+  <code>"disabled": true</code> hides a shipped one. For example:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"feeds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"python-insider"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Python Insider"</span><span class="p">,</span><span class="w"> </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://blog.python.org/feeds/posts/default"</span><span class="p">,</span><span class="w"> </span><span class="nt">"category"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Technology"</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"lemonde-une"</span><span class="p">,</span><span class="w"> </span><span class="nt">"disabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}]}</span>
+</code></pre></div>
+<p>A custom entry needs <code>id</code> (lowercase letters, digits, <code>.</code>, <code>_</code>, <code>-</code>), <code>name</code>
+  and an <code>http</code> or <code>https</code> <code>url</code>; <code>site</code>, <code>category</code>, <code>language</code> and
+  <code>description</code> are optional. The file is read on each request, so an edit shows
+  the next time the dialog opens; an entry it cannot use is skipped and named in
+  the route's <code>problems</code> for an administrator (<a href="../api/#feed-catalogue">api.md</a>).
+- A <strong>webhook</strong> connection then shows a setup panel: its address and its
+  signing secret, shown <strong>once</strong> with copy buttons (the gateway keeps the secret
+  sealed and never shows it again); the GitHub / Zapier recipe (paste the
+  address as the webhook URL, the secret as the signing secret, JSON as the
+  content type), or, when the address is only reachable from this computer or
+  its network, <em>GitHub can't reach this computer yet. Turn on internet access
+  under Network first.</em> with <strong>Open Network</strong>; a ready-to-copy signed call (bash
+  with <code>openssl</code>) with your real address and secret; and <strong>Send a signed test
+  call</strong>, which signs a sample body in the browser (HMAC-SHA256, Standard
+  Webhooks), posts it to the address and says <em>It worked: <name> received the
+  call · see it under Events.</em> (or why it was refused). Signing in the browser
+  needs <code>https</code> or <code>localhost</code>; elsewhere use the command.
+- Administrators get an <strong>All accounts</strong> switch: every account's connections,
+  with an Account column.
+- <code>/console#triggers?new=&lt;source_id&gt;</code> opens the dialog on that source (AbstractFlow's
+  <em>New connection…</em> link uses it).</p>
+<p>Routes: <code>GET /api/gateway/trigger-sources</code>, <code>GET /api/gateway/triggers/feeds/catalog</code>, <code>GET|POST /api/gateway/triggers/connections</code>
+(<code>?all=true</code> for an administrator), <code>PUT|DELETE /api/gateway/triggers/connections/{id}</code>
+(<code>paused</code>, <code>always_listen</code>), <code>GET /api/gateway/triggers/connections/{id}/events?after=&lt;seq&gt;&amp;limit=</code>,
+<code>POST /api/gateway/triggers/connections/{id}/test-fire</code>, <code>GET /api/gateway/me/email/accounts</code>
+(the mailbox rows), <code>GET /api/gateway/automations?status=active</code> (the names of the automations
+that use a connection), and the public <code>POST /api/gateway/triggers/webhooks/{connection_id}</code> (the
+signed test call).</p>
+<h4 id="the-mailbox-form">The mailbox form<a class="headerlink" href="#the-mailbox-form" title="Permanent link">&para;</a></h4>
+<p>One form connects your primary mailbox (<strong>Connect</strong>) and adds another one
+(<strong>Add mailbox</strong>), in a dialog, one column:</p>
+<ol>
+<li><strong>Email address</strong> (the only field at first). The gateway looks the provider
+   up (<code>GET /api/gateway/me/email/autodiscover?address=</code>) and one line says what
+   it found: <em>Gmail · Sign in with Google, or use an app password</em>, <em>Fastmail ·
+   use an app password</em>, <em>example.org · password sign-in</em>, or <em>We could not find
+   this provider's settings; enter them below.</em></li>
+<li><strong>Sign in with Google</strong> / <strong>Sign in with Microsoft</strong> when the gateway has that
+   sign-in client (Google also offers <strong>Use an app password instead</strong>); otherwise
+   a <strong>Password</strong>, with the provider's help and a direct <strong>Create an app
+   password</strong> link (<a href="https://myaccount.google.com/apppasswords">Google's</a>,
+   <a href="https://account.live.com/proofs/manage/additional">Microsoft's</a>, or the one
+   the lookup names) when the provider refuses account passwords. A provider that
+   only accepts its own sign-in, on a gateway without that client, is said
+   plainly: <em>Microsoft mailboxes need Sign in with Microsoft; ask your gateway
+   admin to register a Microsoft sign-in client.</em></li>
+<li><strong>Read and write</strong> (another mailbox only, off by default). <em>Off: automations
+   read this mailbox and never change it or send from it. On: they can mark,
+   move, label, delete and send as it.</em> Your primary mailbox is always read and
+   write.</li>
+<li><strong>Server settings</strong> (collapsed, prefilled from the lookup; open by itself
+   only when nothing was found): incoming server, port and security, the
+   outgoing server (SMTP) when <strong>Read and write</strong> is on, and <strong>Sign-in name</strong>
+   (prefilled with the address).</li>
+</ol>
+<p>No name is asked: another mailbox is named by its address, and its id is
+derived from it (<code>me@fastmail.com</code> → <code>me-fastmail-com</code>). The gateway signs in
+first and stores nothing when that fails; the refusal shows in red in the form
+with everything you typed kept. Routes: the primary through <code>PUT
+/api/gateway/me/email</code> (and <code>…/oauth/start|finish|cancel</code>); another mailbox
+through <code>GET /api/gateway/me/email/accounts</code>, <code>PUT|DELETE
+/api/gateway/me/email/accounts/{mailbox_id}</code> (<code>write</code>, <code>name</code>), <code>POST
+…/{mailbox_id}/test</code>, <code>PUT …/{mailbox_id}/enabled</code>, <code>PUT …/{mailbox_id}/access</code>
+(<code>write</code>) and <code>…/{mailbox_id}/oauth/start|finish|cancel</code> (<code>write</code>).</p>
+<p>In the terminal console, <strong>My email → Mailboxes</strong> shows each of your other
+mailboxes as one line (<em>address · provider · state · Read only</em> or <em>Read and
+write</em>) with <strong>Active</strong> and <strong>Read and write</strong> switches, and <strong>Add mailbox</strong>
+connects another one by password with the same <strong>Read and write</strong> switch (off
+by default; the outgoing server appears in Server settings when it is on).
+Google and Microsoft sign-in for another mailbox is on the web console only.</p>
 <h3 id="memory-figures-on-resources">Memory figures on Resources<a class="headerlink" href="#memory-figures-on-resources" title="Permanent link">&para;</a></h3>
 <p>The accelerator meter shows the larger of two figures and names it: the
 memory <strong>this gateway process</strong> holds ("this process only"), or the
@@ -2143,7 +2418,7 @@ you can click.</p>
 <li><strong>Keys.</strong> <code>?</code> (or the <strong>?</strong> button at the right end of the status bar)
   lists every key of the current screen, each next to the control it
   presses, with <strong>Quit the console</strong>. Screens: <strong>1</strong> Connection, <strong>2</strong> Accounts,
-  <strong>3</strong> Workflows, <strong>4</strong> Skills &amp; MCP, <strong>5</strong> Runtimes, <strong>6</strong> Apps,
+  <strong>3</strong> Workflows, <strong>V</strong> Triggers, <strong>4</strong> Skills &amp; MCP, <strong>5</strong> Runtimes, <strong>6</strong> Apps,
   <strong>7</strong> Providers, <strong>8</strong> OpenAI API, <strong>9</strong> Models, <strong>0</strong> Multimodal,
   <strong>H</strong> Resources, <strong>T</strong> Sandbox, <strong>N</strong> Network, <strong>S</strong> Setup, <strong>I</strong> About
   (<code>W</code> opens Accounts). Also <code>Tab</code> / <code>Shift+Tab</code> focus, <code>Enter</code> press,
@@ -2210,15 +2485,19 @@ you can click.</p>
   <code>GET /entities/{name}/access</code> decides; anyone else reads the gateway's
   sentence "Only an admin or <entity>'s creator can change its settings.").</p>
 </li>
-<li><strong>Email</strong> (<code>@</code>): on your own row, <strong>Email — <you></strong> with your <strong>Email
-  address</strong>, your <strong>Mailbox</strong> ([IMAP] [Google] [Microsoft]; the IMAP pane
-  shows the incoming and outgoing servers, filled in as soon as the address has
-  a domain; the links <strong>My provider uses a different login name</strong> (<code>Ctrl+O</code>)
-  and, when your address is already set, <strong>Use a different account</strong>
-  (<code>Ctrl+U</code>) reveal the Login and Mailbox address fields), once connected the mailbox's <strong>Active</strong> switch, Test and
-  Disconnect, the <strong>Job failed</strong> and <strong>Approval needed</strong> notifications with
-  <strong>Send a test</strong>, the <strong>Agent email tools</strong> switch and <strong>Recipients and
-  limits</strong> (recipient rules, send limits, folder) — see <a href="../email/">email.md</a>.
+<li><strong>Email</strong> (<code>@</code>): on your own row, <strong>My email</strong>, the web's three tabs as
+  three sections of one page. <strong>Mailboxes</strong>: not connected yet, the web's
+  mailbox form in its order — <strong>Email address</strong> and the line saying what was
+  found, the sign-in way (<strong>Password</strong> | <strong>Google</strong> | <strong>Microsoft</strong>; Google or
+  Microsoft picked by itself when the address is theirs and the gateway has
+  that sign-in client), <strong>Password</strong>, <strong>Server settings</strong> (<code>Ctrl+O</code>, or the
+  link; open by themselves when nothing was found: both servers, then the
+  <strong>Sign-in name</strong> prefilled with the address) and <strong>Connect</strong>; once
+  connected, the mailbox's <strong>Active</strong> switch, Test and Disconnect.
+  <strong>Notifications</strong>: your <strong>Email address</strong>, <strong>Job failed</strong> and <strong>Approval
+  needed</strong> with <strong>Send a test</strong>. <strong>Agents</strong>: the <strong>Agent email tools</strong> switch
+  and <strong>Recipients and limits</strong> (recipient rules, send limits, folder) — see
+  <a href="../email/">email.md</a>.
   On another user's row, their <strong>Email address</strong> with <strong>Save</strong> ("Saved:
   <id>'s codes and notifications go to <address>.") and a read-only mailbox
   line; on an entity's row, the entity's own mailbox form.</li>
@@ -2267,6 +2546,38 @@ you can click.</p>
   <strong>Other workflow types</strong> and <strong>Settings</strong> with the <strong>Streamed replies</strong>
   switch. <strong>⚠ Broken workflows</strong> lists versions the gateway could not load,
   with the reason and an <strong>Archive</strong> button.</p>
+</li>
+<li>
+<p><strong>V Triggers</strong> is the web page's table: Name (your label, the trigger in words
+  under it), Status (what it is doing, in the web's words), the <strong>Listening</strong>
+  switch (<code>l</code>; <code>k</code> toggles <strong>Keep fetching even when nothing uses it</strong>; a
+  mailbox row's switch is the mailbox's <strong>Active</strong>), <strong>Handled by</strong> (your rows:
+  the flows of the automations handling it, <em><flow> (paused)</em> muted, or
+  <em>Choose a flow…</em>; a mailbox row says <em>Main mailbox</em> on your own mailbox), Last event (a note under the row below 100 columns; an
+  Account column with <strong>All accounts</strong>, <code>a</code>, administrators), your mailboxes as
+  rows with <strong>Manage under Account → My email</strong> (opens your email dialog) and,
+  on every row of yours, <strong>Use in a flow</strong> (<code>f</code>: a dialog with the web menu's
+  choices; <strong>New flow for this trigger…</strong> prints Flow's link,
+  <code>&lt;gateway&gt;/apps/flow/?trigger=&lt;connection id&gt;</code> or <code>…?trigger=mail:&lt;mailbox id&gt;</code>,
+  with <strong>Copy</strong>, since a terminal cannot open Flow; then your triggered flows,
+  <em>✓ <flow></em> on those handling it, one line per automation with <strong>Pause</strong>
+  (<strong>Resume</strong>), <strong>Open in Flow</strong> (prints <code>&lt;gateway&gt;/apps/flow/?flow=&lt;flow id&gt;</code>
+  with <strong>Copy</strong>; refused, <em>Not in the Flow library (ADR-0040)</em>, for a workflow
+  with no library flow) and <strong>Remove</strong> (asked first: <em>Remove <flow> from this
+  trigger? Its runs stay in Observer.</em> <strong>Remove</strong> / <strong>Keep</strong>); an unchecked
+  pick turns one on for this trigger; all said in the web's words), per connection <strong>Events</strong> (<code>e</code>, also <code>Enter</code>: a dialog with the 20 most recent
+  events, newest first, each followed by its JSON; a webhook's address with
+  <strong>Copy</strong>), <strong>Test</strong> (<code>t</code>: the row's note says "Test event #N sent.") and
+  <strong>Delete</strong> (<code>d</code>, after the web's question). <strong>New connection</strong> (<code>n</code>) is a
+  dialog: What to listen to (a feed or a webhook), for a feed <strong>Choose a
+  well-known feed</strong> (the web's list: category headings, each feed with its site,
+  then <strong>Another address</strong>; a pick fills the Name and the Feed address, a
+  template asks for its one value and builds the address), Name, and the source's
+  settings with their labels (a generated secret is never asked for); a
+  webhook's address and signing secret are then shown once, each with
+  <strong>Copy</strong>, with the GitHub/Zapier recipe and the signed call (bash,
+  <code>openssl</code>) to copy. The signed test call and the further mailboxes are in
+  the web console. <strong>Refresh</strong> reads the list again.</p>
 </li>
 <li>
 <p><strong>4 Skills &amp; MCP</strong> has <strong>[Skills] [MCP servers]</strong> in its head (<code>[</code> / <code>]</code>
@@ -2623,10 +2934,10 @@ a locked model; in-flight calls on the model are cancelled first.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
     
   </body>
