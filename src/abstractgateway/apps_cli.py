@@ -41,7 +41,7 @@ def add_apps_subparser(sub: Any) -> None:
     for name, helptext in (("install", "Download and install an app from the npm registry"), ("update", "Update an installed app to the latest version (restarts it when running)")):
         p = verbs.add_parser(name, help=helptext)
         p.add_argument("app", help="flow | code | observer | continuum | entity | assistant (install: the browser app plus, where available, its terminal app; assistant: into the gateway's Python)")
-        p.add_argument("--version", default=None, help="Exact version (default: latest)")
+        p.add_argument("--version", default=None, help="Exact version (default: install = the version this AbstractFramework release pins, the newest when the gateway was not installed as a release; update = the newest)")
         if name == "install":
             p.add_argument("--launch", action="store_true", help="Start the app after installing it (and keep it enabled)")
         p.add_argument("--no-wait", action="store_true", help="Return once the job is queued")

@@ -52,6 +52,18 @@ Show log, versions, addresses and commands are under **Technical details**.
 
 ## Updates
 
+**Install follows the release.** A gateway set up by the AbstractFramework installer records its
+release in `<data dir>/bootstrap.env` (`FRAMEWORK_VERSION`). Installing a browser app without a
+version (the console's **Install**, `abstractgateway apps install <id>`, `POST /apps/{id}/install`
+without `version`) installs the version that release pins (`npm_apps` in the release's
+`docs/installers/install-manifest.json`, read from the framework repo at the tag `v<release>`), so
+the installed set is the tested matrix. A newer published version is shown as an update and
+installed only when someone chooses it (**Update to x.y.z**, `apps update`). When the release's
+pins cannot be read the install fails with that reason instead of installing the newest; a gateway
+not installed as a release (`pip install`, the installer's `--pin` / `--from`) installs the newest.
+`GET /apps` reports the release (`release: {framework_version, apps, manifest_url, error}`) and
+each row its `release_version`.
+
 Every app row says when a newer version is published: the browser apps from
 the npm registry (`dist-tags.latest`), the Assistant from PyPI
 (`<pypi_url>/abstractassistant/json`, `info.version`). One cache serves the
@@ -605,7 +617,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 |---|---|---|
 | `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `status_control {label, tone, busy, action, enabled, tip}` — the status badge for THIS caller: `action` `stop` or `launch` is what a click posts, `enabled` false with `tip` as the reason, `tip` null for a plain pill (the badge table at the top of this page) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
-| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
+| `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job (without `version`: the release's pinned version, see "Updates"): Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. For `assistant`: `abstractassistant==<version>` from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no `update` action. |
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |

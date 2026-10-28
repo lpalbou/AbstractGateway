@@ -767,3 +767,81 @@ def test_reap_orphans_matches_the_recorded_bin_js_not_the_last_argv_word(manager
                 p.kill()
                 p.wait()
 
+
+
+# ---------------------------------------------------------------------------
+# The release matrix: Install follows the AbstractFramework release the gateway
+# was installed as (fresh-Linux release test, 2026-10-28: the console installed
+# Flow 0.12.0 while the release pinned 0.11.0).
+# ---------------------------------------------------------------------------
+
+
+def _publish_versions(m: am.AppsManager, spec: am.AppSpec, versions: list, latest: str) -> None:
+    integ = {}
+    for v in versions:
+        data = _make_tgz(spec.package, v)
+        integ[v] = _sri(data)
+        m.net.routes[f"https://registry.npmjs.org/{spec.package}/-/{spec.short_name}-{v}.tgz"] = data  # type: ignore[attr-defined]
+    base = m.registry_url + "/" + spec.package.replace("/", "%2F")
+    m.net.routes[base] = json.dumps(_registry_doc(spec, integ, latest)).encode()  # type: ignore[attr-defined]
+
+
+def _release_install(m: am.AppsManager, framework: str, apps: dict) -> str:
+    from abstractgateway.self_update import FRAMEWORK_MANIFEST_PATH, FRAMEWORK_RAW
+
+    (m.data_dir).mkdir(parents=True, exist_ok=True)
+    (m.data_dir / "bootstrap.env").write_text(f"# written by install.sh\nPORT=8080\nFRAMEWORK_VERSION={framework}\n", encoding="utf-8")
+    url = f"{FRAMEWORK_RAW}/v{framework}/{FRAMEWORK_MANIFEST_PATH}"
+    manifest = {"framework": {"version": framework}, "npm_apps": [{"id": k, "package": f"@abstractframework/{k}", "version": v} for k, v in apps.items()]}
+    m.net.routes[url] = json.dumps(manifest).encode()  # type: ignore[attr-defined]
+    return url
+
+
+def test_install_follows_the_release_matrix_and_offers_the_newer_version(manager: am.AppsManager) -> None:
+    spec = am.APP_BY_ID["flow"]
+    _publish_versions(manager, spec, ["0.11.0", "0.12.0"], latest="0.12.0")
+    url = _release_install(manager, "0.11.17", {"flow": "0.11.0"})
+    job, _ = manager.start_install("flow", run_inline=True)
+    d = job.to_dict()
+    assert d["state"] == "succeeded", d["details"]
+    assert manager.installed_version("flow") == "0.11.0"
+    assert url in manager.net.calls  # type: ignore[attr-defined]
+    assert "AbstractFramework 0.11.17 pins Flow Editor 0.11.0" in Path(d["log_path"]).read_text()
+    ov = manager.overview()
+    assert ov["release"]["framework_version"] == "0.11.17" and ov["release"]["error"] is None
+    row = next(a for a in ov["apps"] if a["id"] == "flow")
+    # Newer available is SHOWN (an update the person chooses), never installed by itself.
+    assert row["version"] == "0.11.0" and row["release_version"] == "0.11.0"
+    assert row["latest_version"] == "0.12.0" and row["update_available"] is True and "update" in row["actions"]
+    # The person's explicit Update installs the newest.
+    job, _ = manager.start_install("flow", update=True, run_inline=True)
+    assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"
+
+
+def test_install_without_a_release_installs_the_newest(manager: am.AppsManager) -> None:
+    spec = am.APP_BY_ID["flow"]
+    _publish_versions(manager, spec, ["0.11.0", "0.12.0"], latest="0.12.0")
+    job, _ = manager.start_install("flow", run_inline=True)
+    d = job.to_dict()
+    assert d["state"] == "succeeded", d["details"]
+    assert manager.installed_version("flow") == "0.12.0"
+    assert "not installed as an AbstractFramework release" in Path(d["log_path"]).read_text()
+    assert manager.overview()["release"]["framework_version"] is None
+
+
+def test_an_unreadable_release_matrix_refuses_instead_of_installing_the_newest(manager: am.AppsManager) -> None:
+    spec = am.APP_BY_ID["flow"]
+    _publish_versions(manager, spec, ["0.11.0", "0.12.0"], latest="0.12.0")
+    url = _release_install(manager, "0.11.17", {"flow": "0.11.0"})
+    del manager.net.routes[url]  # type: ignore[attr-defined]
+    job, _ = manager.start_install("flow", run_inline=True)
+    d = job.to_dict()
+    assert d["state"] == "failed" and "app versions of AbstractFramework 0.11.17 could not be read" in d["message"]
+    assert manager.installed_version("flow") is None
+    # A manifest that names another release is refused the same way.
+    manager.net.routes[url] = json.dumps({"framework": {"version": "0.11.18"}, "npm_apps": []}).encode()  # type: ignore[attr-defined]
+    job, _ = manager.start_install("flow", run_inline=True)
+    assert job.to_dict()["state"] == "failed" and manager.installed_version("flow") is None
+    # An explicit version is the person's choice: installed as asked.
+    job, _ = manager.start_install("flow", version="0.12.0", run_inline=True)
+    assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"
