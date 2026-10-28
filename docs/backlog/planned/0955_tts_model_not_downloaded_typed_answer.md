@@ -50,9 +50,8 @@ E2E run on released gateway 0.17.0, fresh HOME and data dir (framework root
 NO silent automatic download, and NO 500. At first use with no weights the TTS route answers a clear,
 actionable sentence (what is missing, its size, the one command), and the console's / apps' voice picker
 offers a "Download the default voice (xx MB)" action that runs the documented download with progress, only
-after the person's click. This item carries that rule; 0959 ("the default voice downloads at first use",
-filed on the open branch `docs/backlog-linux-server-findings`) is merged into it and closes as merged when
-that branch lands. Concretely: the typed answer is 409 `model_not_downloaded` with the model id, its size in
+after the person's click. This item carries that rule; 0959 ("the default voice downloads at first use") is merged into it
+(deprecated as merged). Concretely: the typed answer is 409 `model_not_downloaded` with the model id, its size in
 MB, the command, and the download route (shape below plus `size_mb` and `command`); the console's voice
 picker action reuses the console's model-download action; the shared kit picker's action is a separate
 abstractuic item (proposed, contract: this 409 shape). Not in 0.17.2 (that release ships the app-matrix,

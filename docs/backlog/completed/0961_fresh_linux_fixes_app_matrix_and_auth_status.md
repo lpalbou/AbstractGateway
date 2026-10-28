@@ -7,7 +7,7 @@
 > Priority: P1
 > Labels: apps, release-matrix, network, auth, engines, linux
 > Root link: AbstractFramework release-closing wave 2026-10-28, fresh-Linux test (framework root `untracked/release-closing/ovh-test.log`; QA.md items 8 and 10, the llama.cpp card copy)
-> Number: 0961 (0957-0960 are filed on the open branch `docs/backlog-linux-server-findings`; 0960 is the card item fixed here)
+> Number: 0961 (0957-0960 filed by the fresh-Linux findings; 0960, the card item, is completed by this release)
 
 ## Summary
 

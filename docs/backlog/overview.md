@@ -21,10 +21,10 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 13
+- Planned: 15
 - Proposed: 46
-- Completed: 32
-- Deprecated: 1
+- Completed: 33
+- Deprecated: 2
 - Recurrent: 0
 
 <!-- Counts recomputed from the directories on 2026-08-29 while filing
@@ -54,7 +54,11 @@ can trust without importing local gateway packages.
      Same day: +1 planned for 0954 (live token text on the replay view stream): planned 12.
      Same day: +1 planned for 0955 (TTS model not downloaded answers 500, E2E defect D5): planned 13.
      Same day (0.17.1): 0956 filed and completed directly (console islands resync): completed 31.
-     Same day (0.17.2): 0961 filed and completed directly (fresh-Linux fixes): completed 32. -->
+     Same day: +4 planned for 0957-0960 (fresh-Linux release test: linger hint, setup engine pick,
+     default voice at first use, llama.cpp card copy): planned 17.
+     Same day (0.17.2): 0961 filed and completed directly (fresh-Linux fixes): completed 32; 0960 completed
+     by it (completed 33); 0959 deprecated as merged into 0955 (operator rule: no auto-download, no 500);
+     recounted from the directories: planned 15, proposed 46, completed 33, deprecated 2. -->
 
 ## Priority Bands
 
@@ -123,6 +127,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0953_service_lifecycle_stop_entity_threads_and_gc_freeze.md](planned/0953_service_lifecycle_stop_entity_threads_and_gc_freeze.md) | P1. A stopped service stops and joins its entity chat/visit/repair threads; re-freeze after eviction so evicted services are collected; flat threads/RSS over 20 rebuilds (0945 follow-up). |
 | [0954_live_token_text_on_the_replay_view_stream.md](planned/0954_live_token_text_on_the_replay_view_stream.md) | P1. `/view/stream` carries ephemeral `text` frames from `LiveDeltaHub` (not persisted, superseded by the committed message), or clients keep `/ledger/stream` alongside until then; regression found by the Assistant desktop migration; root 0993, runtime 0854/0859. |
 | [0955_tts_model_not_downloaded_typed_answer.md](planned/0955_tts_model_not_downloaded_typed_answer.md) | P1. A TTS model whose engine is installed but whose files are not downloaded (fresh-install default `supertonic-3`) answers a typed 409 `model_not_downloaded` with the model id and the `POST /models/download` action instead of HTTP 500; catalog marks `downloaded`; red test; E2E defect D5 on 0.17.0. |
+| [0957_service_enable_says_when_linger_is_off.md](planned/0957_service_enable_says_when_linger_is_off.md) | P1. On Linux, `service enable` drops the linger note: with `Linger=no` the user service stops at SSH logout and never starts at boot; print `sudo loginctl enable-linger <user>` when lingering is off, and show it under the consoles' switch. |
+| [0958_setup_recommends_an_installed_text_engine.md](planned/0958_setup_recommends_an_installed_text_engine.md) | P1. The setup guide recommends LM Studio (not installed, no desktop) on a Linux/NVIDIA server where llama.cpp and vLLM are Ready; recommend the installed engine (core seam). |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
