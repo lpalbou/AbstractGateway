@@ -103,6 +103,9 @@ def _run_setup_code(args: argparse.Namespace) -> int:
 
     _apply_data_dir_flag(getattr(args, "data_dir", None))
     res = apply_data_dir_default()
+    from .instances import apply_instance_env
+
+    apply_instance_env(res.path)
     code = current_setup_code()
     if code:
         payload = {"ok": True, "unclaimed": True, "setup_code": code, "data_dir": str(res.path)}
@@ -139,6 +142,9 @@ def run_claim(args: argparse.Namespace) -> int:
 
     _apply_data_dir_flag(getattr(args, "data_dir", None))
     res = apply_data_dir_default()
+    from .instances import apply_instance_env
+
+    apply_instance_env(res.path)
     base = _claim_base_url(args, res.path)
     serve = base.get("serve") or {}
     running = bool(serve) and serve.get("alive") is not False
@@ -304,6 +310,7 @@ def _print_autostart_result(out: Dict[str, Any]) -> None:
     for f in (out.get("plan") or {}).get("files") or []:
         print(f"wrote {f['path']}")
     print(f"start at login [{after.get('state')}]: {after.get('summary')}")
+    # (0957: the lingering sentence rides the summary when lingering is off; nothing more to print.)
     for n in (out.get("plan") or {}).get("notes") or []:
         if "OLD registration" in n or "--pin-command-line" in n:
             print(f"note: {n}")
@@ -317,6 +324,9 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
 
     _apply_data_dir_flag(getattr(args, "data_dir", None))
     res = apply_data_dir_default()
+    from .instances import apply_instance_env
+
+    apply_instance_env(res.path)
     data_dir = res.path
     plat = platform or sys.platform
     home_p = Path(home) if home is not None else Path.home()
@@ -467,6 +477,12 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
     print(f"Console: {plan.url}/console")
     if claim:
         print(f"First run: open {claim}")
+    if plat == "linux" and plan.mechanism == "systemd-user":
+        from .autostart import linger_note
+
+        note = linger_note()
+        if note:
+            print(note)
     for line in setup_code_lines(setup_code, f"{plan.url}/console"):
         print(line)
     return 0

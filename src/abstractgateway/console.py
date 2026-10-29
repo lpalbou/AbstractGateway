@@ -247,6 +247,19 @@ def gateway_console_html() -> str:
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
         .replace("__GATEWAY_ABOUT_JSON__", _script_json(console_about_config()))
     )
+    # A named gateway instance (instances.py) says its name in the tab title, the sidebar brand and the
+    # signed-out heading, so two consoles of one machine are never mistaken for each other.
+    from .instances import current_instance, is_default
+
+    if not is_default():
+        name = html.escape(current_instance())
+        page = (
+            page.replace("<title>AbstractGateway Console</title>", f"<title>AbstractGateway Console · {name}</title>", 1)
+            .replace('<span class="shell_brand_name">AbstractGateway</span>',
+                     f'<span class="shell_brand_name">AbstractGateway</span><span class="shell_brand_instance" data-af-tip="Gateway instance {name}">{name}</span>', 1)
+            .replace('<h1 id="page-title">AbstractGateway Console</h1>', f'<h1 id="page-title">AbstractGateway Console · {name}</h1>', 1)
+            .replace('$("page-title").textContent = "AbstractGateway Console";', f'$("page-title").textContent = "AbstractGateway Console · {name}";', 1)
+        )
     # Fragment content last, each placeholder exactly once. The layer and the
     # kit islands go first (they are console-owned); `<script`/`</` inside the
     # React bundle are hex-escaped (valid in any JS string/regex context) so
@@ -418,6 +431,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .shell_brand { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
 	    .shell_brand_mark { font-size: var(--font-size-xl); line-height: 1; color: var(--accent); font-weight: 700; }
 	    .shell_brand_name { font-weight: 700; letter-spacing: .3px; white-space: nowrap; font-size: var(--font-size-md); }
+	    .shell_brand_instance { padding: 1px 7px; border-radius: 999px; font-size: var(--font-size-xs, 11px); font-weight: 650; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 	    .shell_nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: var(--font-size-md); opacity: .8; }
 	    .shell_nav_label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -11777,6 +11791,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.append(modelTd);
 	        const resTd = document.createElement("td");
 	        resTd.append(residencyPill(row));
+	        // WHO keeps it in memory, in words (ADR 0043): "the runtime of
+	        // account default/bob (loaded)", or that no runtime uses it.
+	        if (row.resident === true && Array.isArray(row.held_by) && row.held_by.length) {
+	          const held = document.createElement("div");
+	          held.className = "muted";
+	          held.textContent = `held by ${row.held_by.join("; ")}`;
+	          resTd.append(held);
+	        }
 	        tr.append(resTd);
 	        // SIZE (operator: "an estimate of the current memory footprint used
 	        // for each model currently loaded"). The coalesced display size
@@ -11790,14 +11812,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const sizeView = modelDisplaySize(row);
 	        const cacheBytes = modelCacheBytes(row);
 	        const sizeMark = sizeView.source === "est_weights_bytes" ? "~" : "";
+	        // GGUF rows say what the cache IS: the KV cache llama.cpp allocated
+	        // for the loaded context (an estimate from the file geometry), then
+	        // the session prompt caches. "+ 8.3 GiB cache" with no context read as
+	        // a leak on a freshly restarted server.
+	        const kvBytes = (typeof row.kv_cache_bytes === "number" && isFinite(row.kv_cache_bytes) && row.kv_cache_bytes >= 0) ? row.kv_cache_bytes : null;
+	        const sessionBytes = (kvBytes !== null && cacheBytes !== null) ? Math.max(0, cacheBytes - kvBytes) : null;
+	        const cacheText = kvBytes !== null
+	          ? `~${_fmtBytes(kvBytes)} KV${sessionBytes ? ` + ${_fmtBytes(sessionBytes)} session caches` : ""}`
+	          : (cacheBytes === null ? null : `${_fmtBytes(cacheBytes)} cache`);
 	        sizeTd.textContent = sizeView.bytes === null
-	          ? (cacheBytes === null ? "" : `${_fmtBytes(cacheBytes)} cache`)
-	          : (cacheBytes === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${_fmtBytes(cacheBytes)} cache`);
+	          ? (cacheText || "")
+	          : (cacheText === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${cacheText}`);
 	        const sizeTitle = [sizeView.bytes === null
 	          ? "size unknown — this host reported no size for the model"
 	          : `${sizeView.label} (${sizeView.source})`];
 	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
-	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        if (kvBytes !== null) {
+	          const copies = Number(row.details && row.details.process_holders);
+	          sizeTitle.push(`KV cache ~${_fmtBytes(kvBytes)}: allocated when the model loaded, for ${typeof row.context_length === "number" ? `its ${_fmtCtx(row.context_length)}-token context` : "its context"}${Number.isFinite(copies) && copies > 1 ? `, summed over ${copies} copies` : ""} (estimated from the model file; it does not grow with use)`);
+	          if (sessionBytes) sizeTitle.push(`session prompt caches ${_fmtBytes(sessionBytes)}`);
+	        } else if (cacheBytes !== null) {
+	          sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        }
 	        sizeTd.title = sizeTitle.join(" · ");
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");
@@ -15992,6 +16029,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // (the recommendation itself never switches model on its own).
           + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          // 0958: the gateway replaced AbstractCore's pick because its engine is missing here.
+          + (r.chosen_because ? `<p class="ui-card__note first-run-installed-engine">${esc(firstRunCap(r.chosen_because))}${r.alternative && (r.alternative.route_provider || r.alternative.provider) ? ` (instead of ${esc(state.providerLabels.get(r.alternative.route_provider || r.alternative.provider) || r.alternative.route_provider || r.alternative.provider)}, which is not installed here).` : "."}</p>` : "")
           + engineMissingMarkup(r, "ui-alert tone-warn")
           + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
@@ -16774,6 +16813,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        button.disabled = false;
 	      }
 	    }
+	    function offerDefaultModelDownload(missing) {
+	      const box = $("default-modal-message");
+	      const size = missing.size_mb ? ` (${missing.size_mb} MB)` : "";
+	      box.className = "message error";
+	      box.innerHTML = `${esc(missing.message || "This model is not downloaded yet.")} `
+	        + `<button type="button" class="btn btn-secondary" data-default-download="1">Download${esc(size)}</button>`;
+	      const btn = typeof box.querySelector === "function" ? box.querySelector("[data-default-download]") : null;
+	      if (!btn) return;
+	      btn.onclick = async () => {
+	        btn.disabled = true;
+	        try {
+	          const dl = missing.download || {};
+	          const res = await api(dl.path || "/api/gateway/models/download", { slow: true, method: dl.method || "POST", body: JSON.stringify(dl.body || {}) });
+	          trackDownloadJob(res.job);
+	          box.className = "message";
+	          box.textContent = "Downloading the voice model. Its progress is on the Models page; save this voice again when it is done.";
+	        } catch (e) {
+	          box.textContent = `The download did not start: ${String((e && e.message) || e)}`;
+	        }
+	      };
+	    }
 	    async function saveDefault() {
 	      $("default-modal-message").textContent = "";
 	      try {
@@ -16858,6 +16918,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        closeDefaultModal();
 	        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	      } catch (err) {
+	        // A voice is selectable only once its model is downloaded (operator ruling 2026-10-29): the
+	        // gateway refuses the save with the sentence and the download, offered here as a button.
+	        const typed = err && err.data && typeof err.data.error === "object" ? err.data.error : null;
+	        if (typed && typed.reason_code === "model_not_downloaded" && typed.download) {
+	          offerDefaultModelDownload(typed);
+	          return;
+	        }
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }

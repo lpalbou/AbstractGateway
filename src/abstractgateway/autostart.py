@@ -76,6 +76,40 @@ def _run(runner: Optional[Runner], argv: Sequence[str]) -> Optional["subprocess.
         return None
 
 
+# 0957: a systemd USER unit runs only while its user is logged in, unless lingering is on.
+LINGER_NOTE = (
+    "On a server, this service stops when you log out and does not start at boot until you run once: "
+    "sudo loginctl enable-linger {user}"
+)
+
+
+def _login_name() -> str:
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:  # noqa: BLE001
+        # No passwd entry (a container's arbitrary uid): the command is shown with the shell's $USER.
+        # Never read from the environment here: env reads are declared in env_registry.py.
+        return "$USER"
+
+
+def linger_state(runner: Optional[Runner] = None, user: Optional[str] = None) -> Optional[bool]:
+    """systemd lingering for `user` (`loginctl show-user <user> -p Linger`, no sudo): True, False, or
+    None when it cannot be read (no loginctl, no systemd)."""
+    cp = _run(runner, ["loginctl", "show-user", user or _login_name(), "-p", "Linger"])
+    if cp is None or getattr(cp, "returncode", 1) != 0:
+        return None
+    value = str(getattr(cp, "stdout", "") or "").strip().partition("=")[2].strip().lower()
+    return True if value == "yes" else False if value == "no" else None
+
+
+def linger_note(runner: Optional[Runner] = None) -> Optional[str]:
+    """The one sentence to show when lingering is OFF on this Linux machine, else None."""
+    user = _login_name()
+    return LINGER_NOTE.format(user=user) if linger_state(runner, user) is False else None
+
+
 def _same_path(a: Any, b: Any) -> bool:
     if not a or not b:
         return False
@@ -137,8 +171,8 @@ def _read_launchd(path: Path, *, runner: Optional[Runner], uid: Optional[int], p
         port=_arg_after(argv, "--port"),
         host=_arg_after(argv, "--host"),
     )
-    if str(pl.get("Label") or "") != os_service.LAUNCHD_LABEL:
-        info["problems"].append(f"its Label is {pl.get('Label')!r}, not {os_service.LAUNCHD_LABEL!r}")
+    if str(pl.get("Label") or "") != os_service.launchd_label():
+        info["problems"].append(f"its Label is {pl.get('Label')!r}, not {os_service.launchd_label()!r}")
     if pl.get("RunAtLoad") is not True:
         info["problems"].append("RunAtLoad is not set, so launchd does not start it at login")
     info["problems"] += _program_problems(info["program"], windows=False)
@@ -146,10 +180,10 @@ def _read_launchd(path: Path, *, runner: Optional[Runner], uid: Optional[int], p
         domain = f"gui/{_uid(uid)}"
         cp = _run(runner, ["launchctl", "print-disabled", domain])
         if cp is not None and int(cp.returncode) == 0:
-            m = re.search(r'"' + re.escape(os_service.LAUNCHD_LABEL) + r'"\s*=>\s*(\w+)', str(cp.stdout or ""))
+            m = re.search(r'"' + re.escape(os_service.launchd_label()) + r'"\s*=>\s*(\w+)', str(cp.stdout or ""))
             if m and m.group(1).lower() in {"disabled", "true"}:
                 info["problems"].append("launchd has it disabled (`launchctl disable`), so it will not start at login")
-        cp = _run(runner, ["launchctl", "print", f"{domain}/{os_service.LAUNCHD_LABEL}"])
+        cp = _run(runner, ["launchctl", "print", f"{domain}/{os_service.launchd_label()}"])
         info["loaded"] = None if cp is None else int(cp.returncode) == 0
     return info
 
@@ -181,7 +215,7 @@ def _read_systemd(path: Path, *, home: Path, runner: Optional[Runner], probe: bo
     info.update(argv=argv, program=argv[0] if argv else None, data_dir=env.get("ABSTRACTGATEWAY_DATA_DIR"), port=_arg_after(argv, "--port"), host=_arg_after(argv, "--host"))
     info["problems"] += _program_problems(info["program"], windows=False)
     if probe:
-        cp = _run(runner, ["systemctl", "--user", "is-enabled", os_service.SYSTEMD_UNIT])
+        cp = _run(runner, ["systemctl", "--user", "is-enabled", os_service.systemd_unit()])
         if cp is None:
             info["problems"].append("systemctl --user is not available here, so nothing starts this unit")
         else:
@@ -189,7 +223,7 @@ def _read_systemd(path: Path, *, home: Path, runner: Optional[Runner], probe: bo
             info["enabled"] = word
             if word not in {"enabled", "enabled-runtime", "linked", "alias"}:
                 info["problems"].append(f"the unit is {word or 'not enabled'} (systemctl --user is-enabled), so it will not start at login")
-        cp = _run(runner, ["systemctl", "--user", "is-active", os_service.SYSTEMD_UNIT])
+        cp = _run(runner, ["systemctl", "--user", "is-active", os_service.systemd_unit()])
         info["loaded"] = None if cp is None else int(cp.returncode) == 0
     return info
 
@@ -227,7 +261,7 @@ def _read_windows(registry: Any, *, home: Path, env: Optional[Dict[str, str]]) -
     value = None
     if registry is not None:
         try:
-            value = registry.get(os_service.WINDOWS_RUN_KEY, os_service.WINDOWS_RUN_VALUE)
+            value = registry.get(os_service.WINDOWS_RUN_KEY, os_service.windows_run_value())
         except Exception:  # noqa: BLE001
             value = None
     legacy = os_service.windows_startup_shortcut_path(home, env)
@@ -260,7 +294,7 @@ def _read_windows(registry: Any, *, home: Path, env: Optional[Dict[str, str]]) -
     }
     info["problems"] += _program_problems(info["program"], windows=True)
     try:
-        approved = registry.get(os_service.WINDOWS_STARTUP_APPROVED_KEY, os_service.WINDOWS_RUN_VALUE)
+        approved = registry.get(os_service.WINDOWS_STARTUP_APPROVED_KEY, os_service.windows_run_value())
     except Exception:  # noqa: BLE001
         approved = None
     if isinstance(approved, (bytes, bytearray)) and len(approved) >= 1 and (approved[0] & 1):
@@ -407,6 +441,14 @@ def autostart_status(
         if primary.get("unverified"):
             out["unverified"] = primary["unverified"]
             out["summary"] += f" ({primary['unverified']})"
+    if plat == "linux" and primary.get("mechanism") == "systemd-user" and probe:
+        # 0957: `linger: true|false|null`; when false, the summary (both consoles show it under the Start at
+        # login switch, `service status` prints it) says what that means on a server and the one fix.
+        user = _login_name()
+        out["linger"] = linger_state(runner, user)
+        if out["linger"] is False:
+            out["linger_note"] = LINGER_NOTE.format(user=user)
+            out["summary"] = f"{out['summary']}. {out['linger_note']}"
     return out
 
 

@@ -802,7 +802,7 @@ def _serve_never_exits_the_test_process(monkeypatch: pytest.MonkeyPatch) -> None
 
     from abstractgateway import cli as _cli
 
-    def _name_stragglers() -> None:
+    def _name_stragglers(exit_code: int = 0) -> None:
         stragglers = [t.name for t in threading.enumerate()
                       if t is not threading.main_thread() and t.is_alive() and not t.daemon]
         if stragglers:
@@ -914,3 +914,16 @@ def pytest_sessionfinish(session, exitstatus):
 
 def pytest_unconfigure(config):
     _hermetic_unconfigure()
+
+
+
+@pytest.fixture(autouse=True)
+def _no_engine_inventory_probe(monkeypatch):
+    """0958: choosing the text engine reads AbstractCore's engine inventory, which runs the engine CLIs
+    (`lms`, `ollama`). Tests never do: the inventory answers "unknown" (the rule is off) unless a test
+    sets the host's engines itself (tests/test_gateway_installed_text_engine.py)."""
+    try:
+        from abstractgateway import core_config as _cc
+    except Exception:  # noqa: BLE001 - a collection without the package
+        return
+    monkeypatch.setattr(_cc, "_engine_installed", lambda engine_id: None, raising=False)

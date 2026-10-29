@@ -114,6 +114,10 @@ const ctx = vm.createContext({
     if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
     if (path.startsWith("/api/gateway/models/catalog?")) {
       if (HUB === null) throw new Error("hub search failed (offline?): connection refused");
+      if (HUB.__pages) {  // one answer per `hub_page` (page 1 when absent)
+        const m = /[?&]hub_page=(\d+)/.exec(path);
+        return JSON.parse(JSON.stringify(HUB.__pages[(m ? Number(m[1]) : 1) - 1]));
+      }
       return JSON.parse(JSON.stringify(HUB));
     }
     if (path === "/api/gateway/models/installed") {
@@ -192,6 +196,22 @@ if (__SCRIPT__ === "hf") {
   root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen coder", dataset: { mcSearch: "1" } } });
   await settle();
   snap("second");
+  out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "hfmore") {
+  out.html1 = root.innerHTML;
+  const more = () => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "hub-more" } } : null) } });
+  more(); await settle(); snap("page2"); out.html2 = root.innerHTML;
+  more(); await settle(); snap("page3"); out.html3 = root.innerHTML;
+  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "beside") {
+  out.html = root.innerHTML;
+  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  // Switching to Hugging Face mode with the same words reuses the answer (no second request).
+  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  await settle();
+  snap("hf"); out.hfHtml = root.innerHTML;
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
 }
 if (__SCRIPT__ === "gpulimit") {
@@ -411,6 +431,56 @@ def test_hugging_face_texts() -> None:
     for text in ("Hugging Face has no model matching", "Hugging Face could not be searched right now.", "Hugging Face could not be reached, so these results may be incomplete."):
         assert text in js
     assert "export " not in js and "HF_TOKEN" not in js and "environment variable" not in js
+
+
+def _hub_page(first: int, n: int, *, page: int, more: bool, handle: str | None = None, found: bool = True) -> dict:
+    cat = _hub(first + n)
+    cat["rows"] = cat["rows"][first:]
+    cat["hub"]["search"] = {"query": "smol lm", "page": page, "page_size": n, "rows": n, "has_more": more,
+                            "handle": handle, "handle_found": bool(handle) and found}
+    return cat
+
+
+def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
+    """Backlog 0864 (front item 4): the count says how many Hugging Face results are shown and
+    whether more exist; "Show more results" appends the next page; the last page has no button."""
+    hub = {"__pages": [_hub_page(0, 4, page=1, more=True), _hub_page(4, 4, page=2, more=True), _hub_page(8, 2, page=3, more=False)]}
+    out = _run(_catalog(10), "hfmore", "#catalog?hf=smol%20lm", hub=hub)
+    assert out["initial"]["cards"] == 4
+    assert 'data-mc-hub-count="4">Showing 4 Hugging Face results; more are available.' in out["html1"]
+    assert 'data-mc-action="hub-more"' in out["html1"]
+    assert out["page2"]["cards"] == 8 and 'data-mc-hub-count="8"' in out["html2"]
+    assert out["page3"]["cards"] == 10 and 'data-mc-hub-count="10">Showing 10 Hugging Face results.</span>' in out["html3"]
+    assert 'data-mc-action="hub-more"' not in out["html3"]
+    assert out["hubCalls"] == [
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=2",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=3",
+    ]
+
+
+def test_a_handle_hugging_face_does_not_have_is_said() -> None:
+    hub = _hub_page(0, 2, page=1, more=False, handle="nobody/Smol-LM", found=False)
+    out = _run(_catalog(10), "hash", "#catalog?hf=nobody%2FSmol-LM", hub=hub)
+    assert out["fromhash"]["cards"] == 2
+    html = _run(_catalog(10), "hfmore", "#catalog?hf=nobody%2FSmol-LM", hub=hub)["html1"]
+    assert "Hugging Face has no repo named “nobody/Smol-LM”; these models match its name." in html
+
+
+def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
+    """Batch item (a): searching the catalog also asks Hugging Face for the same words; its
+    results come below the catalog's cards, and Hugging Face mode reuses that answer."""
+    cat = _catalog(10)
+    hub = _hub_page(0, 3, page=1, more=True)
+    hub["rows"].insert(0, dict(cat["rows"][0], source="curated"))  # a curated row also in the answer: drawn once
+    out = _run(cat, "beside", "#catalog?q=org-1", hub=hub)
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true"]
+    assert '<h4 class="mc-hub-beside__title">From Hugging Face</h4>' in out["html"]
+    assert 'data-mc-hub-beside="3"' in out["html"]
+    assert out["html"].count('data-mc-model="hf:') == 3
+    assert 'data-mc-hub-count="3">Showing 3 Hugging Face results; more are available.' in out["html"]
+    assert out["hubCalls2"] == out["hubCalls"]  # the mode switch asked nothing new
+    assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
 
 
 def _gpu_limit_catalog() -> dict:
