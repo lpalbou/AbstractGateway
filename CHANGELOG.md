@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
-  may be a Mac.
+  may be a Mac. On Linux the processes are read from procfs (whole command lines); elsewhere `ps -ww`, never cut to the terminal width.
 
 ## [0.18.0] - 2026-10-28
 

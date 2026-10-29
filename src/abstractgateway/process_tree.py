@@ -28,6 +28,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,15 +57,41 @@ class Proc:
         return self.stat.startswith("Z")
 
 
-def list_processes() -> List[Proc]:
-    """Every process `ps` shows (macOS and Linux). Empty when `ps` cannot run (a minimal container):
-    the recorded pids are then all that is known."""
+def _procfs_processes(root: Path = Path("/proc")) -> Optional[List[Proc]]:
+    """Linux: every process from procfs, its full command line included (`/proc/<pid>/cmdline`,
+    never cut to a terminal width). None when there is no procfs (macOS)."""
+    try:
+        entries = [e for e in root.iterdir() if e.name.isdigit()]
+    except OSError:
+        return None
+    if not entries:
+        return None
+    out: List[Proc] = []
+    for e in entries:
+        try:
+            stat = (e / "stat").read_text(encoding="utf-8", errors="replace")
+            # "pid (comm) S ppid ...": comm may hold spaces and parentheses; the state follows the LAST ")".
+            rest = stat[stat.rindex(")") + 2 :].split()
+            state, ppid = rest[0], int(rest[1])
+            uid = -1
+            for line in (e / "status").read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("Uid:"):
+                    uid = int(line.split()[1])
+                    break
+            raw = (e / "cmdline").read_bytes()
+        except (OSError, ValueError, IndexError):
+            continue  # gone meanwhile, or not readable
+        args = raw.rstrip(b"\0").replace(b"\0", b" ").decode("utf-8", "replace")
+        out.append(Proc(pid=int(e.name), ppid=ppid, uid=uid, stat=state, args=args))
+    return out
+
+
+def _ps_processes() -> List[Proc]:
+    """macOS (and a Linux without procfs): `ps`, with `-ww` so a command line is never cut to the
+    terminal width (`COLUMNS`). Empty when `ps` cannot run (a minimal container)."""
     try:
         cp = subprocess.run(
-            # -ww: never cut the command line to the terminal's width. ps honours COLUMNS (and a
-            # tty's width) and truncates `args`; a gateway whose "abstract*" name sits past the
-            # cut was then not recognised and nothing was stopped (CI runners set COLUMNS=80).
-            ["ps", "-A", "-ww", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "stat=", "-o", "args="],
+            ["ps", "-ww", "-A", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "stat=", "-o", "args="],
             capture_output=True,
             text=True,
             check=False,
@@ -83,6 +110,13 @@ def list_processes() -> List[Proc]:
             continue
         out.append(Proc(pid=pid, ppid=ppid, uid=uid, stat=parts[3], args=parts[4] if len(parts) > 4 else ""))
     return out
+
+
+def list_processes() -> List[Proc]:
+    """Every process: procfs on Linux (exact command lines), else `ps -ww`. Empty when neither can
+    be read; the recorded pids are then all that is known."""
+    procs = _procfs_processes() if sys.platform.startswith("linux") else None
+    return procs if procs is not None else _ps_processes()
 
 
 _scan: Callable[[], List[Proc]] = list_processes

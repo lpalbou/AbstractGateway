@@ -63,7 +63,12 @@ def _narrow_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-def gateway(tmp_path: Path):
+def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # The fake serve's `abstractgateway` marker sits at the END of a long command line, and the
+    # interpreter's path names no abstract* program (CI: /opt/hostedtoolcache/Python/...): the
+    # tree must read the whole command line (procfs on Linux, `ps -ww` elsewhere), whatever the
+    # terminal width says (CI 2026-10-29: a cut line dropped the marker and the tree came back empty).
+    monkeypatch.setenv("COLUMNS", "80")
     data = tmp_path / "data"
     (data / "run").mkdir(parents=True)
     pid_file = tmp_path / "child.pid"
@@ -204,3 +209,26 @@ def test_the_dry_run_says_the_tree_is_stopped(tmp_path: Path, capsys: pytest.Cap
     out = capsys.readouterr().out
     assert "run: launchctl bootout gui/501/ai.abstractframework.gateway" in out
     assert "stop: the gateway's processes and the children it started (wait up to 20 s" in out
+
+
+def test_procfs_reads_the_whole_command_line_and_the_state(tmp_path: Path) -> None:
+    """Linux's procfs, read without `ps`: a `comm` with spaces and parentheses, the state after the
+    last ")", the uid from `status`, the NUL-separated command line whole (no terminal width)."""
+    long_arg = "x" * 300
+    for pid, comm, state, ppid, uid, argv in (
+        (100, "python3", "S", 1, 1001, [b"/opt/py/bin/python3", b"-c", long_arg.encode(), b"abstractgateway-fake-serve"]),
+        (101, "a (weird) name", "Z", 100, 1001, []),
+    ):
+        d = tmp_path / str(pid)
+        d.mkdir()
+        (d / "stat").write_text(f"{pid} ({comm}) {state} {ppid} 1 1 0 -1\n", encoding="utf-8")
+        (d / "status").write_text(f"Name:\t{comm}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n", encoding="utf-8")
+        (d / "cmdline").write_bytes(b"\0".join(argv) + (b"\0" if argv else b""))
+    (tmp_path / "self").mkdir()  # not a pid: skipped
+    procs = {p.pid: p for p in process_tree._procfs_processes(tmp_path)}
+    assert sorted(procs) == [100, 101]
+    assert procs[100].ppid == 1 and procs[100].uid == 1001 and procs[100].stat == "S"
+    assert procs[100].args.endswith("abstractgateway-fake-serve") and long_arg in procs[100].args
+    assert procs[101].zombie and procs[101].ppid == 100 and procs[101].args == ""
+    assert process_tree._procfs_processes(tmp_path / "missing") is None
+
