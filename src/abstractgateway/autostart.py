@@ -137,8 +137,8 @@ def _read_launchd(path: Path, *, runner: Optional[Runner], uid: Optional[int], p
         port=_arg_after(argv, "--port"),
         host=_arg_after(argv, "--host"),
     )
-    if str(pl.get("Label") or "") != os_service.LAUNCHD_LABEL:
-        info["problems"].append(f"its Label is {pl.get('Label')!r}, not {os_service.LAUNCHD_LABEL!r}")
+    if str(pl.get("Label") or "") != os_service.launchd_label():
+        info["problems"].append(f"its Label is {pl.get('Label')!r}, not {os_service.launchd_label()!r}")
     if pl.get("RunAtLoad") is not True:
         info["problems"].append("RunAtLoad is not set, so launchd does not start it at login")
     info["problems"] += _program_problems(info["program"], windows=False)
@@ -146,10 +146,10 @@ def _read_launchd(path: Path, *, runner: Optional[Runner], uid: Optional[int], p
         domain = f"gui/{_uid(uid)}"
         cp = _run(runner, ["launchctl", "print-disabled", domain])
         if cp is not None and int(cp.returncode) == 0:
-            m = re.search(r'"' + re.escape(os_service.LAUNCHD_LABEL) + r'"\s*=>\s*(\w+)', str(cp.stdout or ""))
+            m = re.search(r'"' + re.escape(os_service.launchd_label()) + r'"\s*=>\s*(\w+)', str(cp.stdout or ""))
             if m and m.group(1).lower() in {"disabled", "true"}:
                 info["problems"].append("launchd has it disabled (`launchctl disable`), so it will not start at login")
-        cp = _run(runner, ["launchctl", "print", f"{domain}/{os_service.LAUNCHD_LABEL}"])
+        cp = _run(runner, ["launchctl", "print", f"{domain}/{os_service.launchd_label()}"])
         info["loaded"] = None if cp is None else int(cp.returncode) == 0
     return info
 
@@ -181,7 +181,7 @@ def _read_systemd(path: Path, *, home: Path, runner: Optional[Runner], probe: bo
     info.update(argv=argv, program=argv[0] if argv else None, data_dir=env.get("ABSTRACTGATEWAY_DATA_DIR"), port=_arg_after(argv, "--port"), host=_arg_after(argv, "--host"))
     info["problems"] += _program_problems(info["program"], windows=False)
     if probe:
-        cp = _run(runner, ["systemctl", "--user", "is-enabled", os_service.SYSTEMD_UNIT])
+        cp = _run(runner, ["systemctl", "--user", "is-enabled", os_service.systemd_unit()])
         if cp is None:
             info["problems"].append("systemctl --user is not available here, so nothing starts this unit")
         else:
@@ -189,7 +189,7 @@ def _read_systemd(path: Path, *, home: Path, runner: Optional[Runner], probe: bo
             info["enabled"] = word
             if word not in {"enabled", "enabled-runtime", "linked", "alias"}:
                 info["problems"].append(f"the unit is {word or 'not enabled'} (systemctl --user is-enabled), so it will not start at login")
-        cp = _run(runner, ["systemctl", "--user", "is-active", os_service.SYSTEMD_UNIT])
+        cp = _run(runner, ["systemctl", "--user", "is-active", os_service.systemd_unit()])
         info["loaded"] = None if cp is None else int(cp.returncode) == 0
     return info
 
@@ -227,7 +227,7 @@ def _read_windows(registry: Any, *, home: Path, env: Optional[Dict[str, str]]) -
     value = None
     if registry is not None:
         try:
-            value = registry.get(os_service.WINDOWS_RUN_KEY, os_service.WINDOWS_RUN_VALUE)
+            value = registry.get(os_service.WINDOWS_RUN_KEY, os_service.windows_run_value())
         except Exception:  # noqa: BLE001
             value = None
     legacy = os_service.windows_startup_shortcut_path(home, env)
@@ -260,7 +260,7 @@ def _read_windows(registry: Any, *, home: Path, env: Optional[Dict[str, str]]) -
     }
     info["problems"] += _program_problems(info["program"], windows=True)
     try:
-        approved = registry.get(os_service.WINDOWS_STARTUP_APPROVED_KEY, os_service.WINDOWS_RUN_VALUE)
+        approved = registry.get(os_service.WINDOWS_STARTUP_APPROVED_KEY, os_service.windows_run_value())
     except Exception:  # noqa: BLE001
         approved = None
     if isinstance(approved, (bytes, bytearray)) and len(approved) >= 1 and (approved[0] & 1):
