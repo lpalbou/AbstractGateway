@@ -52,7 +52,8 @@ const ctx = vm.createContext({
   api: async (path, opts) => {
     const body = (opts && opts.body) ? JSON.parse(opts.body) : null;
     calls.push({ path, body });
-    if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
+    // The console's catalog asks every quant (operator ruling 2026-10-29: no "Every quant" switch).
+    if (path === "/api/gateway/models/catalog?hub=true&extended=true") return JSON.parse(JSON.stringify(FIXTURE));
     if (path === "/api/gateway/models/installed") return { schema: "models_installed_v1", rows: [], errors: {} };
     if (path === "/api/gateway/models/delete-download") {
       if (body.provider === "lmstudio") {
