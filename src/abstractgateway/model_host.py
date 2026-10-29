@@ -751,8 +751,13 @@ class ModelHostClient:
             return
         self._mh_assigned[name] = value
         if self._mh_built():
-            _Exchange(self._mh_host, self, ("setattr", ("c", self._mh_id), name, value),
-                      what={"method": f"set {name}"}).run()
+            try:
+                _Exchange(self._mh_host, self, ("setattr", ("c", self._mh_id), name, value),
+                          what={"method": f"set {name}"}).run()
+            except (ModelHostUnavailable, ModelHostCrashed) as exc:
+                # The child is restarting: the value is recorded and the rebuild delivers it. An
+                # assignment never fails the caller (a service being built) for a transient state.
+                logger.debug("model host: %s recorded, delivered at the rebuild (%s)", name, exc)
 
     def set_provider_endpoint_profile_resolver(self, resolver: Any) -> Any:
         self._provider_endpoint_profile_resolver = resolver

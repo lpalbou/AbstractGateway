@@ -311,5 +311,16 @@ def test_an_attribute_the_host_assigns_reaches_the_child_and_survives_a_restart(
         assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
         client.generate(prompt="after")
         assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/alice"
+        # Assigned while the child is down, with the proxy still believing it built: no exception,
+        # and the rebuild delivers it.
+        pid = sup.pid
+        os.kill(pid, signal.SIGKILL)
+        assert _until(lambda: not sup.generation_alive())
+        client._mh_built = lambda: True  # the instant before the proxy notices the restart
+        client.residency_owner_label = "the runtime of account default/carol"
+        del client._mh_built
+        assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
+        client.generate(prompt="again")
+        assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/carol"
     finally:
         sup.stop()
