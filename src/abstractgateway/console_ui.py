@@ -1238,7 +1238,8 @@ CONSOLE_UI_JS = r"""
     function engineAction_(e, id) { return (Array.isArray(e.actions) ? e.actions : []).find((a) => a && a.id === id) || null; }
     function engineState(e, job) {
       if (job && job.state === "needs_admin") return { key: "waiting", pill: uiPill("Needs your approval", "warn") };
-      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill("Needs Apple tools", "warn") };
+      // Apple's command-line tools only on a Mac; anywhere else the job names its own prerequisite.
+      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill((job.tools_prompt && job.tools_prompt.action && job.tools_prompt.action.kind === "xcode_select_install") ? "Needs Apple tools" : "Needs a prerequisite", "warn") };
       if (engineJobActive(job)) return { key: "installing", pill: uiPill("Installing", "info tone-busy") };
       if (e.supported === false) return { key: "unsupported", pill: uiPill("Not for this computer", "muted") };
       if (e.installed !== true) return { key: "absent", pill: uiPill("Not installed", "muted") };

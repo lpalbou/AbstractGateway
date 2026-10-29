@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
 
+### Changed
+
+- **LM Studio on Linux without root never asks for an administrator**: when the machine lacks the libatomic1
+  system library, the card says so plainly and names the engines that install here for this account (llama.cpp,
+  Ollama, vLLM where they apply), with no administrator step; a gateway running as root still installs it. An
+  engine job waiting on a prerequisite says "Needs Apple tools" only for Apple's installer, never on Linux.
+
 ### Added
 
 - **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
@@ -121,6 +128,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkout without metadata is not refused. Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released
   2026-10-29).
 
+- **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
+  install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
+  `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
+  with no authorization decision. All 14 are now recorded user-level (every handler resolves the caller's principal
+  and plane and acts on that plane's own notebook); the two plane-wide routes (`PUT /settings`,
+  `POST /processor/ensure`) get their shared-plane gate in abstractnote's handler (AbstractNote backlog 0040), not
+  an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
+  green there and red on every real install; security incident note in docs/security.md; planned 0972.
 
 ## [0.18.0] - 2026-10-28
 
