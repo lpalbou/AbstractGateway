@@ -89,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
+- **`service enable` says when the service will stop at logout** (backlog 0957). On a Linux server with lingering
+  off (the default), a systemd user unit stops when the last SSH session ends and never starts at boot, yet
+  `abstractgateway service enable` answered only "start at login [on]". `service install`, `service enable` and
+  `service status`, and the consoles' Start at login switch, now add one line when `loginctl show-user <user> -p
+  Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
+  sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
+  printed whatever the state, is gone.
 - **The Models page says what a model's "cache" is and who keeps it in memory.** A GGUF row reads
   "~5.4 GiB + ~2.0 GiB KV" with the loaded context in the Context column and, in the tooltip, that
   the KV cache was allocated for that context when the model loaded (an estimate from the file;
