@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`service enable` says when the service will stop at logout** (backlog 0957). On a Linux server with lingering
+  off (the default), a systemd user unit stops when the last SSH session ends and never starts at boot, yet
+  `abstractgateway service enable` answered only "start at login [on]". `service install`, `service enable` and
+  `service status`, and the consoles' Start at login switch, now add one line when `loginctl show-user <user> -p
+  Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
+  sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
+  printed whatever the state, is gone.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin

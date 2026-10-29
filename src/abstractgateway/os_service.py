@@ -7,7 +7,7 @@ per user, without admin rights.
 - Linux: a systemd USER unit `~/.config/systemd/user/abstractgateway.service`
   (`Restart=on-failure`), enabled with `systemctl --user enable --now`. It runs
   only while the user is logged in unless lingering is enabled
-  (`loginctl enable-linger $USER`, printed as a hint, never run for you).
+  (`sudo loginctl enable-linger <user>`, printed when lingering is off, never run for you).
   Where no systemd user manager answers (non-systemd distros, WSL, some
   containers) the fallback is an XDG autostart entry
   `~/.config/autostart/abstractgateway.desktop`, started by the desktop
@@ -822,10 +822,8 @@ def build_install_plan(
         plan.commands.append(["systemctl", "--user", "daemon-reload"])
         plan.commands.append(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT])
         plan.notes.append(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f")
-        plan.notes.append(
-            "A user unit runs while you are logged in. To keep it running after logout / start it at boot, "
-            "run once: loginctl enable-linger \"$USER\" (may ask for your password)."
-        )
+        # 0957: the lingering sentence is printed only when lingering is OFF (`autostart.linger_note`, read
+        # after the install), never as an unconditional hint.
     else:
         plan.experimental = True
         logf = log_dir("windows", home, data_dir) / "gateway.log"

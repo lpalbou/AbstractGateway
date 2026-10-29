@@ -76,6 +76,38 @@ def _run(runner: Optional[Runner], argv: Sequence[str]) -> Optional["subprocess.
         return None
 
 
+# 0957: a systemd USER unit runs only while its user is logged in, unless lingering is on.
+LINGER_NOTE = (
+    "On a server, this service stops when you log out and does not start at boot until you run once: "
+    "sudo loginctl enable-linger {user}"
+)
+
+
+def _login_name() -> str:
+    try:
+        import pwd
+
+        return pwd.getpwuid(os.getuid()).pw_name
+    except Exception:  # noqa: BLE001
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or "$USER"
+
+
+def linger_state(runner: Optional[Runner] = None, user: Optional[str] = None) -> Optional[bool]:
+    """systemd lingering for `user` (`loginctl show-user <user> -p Linger`, no sudo): True, False, or
+    None when it cannot be read (no loginctl, no systemd)."""
+    cp = _run(runner, ["loginctl", "show-user", user or _login_name(), "-p", "Linger"])
+    if cp is None or getattr(cp, "returncode", 1) != 0:
+        return None
+    value = str(getattr(cp, "stdout", "") or "").strip().partition("=")[2].strip().lower()
+    return True if value == "yes" else False if value == "no" else None
+
+
+def linger_note(runner: Optional[Runner] = None) -> Optional[str]:
+    """The one sentence to show when lingering is OFF on this Linux machine, else None."""
+    user = _login_name()
+    return LINGER_NOTE.format(user=user) if linger_state(runner, user) is False else None
+
+
 def _same_path(a: Any, b: Any) -> bool:
     if not a or not b:
         return False
@@ -407,6 +439,14 @@ def autostart_status(
         if primary.get("unverified"):
             out["unverified"] = primary["unverified"]
             out["summary"] += f" ({primary['unverified']})"
+    if plat == "linux" and primary.get("mechanism") == "systemd-user" and probe:
+        # 0957: `linger: true|false|null`; when false, the summary (both consoles show it under the Start at
+        # login switch, `service status` prints it) says what that means on a server and the one fix.
+        user = _login_name()
+        out["linger"] = linger_state(runner, user)
+        if out["linger"] is False:
+            out["linger_note"] = LINGER_NOTE.format(user=user)
+            out["summary"] = f"{out['summary']}. {out['linger_note']}"
     return out
 
 

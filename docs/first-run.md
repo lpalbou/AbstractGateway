@@ -271,8 +271,13 @@ Details:
   (`--no-claim` to skip).
 - `--dry-run` prints the files and commands without changing anything.
   `--no-start` registers the service without starting it now.
-- On Linux, a user unit runs while you are logged in. To keep it running after
-  logout or start it at boot, run `loginctl enable-linger "$USER"` once.
+- On Linux, a user unit runs while you are logged in. When lingering is off
+  (`loginctl show-user "$USER" -p Linger` answers `Linger=no`, the default),
+  `service install`, `service enable` and `service status` say so in one line:
+  "On a server, this service stops when you log out and does not start at boot
+  until you run once: sudo loginctl enable-linger <user>". The consoles' Start at
+  login switch shows the same sentence. The gateway never runs it for you (it
+  needs an administrator); `install.sh --server` does.
 
 ## Where the data lives
 

@@ -1385,8 +1385,13 @@ Details:
   (`--no-claim` to skip).
 - `--dry-run` prints the files and commands without changing anything.
   `--no-start` registers the service without starting it now.
-- On Linux, a user unit runs while you are logged in. To keep it running after
-  logout or start it at boot, run `loginctl enable-linger "$USER"` once.
+- On Linux, a user unit runs while you are logged in. When lingering is off
+  (`loginctl show-user "$USER" -p Linger` answers `Linger=no`, the default),
+  `service install`, `service enable` and `service status` say so in one line:
+  "On a server, this service stops when you log out and does not start at boot
+  until you run once: sudo loginctl enable-linger <user>". The consoles' Start at
+  login switch shows the same sentence. The gateway never runs it for you (it
+  needs an administrator); `install.sh --server` does.
 
 ## Where the data lives
 
@@ -14123,6 +14128,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+
+- **`service enable` says when the service will stop at logout** (backlog 0957). On a Linux server with lingering
+  off (the default), a systemd user unit stops when the last SSH session ends and never starts at boot, yet
+  `abstractgateway service enable` answered only "start at login [on]". `service install`, `service enable` and
+  `service status`, and the consoles' Start at login switch, now add one line when `loginctl show-user <user> -p
+  Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
+  sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
+  printed whatever the state, is gone.
 
 ## [0.18.0] - 2026-10-28
 
