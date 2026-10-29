@@ -2443,7 +2443,7 @@ class AppsManager:
         except AppsError as exc:
             return None, exc.message
 
-    def release_app_versions(self, *, use_cache: bool = True) -> Dict[str, Any]:
+    def release_app_versions(self, *, use_cache: bool = True, offline: bool = False) -> Dict[str, Any]:
         """The browser-app versions of the AbstractFramework RELEASE this gateway was installed
         as: the installer records the release in `<data dir>/bootstrap.env`
         (`FRAMEWORK_VERSION`); that release's `install-manifest.json` (at the immutable tag
@@ -2454,7 +2454,9 @@ class AppsManager:
         `{"framework_version", "apps": {id: version}, "manifest_url", "error"}`. Not an installer
         release install (no `bootstrap.env`, or `--pin` / `--from`: `FRAMEWORK_VERSION` empty):
         `framework_version` None and no pins (the newest is installed). A release install whose
-        manifest cannot be read: `error` says why (`start_install` then refuses, loud)."""
+        manifest cannot be read: `error` says why (`start_install` then refuses, loud).
+        `offline=True` makes no request: the manifest only when an earlier request cached it,
+        else no pins and no error (gateway boot; a network read at boot or shutdown is refused)."""
         from .self_update import FRAMEWORK_MANIFEST_PATH, FRAMEWORK_RAW, read_installer_state
 
         state = read_installer_state(self.data_dir) or {}
@@ -2470,6 +2472,10 @@ class AppsManager:
             except ValueError as exc:  # not JSON (a captive portal's page): an answer, cached as a failure
                 raise AppsError(f"{url} did not answer JSON ({exc})") from exc
 
+        if offline:
+            cached = self._registry_cache.get("framework-manifest:" + fv)
+            if cached is None or isinstance(cached[1], Exception) or _now() - cached[0] >= REGISTRY_CACHE_TTL_S:
+                return out
         try:
             manifest = self._registry_cached("framework-manifest:" + fv, _fetch, use_cache=use_cache)
         except AppsError as exc:
@@ -3122,7 +3128,7 @@ class AppsManager:
         no network request: before the first check only this install's own pins count, and the
         console's row says the rest once the update check has run (merge desk review 2026-10-29:
         `GET /api/gateway/update` must not find a check the person never asked for)."""
-        release = self.release_app_versions()
+        release = self.release_app_versions(offline=True)  # boot: never a request
         out: List[str] = []
         for spec in APPS:
             sentence = app_older_than_pin(spec.id, spec.name, self.installed_version(spec.id), release_version=release["apps"].get(spec.id))

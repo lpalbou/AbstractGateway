@@ -884,6 +884,32 @@ def test_an_app_older_than_a_release_pin_is_named_in_its_row_and_at_boot(manager
     assert row == "Flow Editor 0.11.0 is older than this AbstractFramework release's 0.12.0: update Flow Editor."
 
 
+def test_the_boot_warning_never_fetches_the_release_manifest(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Merge desk 2026-10-29 (sharded CI): the boot warning read this install's release pins with
+    a live GET of the framework manifest (raw.githubusercontent.com), so a gateway starting and
+    stopping in a test reached the network at teardown. Boot reads only what an earlier request
+    cached; before that, this install's pins are simply not known yet."""
+    from abstractgateway import self_update
+
+    _release_install(manager, "0.11.17", {"flow": "0.11.0"})
+    monkeypatch.setattr(self_update, "newest_release_app_pins", lambda: (None, {}))
+    asked: list = []
+    real_get = manager._get_json
+
+    def _no_network(url, *a, **k):
+        asked.append(url)
+        return real_get(url, *a, **k)
+
+    monkeypatch.setattr(manager, "_get_json", _no_network)
+    manager._registry_cache.clear()
+    assert manager.outdated_app_warnings() == []
+    assert not [u for u in asked if "install-manifest" in u or "githubusercontent" in u], asked
+    # Once a request read the manifest (the Apps tab, an install), boot uses that cached answer.
+    assert manager.release_app_versions()["apps"] == {"flow": "0.11.0"}
+    asked.clear()
+    assert manager.release_app_versions(offline=True)["apps"] == {"flow": "0.11.0"} and asked == []
+
+
 def test_the_update_check_keeps_the_newest_release_app_pins(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import self_update
 
