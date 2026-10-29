@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an untouched fresh-install text route use a GGUF build that fits this computer through llama.cpp (the pick's own
   family when one fits; on the OVH 16 GB server: Qwen3 8B, Q4_K_M), and the card says why ("instead of LM Studio,
   which is not installed here"). Wherever the pick's engine is installed, nothing changes.
+- **A route on an engine that is not installed says so** (0958, OVH 8443 2026-10-29). A Text route on an LM Studio or
+  Ollama that this computer has not installed showed a green "configured", and every chat failed ("Circuit breaker
+  open for LMStudioProvider"). `GET /config/capability-defaults` now stamps such a route with `engine_missing`
+  {engine, name, reason, engine_row}, the shape AbstractCore uses for in-process engines. The grid shows "engine
+  missing" with the Providers tab's Install.
 - **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
   nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
 ### Changed
