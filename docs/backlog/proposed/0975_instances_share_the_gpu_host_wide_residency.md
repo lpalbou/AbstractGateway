@@ -25,8 +25,9 @@ puts a Qwen3.5 4B Q4_K_M at about 7.1 GiB resident (measured 7,120 MiB after one
   instances' models), or one host-level model host that every instance asks. An instance never evicts another
   instance's model silently; a refusal names the other instance and what it holds.
 - The setup guide's recommendation on a host with another instance counts the memory the other instance holds.
-- A text route can cap its context (the KV allocation), and the recommendation picks a context that fits beside the
-  other instance.
+- No context cap per route and no silent truncation (operator ruling 2026-10-29, framework ADR 0026): the KV is reserved
+  at the model's chosen context, shown and editable on the Models row; a load that does not fit gets the readable
+  refusal, a request longer than the loaded context fails with its sentence (AbstractCore ADR 0010).
 - A test with two instances on a fake 16 GB card: the second load counts the first instance's model.
 
 ## Ruling (2026-10-29)
