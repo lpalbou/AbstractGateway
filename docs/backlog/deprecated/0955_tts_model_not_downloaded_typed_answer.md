@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (routes, voice catalog); abstractuic (shared voice picker state); abstractruntime (retry classification, noted)
 > Type: bug
-> Status: planned (not implemented)
+> Status: rejected (2026-10-29), replaced by the selection-time rule below
 > Created: 2026-10-28
 > Priority: P1
 > Labels: voice, tts, first-run, error-contract, thin-clients
@@ -90,3 +90,29 @@ network-status and engine-card fixes); next gateway batch.
 - A real crash in synthesis still answers 500 (the typed answer is not a catch-all).
 - Real E2E on a fresh HOME: the console Test button and Code's read-aloud show the download prompt; after
   `POST /models/download` completes, the same request answers 200 with audio.
+
+
+## Rejected (2026-10-29): the rule is at selection time
+
+Operator ruling, 2026-10-29: "you can't check at every voice synthesis if the model exists; on the gateway you
+can only select a voice if and only if it has been downloaded". The synthesis-time 409 (PR #47) is closed
+without merging.
+
+Facts read on the 8080 release-test server:
+- The default output.voice route resolves to supertonic / supertonic-3. Its weights are in
+  ~/.cache/abstractvoice/supertonic-3 (383 MB), and Core's probe answers `installed`.
+- The journal holds exactly three TTS failures, at 2026-10-28 14:34:19-22: "Supertonic 3 artifacts are not
+  available locally", retried and then a 500. That is the same minute the voice cache directory was created.
+- There is no TTS error afterwards, and a synthesis on the default route answers HTTP 200 in 2.95 s.
+- So the 500s were calls made while the voice was still downloading.
+
+The rule, as implemented (AbstractGateway, "default voice only when downloaded"):
+- The voice lists offer only voices whose model is downloaded. Checked locally with an empty HOME: Supertonic,
+  runtime installed but no weights, is not offered; only the configured cloud provider is.
+- Setting the default voice (`PUT /config/capability-defaults/output/voice`) to a local model whose weights are
+  absent is refused AT SELECTION TIME: 409, the sentence as a plain `detail` string, and the download action
+  under `error`. The console shows the sentence with a **Download (N MB)** button.
+- Synthesis never checks.
+
+Kept for the kit follow-up: a 409 `detail` must be a plain sentence, because the kit's read-aloud hook prints
+`String(data.detail)`.

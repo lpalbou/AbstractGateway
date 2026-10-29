@@ -1001,6 +1001,48 @@ def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Di
     return out
 
 
+def model_not_downloaded(provider: str, model: str) -> Optional[Dict[str, Any]]:
+    """The typed "download it first" answer for a model whose engine is here but whose weights are
+    not, else None. Asked at SELECTION time only (operator ruling 2026-10-29: a voice can be
+    selected if and only if its model is downloaded; synthesis never checks). Generic: AbstractCore's availability probe for
+    the (provider, model) pair, never an engine's message text; the size comes from the
+    catalog when it knows the artifact. Read-only, no download, no hub call for the probe."""
+    pid, mid = str(provider or "").strip(), str(model or "").strip()
+    if not pid or not mid:
+        return None
+    try:
+        with config_facade.model_presence_sweep():
+            rows = config_facade.annotate_model_availability([{"provider": pid, "model": mid}])
+    except Exception:  # noqa: BLE001 - unknown is not "absent": the call goes ahead as before
+        return None
+    availability = (rows[0] or {}).get("availability") if rows else None
+    if not isinstance(availability, dict) or availability.get("status") != "absent" or availability.get("downloadable") is False:
+        return None
+    artifact = str(availability.get("artifact") or rows[0].get("download_artifact") or mid)
+    size_bytes: Optional[int] = None
+    try:
+        payload = config_facade.model_catalog(artifact)
+        for row in payload.get("rows") or []:
+            for art in row.get("artifacts") or []:
+                if art.get("provider") == pid and str(art.get("artifact")) == artifact and isinstance(art.get("download_bytes"), int):
+                    size_bytes = int(art["download_bytes"])
+    except Exception:  # noqa: BLE001 - the size is advice; the answer stands without it
+        size_bytes = None
+    size_mb = round(size_bytes / 1_000_000) if size_bytes else None
+    command = f"{GATEWAY_CLI} models download {pid} {artifact}"
+    size_text = f" ({size_mb} MB)" if size_mb else ""
+    return {
+        "reason_code": "model_not_downloaded",
+        "message": f"The voice model {artifact}{size_text} is not downloaded on this computer yet, so it cannot be the default voice. Download it first (Models page, or: {command})",
+        "provider": pid,
+        "model": mid,
+        "artifact": artifact,
+        "size_mb": size_mb,
+        "command": command,
+        "download": {"method": "POST", "path": "/api/gateway/models/download", "body": {"provider": pid, "artifact": artifact}},
+    }
+
+
 def recommended_core_model_downloads() -> list[Dict[str, str]]:
     """`{route, provider, artifact}` for the recommended fresh-install set."""
 
@@ -1055,6 +1097,31 @@ def core_model_download(
 
 CoreTooOld = config_facade.AbstractCoreTooOld
 HostActionRefused = config_facade.HostActionRefused
+
+
+class RuntimeTooOld(NotImplementedError):
+    """The installed AbstractRuntime's facade predates a seam argument the gateway was asked to
+    pass (-> 501 `abstractruntime_too_old`, in words). Never a silent fallback to the old answer."""
+
+    def __init__(self, feature: str, *, missing: str):
+        self.feature = str(feature)
+        self.missing = str(missing)
+        super().__init__(
+            f"{self.feature} needs a newer AbstractRuntime on this gateway (its facade has no {self.missing}). "
+            "Upgrade it with: pip install -U abstractruntime"
+        )
+
+
+def _accepts_kwargs(fn: Any, names: Any) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return True  # not introspectable: let the call itself answer
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return all(n in params for n in names)
 
 #: The CLI that job cards and `cli_equivalent` name on this entry point.
 GATEWAY_CLI = "abstractgateway"
@@ -1136,10 +1203,14 @@ def core_model_catalog(
     fits_only: bool = False,
     hub: bool = False,
     tags: Optional[list] = None,
+    **paging: int,
 ) -> Dict[str, Any]:
-    """Contract C (`model_catalog_v1`)."""
+    """Contract C (`model_catalog_v1`). `paging`: `hub_page` / `hub_page_size`, passed only when
+    asked (the facade refuses them in words on an AbstractCore without Hugging Face pages)."""
 
-    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags)
+    if paging and not _accepts_kwargs(config_facade.model_catalog, paging):
+        raise RuntimeTooOld("Hugging Face search pages", missing="model_catalog(hub_page=, hub_page_size=)")
+    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags, **paging)
 
 
 def core_installed_models(provider: Optional[str] = None) -> Dict[str, Any]:
