@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -13,14 +14,40 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # Which heavy, unrelated jobs a pull request needs: the Rust console only when console-tui/
+  # changes, the container build only when the image's inputs change. Pushes to main and tags run
+  # everything.
+  changes:
     runs-on: ubuntu-latest
-    # A safety net only: the suite runs in well under 30 minutes.
+    outputs:
+      tui: ${{ steps.diff.outputs.tui }}
+      docker: ${{ steps.diff.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "tui=true" >> "$GITHUB_OUTPUT"; echo "docker=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+          echo "$files" | grep -qE '^(console-tui/|\.github/workflows/ci\.yml$)' && echo "tui=true" >> "$GITHUB_OUTPUT" || echo "tui=false" >> "$GITHUB_OUTPUT"
+          echo "$files" | grep -qE '^(docker/|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "docker=true" >> "$GITHUB_OUTPUT" || echo "docker=false" >> "$GITHUB_OUTPUT"
+
+  test:
+    # Pull requests: ONE Python (3.12), the suite split in 4 parallel shards (whole test files,
+    # balanced by ci/test_durations.json: scripts/ci_shard.py). Pushes to main and release tags:
+    # the full matrix, 3.10-3.13, each sharded the same way.
+    name: test (${{ matrix.python-version }}, shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    # A safety net only: one shard runs in a few minutes.
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ${{ fromJSON(github.event_name == 'pull_request' && '["3.12"]' || '["3.10", "3.11", "3.12", "3.13"]') }}
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,15 +63,38 @@ jobs:
       # authorization contract walks. A seam is covered by CI or it is not shipped.
       - name: Install the seam packages
         run: python -m pip install "abstractnote>=0.2.0"
+      - name: Shard
+        run: |
+          python scripts/ci_shard.py --shards 4 --plan
+          python scripts/ci_shard.py --shards 4 --index ${{ matrix.shard }} > shard.txt
+          wc -l shard.txt
       - name: Pytest
         env:
           CI_SEAMS_REQUIRED: "abstractnote"
           ABSTRACT_E2E_GATEWAY_SPLIT: "0"
           ABSTRACT_E2E_LMSTUDIO: "0"
           ABSTRACTGATEWAY_EMBEDDING_PROVIDER: "disabled"
-        # Serial: a pytest-xdist trial (-n auto --dist loadfile, 2 min locally vs 24) failed
-        # intermittently on shared state between workers; see backlog 0945.
-        run: python -m pytest --durations=15
+        # Serial inside a shard: a pytest-xdist trial (-n auto --dist loadfile) failed
+        # intermittently on shared state between workers (backlog 0945); separate jobs share nothing.
+        run: python -m pytest --durations=15 --junitxml=junit-${{ matrix.python-version }}-${{ matrix.shard }}.xml $(cat shard.txt)
+      # Seconds per test file, to rebalance the shards: `python scripts/ci_shard.py --record junit.xml`.
+      - name: Keep the timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.python-version }}-${{ matrix.shard }}
+          path: junit-${{ matrix.python-version }}-${{ matrix.shard }}.xml
+          retention-days: 14
+
+  # One required check for branch protection, whatever the matrix: green only when every shard is.
+  tests:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        run: |
+          [ "${{ needs.test.result }}" = "success" ] || { echo "a test shard did not pass: ${{ needs.test.result }}"; exit 1; }
 
   build:
     runs-on: ubuntu-latest
@@ -77,6 +127,8 @@ jobs:
         run: mkdocs build -q
 
   console-tui:
+    needs: changes
+    if: needs.changes.outputs.tui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +158,8 @@ jobs:
         run: cargo package --locked
 
   docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
