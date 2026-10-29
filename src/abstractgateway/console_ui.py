@@ -454,7 +454,12 @@ CONSOLE_UI_CSS = r"""
     .first-run-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .first-run-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
     .first-run-content { width: 100%; max-width: 1560px; margin: 0 auto; padding: clamp(24px, 4vh, 44px) clamp(20px, 3.4vw, 60px) 36px; display: grid; gap: 24px; }
-    .first-run-head { display: grid; gap: 8px; max-width: 920px; }
+    .first-run-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; row-gap: 8px; }
+    .first-run-head > :not(.first-run-head__actions) { grid-column: 1; max-width: 920px; }
+    .first-run-head__actions { grid-column: 2; grid-row: 1 / span 3; align-self: end; }
+    .first-run-head__actions:empty { display: none; }
+    .dm-badge--loading { cursor: default; opacity: .72; }
+    .dm-badge--loading .dm-badge__state { color: var(--text-muted, var(--text-secondary)); }
     .first-run-kicker { color: var(--accent); font-size: var(--font-size-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .first-run-head h3 { font-size: calc(26px * var(--font-scale)); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
@@ -544,6 +549,8 @@ CONSOLE_UI_CSS = r"""
     @media (max-width: 767.98px) {
       .first-run-content { padding: 20px var(--gutter, 16px) 28px; gap: 18px; }
       .first-run-head h3 { font-size: calc(22px * var(--font-scale)); }
+      .first-run-head { grid-template-columns: minmax(0, 1fr); }
+      .first-run-head__actions { grid-column: 1; grid-row: auto; justify-self: start; }
       .first-run-footer { padding-left: var(--gutter, 16px); padding-right: var(--gutter, 16px); }
       .first-run-footer .message { flex-basis: 100%; order: 3; }
     }
@@ -559,16 +566,18 @@ CONSOLE_UI_CSS = r"""
        focused field), 14 px reading text. The visual glyphs keep their size;
        the boxes grow. The target floor is !important on purpose: it is a
        floor, and several control recipes (.ui-btn.is-quiet, #sandbox-reasoning,
-       the catalog's chips, later in this sheet) pin a desktop height with a
-       more specific selector. Exceptions (DESIGN §3.2): inline text links in
-       prose, disabled controls, the kit About dialog's link list. */
+       later in this sheet) pin a desktop height with a more specific selector.
+       Exceptions (DESIGN §3.2): inline text links in prose, disabled controls,
+       the kit About dialog's link list, and the kit's pills (af-chip--button,
+       the filter bar's scope buttons): they keep their pill geometry and the
+       kit grows an invisible 44 px hit area instead. */
     @media (pointer: coarse) {
-      button, .ui-btn, .af-topbar__btn, .af-topbar__pill, .mc-mode button, button.mc-chip, .entity-subtab,
+      button:not(.af-chip--button):not(.af-filterbar__scope-btn), .ui-btn, .af-topbar__btn, .af-topbar__pill, .entity-subtab,
       .first-run-step, .tab-button.shell_nav_item, .af-select-trigger, summary, .ui-card__actions a.ui-link,
       .acc-root .acc-btn, .acc-root .acc-tabs button { min-height: var(--tap-min, 44px) !important; }
       .ui-card__actions a.ui-link { display: inline-flex; align-items: center; }
       .mc-art .mc-id { min-height: var(--tap-min, 44px); display: flex; align-items: center; }
-      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close, .mc-chip { min-width: var(--tap-min, 44px) !important; }
+      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close { min-width: var(--tap-min, 44px) !important; }
       .sandbox-speak { height: var(--tap-min, 44px); }
       input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: var(--font-size-input, 16px) !important; min-height: var(--tap-min, 44px) !important; }
       input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
@@ -1238,13 +1247,13 @@ CONSOLE_UI_JS = r"""
       const p = engineStore.plans.get(e.id);
       if (!p || p.loading) return `<p class="ui-card__note ui-working">Checking where ${esc(e.name || e.id)} can go on this computer...</p>`;
       if (p.error) return `<div class="ui-alert tone-warn"><strong>Could not check the install locations.</strong><span>${esc(p.error)}</span>`
-        + `<span>Install still works: the gateway picks /Applications when your account can write it, else your own Applications folder.</span></div>`;
+        + `<span>Install still works: the gateway picks /Applications when the account it runs as can write it, else that account's own Applications folder.</span></div>`;
       const sys = p.system || {};
       const user = p.user || {};
       return `<ul class="ui-choice-list">`
-        + `<li><b>Install</b> puts it in your own Applications folder: only your account sees it, no password needed.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
+        + `<li><b>Install</b> puts it in the Applications folder of the account the gateway runs as: no password needed, and the gateway serves it to every user.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
         + `<li><b>${esc(sys.needs_admin ? "Install for all users (administrator)" : "Install for all users")}</b> puts it in /Applications for every account on this computer.`
-        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "Your account cannot write there, so an administrator password is asked first.")}` : "")
+        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "The account the gateway runs as cannot write there, so an administrator password is asked first.")}` : "")
         + `<code class="ui-advanced ui-ellip is-block" title="${esc(sys.target || "")}">${esc(sys.target || "")}</code></li></ul>`;
     }
     function engineLocationButtons(e) {
@@ -1353,6 +1362,12 @@ CONSOLE_UI_JS = r"""
           const msg = (job.error && job.error.message) || job.message || "The install did not finish.";
           body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(msg)}</strong></div>`;
         }
+        // A failed UPDATE leaves the installed engine as it was (OVH 8080, 2026-10-29): the card
+        // stays Ready and says why the update did not happen, in the job's one sentence.
+        if (job && job.state === "failed" && e.installed === true) {
+          const msg = (job.error && job.error.message) || job.message || "The update did not finish; the installed version is unchanged.";
+          body += `<div class="ui-alert tone-warn" role="status" data-engine-update-failed><strong>${esc(msg)}</strong></div>`;
+        }
         // Install / Start / Stop are an admin's actions: a non-admin's card does
         // not render them (UX rule: unavailable actions are not shown); Browse
         // models and Learn more stay.
@@ -1392,56 +1407,13 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
-    // ---- "Allow engine installs" (root backlog 0858): the effective value, where it comes from,
-    // and an admin switch (GET/POST /api/gateway/admin/runtime-config `allow_engine_install`).
-    const engineSetting = { data: null, error: "", busy: false, note: null };
-    function engineInstallSourceText(r) {
-      if (r.source === "stored") return "your setting";
-      if (r.source === "default_same_machine") return "the default: you are on the gateway's own computer";
-      return r.loopback_bind ? "the default for a gateway that only this computer reaches" : "the default for a gateway other computers reach";
-    }
+    // ---- Who installs engines (operator ruling 2026-10-29): engines are installed ONCE per
+    // computer by the gateway's administrator and shared by every user; there is no switch here.
+    // An account that is not an admin reads one sentence; an admin sees the install actions.
     function engineInstallSettingMarkup() {
-      const r = engineSetting.data && engineSetting.data.allow_engine_install;
-      const allowed = engineStore.data && engineStore.data.install_allowed !== false;
-      if (!r || typeof r !== "object") {
-        // Not read (yet, or not allowed for this account): the engines answer still says the effective value.
-        return allowed ? "" : `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can turn it on here, on the Engines tab. You can still install an engine yourself and check again.</span></div>`;
-      }
-      const admin = !!engineSetting.data.writable;
-      const on = !!r.value;
-      const note = engineSetting.note ? `<span class="ui-row-saved tone-${esc(engineSetting.note.tone)}" role="status" data-engine-install-saved>${esc(engineSetting.note.text)}</span>` : "";
-      const reason = admin ? "" : "Only an admin can change this";
-      return `<div class="ui-apps-setting" data-engine-install-setting="${on ? "on" : "off"}" data-source="${esc(r.source || "")}"><div class="ui-apps-setting__head">`
-        + `<button type="button" role="switch" class="af-switch af-switch--row" data-engine-action="allow-install" aria-checked="${on ? "true" : "false"}"${reason ? ` aria-disabled="true" title="${esc(reason)}"` : ""}${engineSetting.busy ? ' aria-busy="true"' : ""}>`
-        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Allow engine installs from the console</span>`
-        + `<span class="af-switch__desc">${on ? "On" : "Off"}: ${esc(engineInstallSourceText(r))}. Installs run on the gateway's computer.</span></span></button>${note}</div>`
-        + (admin && r.source === "stored" ? `<p><button type="button" class="ui-btn is-text" data-engine-action="allow-install-default"${engineSetting.busy ? " disabled" : ""}>Use the default</button></p>` : "")
-        + `<p class="ui-advanced ui-sub">CLI: <code>abstractgateway-config set allow_engine_install ${on ? "off" : "on"}</code></p></div>`;
-    }
-    async function engineInstallSettingRefresh() {
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config");
-        engineSetting.error = "";
-      } catch (err) {
-        engineSetting.data = null;
-        engineSetting.error = String((err && err.message) || err);
-      }
-      engineRender();
-    }
-    async function engineInstallSettingSave(value) {
-      if (engineSetting.busy) return;
-      engineSetting.busy = true;
-      engineSetting.note = null;
-      engineRender();
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ allow_engine_install: value }) });
-        engineSetting.note = { tone: "ok", text: "Saved" };
-      } catch (err) {
-        const data = (err && err.data) || {};
-        engineSetting.note = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
-      }
-      engineSetting.busy = false;
-      await engineRefresh();  // the engines' own install_allowed follows the setting
+      const admin = !!(state.principal && state.principal.admin);
+      if (admin) return "";
+      return `<div class="ui-alert tone-info" data-engine-install-note><span>An administrator installs engines for this computer.</span></div>`;
     }
     function engineViewMarkup(key) {
       const extra = engineStore.extras.get(key);
@@ -1560,13 +1532,6 @@ CONSOLE_UI_JS = r"""
     };
     async function engineAction(action, id, button) {
       if (action === "refresh") { engineStore.message = ""; engineStore.notices.clear(); await engineRefresh(); return; }
-      if (action === "allow-install") {
-        const r = engineSetting.data && engineSetting.data.allow_engine_install;
-        if (!r || !engineSetting.data.writable || (button && button.getAttribute && button.getAttribute("aria-disabled") === "true")) return;
-        await engineInstallSettingSave(!r.value);
-        return;
-      }
-      if (action === "allow-install-default") { await engineInstallSettingSave(null); return; }
       // "Browse models": the catalog cards, filtered to this engine's builds.
       if (action === "models") { closeFirstRunWizard(); openCatalogTab(MC_ENGINE_PROVIDER[id] ? { provider: MC_ENGINE_PROVIDER[id] } : {}); return; }
       const e = engineById(id) || { id, name: id };
@@ -1632,7 +1597,6 @@ CONSOLE_UI_JS = r"""
       };
       engineRender();
       engineRefresh();
-      engineInstallSettingRefresh();
       if (fresh) engineRestoreJobs();
     }
     function unmountEngineCards(key) { engineStore.views.delete(key); }

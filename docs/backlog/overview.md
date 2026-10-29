@@ -21,13 +21,13 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 19
+- Planned: 20
 - Proposed: 48
 - Completed: 34
 - Deprecated: 3
 - Recurrent: 0
 
-<!-- 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -133,8 +133,10 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0969_instances_registry_file_lock.md](planned/0969_instances_registry_file_lock.md) | P3. `instances.json` slot assignment is guarded by a threading lock only: two installers started in the same second can draw the same slot; add an inter-process file lock (merge desk review of #37). |
 | [0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md](planned/0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md) | P1. The console's vendored kit (`console_islands.py`, kit 0.9.4) is behind ui-kit 0.9.6: its approval card still shows the pre-0068 rendering. Re-sync it and add a CI-visible pin. Done when the console's approval card reads in words on 8443/8080 at a stated sha. |
 | [0976_console_about_adopts_the_kit_about_dialog.md](planned/0976_console_about_adopts_the_kit_about_dialog.md) | P2. The console About (local dialog with the update controls) becomes the kit `AfAboutDialog` with the controls as `about.extra`, once AbstractUIC #37 is released and the islands are resynced. Done when the operator's instance shows the kit About and its update controls work. |
+| [0978_one_weights_copy_and_the_visible_model_queue.md](planned/0978_one_weights_copy_and_the_visible_model_queue.md) | P0. Core ADR 0011, the gateway half: gateway-side generations borrow the principal's pool (R2), one copy after a model-host restart, the pool fields and the queued sentence on the Models row, `/api/health`, chat status and `/v1`; the audit probe as a test; the 1064 benchmark with real models. |
 | [0977_console_browser_tests_expect_the_old_first_screen.md](planned/0977_console_browser_tests_expect_the_old_first_screen.md) | P2. The console's four browser tests fail on main since the first-run onboarding: a fresh gateway opens on the setup screen; drive the setup (or start claimed), assert the setup screen once, wire the lane into CI. |
 | [0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md](planned/0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md) | P1 (security). Gateway CI installs only `.[dev]`, so the routers it mounts from other packages (abstractnote) never exist in CI: the route authorization contract stayed green while 14 note write routes had no decision on every real install (security incident 2026-10-29, PR #55). Install every seam package in CI and assert the seam is mounted. |
+| [0979_gateway_with_a_data_dir_never_writes_outside_it.md](planned/0979_gateway_with_a_data_dir_never_writes_outside_it.md) | P1 (security). A gateway started with an explicit data dir derives its Core config dir from it (the instances runner's rule) unless `ABSTRACTCORE_CONFIG_DIR`/`_FILE` is set; only a gateway with no data dir uses the machine store; a test PUTs a capability default with a data dir and asserts `~/.abstractcore/config/abstractcore.json` is unchanged (red without the fix); every path the gateway writes is listed in docs/configuration.md. From the 2026-10-29 incident (docs/security.md). |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |

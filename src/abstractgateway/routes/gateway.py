@@ -27062,6 +27062,11 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
+        # The context is explicit (AbstractCore ADR 0010 point 8): what the model advertises and
+        # why the loaded one differs ("memory", "configured", "explicit", "advertised").
+        "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
+        "context_source": _row_v1_str(record, "context_source"),
+        "memory_buffer": record.get("memory_buffer") if isinstance(record.get("memory_buffer"), (int, float)) and not isinstance(record.get("memory_buffer"), bool) else None,
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =
@@ -28116,24 +28121,34 @@ def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[D
     capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
     knows none of these: Ask on a run failed at once with "Unknown provider:
     endpoint:<id>" on a gateway whose runs used that default fine."""
-    from .. import model_host
+    from ..generation_pool import PoolGeneration, generation_client
 
     svc = get_gateway_service()
     current_base, root_base = _gateway_profile_dirs()
     routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
-    # ADR 0002: in the model host child when this process has one, else here.
-    llm = model_host.local_client(
+    # R2 (2026-10-29): the principal's runtime pool, so an in-process model is ONE resident instance
+    # shared with the runs (a client per request was a full extra copy). Without a pool, a client of
+    # its own as before (in the model host child when this process has one, ADR 0002).
+    llm = generation_client(
         provider=routed_provider,
         model=model,
         llm_kwargs=llm_kwargs or None,
-        artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
-        # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
-        # `runtime_core_config_file` is the seam the bundle host uses (this
-        # scope's overlay when it has one, else THE Core store), never the
-        # retired `<data_dir>/config/abstractcore.json`.
-        core_config_file=runtime_core_config_file(current_base),
-        capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        local_ctor=dict(
+            provider=routed_provider,
+            model=model,
+            llm_kwargs=llm_kwargs or None,
+            artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
+            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
+            # `runtime_core_config_file` is the seam the bundle host uses (this
+            # scope's overlay when it has one, else THE Core store), never the
+            # retired `<data_dir>/config/abstractcore.json`.
+            core_config_file=runtime_core_config_file(current_base),
+            capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        ),
     )
+    if isinstance(llm, PoolGeneration):
+        # The pool resolves endpoint profiles with the host's resolver already.
+        return llm, routed_provider, profile_public
 
     def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -28655,6 +28670,33 @@ async def model_residency_unlock(request: Request, req: _GatewayModelResidencyLo
         unavailable_code="model_residency_unavailable",
         error_code="model_residency_error",
     )
+
+
+class _GatewayModelContextRequest(BaseModel):
+    provider: str = Field(description="Provider of the local model.")
+    model: str = Field(description="Model id.")
+    context_length: Optional[int] = Field(default=None, ge=512, description="Tokens to reserve at load; null clears the setting (the fit rule chooses again).")
+
+
+@router.put("/models/context")
+async def model_context_set(request: Request, req: _GatewayModelContextRequest) -> Any:
+    """Set (or clear) the context a local model is LOADED with (admin; AbstractCore ADR 0010
+    point 8). A set context is a pin: loaded as is, refused with the readable sentence when it
+    does not fit, never shrunk. It applies at the model's next load."""
+    _require_admin_principal(request)
+    from .. import core_config
+
+    svc = get_gateway_service()
+    cfg = core_config.runtime_core_config_file(Path(svc.config.data_dir))
+    try:
+        out = await _core_host_call(core_config.set_model_context, req.provider, req.model, req.context_length, config_file=cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(out, JSONResponse):
+        return out  # an older Runtime or Core: 501 in words
+    what = f"{req.context_length:,} tokens" if req.context_length else "the fit to this computer's memory"
+    return {"ok": True, "provider": req.provider, "model": req.model, "context_length": req.context_length,
+            "message": f"{req.model} will load with {what} at its next load; unload it to reload it now."}
 
 
 @router.get("/models/context_estimate")

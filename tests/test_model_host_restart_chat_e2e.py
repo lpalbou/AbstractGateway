@@ -199,8 +199,10 @@ def test_after_a_model_host_restart_the_next_chat_answers_and_the_model_is_built
             new_child = [b for b in builds if b["pid"] == back["pid"] and b["model"] == "fake-model"]
             old_child = [b for b in builds if b["pid"] == child and b["model"] == "fake-model"]
             print(f"\nbuilds of fake-model: first child {len(old_child)}, new child {len(new_child)}; all: {builds}")
-            assert len(new_child) <= len(old_child), (
-                f"the restarted child built the model more often than the first one: {new_child} vs {old_child}")
+            # R2: the sandbox borrows the runtime's pool, so each child builds the model ONCE (the
+            # pool's), before and after the restart, never once more per gateway-side generation.
+            assert len(old_child) == 1, f"the first child built the model {len(old_child)} times: {old_child}"
+            assert len(new_child) == 1, f"the restarted child built the model {len(new_child)} times: {new_child}"
             # And nothing else: the boot-time default the operator replaced is not warmed again.
             others = [b for b in builds if b["pid"] == back["pid"] and b["model"] != "fake-model"]
             assert not others, f"the restarted child built a model nobody uses any more: {others}"

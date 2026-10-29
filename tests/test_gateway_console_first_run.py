@@ -216,7 +216,9 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
   if (path === "/api/gateway/apps/jobs/app-1") return res(200, { ok: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "succeeded", percent: 100, message: "Flow is running" } });
-  if (path === "/api/gateway/models/catalog") {
+  // The Models catalog asks every quant (operator ruling 2026-10-29: no "Every quant" switch); the
+  // defaults dialog reads the plain catalog for its recommendation.
+  if (path === "/api/gateway/models/catalog?hub=true&extended=true" || path === "/api/gateway/models/catalog") {
     if (scenario.catalogFail) return res(501, { detail: { message: scenario.catalogFail } });
     return res(200, CATALOG);
   }
@@ -334,6 +336,8 @@ if (scenario.name === "claim") {
   // AbstractCore's table, whatever the screens' state).
   if (mounts.some((x) => x.id === "first-run-model-catalog")) fail("the model step must show the catalog cards, not mount AbstractCore's table");
   const cat = el("first-run-model-catalog").innerHTML;
+  // test_gateway_console_filter_bar.py reads both catalogs' markup (the guide's here, the Models tab's below).
+  if (scenario.dumpCatalogs) console.log("CATALOG guide " + JSON.stringify(cat));
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
@@ -426,6 +430,7 @@ if (scenario.name === "claim") {
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
+    if (scenario.dumpCatalogs) console.log("CATALOG tab " + JSON.stringify(el("catalog-cards-root").innerHTML));
     if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
@@ -533,7 +538,7 @@ if (scenario.name === "default-models") {
   // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
   context.firstRunGoto("model"); await settle();
   if (!el("first-run-default-models").innerHTML.includes('data-dm-badge="in-text"')) fail("the step must open in Simple mode");
-  await dmClick("first-run-default-models", { dmMode: "advanced" });
+  await dmClick("first-run-head-actions", { dmMode: "advanced" });
   const html = el("first-run-default-models").innerHTML;
   const rows = (html.match(/data-dm-row="/g) || []).length;
   if (rows !== 9) fail("expected 9 capability rows, got " + rows);
@@ -550,7 +555,16 @@ if (scenario.name === "default-models") {
 }
 if (scenario.name === "simple-mode") {
   // 1069 Simple mode (default): one Use recommended, then capability badges in readable names.
-  context.firstRunGoto("model"); await settle();
+  // Operator 2026-10-29: the step's FIRST paint is Simple mode (a skeleton while the recommendations
+  // load), never the older layout ("Checking the recommended starter models…", the catalog search).
+  context.firstRunGoto("model");
+  const first = el("first-run-default-models").innerHTML;
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("the first paint is not Simple mode: the older layout shows until the data loads");
+  if (!first.includes("Reading what this computer can run") || !first.includes("dm-badge--loading")) fail("no Simple-mode skeleton while loading: " + first.slice(0, 400));
+  await settle();
+  // The Simple / Advanced switch sits on the step's header line, not in the step body.
+  if (!el("first-run-head-actions").innerHTML.includes('data-dm-mode="advanced"')) fail("the Simple / Advanced switch is not on the header line");
+  if (el("first-run-default-models").innerHTML.includes("data-dm-mode")) fail("the Simple / Advanced switch is still in the step body");
   let html = el("first-run-default-models").innerHTML;
   const ins = (html.match(/data-dm-badge="in-/g) || []).length;
   const outs = (html.match(/data-dm-badge="out-/g) || []).length;

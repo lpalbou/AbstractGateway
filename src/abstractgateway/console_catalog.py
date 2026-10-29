@@ -36,6 +36,326 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 
 from __future__ import annotations
 
+# The kit's af-filterbar block (abstractuic ui-kit/src/theme.css, backlog 0074), VERBATIM.
+# The console vendors a RELEASED kit (console_islands.py); until a kit release carries
+# this block in ISLANDS_CSS the page serves this copy, spliced before CATALOG_CSS.
+# tests/test_gateway_console_filter_bar.py pins it: equal to the kit checkout's block
+# when that checkout has one, and present exactly while the vendored kit lacks it (the
+# test goes red the day a re-sync brings it, so this copy is deleted then).
+KIT_FILTER_BAR_CSS = r"""
+/* af-filterbar:begin
+ * FILTER BAR (ui-kit after 0.9.8, operator design finding 2026-10-29): ONE compact, aligned bar
+ * (src/af_filter_bar.tsx; markup from src/af_filter_bar_core.ts; contract in
+ * docs/filter-bar.md). A first line: the optional scope switch, the search field with its
+ * on/off filters beside it (one line, they never wrap apart), the end slot (count,
+ * actions). Then one row per facet: the label in a FIXED column, the chips in the second
+ * column where they wrap (never under the label). Chips are the kit chip at one size, the
+ * count muted small text, the accent hue when pressed. `--sticky` keeps the first line at
+ * the top of the scroller while the facet rows scroll away. Consoles that vendor an older
+ * kit copy this block verbatim until their vendored kit carries it. */
+.af-filterbar {
+  --af-filterbar-label-w: 7.5rem;
+  --af-filterbar-chip-h: 28px;
+  --af-filterbar-pad-x: 16px;
+  --af-filterbar-top: 0px;
+  display: grid;
+  min-width: 0;
+}
+/* The two parts become items of the host's layout, so the first line sticks to the
+ * scroller rather than to this wrapper. */
+.af-filterbar--sticky {
+  display: contents;
+}
+.af-filterbar__lead,
+.af-filterbar__facets {
+  min-width: 0;
+  border: 1px solid var(--ui-border-1);
+  /* Opaque (the card tone laid over the page tone): content scrolls under the sticky line. */
+  background-color: var(--bg-primary);
+  background-image: linear-gradient(var(--bg-card, var(--bg-secondary)), var(--bg-card, var(--bg-secondary)));
+}
+.af-filterbar__lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px var(--af-filterbar-pad-x);
+  border-bottom-color: transparent;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.af-filterbar__lead:has(+ .af-filterbar__facets:empty) {
+  border-bottom-color: var(--ui-border-1);
+  border-radius: var(--radius-lg);
+}
+.af-filterbar--sticky > .af-filterbar__lead {
+  position: sticky;
+  top: var(--af-filterbar-top);
+  z-index: 6;
+}
+.af-filterbar--stuck > .af-filterbar__lead {
+  border-bottom-color: var(--ui-border-1);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  box-shadow: 0 10px 22px -16px rgba(0, 0, 0, 0.6);
+}
+/* Scope switch ("Catalog | Hugging Face"): a segmented pill, chip height. */
+.af-filterbar__scope {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ui-border-2);
+  border-radius: 999px;
+  background: var(--ui-surface-1);
+}
+.af-filterbar__scope-btn {
+  display: inline-flex;
+  align-items: center;
+  height: var(--af-filterbar-chip-h);
+  min-height: var(--af-filterbar-chip-h);
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+}
+.af-filterbar__scope-btn:hover:not([aria-pressed="true"]) {
+  background: var(--ui-surface-2);
+  color: var(--text-primary);
+}
+.af-filterbar__scope-btn[aria-pressed="true"] {
+  background: var(--accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+  color: var(--text-primary);
+}
+/* The search field and its on/off filters: ONE line. */
+.af-filterbar__line {
+  display: flex;
+  flex: 1 1 26rem;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px 14px;
+  min-width: 0;
+}
+.af-filterbar__search {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  width: auto;
+  min-width: 4.5rem;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--ui-border-1);
+  border-radius: var(--radius-md);
+  background: var(--ui-surface-3);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-md);
+}
+.af-filterbar__search:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.af-filterbar__submit {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border-2);
+  border-radius: var(--radius-md);
+  background: var(--ui-surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: none;
+  cursor: pointer;
+}
+.af-filterbar__submit:hover {
+  border-color: var(--accent-border);
+}
+.af-filterbar__submit[hidden] {
+  display: none;
+}
+.af-filterbar__toggles {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px 14px;
+}
+.af-filterbar__toggles .af-switch,
+.af-filterbar__trailing .af-switch {
+  white-space: nowrap;
+}
+.af-filterbar__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+.af-filterbar__end:empty {
+  display: none;
+}
+.af-filterbar__scope-btn:focus-visible,
+.af-filterbar__submit:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+/* One row per facet: label in the fixed column, chips wrap in the second. */
+.af-filterbar__facets {
+  display: grid;
+  gap: 8px;
+  padding: 0 var(--af-filterbar-pad-x) 14px;
+  border-top: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.af-filterbar__facets::before {
+  content: "";
+  height: 1px;
+  margin-bottom: 4px;
+  background: var(--ui-border-1);
+}
+.af-filterbar__facets:empty {
+  display: none;
+}
+.af-filterbar__facet {
+  display: grid;
+  grid-template-columns: var(--af-filterbar-label-w) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.af-filterbar__label {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: var(--af-filterbar-chip-h);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.af-filterbar__chips {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.af-filterbar__chip {
+  box-sizing: border-box;
+  height: var(--af-filterbar-chip-h);
+  min-height: var(--af-filterbar-chip-h);
+  margin: 0;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: none;
+}
+.af-filterbar__chip[aria-pressed="true"] {
+  --af-chip-hue: var(--accent);
+}
+.af-filterbar__chip--zero:not([aria-pressed="true"]) {
+  --af-chip-hue: var(--text-muted);
+  border-style: dashed;
+}
+.af-filterbar__count {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.af-filterbar__chip[aria-pressed="true"] .af-filterbar__count {
+  color: var(--text-secondary);
+}
+/* A control that belongs to the facet (e.g. "Every quant"), after a divider. */
+.af-filterbar__trailing {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--af-filterbar-chip-h);
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--ui-border-1);
+}
+@media (pointer: coarse) {
+  /* Pill geometry stays; the hit area grows invisibly (the kit chip rule, for the scope). */
+  .af-filterbar__scope-btn {
+    position: relative;
+  }
+  .af-filterbar__scope-btn::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--tap-min));
+    height: max(100%, var(--tap-min));
+    transform: translate(-50%, -50%);
+  }
+  .af-filterbar__search {
+    min-height: var(--tap-min);
+    font-size: var(--font-size-input);
+  }
+  .af-filterbar__submit {
+    min-height: var(--tap-min);
+  }
+  .af-filterbar__chips {
+    gap: 8px;
+  }
+  .af-filterbar__facets {
+    gap: 10px;
+  }
+}
+@media (max-width: 479.98px) {
+  .af-filterbar {
+    --af-filterbar-pad-x: 12px;
+  }
+  .af-filterbar__lead {
+    gap: 8px 10px;
+  }
+  .af-filterbar__line {
+    gap: 8px 10px;
+  }
+  .af-filterbar__facet {
+    column-gap: 8px;
+  }
+}
+/* Phones: the keyboard's search key submits (enterkeyhint="search"), so the field keeps
+ * the room beside its filters. */
+@media (max-width: 479.98px) and (pointer: coarse) {
+  .af-filterbar__submit {
+    display: none;
+  }
+}
+/* af-filterbar:end */
+"""
+
 CATALOG_CSS = r"""
     /* ================= Model catalog as cards ================= */
     #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 18px; min-width: 0; }
@@ -43,48 +363,30 @@ CATALOG_CSS = r"""
     .mc-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .mc-host b { color: var(--text-primary); font-weight: 600; }
     .mc-host__facts { margin-right: auto; min-width: 0; }
-    /* The filter bar: its top row (search, fits, count, the active filters in
-       words) stays under the tab header while the cards scroll; the chip
-       panel below it scrolls away, so a 1024 x 768 window keeps its cards.
-       The two read as one surface at the top. Opaque (the card tone laid over
-       the page tone): the cards pass underneath. Sticky honours the
-       scroller's padding, so inside the console's scrolling <main>
-       (padding-top 20px) the row lifts by that much to sit flush under the
-       header; the guide's scroller has no padding. */
-    .mc-bar { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; padding: 14px 16px 12px; border: 1px solid var(--ui-border-1); border-bottom-color: transparent; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background-color: var(--bg-primary); background-image: linear-gradient(var(--bg-card, var(--bg-secondary)), var(--bg-card, var(--bg-secondary))); }
-    .shell_content .mc-bar { top: -20px; }
-    /* No chip panel (the data is not there yet, or the Hub search failed): the row closes itself. */
-    .mc-bar:has(+ .mc-filters:empty) { border-bottom-color: var(--ui-border-1); border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); }
-    .mc-bar.is-stuck { border-bottom-color: var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); box-shadow: 0 10px 22px -16px rgba(0, 0, 0, .6); }
-    .mc-mode { display: inline-flex; flex: 0 0 auto; padding: 3px; gap: 2px; border: 1px solid var(--ui-border-2); border-radius: 999px; background: var(--ui-surface-1); }
-    .mc-mode button { min-height: 30px; padding: 4px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 600; white-space: nowrap; box-shadow: none; cursor: pointer; }
-    .mc-mode button:hover:not([aria-pressed="true"]) { background: var(--ui-surface-2); color: var(--text-primary); filter: none; }
-    .mc-mode button[aria-pressed="true"] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text-primary); }
-    .mc-mode button:focus-visible, .mc-hf-go:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
-    .mc-bar .mc-hf-go[hidden] { display: none; }
-    .mc-bar input.mc-search { flex: 1 1 340px; min-width: min(100%, 260px); width: auto; margin: 0; }
-    .mc-bar .ui-switch { flex: 0 0 auto; }
-    .mc-bar__end { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-left: auto; min-width: 0; }
+    /* The filter bar is the kit's AfFilterBar (abstractuic ui-kit backlog 0074, the
+       af-filterbar block in KIT_FILTER_BAR_CSS): the search field and "Fits this
+       computer" on the first line, one row per facet with the label in a fixed column.
+       Its first line (scope, search, fits, the filters in words, the count) stays under
+       the tab header while the cards scroll; the facet rows scroll away, so a 1024 x 768
+       window keeps its cards. Sticky honours the scroller's padding: inside the
+       console's scrolling <main> (padding-top 20px) the line lifts by that much to sit
+       flush under the header; the guide's scroller has no padding. The console only
+       places the bar: */
+    .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
+    /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
+    .mc-filterbar label.af-switch { text-transform: none; letter-spacing: normal; }
+    /* Sticky mode: the bar's two parts are items of .mc-root (gap 18px); they read as one surface. */
+    .mc-filterbar > .af-filterbar__facets { margin-top: -18px; }
     .mc-count { color: var(--text-secondary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .mc-count b { color: var(--text-primary); font-weight: 650; }
     .mc-active { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: 4px 10px; min-width: min-content; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
     .mc-active:empty { display: none; }
     .mc-active span + span::before { content: "\00B7"; margin-right: 10px; color: var(--text-muted); font-weight: 400; }
-    .mc-bar .mc-to-filters { visibility: hidden; }
-    .mc-bar.is-stuck .mc-to-filters { visibility: visible; }
-    .mc-filters { margin-top: -18px; padding: 4px 16px 16px; border: 1px solid var(--ui-border-1); border-top: 0; border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); background: var(--bg-card, var(--bg-secondary)); min-width: 0; }
-    .mc-groups { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 26px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--ui-border-1); }
+    /* "Filters" (back up to the facet rows) only once they have scrolled under the line. */
+    .mc-filterbar .mc-to-filters { visibility: hidden; }
+    .mc-filterbar.af-filterbar--stuck .mc-to-filters { visibility: visible; }
     .mc-root > [data-mc-part]:empty { display: none; }
-    .mc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
-    .mc-group__label { margin-right: 4px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
-    button.mc-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 12px; border: 1px solid var(--ui-border-2); border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 600; white-space: nowrap; box-shadow: none; cursor: pointer; }
-    button.mc-chip:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); filter: none; }
-    button.mc-chip[aria-pressed="true"] { background: var(--accent-subtle); border-color: var(--accent); color: var(--text-primary); }
-    button.mc-chip:disabled { opacity: .45; cursor: not-allowed; }
-    button.mc-chip.is-zero:not([aria-pressed="true"]) { color: var(--text-muted); border-style: dashed; }
-    button.mc-chip:focus-visible, .mc-id:focus-visible, .mc-search:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
-    .mc-chip__n { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
-    button.mc-chip[aria-pressed="true"] .mc-chip__n { color: var(--text-secondary); }
+    .mc-id:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .mc-seam strong { font-weight: 650; }
     /* Cards: one per model, condensed (R5.2): the header is one line (name,
        organisation, parameters, licence, capability tags, badges) and each
@@ -155,8 +457,6 @@ CATALOG_CSS = r"""
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
     .mc-empty strong { color: var(--text-primary); font-weight: 650; }
-    /* Phones: filter chips and the mode switch are touch targets too. */
-    @media (max-width: 767.98px) { button.mc-chip, .mc-mode button { min-height: 44px; } }
 """
 
 CATALOG_JS = r"""
@@ -196,7 +496,9 @@ CATALOG_JS = r"""
       installed: null, installedError: "", extraNotice: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
-    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, every: false, hf: null }; }
+    // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
+    const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
+    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
@@ -214,7 +516,6 @@ CATALOG_JS = r"""
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
         else if (key === "status" && ["downloaded", "not_downloaded"].includes(value)) f.status = value;
         else if (key === "fits") f.fits = value === "1" || value === "true";
-        else if (key === "every") f.every = value === "1" || value === "true";
         else if (key === "hf") f.hf = value;
       }
       return f;
@@ -227,7 +528,6 @@ CATALOG_JS = r"""
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
       if (f.fits) parts.push("fits=1");
-      if (f.every) parts.push("every=1");
       if (mcHfMode(f)) parts.push(`hf=${encodeURIComponent(f.hf)}`);
       return parts.length ? `#catalog?${parts.join("&")}` : "#catalog";
     }
@@ -425,9 +725,47 @@ CATALOG_JS = r"""
       if (uiNum(p.ceiling_bytes) && !(vram && p.ceiling_bytes === p.vram_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
       return bits.length ? `<span class="mc-host__facts">This computer: ${bits.join(" · ")}</span>` : "";
     }
-    function mcChip(group, value, label, on, count, disabled) {
-      const n = count === null || count === undefined ? "" : `<span class="mc-chip__n">${esc(count)}</span>`;
-      return `<button type="button" class="mc-chip${count === 0 ? " is-zero" : ""}" data-mc-filter="${esc(group)}" data-mc-value="${esc(value)}" aria-pressed="${on ? "true" : "false"}"${disabled ? " disabled" : ""}>${esc(label)}${n}</button>`;
+    // ---- The filter bar: abstractuic's AfFilterBar (ui-kit backlog 0074) ----
+    // The chip, facet-row and scope markup of the kit's ui-kit/src/af_filter_bar_core.ts,
+    // ported VERBATIM (same names, same output): the console vendors a RELEASED kit, and
+    // the release that carries the islands' filterBarFacetsHtml / filterBarScopeButtonsHtml
+    // replaces this port (and KIT_FILTER_BAR_CSS). tests/test_gateway_console_filter_bar.py
+    // compares the port's output with the kit's own functions.
+    const AF_FILTER_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+    function afFilterEsc(value) { return String(value ?? "").replace(/[&<>"']/g, (c) => AF_FILTER_ESC[c]); }
+    function afFilterHasCount(count) { return typeof count === "number" && Number.isFinite(count); }
+    function afFilterChipClass(option) {
+      return ["af-chip", "af-chip--neutral", "af-chip--button", "af-filterbar__chip", option.count === 0 ? "af-filterbar__chip--zero" : ""].filter(Boolean).join(" ");
+    }
+    function afFilterChipName(option) { return afFilterHasCount(option.count) ? `${option.label}, ${option.count}` : option.label; }
+    function afFilterChipHtml(facet, option) {
+      const pressed = option.value === facet.value && !facet.disabled;
+      const disabled = Boolean(facet.disabled || option.disabled);
+      return `<button type="button" class="${afFilterChipClass(option)}" data-af-facet="${afFilterEsc(facet.id)}" data-af-value="${afFilterEsc(option.value)}"`
+        + ` aria-pressed="${pressed ? "true" : "false"}" aria-label="${afFilterEsc(afFilterChipName(option))}"`
+        + (option.title ? ` title="${afFilterEsc(option.title)}"` : "")
+        + (disabled ? ` disabled=""` : "")
+        + `><span class="af-chip__label">${afFilterEsc(option.label)}</span>`
+        + (afFilterHasCount(option.count) ? `<span class="af-filterbar__count" aria-hidden="true">${afFilterEsc(option.count)}</span>` : "")
+        + `</button>`;
+    }
+    function afFilterFacetClass(facet) { return facet.disabled ? "af-filterbar__facet af-filterbar__facet--disabled" : "af-filterbar__facet"; }
+    function afFilterFacetHtml(facet, trailingHtml) {
+      return `<div class="${afFilterFacetClass(facet)}" role="group" aria-label="${afFilterEsc(facet.label)}" data-af-facet-row="${afFilterEsc(facet.id)}">`
+        + `<span class="af-filterbar__label" aria-hidden="true">${afFilterEsc(facet.label)}</span>`
+        + `<div class="af-filterbar__chips">`
+        + facet.options.map((option) => afFilterChipHtml(facet, option)).join("")
+        + (trailingHtml ? `<span class="af-filterbar__trailing">${trailingHtml}</span>` : "")
+        + `</div></div>`;
+    }
+    function afFilterFacetsHtml(facets, trailing) { return facets.map((facet) => afFilterFacetHtml(facet, trailing ? trailing[facet.id] : undefined)).join(""); }
+    function afFilterScopeButtonsHtml(options, value) {
+      return options.map((option) => `<button type="button" class="af-filterbar__scope-btn" data-af-scope="${afFilterEsc(option.value)}" aria-pressed="${option.value === value ? "true" : "false"}">${afFilterEsc(option.label)}</button>`).join("");
+    }
+    // The kit's native switch (af-switch--native: a checkbox with role="switch"), small.
+    function mcSwitchMarkup(dataAttr, on, label, attrs) {
+      return `<label class="af-switch af-switch--native af-switch--sm"${attrs || ""}><input type="checkbox" role="switch" class="af-switch__input" ${dataAttr}="1"${on ? " checked" : ""}>`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(label)}</span></span></label>`;
     }
     // A chip's count = the artifacts the view would show with that chip on.
     function mcChipCount(view, group, value) {
@@ -443,17 +781,17 @@ CATALOG_JS = r"""
       for (const r of mcExtras(view, Object.assign({}, f, { provider: "all" }))) if (!providers.includes(r.provider)) providers.push(r.provider);
       if (f.provider !== "all" && !providers.includes(f.provider)) providers.push(f.provider);
       const caps = MC_CAPS.filter(([id]) => rows.some((r) => mcRowCaps(r).includes(id)) || f.cap === id);
-      const quant = MC_QUANT_CHIPS.map(([id, label]) => mcChip("quant", id, label, quantOn && f.quant === id, quantOn && id !== "all" ? mcChipCount(view, "quant", id) : null, !quantOn)).join("");
-      const prov = [["all", "All"]].concat(providers.map((p) => [p, mcProviderLabel(p)])).map(([id, label]) => mcChip("provider", id, label, f.provider === id, id === "all" ? null : mcChipCount(view, "provider", id), false)).join("");
-      const cap = [["all", "All"]].concat(caps).map(([id, label]) => mcChip("cap", id, label, f.cap === id, id === "all" ? null : mcChipCount(view, "cap", id), false)).join("");
-      const status = MC_STATUS_CHIPS.map(([id, label]) => mcChip("status", id, label, f.status === id, id === "all" ? null : mcChipCount(view, "status", id), false)).join("");
-      const group = (label, body, extra) => `<div class="mc-group" role="group" aria-label="${esc(label)}"${extra || ""}><span class="mc-group__label" aria-hidden="true">${esc(label)}</span>${body}</div>`;
-      return `<div class="mc-groups">`
-        + group("Quantization", quant, quantOn ? "" : ' data-mc-quant="unreported"')
-        + group("Provider", prov)
-        + group("Capability", cap)
-        + group("Status", status)
-        + `</div>`;
+      // A chip's count = the artifacts the view would show with it on ("All" carries none).
+      const options = (group, pairs) => pairs.map(([id, label]) => ({ value: id, label, count: id === "all" ? null : mcChipCount(view, group, id) }));
+      const facets = [
+        // No quant_class in the payload: the facet is shown, disabled, never guessed.
+        { id: "quant", label: "Quantization", value: f.quant, disabled: !quantOn, options: quantOn ? options("quant", MC_QUANT_CHIPS) : MC_QUANT_CHIPS.map(([id, label]) => ({ value: id, label })) },
+        { id: "provider", label: "Provider", value: f.provider, options: options("provider", [["all", "All"]].concat(providers.map((p) => [p, mcProviderLabel(p)]))) },
+        { id: "cap", label: "Capability", value: f.cap, options: options("cap", [["all", "All"]].concat(caps)) },
+        { id: "status", label: "Status", value: f.status, options: options("status", MC_STATUS_CHIPS) },
+      ];
+      // No "Every quant" switch on any tab (operator ruling, AbstractGateway #79).
+      return afFilterFacetsHtml(facets, null);
     }
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
@@ -783,22 +1121,25 @@ CATALOG_JS = r"""
     function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search by model, organisation or artifact id"; }
     function mcModeMarkup(view) {
       const hf = mcHfMode(view.filters);
-      return `<button type="button" data-mc-action="mode" data-mc-mode="catalog" aria-pressed="${hf ? "false" : "true"}">Catalog</button>`
-        + `<button type="button" data-mc-action="mode" data-mc-mode="hf" aria-pressed="${hf ? "true" : "false"}">Hugging Face</button>`;
+      return afFilterScopeButtonsHtml([{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging Face" }], hf ? "hf" : "catalog");
     }
     function mcShellMarkup(view) {
       const f = view.filters;
       return `<div class="mc-root" data-mc-view="${esc(view.key)}">`
         + `<div class="mc-host" data-mc-part="host"></div>`
-        + `<div class="mc-bar" role="search" aria-label="Filter the model catalog">`
-        + `<div class="mc-mode" role="group" aria-label="Search in" data-mc-part="mode"></div>`
-        + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
-        + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
-        + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
-        + `<label class="ui-switch" data-mc-every-switch="1"${mcHfMode(f) ? " hidden" : ""} title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
-        + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
+        // The kit's filter bar (docs/filter-bar.md in abstractuic): the first line, then the facet rows.
+        + `<div class="af-filterbar af-filterbar--sticky mc-filterbar">`
+        + `<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">`
+        + `<div class="af-filterbar__scope" role="group" aria-label="Search in" data-mc-part="mode"></div>`
+        + `<div class="af-filterbar__line">`
+        + `<input type="search" class="af-filterbar__search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false" enterkeyhint="search">`
+        + `<button type="button" class="af-filterbar__submit mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
+        + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}</span>`
+        + `</div>`
+        + `<div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
-        + `<div class="mc-filters" data-mc-part="controls"></div>`
+        + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
+        + `</div>`
         + `<div data-mc-part="notice"></div>`
         + `<div data-mc-part="message"></div>`
         + `<div class="mc-list" data-mc-part="list"></div>`
@@ -832,12 +1173,13 @@ CATALOG_JS = r"""
         return;
       }
       // Later paints keep the search box and the fits switch (focus, caret)
-      // and redraw the rest; a focused chip keeps the focus.
+      // and redraw the rest; a focused chip, scope button or switch keeps the focus.
       let focus = null;
       try {
         const a = document.activeElement;
-        if (a && el.contains(a) && a.dataset && a.dataset.mcFilter) focus = [a.dataset.mcFilter, a.dataset.mcValue];
-        else if (a && el.contains(a) && a.dataset && a.dataset.mcMode) focus = ["mode", a.dataset.mcMode];
+        const q = (v) => String(v).replace(/"/g, "");
+        if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.afScope) focus = `[data-af-scope="${q(a.dataset.afScope)}"]`;
       } catch { focus = null; }
       for (const name of Object.keys(parts)) {
         const p = mcPart(view, name);
@@ -845,28 +1187,21 @@ CATALOG_JS = r"""
       }
       const box = el.querySelector("[data-mc-fits]");
       if (box) box.checked = !!view.filters.fits;
-      const everyBox = el.querySelector("[data-mc-every]");
-      if (everyBox) everyBox.checked = !!view.filters.every;
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
-      // The Hugging Face tab always lists every quant: no switch there.
-      const everySwitch = el.querySelector("[data-mc-every-switch]");
-      if (everySwitch) everySwitch.hidden = hf;
       const want = hf ? view.filters.hf : view.filters.q;
       if (search && search.value !== want && document.activeElement !== search) search.value = want;
       if (search) { search.placeholder = mcSearchPlaceholder(view.filters); search.setAttribute("aria-label", hf ? "Search Hugging Face" : "Search the model catalog"); }
       const go = el.querySelector(".mc-hf-go");
       if (go) go.hidden = !hf;
       if (focus) {
-        const again = focus[0] === "mode"
-          ? el.querySelector(`[data-mc-mode="${String(focus[1]).replace(/"/g, "")}"]`)
-          : el.querySelector(`[data-mc-filter="${focus[0]}"][data-mc-value="${String(focus[1]).replace(/"/g, "")}"]`);
+        const again = el.querySelector(focus);
         if (again && typeof again.focus === "function") again.focus();
       }
     }
     function mcRender() { for (const view of mcStore.views.values()) mcRenderView(view); }
-    // `is-stuck` once the chip panel has scrolled under the sticky row: the
-    // row then gets its own bottom edge and a "Filters" button back up.
+    // `af-filterbar--stuck` once the facet rows have scrolled under the sticky
+    // first line: the line then gets its own bottom edge and a "Filters" button back up.
     function mcWatchStuck(view) {
       const el = view.el;
       if (view.watching || !el || typeof el.closest !== "function") return;
@@ -876,10 +1211,11 @@ CATALOG_JS = r"""
       let pending = false;
       view.checkStuck = () => {
         pending = false;
-        const bar = el.querySelector(".mc-bar");
-        const panel = el.querySelector(".mc-filters");
-        if (!bar || !panel || !panel.getClientRects().length) return;
-        bar.classList.toggle("is-stuck", panel.getBoundingClientRect().bottom <= bar.getBoundingClientRect().bottom + 1);
+        const wrap = el.querySelector(".mc-filterbar");
+        const bar = el.querySelector(".af-filterbar__lead");
+        const panel = el.querySelector(".af-filterbar__facets");
+        if (!wrap || !bar || !panel || !panel.getClientRects().length) return;
+        wrap.classList.toggle("af-filterbar--stuck", panel.getBoundingClientRect().bottom <= bar.getBoundingClientRect().bottom + 1);
       };
       scroller.addEventListener("scroll", () => {
         if (pending) return;
@@ -931,8 +1267,9 @@ CATALOG_JS = r"""
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
         : null;
       try {
-        // "Every quant" (batch item b): the catalog with each row's whole quant set (AbstractCore 0865).
-        const data = await api(mcStore.every ? "/api/gateway/models/catalog?hub=true&extended=true" : "/api/gateway/models/catalog", { slow: true });
+        // Every quant of every repo, always (operator ruling 2026-10-29): the quantization filter's "All"
+        // is the whole set (AbstractCore 0865 `extended`), 4-bit / 8-bit / Other filter it; no switch.
+        const data = await api(MC_CATALOG_PATH, { slow: true });
         if (seq !== mcStore.seq) return;
         if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
           throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -967,7 +1304,7 @@ CATALOG_JS = r"""
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
       // A Hugging Face search shows what is available, period (operator, 2026-10-29): every quant of
-      // every matching repo, always (`extended=true`); the "Every quant" switch is the Catalog's only.
+      // every matching repo, always (`extended=true`), as the Catalog tab.
       const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -1162,10 +1499,8 @@ CATALOG_JS = r"""
         view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf });
         mcWriteHash(view);
         mcRenderView(view);
-        if (mcStore.every) { mcStore.every = false; mcLoad(); }
         return;
       }
-      if (action === "mode") { mcSetMode(view, b.dataset.mcMode); return; }
       if (action === "hf-search") {
         const box = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector("[data-mc-search]") : null;
         mcHubSearch(view, box ? box.value : view.filters.hf);
@@ -1195,8 +1530,11 @@ CATALOG_JS = r"""
       el.onclick = (event) => {
         const t = event && event.target;
         if (!t || typeof t.closest !== "function") return;
-        const chip = t.closest("[data-mc-filter]");
-        if (chip && !chip.disabled) { mcSetFilter(view, { [chip.dataset.mcFilter]: chip.dataset.mcValue }); return; }
+        // The kit filter bar's hooks: a chip names its facet and value, a scope button its mode.
+        const chip = t.closest("[data-af-facet]");
+        if (chip && !chip.disabled) { mcSetFilter(view, { [chip.dataset.afFacet]: chip.dataset.afValue }); return; }
+        const scope = t.closest("[data-af-scope]");
+        if (scope) { mcSetMode(view, scope.dataset.afScope); return; }
         const b = t.closest("[data-mc-action]");
         if (b && !b.disabled) { mcAction(view, b.dataset.mcAction, b); return; }
         const copy = t.closest("[data-mc-copy]");
@@ -1214,13 +1552,6 @@ CATALOG_JS = r"""
       el.onchange = (event) => {
         const t = event && event.target;
         if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
-        if (t && t.dataset && t.dataset.mcEvery) {
-          mcSetFilter(view, { every: !!t.checked });
-          if (mcStore.every !== !!t.checked) {
-            mcStore.every = !!t.checked;
-            mcLoad();
-          }
-        }
       };
       el.onkeydown = (event) => {
         const t = event && event.target;
@@ -1236,7 +1567,6 @@ CATALOG_JS = r"""
       mcRenderView(view);
       mcWatchStuck(view);
       mcWriteHash(view);
-      if (view.filters.every) mcStore.every = true;  // a `#catalog?every=1` link asks for the whole set
       mcLoad();
       if (mcHfMode(view.filters) && view.filters.hf && !(mcStore.hub.q === view.filters.hf && (mcStore.hub.data || mcStore.hub.loading))) mcHubSearch(view, view.filters.hf);
       else mcHubBeside(view);

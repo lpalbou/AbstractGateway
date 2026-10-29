@@ -115,11 +115,11 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
   · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
   figure, as before.
-- **"Every quant" in the console's Models catalog** (batch item b). A switch beside **Fits this computer** asks for each
-  row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore 0865. The extra quants
-  (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and **Download**. The setting is
-  part of the link (`#catalog?every=1`). On an AbstractRuntime without the passthrough, the answer is a 501 that says
-  so.
+- **Every quant in the console's Models catalog** (batch item b; operator ruling 2026-10-29: no switch). The catalog
+  always asks for each row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore
+  0865. The extra quants (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and
+  **Download**. The quantization filter's **All** shows them all, and 4-bit, 8-bit and Other filter them. On an
+  AbstractRuntime without the passthrough, the answer is a 501 that says so.
 - **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
   **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
   generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.
@@ -188,13 +188,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
   `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
   `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
-- **Allow engine installs: a switch on the console's Engines tab** (root backlog 0858). The tab says whether the
-  console may install engines on the gateway's computer and why ("On: your setting", "Off: the default for a
-  gateway other computers reach", "On: the default: you are on the gateway's own computer"), with the CLI twin
-  (`abstractgateway-config set allow_engine_install on|off`). An admin turns it on or off in place ("Saved" or
-  "Not saved: …") or returns to the default (`POST /api/gateway/admin/runtime-config
-  {"allow_engine_install": true|false|null}`, recorded in the audit log); other accounts see it read-only ("Only an
-  admin can change this"). The refused-install message and the network-exposure note now point at this switch.
 - **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
   server).
   - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
