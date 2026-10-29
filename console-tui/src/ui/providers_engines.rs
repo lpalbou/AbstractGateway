@@ -24,7 +24,7 @@ use super::super::w::form::sentence;
 use super::super::w::{Action, Cell, Col, ColW, DataTable, Ink, Row as WRow};
 use super::super::Ctx;
 use crate::store::json::WriteState;
-use crate::store::{ConnPhase, EngineInstallSetting, Loadable, Store};
+use crate::store::{ConnPhase, Loadable, Store};
 use crate::worker::json::JsonCmd;
 use crate::worker::Cmd;
 
@@ -323,10 +323,6 @@ pub struct EnginesUi {
     /// engine id → (action, its "Starting..." label): what the page sent.
     pub sent: Signal<HashMap<String, (String, String)>>,
     pub notices: Signal<HashMap<String, Notice>>,
-    /// The "Allow engine installs" save in flight (its form id).
-    pub install_form: Signal<Option<u64>>,
-    /// That save's outcome: ("Saved" | "Not saved: ...", ok?).
-    pub install_note: Signal<Option<(String, bool)>>,
 }
 
 impl EnginesUi {
@@ -340,8 +336,6 @@ impl EnginesUi {
             confirm: cx.signal(None),
             sent: cx.signal(HashMap::new()),
             notices: cx.signal(HashMap::new()),
-            install_form: cx.signal(None),
-            install_note: cx.signal(None),
         }
     }
 }
@@ -360,79 +354,9 @@ pub fn pending_label(action: &str) -> &'static str {
     }
 }
 
-// ---- "Allow engine installs" (root backlog 0858): the web Engines tab's
-// switch (console_ui.py `engineInstallSettingMarkup`) — the effective value,
-// where it comes from, and an admin's change through POST
-// /admin/runtime-config `{"allow_engine_install": true|false|null}`.
-
-/// Where the value comes from, in words (the web's `engineInstallSourceText`).
-pub fn install_source_text(r: &EngineInstallSetting) -> &'static str {
-    match r.source.as_str() {
-        "stored" => "your setting",
-        "default_same_machine" => "the default: you are on the gateway's own computer",
-        _ if r.loopback_bind => "the default for a gateway that only this computer reaches",
-        _ => "the default for a gateway other computers reach",
-    }
-}
-
-/// The setting's lines: the value and its source, what an admin can do (or
-/// why this account cannot), and the CLI twin.
-pub fn install_setting_lines(r: &EngineInstallSetting, admin: bool) -> Vec<String> {
-    let on = r.value;
-    let mut lines = vec![format!(
-        "Allow engine installs from the console: {}. {}. Installs run on the gateway's computer.",
-        if on { "On" } else { "Off" },
-        capitalize(install_source_text(r)),
-    )];
-    if admin {
-        let mut what = format!("Press E to turn it {}", if on { "off" } else { "on" });
-        if r.source == "stored" {
-            what.push_str(", D to use the default");
-        }
-        what.push('.');
-        lines.push(what);
-    } else {
-        lines.push("Only an admin can change this.".into());
-    }
-    lines.push(format!(
-        "CLI: abstractgateway-config set allow_engine_install {}",
-        if on { "off" } else { "on" }
-    ));
-    lines
-}
-
-fn capitalize(text: &str) -> String {
-    let mut c = text.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
-    }
-}
-
-/// The POST body: Some(on) stores a choice, None returns to the default.
-pub fn install_setting_body(value: Option<bool>) -> Value {
-    json!({ "allow_engine_install": value })
-}
-
-/// Save the setting (admins only; the gateway refuses anyone else too).
-pub fn save_install_setting(ctx: &Ctx, ui: EnginesUi, value: Option<bool>) {
-    let store = ctx.store;
-    if !store.conn.with_untracked(ConnPhase::is_admin) {
-        store.notice.set(Some(
-            "Only an admin can change whether engines can be installed".into(),
-        ));
-        return;
-    }
-    if ui.install_form.get_untracked().is_some() {
-        return;
-    }
-    let fid = crate::worker::next_form_id();
-    ui.install_form.set(Some(fid));
-    ui.install_note.set(Some(("Saving...".into(), true)));
-    ctx.send(Cmd::SaveRuntimeConfig {
-        body: install_setting_body(value).into(),
-        form_id: Some(fid),
-    });
+/// Who installs engines, said to an account that cannot (the web's Engines tab says the same).
+pub fn install_note(admin: bool) -> Option<&'static str> {
+    (!admin).then_some("An administrator installs engines for this computer.")
 }
 
 /// Read the engines (and, once, the job list) — the web's `engineRefresh`.
@@ -651,39 +575,6 @@ fn body_details(body: Option<&Value>) -> String {
 /// jobs once a second while this page is mounted.
 pub fn install_effects(cx: Scope, ctx: &Ctx, ui: EnginesUi) {
     let store = ctx.store;
-    // The "Allow engine installs" setting: read once connected (any
-    // signed-in account may read it; `writable` says who may change it).
-    {
-        let c = ctx.clone();
-        cx.effect(move || {
-            if c.store.conn.with(ConnPhase::is_connected)
-                && c.store
-                    .runtime_config
-                    .with_untracked(|r| matches!(r, Loadable::NotAsked))
-            {
-                c.store.runtime_config.set(Loadable::Loading);
-                c.send(Cmd::LoadRuntimeConfig);
-            }
-        });
-    }
-    // Its save's outcome, in place; the engines' own install_allowed follows.
-    {
-        let c = ctx.clone();
-        let wd = ctx.ui;
-        cx.effect(move || {
-            if let Some((fid, out)) = wd.write_done.get() {
-                if ui.install_form.get_untracked() == Some(fid) {
-                    wd.write_done.set(None);
-                    ui.install_form.set(None);
-                    ui.install_note.set(Some(match out {
-                        Ok(_) => ("Saved".into(), true),
-                        Err(e) => (format!("Not saved: {e}"), false),
-                    }));
-                    refresh(&c);
-                }
-            }
-        });
-    }
     // An app install waits for its two location plans; once they answer,
     // its question opens (w::Confirm, the web's sentence).
     {
@@ -1750,35 +1641,10 @@ pub fn section(cx: Scope, ctx: &Ctx, ui: EnginesUi, t: &TokenSet, width: i32) ->
             .child(check_btn)
             .build(),
     );
-    let setting = match store.runtime_config.get() {
-        Loadable::Ready(d) => d.allow_engine_install.clone(),
-        _ => None,
-    };
-    let writable = match store.runtime_config.get() {
-        Loadable::Ready(d) => d.writable && admin,
-        _ => false,
-    };
-    match setting {
-        Some(r) => {
-            for (i, line) in install_setting_lines(&r, writable).iter().enumerate() {
-                let ink = if i == 0 { t.text } else { t.text_muted };
-                col = col.child(sentence(&t, line, width, ink));
-            }
-            if let Some((note, ok)) = ui.install_note.get() {
-                col = col.child(sentence(&t, &note, width, if ok { t.ok } else { t.error }));
-            }
-        }
-        None if data.get("install_allowed").and_then(Value::as_bool) == Some(false) => {
-            // Not read (yet): the engines answer still says the effective value.
-            col = col.child(sentence(
-                &t,
-                "Installing engines is turned off on this gateway.",
-                width,
-                t.info,
-            ));
-            col = col.child(sentence(&t, "An admin can turn it on here (Allow engine installs) or with abstractgateway-config set allow_engine_install on. You can still install an engine yourself and check again.", width, t.text_muted));
-        }
-        None => {}
+    // Operator ruling 2026-10-29: engines are installed once per computer by the gateway's
+    // administrator and shared by every user; nobody else installs them (no switch here).
+    if let Some(note) = install_note(admin) {
+        col = col.child(sentence(&t, note, width, t.text_muted));
     }
     if engines.is_empty() {
         return anchor(
@@ -1992,22 +1858,6 @@ pub fn key(ctx: &Ctx, ui: EnginesUi, ch: char) {
         run_action(ctx, ui, "", "refresh");
         return;
     }
-    if ch == 'E' || ch == 'D' {
-        let current = store
-            .runtime_config
-            .with_untracked(|r| r.ready().and_then(|d| d.allow_engine_install.clone()));
-        match current {
-            Some(r) if ch == 'E' => save_install_setting(ctx, ui, Some(!r.value)),
-            Some(r) if r.source == "stored" => save_install_setting(ctx, ui, None),
-            Some(_) => store.notice.set(Some(
-                "Allow engine installs already follows the default".into(),
-            )),
-            None => store.notice.set(Some(
-                "This gateway did not report its Allow engine installs setting".into(),
-            )),
-        }
-        return;
-    }
     let Some(e) = selected(&store, ui) else {
         store.notice.set(Some("no engine selected".into()));
         return;
@@ -2121,69 +1971,12 @@ mod tests {
         );
     }
 
-    fn setting(value: bool, source: &str, loopback: bool) -> EngineInstallSetting {
-        EngineInstallSetting {
-            value,
-            source: source.into(),
-            loopback_bind: loopback,
-        }
-    }
-
     #[test]
-    fn install_setting_says_value_source_and_cli_twin() {
-        let l = install_setting_lines(&setting(false, "default", false), true);
+    fn a_non_admin_reads_who_installs_engines() {
         assert_eq!(
-            l[0],
-            "Allow engine installs from the console: Off. The default for a gateway other computers reach. Installs run on the gateway's computer."
+            install_note(false),
+            Some("An administrator installs engines for this computer.")
         );
-        assert_eq!(l[1], "Press E to turn it on.");
-        assert_eq!(
-            l[2],
-            "CLI: abstractgateway-config set allow_engine_install on"
-        );
-        let l = install_setting_lines(&setting(true, "stored", false), true);
-        assert!(l[0].contains(": On. Your setting."), "{}", l[0]);
-        assert_eq!(l[1], "Press E to turn it off, D to use the default.");
-        assert_eq!(
-            l[2],
-            "CLI: abstractgateway-config set allow_engine_install off"
-        );
-        let l = install_setting_lines(&setting(true, "default_same_machine", false), true);
-        assert!(l[0].contains("The default: you are on the gateway's own computer"));
-        let l = install_setting_lines(&setting(true, "default", true), true);
-        assert!(l[0].contains("only this computer reaches"));
-    }
-
-    #[test]
-    fn install_setting_is_read_only_for_non_admins() {
-        let l = install_setting_lines(&setting(true, "stored", false), false);
-        assert_eq!(l[1], "Only an admin can change this.");
-        assert!(!l.iter().any(|x| x.contains("Press E")));
-    }
-
-    #[test]
-    fn install_setting_body_stores_or_clears() {
-        assert_eq!(
-            install_setting_body(Some(true)),
-            json!({"allow_engine_install": true})
-        );
-        assert_eq!(
-            install_setting_body(None),
-            json!({"allow_engine_install": null})
-        );
-    }
-
-    #[test]
-    fn runtime_config_parses_allow_engine_install() {
-        let d = crate::store::RuntimeConfigData::from_value(&json!({
-            "writable": true,
-            "allow_engine_install": {"value": false, "source": "stored", "bind_host": "0.0.0.0", "loopback_bind": false}
-        }));
-        assert_eq!(
-            d.allow_engine_install,
-            Some(setting(false, "stored", false))
-        );
-        let d = crate::store::RuntimeConfigData::from_value(&json!({"writable": true}));
-        assert_eq!(d.allow_engine_install, None);
+        assert_eq!(install_note(true), None);
     }
 }

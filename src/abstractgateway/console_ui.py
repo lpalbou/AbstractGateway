@@ -454,7 +454,12 @@ CONSOLE_UI_CSS = r"""
     .first-run-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .first-run-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
     .first-run-content { width: 100%; max-width: 1560px; margin: 0 auto; padding: clamp(24px, 4vh, 44px) clamp(20px, 3.4vw, 60px) 36px; display: grid; gap: 24px; }
-    .first-run-head { display: grid; gap: 8px; max-width: 920px; }
+    .first-run-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; row-gap: 8px; }
+    .first-run-head > :not(.first-run-head__actions) { grid-column: 1; max-width: 920px; }
+    .first-run-head__actions { grid-column: 2; grid-row: 1 / span 3; align-self: end; }
+    .first-run-head__actions:empty { display: none; }
+    .dm-badge--loading { cursor: default; opacity: .72; }
+    .dm-badge--loading .dm-badge__state { color: var(--text-muted, var(--text-secondary)); }
     .first-run-kicker { color: var(--accent); font-size: var(--font-size-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .first-run-head h3 { font-size: calc(26px * var(--font-scale)); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
@@ -544,6 +549,8 @@ CONSOLE_UI_CSS = r"""
     @media (max-width: 767.98px) {
       .first-run-content { padding: 20px var(--gutter, 16px) 28px; gap: 18px; }
       .first-run-head h3 { font-size: calc(22px * var(--font-scale)); }
+      .first-run-head { grid-template-columns: minmax(0, 1fr); }
+      .first-run-head__actions { grid-column: 1; grid-row: auto; justify-self: start; }
       .first-run-footer { padding-left: var(--gutter, 16px); padding-right: var(--gutter, 16px); }
       .first-run-footer .message { flex-basis: 100%; order: 3; }
     }
@@ -1392,56 +1399,13 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
-    // ---- "Allow engine installs" (root backlog 0858): the effective value, where it comes from,
-    // and an admin switch (GET/POST /api/gateway/admin/runtime-config `allow_engine_install`).
-    const engineSetting = { data: null, error: "", busy: false, note: null };
-    function engineInstallSourceText(r) {
-      if (r.source === "stored") return "your setting";
-      if (r.source === "default_same_machine") return "the default: you are on the gateway's own computer";
-      return r.loopback_bind ? "the default for a gateway that only this computer reaches" : "the default for a gateway other computers reach";
-    }
+    // ---- Who installs engines (operator ruling 2026-10-29): engines are installed ONCE per
+    // computer by the gateway's administrator and shared by every user; there is no switch here.
+    // An account that is not an admin reads one sentence; an admin sees the install actions.
     function engineInstallSettingMarkup() {
-      const r = engineSetting.data && engineSetting.data.allow_engine_install;
-      const allowed = engineStore.data && engineStore.data.install_allowed !== false;
-      if (!r || typeof r !== "object") {
-        // Not read (yet, or not allowed for this account): the engines answer still says the effective value.
-        return allowed ? "" : `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can turn it on here, on the Engines tab. You can still install an engine yourself and check again.</span></div>`;
-      }
-      const admin = !!engineSetting.data.writable;
-      const on = !!r.value;
-      const note = engineSetting.note ? `<span class="ui-row-saved tone-${esc(engineSetting.note.tone)}" role="status" data-engine-install-saved>${esc(engineSetting.note.text)}</span>` : "";
-      const reason = admin ? "" : "Only an admin can change this";
-      return `<div class="ui-apps-setting" data-engine-install-setting="${on ? "on" : "off"}" data-source="${esc(r.source || "")}"><div class="ui-apps-setting__head">`
-        + `<button type="button" role="switch" class="af-switch af-switch--row" data-engine-action="allow-install" aria-checked="${on ? "true" : "false"}"${reason ? ` aria-disabled="true" title="${esc(reason)}"` : ""}${engineSetting.busy ? ' aria-busy="true"' : ""}>`
-        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Allow engine installs from the console</span>`
-        + `<span class="af-switch__desc">${on ? "On" : "Off"}: ${esc(engineInstallSourceText(r))}. Installs run on the gateway's computer.</span></span></button>${note}</div>`
-        + (admin && r.source === "stored" ? `<p><button type="button" class="ui-btn is-text" data-engine-action="allow-install-default"${engineSetting.busy ? " disabled" : ""}>Use the default</button></p>` : "")
-        + `<p class="ui-advanced ui-sub">CLI: <code>abstractgateway-config set allow_engine_install ${on ? "off" : "on"}</code></p></div>`;
-    }
-    async function engineInstallSettingRefresh() {
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config");
-        engineSetting.error = "";
-      } catch (err) {
-        engineSetting.data = null;
-        engineSetting.error = String((err && err.message) || err);
-      }
-      engineRender();
-    }
-    async function engineInstallSettingSave(value) {
-      if (engineSetting.busy) return;
-      engineSetting.busy = true;
-      engineSetting.note = null;
-      engineRender();
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ allow_engine_install: value }) });
-        engineSetting.note = { tone: "ok", text: "Saved" };
-      } catch (err) {
-        const data = (err && err.data) || {};
-        engineSetting.note = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
-      }
-      engineSetting.busy = false;
-      await engineRefresh();  // the engines' own install_allowed follows the setting
+      const admin = !!(state.principal && state.principal.admin);
+      if (admin) return "";
+      return `<div class="ui-alert tone-info" data-engine-install-note><span>An administrator installs engines for this computer.</span></div>`;
     }
     function engineViewMarkup(key) {
       const extra = engineStore.extras.get(key);
@@ -1560,13 +1524,6 @@ CONSOLE_UI_JS = r"""
     };
     async function engineAction(action, id, button) {
       if (action === "refresh") { engineStore.message = ""; engineStore.notices.clear(); await engineRefresh(); return; }
-      if (action === "allow-install") {
-        const r = engineSetting.data && engineSetting.data.allow_engine_install;
-        if (!r || !engineSetting.data.writable || (button && button.getAttribute && button.getAttribute("aria-disabled") === "true")) return;
-        await engineInstallSettingSave(!r.value);
-        return;
-      }
-      if (action === "allow-install-default") { await engineInstallSettingSave(null); return; }
       // "Browse models": the catalog cards, filtered to this engine's builds.
       if (action === "models") { closeFirstRunWizard(); openCatalogTab(MC_ENGINE_PROVIDER[id] ? { provider: MC_ENGINE_PROVIDER[id] } : {}); return; }
       const e = engineById(id) || { id, name: id };
@@ -1632,7 +1589,6 @@ CONSOLE_UI_JS = r"""
       };
       engineRender();
       engineRefresh();
-      engineInstallSettingRefresh();
       if (fresh) engineRestoreJobs();
     }
     function unmountEngineCards(key) { engineStore.views.delete(key); }
@@ -3885,7 +3841,7 @@ CONSOLE_UI_JS = r"""
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
-    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null, warming: false };
+    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, about: null, warming: false };
     function islandsLib() {
       try {
         const w = typeof window !== "undefined" ? window : null;
@@ -3938,11 +3894,17 @@ CONSOLE_UI_JS = r"""
           // cluster carries the memory/compute widget (#topbar-resources);
           // the addresses, with Copy, live on the Network page.
           // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
-          { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
+        // The kit's ONE account widget (ui-kit 0.9.6): person icon, name and
+        // status light; its menu says who and which gateway, Copy user id and
+        // Disconnect (which calls onDisconnect below). It reads the console's
+        // own GET /api/gateway/me body (connection.me, held by renderAccount);
+        // no "Signed in as" text extra beside the pill any more.
+        identity: "menu",
         connection: {
           phase: islands.phase,
           signingOut: islands.signingOut,
+          me: state.me || null,
           onConnect: () => { const t = $("login-token"); if (t && t.focus) t.focus(); },
           onDisconnect: () => { islands.signingOut = true; renderIslands(); signOut(); },
         },
@@ -4084,9 +4046,8 @@ CONSOLE_UI_JS = r"""
       // The Docs assistant island follows the session (connected) and its open state.
       if (typeof renderDocsAssistant === "function") renderDocsAssistant();
     }
-    function islandsSetConnection(ok, text) {
+    function islandsSetConnection(ok) {
       islands.phase = ok ? "connected" : "disconnected";
-      islands.identity = ok ? String(text || "") : "";
       renderIslands();
     }
     function mountConsoleIslands() {

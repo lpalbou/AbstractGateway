@@ -188,13 +188,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
   `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
   `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
-- **Allow engine installs: a switch on the console's Engines tab** (root backlog 0858). The tab says whether the
-  console may install engines on the gateway's computer and why ("On: your setting", "Off: the default for a
-  gateway other computers reach", "On: the default: you are on the gateway's own computer"), with the CLI twin
-  (`abstractgateway-config set allow_engine_install on|off`). An admin turns it on or off in place ("Saved" or
-  "Not saved: …") or returns to the default (`POST /api/gateway/admin/runtime-config
-  {"allow_engine_install": true|false|null}`, recorded in the audit log); other accounts see it read-only ("Only an
-  admin can change this"). The refused-install message and the network-exposure note now point at this switch.
 - **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
   server).
   - Below the Hugging Face cards, a line says how many results are shown and whether more exist.

@@ -3066,6 +3066,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
 	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
 	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
+	          <label id="modal-default-device-label" class="hidden" title="Where the embedding model runs. The GPU is fast; the CPU leaves the GPU memory to the text model. Default: the GPU when there is room.">Device<select id="modal-default-device">
+	            <option value="">GPU when there is room (default)</option><option value="gpu">GPU</option><option value="cpu">CPU</option>
+	          </select><span id="modal-default-device-status" class="subtle"></span></label>
 	          <label id="modal-default-speculation-label" class="hidden" title="Core-owned default policy. Explicit request overrides win; unsupported backends do not enable MTP merely because a default is saved.">MTP<select id="modal-default-speculation">
 	            <option value="">inherit (no override)</option><option value="off">off</option>
 	            <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
@@ -3206,6 +3209,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 5</div>
 	              <h3 id="first-run-step-title">Welcome</h3>
 	              <p id="first-run-step-lede"></p>
+	              <!-- A step's view switch sits on the header line (Default models: Simple / Advanced). -->
+	              <div id="first-run-head-actions" class="first-run-head__actions"></div>
 	            </header>
 	            <!-- DOM CONTRACT (first-run; the ids below are what
 	                 later work embeds into). Local engines render as cards
@@ -3218,7 +3223,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="first-run-engines-body"></div>
 	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
-	              <div id="first-run-model-body" class="first-run-panel">
+	              <div id="first-run-model-body" class="first-run-panel dm-simple">
 	                <!-- 1069: one row per capability (the framework's modality vocabulary), AbstractCore's
 	                     pick for this computer, Use recommended / Choose per row, and a subscription
 	                     path for text. The download cards below stay the place downloads run. -->
@@ -3915,7 +3920,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, me: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -9159,7 +9164,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
-	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok, text);
+	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok);
 	      // Signed out = the assistant has no session to run with; close the
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
@@ -9579,6 +9584,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!value) return "MTP execution not reported";
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
 	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
+	    }
+	    // DEVICE of a local embedding model (AbstractCore: route `options.device`, the person's
+	    // choice; operator ruling 2026-10-29) with what the loaded one takes now, in words.
+	    function isEmbeddingDefault(row) { return String(row?.key || "").startsWith("embedding."); }
+	    function embeddingDeviceStatus() {
+	      const models = Array.isArray(state.hostState?.models) ? state.hostState.models : [];
+	      const m = models.find((r) => r && r.task === "embedding" && r.resident === true);
+	      if (!m) return "Not loaded now.";
+	      const d = m.details || {};
+	      const where = String(d.device || "").toLowerCase().startsWith("cpu") ? "the CPU" : (d.device ? "the GPU" : "");
+	      const bytes = typeof d.device_bytes === "number" ? ` (${_fmtBytes(d.device_bytes)} of GPU memory, measured)` : "";
+	      return where ? `Now on ${where}${bytes}.${d.device_note ? " " + d.device_note + "." : ""}` : "Loaded.";
+	    }
+	    function loadDefaultDevice(row) {
+	      const on = isEmbeddingDefault(row);
+	      $("modal-default-device-label").classList.toggle("hidden", !on);
+	      if (!on) return;
+	      const dev = String(row?.options?.device || "").toLowerCase();
+	      $("modal-default-device").value = dev === "gpu" || dev === "cpu" ? dev : "";
+	      $("modal-default-device-status").textContent = embeddingDeviceStatus();
 	    }
 	    function loadDefaultSpeculation(row) {
 	      const label = $("modal-default-speculation-label");
@@ -12604,6 +12629,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
+	      // The whole /me body, for the kit account widget (topBarIslandProps
+	      // connection.me); null when signed out, so no stale identity remains.
+	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
 		        document.body.classList.remove("signed-in");
@@ -14823,6 +14851,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
 	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
+      if (shownOptions && String(row?.key || "").startsWith("embedding.")) delete shownOptions.device;
 	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
 	        ? JSON.stringify(shownOptions, null, 2)
 	        : "";
@@ -14840,7 +14869,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        options: $("modal-default-options").value,
 	        voice: defaultVoiceValue(row),
 	        speculation: speculationChoice(row?.options?.speculation),
+	        device: String(row?.options?.device || ""),
 	      };
+	      if (typeof loadDefaultDevice === "function") loadDefaultDevice(row);
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      if (isVoiceOutputDefault(row)) {
@@ -15368,6 +15399,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("first-run-kicker").textContent = `Step ${idx + 1} of ${FIRST_RUN_STEPS.length}`;
       $("first-run-step-title").textContent = copy.title || FIRST_RUN_STEP_TITLES[step];
       $("first-run-step-lede").textContent = copy.lede || "";
+      const headActions = $("first-run-head-actions");
+      if (headActions && step !== "model") { headActions.innerHTML = ""; headActions.onclick = null; }
       const scroller = $("first-run-scroll");
       if (scroller) scroller.scrollTop = 0;
       // Keyboard: each step starts at its title (Tab then walks the step's
@@ -15452,11 +15485,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function loadFirstRunModel() {
       const box = $("first-run-model-recommended");
       box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
+      // Simple mode paints first, as a skeleton, while the recommendations load.
+      dmUi.loading = true;
+      renderFirstRunDefaultModels();
       // The Models tab's catalog cards below the starter kit, with "Fits this
       // computer" preset, so the list opens on what can run here; "Open in the
       // Models tab" carries the same filters over (console_catalog.py).
       mountModelCatalog("first-run", $("first-run-model-catalog"), { guide: true, filters: { fits: true } });
-      await refreshAvailability({ rerender: false });
+      try {
+        await refreshAvailability({ rerender: false });
+      } finally {
+        dmUi.loading = false;
+      }
       renderFirstRunModel();
       uiRestoreDownloads();
     }
@@ -15559,7 +15599,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
       { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
     ];
-    const dmUi = { mode: "simple", busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
+    const dmUi = { mode: "simple", loading: false, busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
     function dmCatalogRows() { return (dmUi.catalog && Array.isArray(dmUi.catalog.rows)) ? dmUi.catalog.rows : []; }
     async function dmLoadCatalog() {
       if (dmUi.catalog || dmUi.catalogLoading) return;
@@ -15627,6 +15667,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       return { kind: "none", name: "", recName };
     }
     const DM_STATE_WORD = { none: "Not set", recommended: "Recommended", custom: "Your choice", covered: "Covered" };
+    function dmBadgeSkeleton(cap) {
+      return `<div class="dm-badge dm-badge--loading" style="--dm-hue:${cap.hue}" aria-hidden="true">`
+        + `<span class="dm-badge__mark">${dmIcon(cap.icon)}</span>`
+        + `<span class="dm-badge__text"><span class="dm-badge__label">${esc(cap.label)}</span><span class="dm-badge__state">Checking…</span></span></div>`;
+    }
     function dmBadgeMarkup(cap) {
       const st = dmState(cap);
       const word = DM_STATE_WORD[st.kind] || "";
@@ -15647,6 +15692,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const group = dlFeed.group;
       const names = [];
       for (const r of rows) { const n = dmReadableName(dmRecRoute(r).provider, dmRecRoute(r).model); if (n && !names.includes(n)) names.push(n); }
+      if (dmUi.loading && !rows.length) {
+        // The first paint of the step (operator 2026-10-29): Simple mode at once, a skeleton while
+        // this computer's recommendations load; never the older layout first.
+        return `<section class="dm-hero is-loading" aria-labelledby="dm-hero-title" aria-busy="true"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
+          + `<p>Reading what this computer can run…</p></div>`
+          + `<button type="button" class="ui-btn is-primary dm-hero__btn" data-dm-recommended="1" disabled>Use recommended</button></section>`
+          + `<div class="dm-groups">`
+          + `<section class="dm-group" aria-labelledby="dm-in-title"><h4 id="dm-in-title">Input <span>what it understands</span></h4><div class="dm-badges">${DM_INPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `<section class="dm-group" aria-labelledby="dm-out-title"><h4 id="dm-out-title">Output <span>what it makes</span></h4><div class="dm-badges">${DM_OUTPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `</div>`;
+      }
       return `<section class="dm-hero" aria-labelledby="dm-hero-title"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
         + `<p>${names.length ? `${esc(names.slice(0, 5).join(", "))}${names.length > 5 ? "…" : ""}: chosen for this computer's memory and engines.` : "AbstractCore's picks for this computer."}`
         + `${absent.length ? ` ${absent.length} to download${bytes ? `, about ${esc(uiBytes(bytes))}` : ""}.` : rows.length ? " Everything is downloaded." : ""} Your own choices are kept.</p></div>`
@@ -15723,18 +15779,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const simple = dmUi.mode === "simple";
       const body = $("first-run-model-body");
       if (body && body.classList) body.classList.toggle("dm-simple", simple);
-      box.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`
-        + (simple ? dmSimpleMarkup() : dmAdvancedMarkup());
+      // The Simple / Advanced switch is on the step's header line (operator 2026-10-29: the content
+      // starts higher); the step body holds the view only.
+      const head = $("first-run-head-actions");
+      if (head) {
+        head.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`;
+        head.onclick = (event) => {
+          const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode]") : null;
+          if (!b) return;
+          dmUi.mode = b.dataset.dmMode === "advanced" ? "advanced" : "simple";
+          renderFirstRunModel();
+        };
+      }
+      box.innerHTML = simple ? dmSimpleMarkup() : dmAdvancedMarkup();
       if (!simple) $("dm-apply-all").onclick = async () => {
         await applyRecommendedDefaults($("dm-apply-all"), false);
         dmSay($("defaults-message").textContent, $("defaults-message").className.replace(/^message\\s*/, ""));
         renderFirstRunModel();
       };
       box.onclick = (event) => {
-        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode], [data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
         if (!b || b.disabled) return;
         const d = b.dataset || {};
-        if (d.dmMode) { dmUi.mode = d.dmMode === "advanced" ? "advanced" : "simple"; return renderFirstRunModel(); }
         if (d.dmRecommended) return dmUseAllRecommended();
         if (d.dmBadge) return dmOpenChoice(d.dmBadge);
         if (d.dmUse) return dmUseRecommendedFor(d.dmUse);
@@ -16988,6 +17054,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          delete options.speculation;
 	          if (value !== undefined && value !== null) options.speculation = value;
 	          if (changed) optionsEdited = true;
+	        }
+	        if (String(row?.key || "").startsWith("embedding.")) {
+	          if (Object.prototype.hasOwnProperty.call(options, "device")) throw new Error("Use the Device selector; the options box edits the remaining provider settings.");
+	          const dev = $("modal-default-device").value;
+	          if (dev) options.device = dev; else delete options.device;
+	          if (dev !== String(prefill.device || "")) optionsEdited = true;
 	        }
 	        if (optionsEdited) body.options = options;
 	        // Slow lane: see apply-recommended. A 60s abort on a PUT is

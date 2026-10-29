@@ -533,7 +533,7 @@ if (scenario.name === "default-models") {
   // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
   context.firstRunGoto("model"); await settle();
   if (!el("first-run-default-models").innerHTML.includes('data-dm-badge="in-text"')) fail("the step must open in Simple mode");
-  await dmClick("first-run-default-models", { dmMode: "advanced" });
+  await dmClick("first-run-head-actions", { dmMode: "advanced" });
   const html = el("first-run-default-models").innerHTML;
   const rows = (html.match(/data-dm-row="/g) || []).length;
   if (rows !== 9) fail("expected 9 capability rows, got " + rows);
@@ -550,7 +550,16 @@ if (scenario.name === "default-models") {
 }
 if (scenario.name === "simple-mode") {
   // 1069 Simple mode (default): one Use recommended, then capability badges in readable names.
-  context.firstRunGoto("model"); await settle();
+  // Operator 2026-10-29: the step's FIRST paint is Simple mode (a skeleton while the recommendations
+  // load), never the older layout ("Checking the recommended starter models…", the catalog search).
+  context.firstRunGoto("model");
+  const first = el("first-run-default-models").innerHTML;
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("the first paint is not Simple mode: the older layout shows until the data loads");
+  if (!first.includes("Reading what this computer can run") || !first.includes("dm-badge--loading")) fail("no Simple-mode skeleton while loading: " + first.slice(0, 400));
+  await settle();
+  // The Simple / Advanced switch sits on the step's header line, not in the step body.
+  if (!el("first-run-head-actions").innerHTML.includes('data-dm-mode="advanced"')) fail("the Simple / Advanced switch is not on the header line");
+  if (el("first-run-default-models").innerHTML.includes("data-dm-mode")) fail("the Simple / Advanced switch is still in the step body");
   let html = el("first-run-default-models").innerHTML;
   const ins = (html.match(/data-dm-badge="in-/g) || []).length;
   const outs = (html.match(/data-dm-badge="out-/g) || []).length;
