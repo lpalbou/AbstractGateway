@@ -145,6 +145,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
   green there and red on every real install; security incident note in docs/security.md; planned 0972.
 
+### Fixed
+
+- **Two timing-dependent tests no longer flake** (tests only; gateway main's integration run on 5efc2bf6).
+  - `test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind` reads each answer's reset time from that
+    answer's own `limit.resets_at`. The second and third clicks can fall either side of a minute (07:24 vs 07:25).
+  - `test_idle_poll_is_stat_only` counts only opens of this store's own files (its tmp folder). `Path.open` is patched
+    for the whole process, and a runner left by an earlier test reads its `runner.takeover` on a timer. Neither that
+    file nor that read belongs to the tail.
+  - Both stay live: opening the ledger is counted (checked in the test), and a tail that opens the file on an idle
+    poll fails it (mutation-checked).
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
