@@ -298,6 +298,7 @@ def _drive_card() -> dict:
 
     from abstractgateway.console import gateway_console_html
     from tests.test_gateway_console_first_run import _HARNESS, WIZARD_IDS
+    from abstractgateway.console_islands import ISLANDS_JS
 
     marker = "vm.runInContext(source, context);"
     assert marker in _HARNESS, "the console node harness changed shape (tests/test_gateway_console_first_run.py)"
@@ -305,7 +306,8 @@ def _drive_card() -> dict:
     html = gateway_console_html()
     scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
     harness = (
-        prefix.replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        prefix.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts)))
         .replace("__SCENARIO__", json.dumps({"name": "apps-first-run", "hash": "", "completed": True}))
         .replace("__CLASSES__", json.dumps({k: "" for k in WIZARD_IDS}))
         + _CARD_SCENARIO
