@@ -3074,14 +3074,10 @@ class AppsManager:
 
     def outdated_app_warnings(self) -> List[str]:
         """Gateway boot: one sentence per installed browser app older than a release's pin
-        (this install's release, then the newest release: the update check, cached 1 h).
-        A failed check names nothing (the console says why it could not check)."""
-        try:
-            from .self_update import check_for_update
-
-            check_for_update()
-        except Exception:  # noqa: BLE001 - offline: this install's own pins still count
-            pass
+        (this install's release, then the newest release the last update check read). Boot makes
+        no network request: before the first check only this install's own pins count, and the
+        console's row says the rest once the update check has run (merge desk review 2026-10-29:
+        `GET /api/gateway/update` must not find a check the person never asked for)."""
         release = self.release_app_versions()
         out: List[str] = []
         for spec in APPS:

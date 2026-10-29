@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An installed browser app older than a release's pin is named**: the console's Apps card shows one readable
   sentence ("Code 0.13.0 is older than the 0.13.2 that AbstractFramework 0.11.18 installs: update Code to get its
-  fixes.") and the gateway's boot log warns. On the OVH test server an old Code showed a reopened conversation's
+  fixes.") and the gateway's boot log warns. Boot reads the last update check and never runs one. On the OVH test server an old Code showed a reopened conversation's
   last turn only, with nothing saying the app was behind.
 
 ## [0.18.0] - 2026-10-28

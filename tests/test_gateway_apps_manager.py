@@ -866,7 +866,8 @@ def test_an_app_older_than_a_release_pin_is_named_in_its_row_and_at_boot(manager
     _release_install(manager, "0.11.17", {"flow": "0.11.0"})
     job, _ = manager.start_install("flow", run_inline=True)
     assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.11.0"
-    monkeypatch.setattr(self_update, "check_for_update", lambda *a, **k: {})
+    checks: list = []
+    monkeypatch.setattr(self_update, "check_for_update", lambda *a, **k: checks.append(1) or {})
     # At this install's pin and no newer release read yet: nothing to say.
     monkeypatch.setattr(self_update, "newest_release_app_pins", lambda: (None, {}))
     row = next(a for a in manager.overview()["apps"] if a["id"] == "flow")
@@ -877,6 +878,7 @@ def test_an_app_older_than_a_release_pin_is_named_in_its_row_and_at_boot(manager
     sentence = "Flow Editor 0.11.0 is older than the 0.12.0 that AbstractFramework 0.11.18 installs: update Flow Editor to get its fixes."
     assert row["pin_warning"] == sentence
     assert manager.outdated_app_warnings() == [sentence]
+    assert checks == [], "the boot warning reads the last update check; it never runs one (no network at boot)"
     # Below this install's own pin (an older app put back by hand): said against it first.
     row = am.app_older_than_pin("flow", "Flow Editor", "0.11.0", release_version="0.12.0")
     assert row == "Flow Editor 0.11.0 is older than this AbstractFramework release's 0.12.0: update Flow Editor."
