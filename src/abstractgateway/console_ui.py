@@ -1392,56 +1392,13 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
-    // ---- "Allow engine installs" (root backlog 0858): the effective value, where it comes from,
-    // and an admin switch (GET/POST /api/gateway/admin/runtime-config `allow_engine_install`).
-    const engineSetting = { data: null, error: "", busy: false, note: null };
-    function engineInstallSourceText(r) {
-      if (r.source === "stored") return "your setting";
-      if (r.source === "default_same_machine") return "the default: you are on the gateway's own computer";
-      return r.loopback_bind ? "the default for a gateway that only this computer reaches" : "the default for a gateway other computers reach";
-    }
+    // ---- Who installs engines (operator ruling 2026-10-29): engines are installed ONCE per
+    // computer by the gateway's administrator and shared by every user; there is no switch here.
+    // An account that is not an admin reads one sentence; an admin sees the install actions.
     function engineInstallSettingMarkup() {
-      const r = engineSetting.data && engineSetting.data.allow_engine_install;
-      const allowed = engineStore.data && engineStore.data.install_allowed !== false;
-      if (!r || typeof r !== "object") {
-        // Not read (yet, or not allowed for this account): the engines answer still says the effective value.
-        return allowed ? "" : `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can turn it on here, on the Engines tab. You can still install an engine yourself and check again.</span></div>`;
-      }
-      const admin = !!engineSetting.data.writable;
-      const on = !!r.value;
-      const note = engineSetting.note ? `<span class="ui-row-saved tone-${esc(engineSetting.note.tone)}" role="status" data-engine-install-saved>${esc(engineSetting.note.text)}</span>` : "";
-      const reason = admin ? "" : "Only an admin can change this";
-      return `<div class="ui-apps-setting" data-engine-install-setting="${on ? "on" : "off"}" data-source="${esc(r.source || "")}"><div class="ui-apps-setting__head">`
-        + `<button type="button" role="switch" class="af-switch af-switch--row" data-engine-action="allow-install" aria-checked="${on ? "true" : "false"}"${reason ? ` aria-disabled="true" title="${esc(reason)}"` : ""}${engineSetting.busy ? ' aria-busy="true"' : ""}>`
-        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Allow engine installs from the console</span>`
-        + `<span class="af-switch__desc">${on ? "On" : "Off"}: ${esc(engineInstallSourceText(r))}. Installs run on the gateway's computer.</span></span></button>${note}</div>`
-        + (admin && r.source === "stored" ? `<p><button type="button" class="ui-btn is-text" data-engine-action="allow-install-default"${engineSetting.busy ? " disabled" : ""}>Use the default</button></p>` : "")
-        + `<p class="ui-advanced ui-sub">CLI: <code>abstractgateway-config set allow_engine_install ${on ? "off" : "on"}</code></p></div>`;
-    }
-    async function engineInstallSettingRefresh() {
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config");
-        engineSetting.error = "";
-      } catch (err) {
-        engineSetting.data = null;
-        engineSetting.error = String((err && err.message) || err);
-      }
-      engineRender();
-    }
-    async function engineInstallSettingSave(value) {
-      if (engineSetting.busy) return;
-      engineSetting.busy = true;
-      engineSetting.note = null;
-      engineRender();
-      try {
-        engineSetting.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ allow_engine_install: value }) });
-        engineSetting.note = { tone: "ok", text: "Saved" };
-      } catch (err) {
-        const data = (err && err.data) || {};
-        engineSetting.note = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
-      }
-      engineSetting.busy = false;
-      await engineRefresh();  // the engines' own install_allowed follows the setting
+      const admin = !!(state.principal && state.principal.admin);
+      if (admin) return "";
+      return `<div class="ui-alert tone-info" data-engine-install-note><span>An administrator installs engines for this computer.</span></div>`;
     }
     function engineViewMarkup(key) {
       const extra = engineStore.extras.get(key);
@@ -1560,13 +1517,6 @@ CONSOLE_UI_JS = r"""
     };
     async function engineAction(action, id, button) {
       if (action === "refresh") { engineStore.message = ""; engineStore.notices.clear(); await engineRefresh(); return; }
-      if (action === "allow-install") {
-        const r = engineSetting.data && engineSetting.data.allow_engine_install;
-        if (!r || !engineSetting.data.writable || (button && button.getAttribute && button.getAttribute("aria-disabled") === "true")) return;
-        await engineInstallSettingSave(!r.value);
-        return;
-      }
-      if (action === "allow-install-default") { await engineInstallSettingSave(null); return; }
       // "Browse models": the catalog cards, filtered to this engine's builds.
       if (action === "models") { closeFirstRunWizard(); openCatalogTab(MC_ENGINE_PROVIDER[id] ? { provider: MC_ENGINE_PROVIDER[id] } : {}); return; }
       const e = engineById(id) || { id, name: id };
@@ -1632,7 +1582,6 @@ CONSOLE_UI_JS = r"""
       };
       engineRender();
       engineRefresh();
-      engineInstallSettingRefresh();
       if (fresh) engineRestoreJobs();
     }
     function unmountEngineCards(key) { engineStore.views.delete(key); }
