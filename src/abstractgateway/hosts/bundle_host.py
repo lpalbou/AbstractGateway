@@ -2069,6 +2069,20 @@ class WorkflowBundleGatewayHost:
                             "default, download this model's weights (`abstractcore models status`), or "
                             "put provider/model on the flow's llm_call/agent nodes."
                         ) from _construct_err
+                    # ADR 0002: in the `process` model-host mode this runtime's model work (every
+                    # AbstractCore effect, the host facade, chat summaries) runs in the model host
+                    # child; the client built above holds no model (warm-up is off here).
+                    from .. import model_host as _model_host
+
+                    if _model_host.active():
+                        _model_host.move_runtime_client_to_host(
+                            runtime,
+                            tools=tool_executor,
+                            artifact_store=artifact_store,
+                            run_store=run_store,
+                            extra_effect_handlers=extra_effect_handlers,
+                            capability_defaults=gateway_capability_defaults_payload(base_dir=data_root),
+                        )
                 if provider_override:
                     try:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)

@@ -27983,12 +27983,13 @@ def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[D
     capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
     knows none of these: Ask on a run failed at once with "Unknown provider:
     endpoint:<id>" on a gateway whose runs used that default fine."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+    from .. import model_host
 
     svc = get_gateway_service()
     current_base, root_base = _gateway_profile_dirs()
     routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
-    llm = LocalAbstractCoreLLMClient(
+    # ADR 0002: in the model host child when this process has one, else here.
+    llm = model_host.local_client(
         provider=routed_provider,
         model=model,
         llm_kwargs=llm_kwargs or None,

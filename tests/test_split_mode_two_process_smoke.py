@@ -194,7 +194,7 @@ def test_split_mode_boots_runs_and_reports_itself(tmp_path: Path) -> None:
     runner_log, api_log = tmp_path / "runner.log", tmp_path / "api.log"
     # The two commands of split mode, exactly as docs/configuration.md gives them.
     runner = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "runner", "--data-dir", str(data)],
+        [sys.executable, "-m", "abstractgateway", "runner", "--data-dir", str(data), "--model-host", "in-process"],
         env=env, stdout=runner_log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     api = subprocess.Popen(
         [sys.executable, "-m", "abstractgateway", "serve", "--no-runner", "--data-dir", str(data),
