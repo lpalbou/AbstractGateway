@@ -756,6 +756,11 @@ def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     argv = list(argv) if argv is not None else sys.argv[1:]
+    # `--instance NAME` (instances.py): a self-contained gateway of its own on this machine (data dir,
+    # AbstractCore config, app ports, service unit). Exported for every reader and child process.
+    from .instances import apply_instance_arg
+
+    argv = apply_instance_arg(argv)
     # `abstractgateway --update` / `--console`: the spellings the operator asked for, the
     # same verbs as `update` / `console` (so --help lists them with the other commands).
     if argv[:1] in (["--update"], ["--console"]):
@@ -1128,8 +1133,17 @@ def main(argv: list[str] | None = None) -> None:
         from .host_paths import apply_data_dir_default, describe_resolution
 
         _data_dir_resolution = apply_data_dir_default()
+        from .instances import apply_instance_env
+
+        _instance = apply_instance_env(_data_dir_resolution.path)
         if args.cmd == "serve":
             _stderr(describe_resolution(_data_dir_resolution))
+            if _instance:
+                _stderr(
+                    f"Gateway instance: {_instance['name']} (slot {_instance['slot']}; apps on ports "
+                    f"{_instance['app_ports'][0]}-{_instance['app_ports'][1]}, then {_instance['app_port_range'][0]}-"
+                    f"{_instance['app_port_range'][1]}; AbstractCore config {_instance['core_config_dir']}; unit {_instance['systemd_unit']})"
+                )
 
     if args.cmd == "models":
         from .models_engines_cli import MODELS_VERBS, run_models_verb

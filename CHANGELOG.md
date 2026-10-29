@@ -14,8 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ollama, vLLM where they apply), with no administrator step; a gateway running as root still installs it. An
   engine job waiting on a prerequisite says "Needs Apple tools" only for Apple's installer, never on Linux.
 
+### Added
+
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+
 ### Fixed
 
+- **A voice can be the default only once its model is downloaded** (operator ruling 2026-10-29; backlog 0955
+  closed as rejected and replaced by this rule).
+  - Setting the default voice to a local model whose weights are not on disk is refused when it is chosen: 409
+    with the sentence ("The voice model supertonic-3 (401 MB) is not downloaded on this computer yet, so it cannot
+    be the default voice…") as a plain `detail`, and the download action under `error`.
+  - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
+    before the click.
+  - Synthesis never checks, and the voice lists already offer only downloaded voices.
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
