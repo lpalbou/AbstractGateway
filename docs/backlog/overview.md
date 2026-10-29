@@ -21,13 +21,13 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 15
+- Planned: 16
 - Proposed: 48
-- Completed: 33
-- Deprecated: 2
+- Completed: 34
+- Deprecated: 3
 - Recurrent: 0
 
-<!-- Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-10-29: 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -118,6 +118,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
+| [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
@@ -129,6 +130,9 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0955_tts_model_not_downloaded_typed_answer.md](planned/0955_tts_model_not_downloaded_typed_answer.md) | P1. A TTS model whose engine is installed but whose files are not downloaded (fresh-install default `supertonic-3`) answers a typed 409 `model_not_downloaded` with the model id and the `POST /models/download` action instead of HTTP 500; catalog marks `downloaded`; red test; E2E defect D5 on 0.17.0. |
 | [0957_service_enable_says_when_linger_is_off.md](planned/0957_service_enable_says_when_linger_is_off.md) | P1. On Linux, `service enable` drops the linger note: with `Linger=no` the user service stops at SSH logout and never starts at boot; print `sudo loginctl enable-linger <user>` when lingering is off, and show it under the consoles' switch. |
 | [0958_setup_recommends_an_installed_text_engine.md](planned/0958_setup_recommends_an_installed_text_engine.md) | P1. The setup guide recommends LM Studio (not installed, no desktop) on a Linux/NVIDIA server where llama.cpp and vLLM are Ready; recommend the installed engine (core seam). |
+| [0969_instances_registry_file_lock.md](planned/0969_instances_registry_file_lock.md) | P3. `instances.json` slot assignment is guarded by a threading lock only: two installers started in the same second can draw the same slot; add an inter-process file lock (merge desk review of #37). |
+| [0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md](planned/0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md) | P1. The console's vendored kit (`console_islands.py`, kit 0.9.4) is behind ui-kit 0.9.6: its approval card still shows the pre-0068 rendering. Re-sync it and add a CI-visible pin. Done when the console's approval card reads in words on 8443/8080 at a stated sha. |
+| [0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md](planned/0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md) | P1 (security). Gateway CI installs only `.[dev]`, so the routers it mounts from other packages (abstractnote) never exist in CI: the route authorization contract stayed green while 14 note write routes had no decision on every real install (security incident 2026-10-29, PR #55). Install every seam package in CI and assert the seam is mounted. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
@@ -178,6 +182,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Model host: providers, the model pool and /v1 in a supervised child (ADR 0002 stage 1; completed 2026-10-29, Unreleased) | (filed completed) | [completed/0967_model_host_child_process_isolation_stage_1.md](completed/0967_model_host_child_process_isolation_stage_1.md) | `--model-host process` (Linux default): a crash in the child costs the requests in flight, never the gateway; restarts with backoff and a limit; memory ceiling; incident file per crash | kill -9 e2e (fails in 0.06 s, health 200, back in 0.6 s, next run completes); hop +0.1 ms p50; unit tests |
 | Fresh-Linux fixes: apps follow the release matrix, network status auth, llama.cpp card (completed 2026-10-28, 0.17.2) | (filed completed) | [completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md](completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md) | Install installs the release's app pins (newer offered, never auto-installed); `network status` reports loopback user auth; the llama.cpp card names the Linux CUDA build | 4 tests red without the fixes, green with them |
 | Console islands resynced from ui-kit 0.9.4 (completed 2026-10-28, 0.17.1) | (filed completed) | [completed/0956_console_islands_resync_ui_kit_0_9_4.md](completed/0956_console_islands_resync_ui_kit_0_9_4.md) | The console vendors the released kit (AbstractUIC 0.8.2): the voice picker lists each Qwen3-TTS voice once (the kit's Create-a-voice, approval-card and duration polish ride in the bundle, not yet rendered by the console) | islands/theme drift pins 8 passed against tag `v0.8.2`; old module mutation-checked red |
 | Memory graph routes over the runtime facade (completed 2026-10-28, 0.17.0) | `planned/0948_memory_graph_routes_over_the_runtime_facade.md` | [completed/0948_memory_graph_routes_over_the_runtime_facade.md](completed/0948_memory_graph_routes_over_the_runtime_facade.md) | `/api/gateway/memory/*` (query, history, sources, reconstruct, derived) over AbstractRuntime's memory facade; strict owner rule shared with `/kg/query`; direct AbstractMemory imports 34 -> 0. | `tests/test_gateway_memory_routes.py`, the import-boundary test; PR #7 CI green. |
@@ -213,6 +218,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Reason |
 | --- | --- |
+| [0944_openai_endpoint_as_a_separately_supervised_process.md](deprecated/0944_openai_endpoint_as_a_separately_supervised_process.md) | Superseded by ADR 0002 (2026-10-29): `/v1` is served by the model host child (a separate `/v1` process would load every model twice); drill and controls in 0968 |
 | [deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md](deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md) | Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram. |
 
 ## Planning Notes

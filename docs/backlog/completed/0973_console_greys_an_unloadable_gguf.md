@@ -17,5 +17,5 @@ text model. It then failed at its first call, because that llama-cpp-python buil
 - Test: `tests/test_gateway_console_catalog.py::test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default`.
   Mutation-checked: without the installed-row lookup, or without the Download greying, it fails.
 
-## Not here
-- The not-in-catalog rows' **Use as default** (PR #45, open) should apply the same check once both land.
+## Also
+- The not-in-catalog rows' **Use as default** (#45) applies the same check (merged together 2026-10-29).

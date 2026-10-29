@@ -2,7 +2,10 @@
 
 > Package: abstractgateway
 > Type: reliability / security
-> Status: proposed
+> Status: deprecated (2026-10-29): superseded by ADR 0002. Rejected as asked: a `/v1` process of its own would
+> load every model a second time (inference must use the one model pool) or forward to the model host anyway (one
+> more hop, the same failure domain). `/v1` is served by the supervised model host child behind the gateway's
+> admission (0967, stage 1); the load drill and console controls moved to 0968.
 > Created: 2026-10-27
 > Priority: P1
 > Labels: resilience, isolation, openai-endpoint, security, load

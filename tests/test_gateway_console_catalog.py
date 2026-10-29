@@ -198,6 +198,9 @@ if (__SCRIPT__ === "hf") {
   snap("second");
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
 }
+if (__SCRIPT__ === "host") {
+  out.host = vm.runInContext("mcHostMarkup()", ctx);
+}
 if (__SCRIPT__ === "hfmore") {
   out.html1 = root.innerHTML;
   const more = () => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "hub-more" } } : null) } });
@@ -213,6 +216,17 @@ if (__SCRIPT__ === "beside") {
   await settle();
   snap("hf"); out.hfHtml = root.innerHTML;
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "every") {
+  out.calls1 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
+  await settle();
+  snap("every"); out.html = root.innerHTML;
+  out.calls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: false } });
+  await settle();
+  snap("plain");
+  out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
 }
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
@@ -299,7 +313,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [n, n, total_arts] and out["cleared"]["hash"] == "#catalog"
-    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
+    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "every": False, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
@@ -436,6 +450,22 @@ def test_hugging_face_texts() -> None:
     assert "export " not in js and "HF_TOKEN" not in js and "environment variable" not in js
 
 
+@pytest.mark.parametrize("profile,expected,absent", [
+    ({"accelerator": "cuda", "gpu_name": "Quadro RTX 5000", "unified_memory": False, "ram_bytes": 28734308352,
+      "vram_bytes": 16106127360, "ceiling_bytes": 16106127360}, ["Quadro RTX 5000", "16.1 GB VRAM", "28.7 GB RAM"], ["models up to", "memory"]),
+    ({"accelerator": "metal", "unified_memory": True, "ram_bytes": 137438953472, "ceiling_bytes": 103079215104},
+     ["137 GB unified memory", "models up to about"], ["VRAM"]),
+])
+def test_the_machine_line_shows_vram_and_ram_separately(profile, expected, absent) -> None:
+    """QA 2026-10-28 (e): a 16 GB GPU + 26 GB RAM server read "28.7 GB memory · models up to 16.1 GB"."""
+    cat = dict(_catalog(2), host_profile=profile)
+    host = _run(cat, "host")["host"]
+    for text in expected:
+        assert text in host, host
+    for text in absent:
+        assert text not in host, host
+
+
 def _hub_page(first: int, n: int, *, page: int, more: bool, handle: str | None = None, found: bool = True) -> dict:
     cat = _hub(first + n)
     cat["rows"] = cat["rows"][first:]
@@ -484,6 +514,21 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     assert 'data-mc-hub-count="3">Showing 3 Hugging Face results; more are available.' in out["html"]
     assert out["hubCalls2"] == out["hubCalls"]  # the mode switch asked nothing new
     assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
+
+
+def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
+    """Batch item (b): "Every quant" asks the catalog with `hub=true&extended=true` (AbstractCore 0865)
+    and draws the extra quants as rows of the same cards; off, the plain catalog again; in the link."""
+    cat = _catalog(10)
+    extended = json.loads(json.dumps(cat))
+    for row in extended["rows"]:
+        row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", extended=True))
+    out = _run(cat, "every", "", hub=extended)
+    assert out["calls1"] == ["/api/gateway/models/catalog"]
+    assert out["calls2"][-1] == "/api/gateway/models/catalog?hub=true&extended=true"
+    assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
+    assert 'data-mc-every="1" checked' in out["html"]
+    assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
 
 
 def _gpu_limit_catalog() -> dict:
@@ -542,6 +587,9 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
     a0["presence"] = {"status": "installed", "location": None, "evidence": None}
     installed = {"schema": "models_installed_v1", "errors": {}, "rows": [
         {"provider": a0["provider"], "artifact": a0["artifact"], "loadable": False, "unloadable_reason": reason},
+        # A downloaded model outside the catalog (#45's "Use as default"): greyed the same way.
+        {"provider": "huggingface", "artifact": "XHToken/Spark-X2.6-4B-GGUF", "kind": "model", "tasks": ["text_generation"],
+         "loadable": False, "unloadable_reason": reason},
     ]}
     html = _run(cat, "unloadable", installed=installed)["html"]
     card = html[html.index('data-mc-model="model-1"'):]
@@ -550,6 +598,8 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
     assert greyed + "Use as default</button>" in card
     # The other build of the same model is offered as usual.
     assert f'data-mc-action="download" data-provider="{a2["provider"]}" data-artifact="{a2["artifact"]}"' in card
+    extra = html[html.index("XHToken/Spark-X2.6-4B-GGUF"):]
+    assert greyed + "Use as default</button>" in extra and 'data-mc-action="default" data-provider="huggingface" data-artifact="XHToken/Spark-X2.6-4B-GGUF"' not in extra
     # Model 0's downloaded build (no flag) keeps its working buttons.
     assert 'data-mc-unloadable' not in html[:html.index('data-mc-model="model-1"')]
 

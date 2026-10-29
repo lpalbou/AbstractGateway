@@ -59,6 +59,10 @@ jobs:
         run: |
           python -m pip install -U pip
           python -m pip install -e ".[dev]"
+      # Every package a seam mounts (backlog 0972): its routes must be in the route table the
+      # authorization contract walks. A seam is covered by CI or it is not shipped.
+      - name: Install the seam packages
+        run: python -m pip install "abstractnote>=0.2.0"
       - name: Shard
         run: |
           python scripts/ci_shard.py --shards 4 --plan
@@ -66,6 +70,7 @@ jobs:
           wc -l shard.txt
       - name: Pytest
         env:
+          CI_SEAMS_REQUIRED: "abstractnote"
           ABSTRACT_E2E_GATEWAY_SPLIT: "0"
           ABSTRACT_E2E_LMSTUDIO: "0"
           ABSTRACTGATEWAY_EMBEDDING_PROVIDER: "disabled"

@@ -503,6 +503,26 @@ def browser_status_control(*, status: str, actions: Sequence[str], external: boo
     return status_control(status, action=action, enabled=True, tip=BADGE_RUNNING_TIP if running else _start_tip(label))
 
 
+def app_older_than_pin(app_id: str, name: str, installed: Optional[str], *, release_version: Optional[str]) -> Optional[str]:
+    """The sentence for an installed app older than a release's pin, else None: this install's
+    release pin first, then the newest AbstractFramework release's (from the last update check,
+    no request)."""
+    if not installed:
+        return None
+    if release_version and version_newer(release_version, installed):
+        return f"{name} {installed} is older than this AbstractFramework release's {release_version}: update {name}."
+    from .self_update import newest_release_app_pins
+
+    newest, pins = newest_release_app_pins()
+    pin = pins.get(app_id) if pins else None
+    if newest and pin and version_newer(pin, installed):
+        return (
+            f"{name} {installed} is older than the {pin} that AbstractFramework {newest} installs: "
+            f"update {name} to get its fixes."
+        )
+    return None
+
+
 def update_offer(name: str, latest: Optional[str], *, restarts: bool = True) -> Tuple[str, str]:
     """(label, tooltip) of the Update action. `restarts` False: a running copy
     the gateway did not start is left alone, and the tooltip says what to do."""
@@ -2423,7 +2443,7 @@ class AppsManager:
         except AppsError as exc:
             return None, exc.message
 
-    def release_app_versions(self, *, use_cache: bool = True) -> Dict[str, Any]:
+    def release_app_versions(self, *, use_cache: bool = True, offline: bool = False) -> Dict[str, Any]:
         """The browser-app versions of the AbstractFramework RELEASE this gateway was installed
         as: the installer records the release in `<data dir>/bootstrap.env`
         (`FRAMEWORK_VERSION`); that release's `install-manifest.json` (at the immutable tag
@@ -2434,7 +2454,9 @@ class AppsManager:
         `{"framework_version", "apps": {id: version}, "manifest_url", "error"}`. Not an installer
         release install (no `bootstrap.env`, or `--pin` / `--from`: `FRAMEWORK_VERSION` empty):
         `framework_version` None and no pins (the newest is installed). A release install whose
-        manifest cannot be read: `error` says why (`start_install` then refuses, loud)."""
+        manifest cannot be read: `error` says why (`start_install` then refuses, loud).
+        `offline=True` makes no request: the manifest only when an earlier request cached it,
+        else no pins and no error (gateway boot; a network read at boot or shutdown is refused)."""
         from .self_update import FRAMEWORK_MANIFEST_PATH, FRAMEWORK_RAW, read_installer_state
 
         state = read_installer_state(self.data_dir) or {}
@@ -2450,6 +2472,10 @@ class AppsManager:
             except ValueError as exc:  # not JSON (a captive portal's page): an answer, cached as a failure
                 raise AppsError(f"{url} did not answer JSON ({exc})") from exc
 
+        if offline:
+            cached = self._registry_cache.get("framework-manifest:" + fv)
+            if cached is None or isinstance(cached[1], Exception) or _now() - cached[0] >= REGISTRY_CACHE_TTL_S:
+                return out
         try:
             manifest = self._registry_cached("framework-manifest:" + fv, _fetch, use_cache=use_cache)
         except AppsError as exc:
@@ -3095,6 +3121,20 @@ class AppsManager:
                 outcomes.append({"app_id": spec.id, "ok": False, "message": exc.message})
                 logger.warning("app %s is enabled but did not start: %s", spec.id, exc.message)
         return outcomes
+
+    def outdated_app_warnings(self) -> List[str]:
+        """Gateway boot: one sentence per installed browser app older than a release's pin
+        (this install's release, then the newest release the last update check read). Boot makes
+        no network request: before the first check only this install's own pins count, and the
+        console's row says the rest once the update check has run (merge desk review 2026-10-29:
+        `GET /api/gateway/update` must not find a check the person never asked for)."""
+        release = self.release_app_versions(offline=True)  # boot: never a request
+        out: List[str] = []
+        for spec in APPS:
+            sentence = app_older_than_pin(spec.id, spec.name, self.installed_version(spec.id), release_version=release["apps"].get(spec.id))
+            if sentence:
+                out.append(sentence)
+        return out
 
     def apply_pending_upgrades(self) -> List[Dict[str, Any]]:
         """Gateway boot: the installer's `<data dir>/apps-upgrade.pending`
@@ -4310,6 +4350,7 @@ class AppsManager:
             blocked = f"The npm registry is not reachable: {registry_error}"
         job = self.jobs.active_for(f"app:{spec.id}")
         upd_label, upd_tip = update_offer(spec.name, latest) if update_available else (None, None)
+        older_than_pin = app_older_than_pin(spec.id, spec.name, installed, release_version=release_version)
         row = {
             "id": spec.id,
             "name": spec.name,
@@ -4325,6 +4366,11 @@ class AppsManager:
             "update_available": update_available,
             "update_label": upd_label,
             "update_tip": upd_tip,
+            # An installed app older than the version an AbstractFramework release pins
+            # (this install's, else the newest one the update check read): one readable
+            # sentence, or None (OVH 2026-10-29: Code 0.13.0 under a release whose Code had
+            # the fix showed a reopened conversation's last turn only).
+            "pin_warning": older_than_pin,
             "running": running,
             "status": snap["status"] if (installed or running) else "not_installed",
             "managed": bool(installed),
@@ -4593,6 +4639,9 @@ def start_apps_on_boot() -> None:
             for o in outcomes:
                 line = f"Browser app {o['app_id']}: " + (f"started at {o['url']}" if o["ok"] else f"did not start: {o['message']}")
                 print(line, file=sys.stderr, flush=True)
+            if not cancel.is_set():
+                for sentence in get_apps_manager().outdated_app_warnings():
+                    print(f"[WARN] {sentence}", file=sys.stderr, flush=True)
         except Exception:  # noqa: BLE001
             logger.warning("starting the enabled browser apps failed", exc_info=True)
 

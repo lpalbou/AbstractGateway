@@ -749,7 +749,7 @@ async def serve_core(scope, receive, send, *, token: str, allow_unauthenticated:
     """Core's serving app for one admitted request: in this process (combined `serve`, or the split
     runner), or, in the split API process, forwarded to the runner's model host (never loaded here).
     Raises split_mode.RunnerUnavailable when the API process has no runner to forward to."""
-    if split_mode.is_api_process():
+    if split_mode.forwards_core():
         await split_mode.forward_core_request(
             scope, receive, send, data_dir=Path(data_dir) if data_dir is not None else gateway_data_dir_from_env(),
             allow_unauthenticated=allow_unauthenticated)
@@ -961,7 +961,8 @@ class CoreEndpoint:
             note["ended"] = "stopped"
         except split_mode.RunnerUnavailable:
             note["ended"] = "runner_unavailable"
-            await openai_error(503, RUNNER_UNAVAILABLE, type_="server_error", code="runner_unavailable")(scope, receive, send)
+            await openai_error(503, split_mode.core_unavailable_sentence(), type_="server_error",
+                               code="runner_unavailable")(scope, receive, send)
         finally:
             with _INFLIGHT_LOCK:
                 _INFLIGHT.discard(stop)
@@ -1357,13 +1358,14 @@ async def check_setup(data_dir: Path, *, network: Dict[str, Any]) -> List[Dict[s
     else:
         checks.append({"id": "listener", "ok": False,
                        "text": "The gateway listens on this computer only: change it on the Network page."})
-    if split_mode.is_api_process():
-        # Split mode: Core's server runs in the runner process; importing it here would be the
-        # first step to a second model copy.
+    if split_mode.forwards_core():
+        # Split mode or a model host child (ADR 0002): Core's server runs in another process;
+        # importing it here would be the first step to a second model copy.
         if await off_loop("light", split_mode.read_address, data_dir) is None:
-            checks.append({"id": "core", "ok": False, "text": RUNNER_UNAVAILABLE})
+            checks.append({"id": "core", "ok": False, "text": split_mode.core_unavailable_sentence()})
             return checks
-        checks.append({"id": "core", "ok": True, "text": "AbstractCore's server runs in the runner process."})
+        where = "the runner process" if split_mode.is_api_process() else "the model host process"
+        checks.append({"id": "core", "ok": True, "text": f"AbstractCore's server runs in {where}."})
     else:
         try:
             import importlib

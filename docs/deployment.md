@@ -218,6 +218,24 @@ restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
 
+**On a Linux server the models run in a child process.** `serve` defaults to
+`--model-host process` on Linux: every AbstractCore provider call and model load
+happens in one child the gateway starts, pings, restarts (backoff, at most 5
+restarts in 10 minutes) and kills above a memory ceiling (default 80 % of the
+machine's memory, `--model-host-memory-gb`). A llama.cpp abort, a KV cache that
+runs out or an out-of-memory kill costs the requests in flight, with a sentence
+naming the cause, while the gateway keeps answering; the child is back in about
+a second and warms its default model again. The systemd unit needs no change:
+the child exits with the gateway (`KillMode=mixed` stops the rest). Each crash
+writes `<data dir>/incidents/model-host-<stamp>-<id>-<kind>.json`, the child's
+log is `<data dir>/logs/model-host.log`, and `GET /api/health` shows
+`model_host`. `--model-host in-process` keeps everything in one process. See
+[configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
+
+**A stop is quick.** On SIGTERM (`systemctl stop`, `launchctl`, `docker stop`) the gateway ends its live
+streams at once (clients reconnect with their cursor), gives requests in flight 10 s
+(`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`), runs its shutdown steps and exits 0, typically in under a second.
+
 **Incident files.** Before it exits, the watchdog writes
 `<data dir>/incidents/watchdog-<UTC stamp>.json` and
 `watchdog-<stamp>.threads.txt` (every thread's stack). The JSON

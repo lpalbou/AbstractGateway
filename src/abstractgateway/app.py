@@ -209,6 +209,12 @@ from .loop_watchdog import InflightRequests  # noqa: E402
 
 app.add_middleware(InflightRequests)
 
+# Outermost of all (2026-10-29, shutdown_drain.py): when a stop signal arrives, every GET request
+# sees its client leave, so live streams end at once instead of holding the shutdown.
+from .shutdown_drain import EndStreamsOnShutdown  # noqa: E402
+
+app.add_middleware(EndStreamsOnShutdown)
+
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
 from .routes.session_tools import router as session_tools_router  # noqa: E402
@@ -642,6 +648,17 @@ async def health_check():
         body["watchdog"] = _watchdog_snapshot()
     except Exception:
         pass
+    # Model host (ADR 0002): where the models run; in the `process` mode the child's state, pid,
+    # restarts in the window, memory, and the newest incident. `failed` (it stopped restarting)
+    # degrades the status; the gateway itself still answers.
+    try:
+        from . import model_host as _model_host
+
+        body["model_host"] = _model_host.health_snapshot()
+        if body["model_host"].get("state") == "failed":
+            body["status"] = "degraded"
+    except Exception as e:  # noqa: BLE001 - health stays answerable; the error is shown
+        body["model_host"] = {"error": f"{type(e).__name__}: {e}"}
     # Worker pools (gateway load 2026-10-26): size, threads started, queued work per kind.
     try:
         from .work_pools import pool_stats

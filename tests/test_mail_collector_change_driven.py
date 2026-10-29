@@ -180,9 +180,9 @@ def _runtime_before(version: str) -> bool:
 # 2026-10-29 (backlog 0965): red on main with AbstractRuntime 0.15.2, whose index-build replay moves
 # the run store's change token (a 0.15.2 regression), so the full pass reloads every finished run.
 # Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released by #23); the gateway's floor
-# moves to it in lpalbou/AbstractGateway#22. The test runs again by itself once 0.15.3 is installed.
+# moves to it in lpalbou/AbstractGateway#57. The test runs again by itself once 0.15.3 is installed.
 @pytest.mark.skipif(_runtime_before("0.15.3"), reason="needs AbstractRuntime >= 0.15.3 (index-build change token "
-                    "fix, AbstractRuntime#21; floor in AbstractGateway#22); backlog 0965, 2026-10-29")
+                    "fix, AbstractRuntime#21; floor in AbstractGateway#57); backlog 0965, 2026-10-29")
 def test_400_finished_runs_a_change_to_one_loads_exactly_one(gateway, imap, smtp, stores, monkeypatch) -> None:
     """The full pass (every 5 min, a foreign change, a restart) reads index rows, never the 400
     finished RunStates: a run is loaded only when its (status, updated_at) row is new."""
