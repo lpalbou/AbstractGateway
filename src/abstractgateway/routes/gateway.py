@@ -15818,7 +15818,11 @@ def about_payload() -> Dict[str, Any]:
         except metadata.PackageNotFoundError:
             return None
 
+    from ..instances import current_instance
+
     return {
+        # The gateway instance (instances.py): "default", or the name of a second gateway on this machine.
+        "instance": current_instance(),
         "abstractframework": installed_framework_version(_v("abstractframework")),
         "abstractgateway": _v("abstractgateway"),
         "packages": dict(sorted(packages.items())),
@@ -26976,6 +26980,22 @@ def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
     return None
 
 
+def _row_v1_held_by_for_caller(value: Any) -> Optional[list[str]]:
+    """`held_by` as the caller may read it: the operator sees every account's
+    runtime by name; a signed-in non-admin sees only its own account by name,
+    any other account's runtime as "another account's runtime"."""
+    if not isinstance(value, list):
+        return None
+    holders = [str(h) for h in value]
+    principal = current_gateway_principal()
+    if principal is None or principal.is_admin():
+        return holders
+    mine = f"the runtime of account {safe_principal_component(principal.tenant_id, default='default')}/"
+    mine += safe_principal_component(principal.user_id, default="user")
+    return [h if (h.startswith(mine + " ") or h == mine or not h.startswith("the runtime of account "))
+            else "another account's runtime" + (h[h.index(" ("):] if " (" in h else "") for h in holders]
+
+
 def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
     """Coerce one runtime residency record into the frozen `model_residency_row_v1` shape.
 
@@ -27020,6 +27040,12 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         # pair — nan/inf/bool/junk coerce to null, never a guess.
         "est_weights_bytes": _row_v1_int(record, "est_weights_bytes", "estWeightsBytes"),
         "cache_bytes": _row_v1_int(record, "cache_bytes", "cacheBytes"),
+        # What the cache is (GGUF): the KV cache llama.cpp allocated for the
+        # loaded `context_length`, estimated from the file geometry.
+        "kv_cache_bytes": _row_v1_int(record, "kv_cache_bytes", "kvCacheBytes"),
+        "kv_cache_estimated": True if record.get("kv_cache_estimated") is True else None,
+        # Who keeps it in memory, in words (ADR 0043).
+        "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
@@ -27634,7 +27660,7 @@ async def model_downloads_stream(
 #   GET  /engines?probe=                             contract B (+ install_allowed)
 #   GET  /engines/{id}?probe=                        one contract-B row
 #   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
-#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=  contract C
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=  contract C
 #   GET  /models/installed?provider=                 contract D
 #   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
 #   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
@@ -27657,10 +27683,12 @@ def _host_action_error(status_code: int, status: str, message: str, **extra: Any
 
 async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Run one seam call off the event loop; map the facade's typed errors to HTTP."""
-    from ..core_config import CoreTooOld, HostActionRefused
+    from ..core_config import CoreTooOld, HostActionRefused, RuntimeTooOld
 
     try:
         return await off_loop("watchers", fn, *args, **kwargs)
+    except RuntimeTooOld as exc:
+        return _host_action_error(501, "unsupported", str(exc), reason="abstractruntime_too_old", missing=exc.missing)
     except HostActionRefused as exc:
         body = exc.payload()
         message = str(body.pop("message", "") or exc)
@@ -27728,13 +27756,17 @@ async def models_catalog_get(
     fits: bool = Query(False, description="Keep only artifacts that fit this host (fits or tight)."),
     hub: bool = Query(False, description="Enrich from the Hugging Face API (cached 24 h) and add hub search rows."),
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
+    hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
+    hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
+    paging = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
     return await _core_host_call(
-        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None
+        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
+        **paging,
     )
 
 
@@ -28376,6 +28408,25 @@ def _with_capability_default_warnings(
     return out
 
 
+async def _refuse_voice_not_downloaded(kind: str, modality: str, req: Any) -> Optional[JSONResponse]:
+    """A voice can be selected if and only if its model is downloaded (operator ruling 2026-10-29):
+    setting the default voice to a local model whose weights are not on disk is refused HERE, at
+    selection time, with the sentence (`detail`, a string every client prints) and the download
+    action (`error.download`). Synthesis never checks. An unknown state does not refuse."""
+    if str(kind).strip().lower() != "output" or str(modality).strip().lower() != "voice":
+        return None
+    provider = str(getattr(req, "provider", "") or "").strip()
+    model = str(getattr(req, "model", "") or "").strip()
+    if not provider or not model:
+        return None
+    from ..core_config import model_not_downloaded
+
+    missing = await off_loop("light", model_not_downloaded, provider, model)
+    if not missing:
+        return None
+    return JSONResponse(status_code=409, content={"detail": str(missing.get("message") or ""), "error": missing})
+
+
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
     """Persist one execution-host Core/Runtime capability route default.
@@ -28386,6 +28437,9 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
     config store warns here instead of refusing.
     """
     svc = get_gateway_service()
+    refused = await _refuse_voice_not_downloaded(kind, modality, req)
+    if refused is not None:
+        return refused
     try:
         save_gateway_capability_default(
             kind,
