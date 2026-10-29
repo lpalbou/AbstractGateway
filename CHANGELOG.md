@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
   - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
   - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
+- **"Every quant" in the console's Models catalog** (batch item b). A switch beside **Fits this computer** asks for each
+  row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore 0865. The extra quants
+  (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and **Download**. The setting is
+  part of the link (`#catalog?every=1`). On an AbstractRuntime without the passthrough, the answer is a 501 that says
+  so.
 
 ## [0.18.0] - 2026-10-28
 
