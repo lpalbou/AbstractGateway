@@ -619,6 +619,29 @@ if (scenario.name === "simple-mode") {
   if (checks.emb.length !== 1 || checks.emb[0] !== "x/E") fail("embeddings offered a GGUF artifact: " + JSON.stringify(checks.emb));
   if (checks.vid !== 0) fail("output.video offered an image-to-video-only model");
   if (checks.ollamaSame) fail("two Ollama tags read the same name");
+  // OVH 8443 (2026-10-29): "Other models that fit" offered Ollama models with Ollama not installed, and
+  // engine rows read "HuggingFace (huggingface)". Only models whose engine is installed here (the 0958
+  // rule), each under its engine's readable name.
+  const eng = vm.runInContext(`(() => {
+    const savedCatalog = dmUi.catalog, savedEngines = engineStore.data;
+    engineStore.data = { schema: "gateway_engines_v2", engines: [
+      { id: "ollama", name: "Ollama", installed: false }, { id: "llamacpp", name: "llama.cpp", installed: true },
+      { id: "huggingface", name: "Hugging Face (transformers)", installed: true } ] };
+    state.providerLabels.set("huggingface", "HuggingFace (huggingface)");
+    dmUi.catalog = { rows: [{ id: "q4b", display_name: "Qwen3 4B", capabilities: { text: true }, artifacts: [
+      { provider: "ollama", artifact: "qwen3:4b", fit: { verdict: "fits" } },
+      { provider: "huggingface", artifact: "unsloth/Qwen3-4B-GGUF:Q4_K_M", fit: { verdict: "fits" } } ] }] };
+    const offered = dmOtherModels(dmCapById("out-text")).map((o) => o.provider + "|" + o.artifact);
+    renderDmChoice();
+    const html = $("dm-choice-body").innerHTML;
+    engineStore.data = null;
+    const unknown = dmOtherModels(dmCapById("out-text"));
+    dmUi.catalog = savedCatalog; engineStore.data = savedEngines;
+    return { offered, html, unknown };
+  })()`, context);
+  if (JSON.stringify(eng.offered) !== JSON.stringify(["huggingface|unsloth/Qwen3-4B-GGUF:Q4_K_M"])) fail("a model on an engine that is not installed is offered: " + JSON.stringify(eng.offered));
+  if (eng.html.includes("(huggingface)") || !eng.html.includes("llama.cpp")) fail("engine rows must read their readable name only: " + eng.html.slice(0, 900));
+  if (eng.unknown !== null) fail("with the engine inventory unknown, nothing is offered as installed");
   // The key is checked before anything is stored, and an existing connection is never overwritten.
   el("dm-key-family").value = "anthropic";
   el("dm-key-value").value = "sk-ant-test-key";
