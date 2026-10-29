@@ -231,14 +231,11 @@ if (__SCRIPT__ === "every") {
 if (__SCRIPT__ === "hfevery") {
   const hubCalls = () => calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?q=")).map((c) => c.path);
   out.hubCalls1 = hubCalls();
-  // "Every quant" on: the Hugging Face results shown are asked again with every quant.
+  out.html = root.innerHTML;
+  // The Catalog's switch never re-asks Hugging Face (its search is always every quant).
   root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
   await settle();
   out.hubCalls2 = hubCalls();
-  // A new Hugging Face search (Enter) with the switch on asks for every quant too.
-  root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen3.8", dataset: { mcSearch: "1" } } });
-  await settle();
-  out.hubCalls3 = hubCalls();
 }
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
@@ -424,7 +421,7 @@ def _hub(rows: int) -> dict:
 def check_hf(out: dict, hub: dict) -> None:
     n = len(hub["rows"])
     arts = sum(len(r["artifacts"]) for r in hub["rows"])
-    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true"]
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true"]
     # The Hub answer is drawn as the SAME cards and rows, every one of them.
     assert out["initial"]["cards"] == n and out["initial"]["arts"] == arts
     assert out["initial"]["count"] == [n, n, arts]
@@ -435,7 +432,7 @@ def check_hf(out: dict, hub: dict) -> None:
     assert set(out["initial"]["boldQuant"]) == {"8-bit", "Not stated"}
     assert 'data-mc-action="download"' in out["html"]
     assert out["backToCatalog"]["hash"] == "#catalog" and out["backToCatalog"]["cards"] == 80
-    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true"
+    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true&extended=true"
     assert out["second"]["hash"] == "#catalog?hf=qwen%20coder"
 
 
@@ -498,9 +495,9 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
     assert out["page3"]["cards"] == 10 and 'data-mc-hub-count="10">Showing 10 Hugging Face results.</span>' in out["html3"]
     assert 'data-mc-action="hub-more"' not in out["html3"]
     assert out["hubCalls"] == [
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=2",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=3",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=2",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=3",
     ]
 
 
@@ -519,7 +516,7 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     hub = _hub_page(0, 3, page=1, more=True)
     hub["rows"].insert(0, dict(cat["rows"][0], source="curated"))  # a curated row also in the answer: drawn once
     out = _run(cat, "beside", "#catalog?q=org-1", hub=hub)
-    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true"]
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true&extended=true"]
     assert '<h4 class="mc-hub-beside__title">From Hugging Face</h4>' in out["html"]
     assert 'data-mc-hub-beside="3"' in out["html"]
     assert out["html"].count('data-mc-model="hf:') == 3
@@ -543,15 +540,18 @@ def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
     assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
 
 
-def test_every_quant_applies_to_hugging_face_results() -> None:
-    """OVH 8443 (2026-10-29): with "Every quant" on, the Hugging Face search for the exact repo
-    unsloth/Qwen3.8-27B-GGUF showed 2 of its 24 quants: the hub request never asked `extended=true`."""
+def test_a_hugging_face_search_lists_every_quant_and_has_no_switch() -> None:
+    """Operator ruling (2026-10-29): "this is a Hugging Face search, it should show what's available,
+    period". OVH 8443 showed 2 of the 24 quants of unsloth/Qwen3.8-27B-GGUF. The Hugging Face tab now
+    always asks `extended=true` and shows no "Every quant" switch (the Catalog tab keeps it)."""
     cat = _catalog(10)
     hub = _hub_page(0, 3, page=1, more=False)
     out = _run(cat, "hfevery", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
-    assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true"]
-    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"
-    assert out["hubCalls3"][-1] == "/api/gateway/models/catalog?q=qwen3.8&hub=true&extended=true"
+    assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"]
+    assert re.search(r'data-mc-every-switch="1" hidden', out["html"]), out["html"][:600]
+    assert out["hubCalls2"] == out["hubCalls1"]
+    catalog = _run(cat, "every", "", hub=hub)  # the Catalog tab keeps its switch, shown
+    assert 'data-mc-every-switch="1" title=' in catalog["html"] and 'data-mc-every-switch="1" hidden' not in catalog["html"]
 
 
 def _gpu_limit_catalog() -> dict:
