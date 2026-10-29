@@ -456,6 +456,90 @@ Catalog mutation routes are admin-only under
 `/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
 available at `GET /api/gateway/workflow-catalog`.
 
+## Sign-in: passwords, tokens and the first-run window
+
+Since 0.18.0 an account signs in with its **account id and a password** or with its
+**gateway token**; both open the same browser session (`POST /api/gateway/session/login`
+with `{user_id, password}` or `{user_id, token}`, exactly one of the two). Tokens stay
+for apps, scripts and the OpenAI-compatible API (`/v1` takes named API keys).
+
+**Password storage.** The hash is on the account's registry record
+(`<data dir>/auth/users.json`, `password_hash`): `hashlib.scrypt` (N=2^16, r=8, p=1,
+16-byte salt, 32-byte key) in the self-describing form `scrypt$N$r$p$salt$key`, compared in
+constant time. No password is ever written, logged or returned. The strength rule: at least
+10 characters with at least 5 different ones, not built around the account name, not a
+well-known password.
+
+**Attempt limits** (process-local; a restart clears them, like the token lockout below;
+every counter decays: refusals older than 15 minutes stop counting; an IPv6 address counts
+as its /64). Ten refused passwords from one address in 15 minutes lock that address for 15
+minutes. Five refused passwords in a row for one account FROM ONE ADDRESS lock that (account,
+address) pair for 30 seconds, doubling up to 15 minutes. Every 20 refused passwords for one
+account from all addresses within 15 minutes lock the account for 15 minutes, doubling at each
+further lock up to 24 hours (back to 15 minutes after a quiet 30 minutes past the last lock);
+an address that signed this account in during the last 30 days is not held by that lock, so a
+distributed guesser cannot lock the owner out. Counters are kept per hashed account name and
+never dropped while locked, so a flood of made-up names cannot reset them. Residual: the
+"signed in before" exemption is per address, so callers sharing the owner's address (a shared
+NAT, the same IPv6 /64) share it too and fall back to the per-address limits (never for a
+loopback address, which every caller behind a header-less proxy has).
+A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
+account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
+trust on (or behind a proxy that passes the header through), the address is the left-most
+`X-Forwarded-For` entry, which a client can vary; the per-account limit still holds. Every refusal is the same sentence (`password_refused`:
+"That account and password don't match.") whether the account is unknown, has no password,
+is deactivated or the password is wrong, and an unknown account costs the same scrypt time.
+
+**Sessions follow credentials.** A browser session is bound to the account's credentials
+(token hash, and the password hash once one is set), and setting, changing or removing a
+password also deletes the account's other sessions at once (so none can revive when a
+credential returns to an earlier value). `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
+give the browser that made the change a fresh session.
+
+**Who sets passwords.** Anyone signed in sets their own (`PUT /me/password`, current password
+required once one exists, under the attempt limits). Admins set or remove anyone's
+(`PUT|DELETE /admin/accounts/{id}/password`) and may give one at creation
+(`POST /admin/users` `password`). Entities never have a password. The last-admin rule is
+unchanged.
+
+**Where tokens come from (automation).** `POST /api/gateway/admin/users` answers the new
+account's token once; an admin rotates another account's token with
+`PATCH /api/gateway/admin/users/{id}` `{"rotate_token": true}` (answered once); anyone rotates
+their own with `POST /api/gateway/me/token/rotate`. The bootstrap admin's token is in
+`<data dir>/auth/bootstrap-admin-token` (0600).
+
+### The first-run window (an unclaimed gateway)
+
+A fresh data folder (the bootstrap admin was just created, with a generated token, on an
+empty registry) is **unclaimed** until an admin signs in or the admin gets a password. While
+unclaimed, `GET /api/gateway/session/onboarding` (public) answers `unclaimed: true` and
+`POST /api/gateway/session/onboarding` sets the admin password and signs the browser in.
+That window is the risk, and it is fenced:
+
+- **browser only**: the POST needs an `Origin` header, and the security middleware has
+  already refused any Origin the gateway does not accept;
+- **the setup code** (six words from a list of 273, about 48 bits, stored in
+  `<data dir>/auth/onboarding.json`, 0600) is ALWAYS required. A gateway behind
+  `tailscale serve`/Funnel, a container's port mapping, a shared LAN, or a proxy that adds
+  no forwarding headers at all (a minimal nginx `proxy_pass`, `tailscale funnel --tcp`,
+  `ssh -R`) looks like a local caller to itself, so nothing about a request proves the person
+  is at the machine. (A first draft skipped the code for a loopback peer without forwarding
+  headers; the adversarial review took the gateway through a header-less proxy.) Someone at
+  the machine has the no-code path anyway: the one-time claim link;
+- **limits**: 5 refused setup codes per address and 20 across all addresses per 15 minutes
+  (then 429 for 15 minutes; the gateway-wide lock never applies to a loopback peer without
+  forwarding headers, so strangers cannot lock the machine's own browser out);
+- **logged**: a warning log line and the audit line's `onboarding` detail with the client
+  address, and `claimed_at / claimed_via / claimed_from` in `onboarding.json`;
+- **closes for good** on the first admin sign-in of any kind (password, token, one-time
+  link, email code), when the admin gets a password, or when an admin creates an account
+  (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
+  then. A data folder that was not fresh when 0.18.0 first ran never has the record, so an
+  upgrade never opens the window.
+
+The one-time claim link (`abstractgateway claim`) stays the loopback-only path: it is
+refused from any non-loopback peer or through a proxy.
+
 ## Origin allowlist (browser/origin defense)
 
 If the request includes an `Origin` header, the middleware allows it only when

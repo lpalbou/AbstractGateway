@@ -24,12 +24,25 @@ the user's own machine.
   can build the right link without being told the port.
 - **First-run state** (`<data>/first_run.json`): whether the console's
   first-run wizard has been completed for this data dir.
+- **Onboarding** (`<data>/auth/onboarding.json`, 0.18.0): a FRESH data dir (the
+  bootstrap admin was just created with a generated token, on an empty registry,
+  outside a shared-token deployment) is "unclaimed". While unclaimed, the console
+  shows "Set up your gateway" instead of the sign-in form, from any origin the
+  gateway accepts, proxied or not: choosing the admin password, with the
+  one-time SETUP CODE (six words, always required; printed by the installer,
+  `abstractgateway claim --code`, `service install` and `service enable`),
+  claims the gateway. Any admin sign-in (password, token, claim link, email
+  code), a password set on the admin, or an account created closes the window
+  for good, and pending claim links are deleted then. A data dir that was not
+  fresh when this version first ran never has the file, so an upgrade never
+  reopens it.
 """
 
 from __future__ import annotations
 
 import datetime
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -558,3 +571,165 @@ def mark_first_run_complete(data_dir: Path, *, by: str, outcome: str = "finished
 
 def claim_url(base_url: str, code: str) -> str:
     return f"{str(base_url).rstrip('/')}/console#claim={code}"
+
+
+# ---------------------------------------------------------------------------
+# Onboarding (unclaimed fresh data dir) and the setup code
+# ---------------------------------------------------------------------------
+
+ONBOARDING_SCHEMA = "gateway_onboarding_v1"
+SETUP_CODE_WORDS = 6
+
+#: The setup code's words: short, common, distinct English nouns (6 of 273 = about 48 bits,
+#: behind a 5-per-address and 20-per-gateway refusal limit per 15 minutes).
+SETUP_WORDLIST: tuple = tuple(
+    """
+    acorn actor adobe agent album alley amber anchor angle ankle apple apron arena armor arrow atlas
+    attic autumn award bacon badge bagel baker balloon bamboo banana banjo barrel basil basket beach
+    beacon beaver berry bicycle bison blanket blossom bonnet border bottle bracket branch bread
+    breeze brick bridge brook bucket buffalo bundle butter button cabin cactus camel camera candle
+    canoe canvas canyon carpet carrot castle cedar cello chalk channel cherry chess chimney cinema
+    circle citrus clock cloud clover cobalt cocoa comet compass copper coral cotton cradle crayon
+    cricket crystal cupcake curtain cushion daisy dancer delta desert diamond dolphin donkey dragon
+    drum eagle easel echo elbow ember engine falcon feather fence fern ferry fiddle finch flame
+    flute forest fossil fountain fox galaxy garden garlic gecko ginger giraffe glacier globe goose
+    granite grape gravel guitar hammer harbor harp hazel helmet heron hill honey hornet iceberg
+    igloo island ivory jacket jaguar jasmine jelly jewel jungle kayak kernel kettle kiwi koala
+    ladder lagoon lantern laptop lemon lettuce library lily lion lizard lobster locket lotus magnet
+    mango maple marble meadow melon meteor mirror mitten monkey moose mosaic muffin museum napkin
+    needle nest nickel noodle oasis ocean olive onion orange orbit orchid otter oven owl paddle
+    palace panda paper parrot peach peanut pebble pelican pencil pepper piano pickle pigeon pillow
+    pine planet plum pocket pony poppy potato pretzel pumpkin puzzle quartz quilt rabbit radio raven
+    ribbon river robin rocket saddle salmon sandal satin scarf shell silver sketch sled spider spoon
+    squirrel stamp stone sunset swan tablet teapot temple thimble tiger timber tomato topaz tractor
+    trumpet tulip tunnel turtle umbrella valley velvet violin walnut walrus wagon whale willow
+    window yogurt zebra
+    """.split()
+)
+
+
+def onboarding_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "auth" / "onboarding.json"
+
+
+def _write_onboarding(data_dir: Path, payload: Dict[str, Any]) -> None:
+    path = onboarding_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except Exception:
+        pass
+    tmp = path.with_suffix(".json.tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def read_onboarding(data_dir: Path) -> Optional[Dict[str, Any]]:
+    try:
+        rec = json.loads(onboarding_path(data_dir).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return rec if isinstance(rec, dict) and rec.get("schema") == ONBOARDING_SCHEMA else None
+
+
+def generate_setup_code() -> str:
+    return " ".join(secrets.choice(SETUP_WORDLIST) for _ in range(SETUP_CODE_WORDS))
+
+
+def normalize_setup_code(raw: Any) -> str:
+    """Words in any case, separated by spaces, dashes, dots or commas -> "w1 w2 ... w6"."""
+    return " ".join(re.split(r"[\s,.;:_-]+", str(raw or "").strip().lower())).strip()
+
+
+def open_onboarding(data_dir: Path, *, tenant_id: str = "default", user_id: str = "admin") -> Dict[str, Any]:
+    """Mark a FRESH data dir unclaimed (called once, when the bootstrap admin is first created
+    with a generated token on an empty registry). Never reopens a claimed one."""
+    existing = read_onboarding(data_dir)
+    if existing is not None:
+        return existing
+    payload = {
+        "schema": ONBOARDING_SCHEMA,
+        "state": "unclaimed",
+        "tenant_id": str(tenant_id or "default"),
+        "user_id": str(user_id or "admin"),
+        "setup_code": generate_setup_code(),
+        "created_at": _iso(_now()),
+    }
+    _write_onboarding(data_dir, payload)
+    return payload
+
+
+def onboarding_unclaimed(data_dir: Path) -> Optional[Dict[str, Any]]:
+    """The onboarding record when this data dir is unclaimed RIGHT NOW, else None.
+
+    Unclaimed = the record says so AND its admin account still exists, is an enabled,
+    unarchived admin, and has no password yet."""
+    rec = read_onboarding(data_dir)
+    if rec is None or rec.get("state") != "unclaimed":
+        return None
+    try:
+        from .users import GatewayUserRegistry
+
+        user = GatewayUserRegistry().get_user(str(rec.get("user_id") or "admin"), tenant_id=str(rec.get("tenant_id") or "default"))
+    except Exception:
+        return None
+    if user is None or not user.enabled or user.archived or user.password_hash:
+        return None
+    if "admin" not in {str(r).strip().lower() for r in user.roles}:
+        return None
+    return rec
+
+
+def setup_code_for_display(data_dir: Path) -> Optional[str]:
+    """The current setup code while unclaimed (the local CLI prints it), else None."""
+    rec = onboarding_unclaimed(data_dir)
+    if rec is None:
+        return None
+    code = str(rec.get("setup_code") or "").strip()
+    if not code:
+        rec["setup_code"] = code = generate_setup_code()
+        _write_onboarding(data_dir, rec)
+    return code
+
+
+def setup_code_matches(data_dir: Path, presented: Any) -> bool:
+    rec = read_onboarding(data_dir)
+    expected = normalize_setup_code((rec or {}).get("setup_code"))
+    given = normalize_setup_code(presented)
+    if not expected or not given:
+        return False
+    return hmac.compare_digest(expected.encode("utf-8"), given.encode("utf-8"))
+
+
+def close_onboarding(data_dir: Path, *, via: str, client_ip: str = "", user_id: str = "", tenant_id: str = "default") -> bool:
+    """Claim the gateway: the onboarding window closes for good and pending claim links are
+    deleted. Returns True when THIS call closed it (False: it was not unclaimed)."""
+    rec = read_onboarding(data_dir)
+    if rec is None or rec.get("state") != "unclaimed":
+        return False
+    rec = dict(rec)
+    rec.pop("setup_code", None)
+    rec.update(
+        {
+            "state": "claimed",
+            "claimed_at": _iso(_now()),
+            "claimed_via": str(via or ""),
+            "claimed_by": f"{tenant_id or 'default'}/{user_id}" if user_id else "",
+            "claimed_from": str(client_ip or ""),
+        }
+    )
+    _write_onboarding(data_dir, rec)
+    d = claims_dir(data_dir)
+    if d.is_dir():
+        for f in d.glob("*.json"):
+            try:
+                f.unlink()
+            except Exception:
+                pass
+    return True

@@ -275,6 +275,15 @@ def ensure_bootstrap_admin_user(
 
     if record is None:
         token = explicit_token or existing_file_token or generate_gateway_token()
+        # A FRESH data dir: no account at all, and a token nobody holds yet (generated now).
+        # Only then does the console offer "Set up your gateway" (first_run.open_onboarding).
+        fresh = (
+            not registry.list_users() and not explicit_token and not existing_file_token
+            # A shared-token deployment switching to accounts holds data already: not fresh.
+            and not any(str(os.getenv(n) or "").strip() for n in (
+                "ABSTRACTGATEWAY_AUTH_TOKEN", "ABSTRACTGATEWAY_AUTH_TOKENS",
+                "ABSTRACTFLOW_GATEWAY_AUTH_TOKEN", "ABSTRACTFLOW_GATEWAY_AUTH_TOKENS"))
+        )
         record, issued_token = registry.create_user(
             user_id=user_id,
             tenant_id=tenant_id,
@@ -287,6 +296,10 @@ def ensure_bootstrap_admin_user(
         token_source = "env" if explicit_token else ("token-file" if existing_file_token else "generated")
         if not bool(no_token_file):
             _write_token_file(resolved_token_file, issued_token, force=True)
+        if fresh:
+            from .first_run import open_onboarding
+
+            open_onboarding(gateway_data_dir_from_env(), tenant_id=record.tenant_id, user_id=record.user_id)
     else:
         desired_roles = tuple(dict.fromkeys([*record.roles, "admin", "user"]))
         needs_update = (

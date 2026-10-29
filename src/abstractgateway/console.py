@@ -2204,23 +2204,67 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="af-gateway-signin__hero">
 	        <div>
 	          <div class="af-gateway-signin__kicker">AbstractGateway Console</div>
-	          <h2>Sign in</h2>
-	          <p>Use the token your gateway admin gave you.</p>
+	          <h2 id="login-title">Sign in</h2>
+	          <p id="login-lede">Sign in with your account and password.</p>
 	        </div>
 	      </div>
 	      <div class="af-gateway-signin__status-row">
 	        <span id="login-status" class="af-gateway-signin__status af-gateway-signin__status--neutral" role="status" aria-live="polite">Not signed in</span>
 	      </div>
-	      <form id="login-form" class="af-gateway-signin__form" novalidate>
+	      <!-- First run (0.18.0): a fresh gateway (GET /session/onboarding `unclaimed`) shows this
+	           form instead of the sign-in form. Choosing the admin password claims the gateway and
+	           opens the setup guide. The setup code field shows when the gateway asks for it
+	           (`setup_code_required`, always while unclaimed since review: a header-less proxy looks local). -->
+	      <form id="onboarding-form" class="af-gateway-signin__form" novalidate hidden>
 	        <div class="af-gateway-signin__field">
-	          <label class="af-gateway-signin__label" for="login-user">Gateway user</label>
-	          <input id="login-user" autocomplete="username" value="admin" aria-describedby="login-user-error">
-	          <p id="login-user-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	          <label class="af-gateway-signin__label" for="onboard-name">Your name</label>
+	          <input id="onboard-name" autocomplete="name" spellcheck="false" maxlength="80" aria-describedby="onboard-name-help onboard-name-error">
+	          <p id="onboard-name-help" class="af-gateway-signin__source">Shown in the console. You sign in as <strong id="onboard-account">admin</strong> or with this name.</p>
+	          <p id="onboard-name-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
 	        </div>
 	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="onboard-password">Admin password</label>
+	          <div class="af-gateway-signin__token-input">
+	            <input id="onboard-password" type="password" autocomplete="new-password" aria-describedby="onboard-password-help onboard-password-error">
+	            <button id="toggle-onboard-password" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+	          </div>
+	          <p id="onboard-password-help" class="af-gateway-signin__source">At least 10 characters with at least 5 different ones. A few words make a good one.</p>
+	          <p id="onboard-password-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="onboard-password-confirm">Confirm the password</label>
+	          <input id="onboard-password-confirm" type="password" autocomplete="new-password" aria-describedby="onboard-password-confirm-error">
+	          <p id="onboard-password-confirm-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="onboard-code-field" class="af-gateway-signin__field" hidden>
+	          <label class="af-gateway-signin__label" for="onboard-code">Setup code</label>
+	          <input id="onboard-code" autocomplete="one-time-code" spellcheck="false" autocapitalize="none" aria-describedby="onboard-code-help onboard-code-error">
+	          <p id="onboard-code-help" class="af-gateway-signin__source">Six words. On the gateway's machine, run <code>abstractgateway claim --code</code>; the installer printed it too.</p>
+	          <p id="onboard-code-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__submit-row">
+	          <label class="af-gateway-signin__checkbox"><input id="onboard-remember" type="checkbox"> Remember this browser</label>
+	          <button id="onboard-button" class="af-gateway-signin__primary" type="submit">Set up and sign in</button>
+	        </div>
+	      </form>
+	      <form id="login-form" class="af-gateway-signin__form" novalidate>
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="login-user">Account</label>
+	          <input id="login-user" autocomplete="username" value="admin" spellcheck="false" autocapitalize="none" aria-describedby="login-user-error">
+	          <p id="login-user-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="login-password-field" class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="login-password">Password</label>
+	          <div class="af-gateway-signin__token-input">
+	            <input id="login-password" autocomplete="current-password" type="password" aria-describedby="login-password-error">
+	            <button id="toggle-password" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+	          </div>
+	          <p id="login-password-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="login-token-field" class="af-gateway-signin__field" hidden>
 	          <label class="af-gateway-signin__label" for="login-token">Token</label>
 	          <div class="af-gateway-signin__token-input">
-	            <input id="login-token" autocomplete="current-password" type="password" aria-describedby="login-token-error">
+	            <input id="login-token" autocomplete="off" type="password" aria-describedby="login-token-error">
 	            <button id="toggle-token" type="button" aria-label="Show token" aria-pressed="false">Show</button>
 	          </div>
 	          <p id="login-token-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
@@ -2229,11 +2273,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label class="af-gateway-signin__checkbox"><input id="login-remember" type="checkbox"> Remember this browser</label>
 	          <button id="login-button" class="af-gateway-signin__primary" type="submit">Sign in</button>
 	        </div>
+	        <button id="login-method-switch" type="button" class="af-gateway-signin__link">Sign in with a token instead</button>
 	      </form>
 	      <p id="login-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
 	      <!-- Shown only when GET /session/recovery says sign-in by email is on. -->
 	      <div id="recovery-section" class="af-gateway-signin__recovery" hidden>
-	        <button id="recovery-link" type="button" class="af-gateway-signin__link">Forgot your token? Email me a sign-in code</button>
+	        <button id="recovery-link" type="button" class="af-gateway-signin__link">Forgot your password? Email me a sign-in code</button>
 	        <p id="recovery-request-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
 	      </div>
 	      <div id="recovery-code-step" class="af-gateway-signin__code" hidden>
@@ -2247,7 +2292,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <button id="recovery-resend" type="button" class="af-gateway-signin__link">Send a new code</button>
 	          <button id="recovery-use" type="button" class="af-gateway-signin__primary" disabled>Use code</button>
 	        </div>
-	        <button id="recovery-back" type="button" class="af-gateway-signin__link af-gateway-signin__back">Back to token</button>
+	        <button id="recovery-back" type="button" class="af-gateway-signin__link af-gateway-signin__back">Back to sign-in</button>
 	      </div>
 	    </section>
 
@@ -2814,7 +2859,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="switch-list">
 	                  <button type="button" role="switch" id="email-cap-email" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-email-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Mailboxes for users</span><span class="af-switch__desc" id="email-cap-email-desc">Users may connect their own mailbox for their agents, automations and notifications. You never see anyone&#39;s mail.</span></span></button><span id="email-cap-email-reason" class="af-switch__reason" hidden></span>
 	                  <button type="button" role="switch" id="email-cap-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools for users</span><span class="af-switch__desc" id="email-cap-agent-tools-desc">Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.</span></span></button><span id="email-cap-agent-tools-reason" class="af-switch__reason" hidden></span>
-	                  <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your token?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
+	                  <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your password?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
 	                </div>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
@@ -3412,6 +3457,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
     </div>
   </div>
+  <!-- Password (0.18.0): set or change an account's password. Your own row: PUT /me/password
+       (asks the current password once one is set); another account (admins): PUT
+       /admin/accounts/{id}/password, and Remove (DELETE) when one is set. -->
+  <div id="account-password-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-password-title">
+      <div class="af-modal__header">
+        <h2 id="account-password-title" class="af-modal__title">Password</h2>
+        <button id="account-password-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="account-password-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
   <!-- Preferences (round 14, R14.2): the account's default workflow per app
        (GET/PUT /api/gateway/accounts/{id}/preferences). Applies on change; no Save.
        Round 16 (R16.1): + the account's time zone (the kit AfTimeZonePicker island). -->
@@ -3698,6 +3755,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <option value="admin">Admin — manages this gateway</option>
           </select>
           <p id="new-roles-note" class="af-form__help hidden" role="status"></p>
+        </div>
+        <div class="af-form__field">
+          <label class="af-form__label" for="new-password">Password</label>
+          <input id="new-password" type="password" autocomplete="new-password" aria-describedby="new-password-help">
+          <p id="new-password-help" class="af-form__help">Optional. They sign in with their User ID and this password (at least 10 characters). Their token is still issued for apps and automation.</p>
         </div>
         <div class="af-form__field">
           <label class="af-form__label" for="new-email">Email address</label>
@@ -12971,6 +13033,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (a.kind === "entity") {
             add("manage", "manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {
+            add("password", "key", `Password of ${a.id}`, () => openAccountPassword(a));
             add("rotate", "rotate", `Rotate the token of ${a.id}`, () => askRotateAccount(tr, a));
           }
           add("archive", "archive", `Archive ${a.id}`, () => askArchiveAccount(tr, a), true);
@@ -13004,6 +13067,109 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const first = backdrop.querySelector(".af-modal__body button, .af-modal__body input, .af-modal__body select, .af-modal__close");
       try { if (first && first.focus) first.focus(); } catch {}
       return () => { document.removeEventListener("keydown", onKey, true); backdrop.removeEventListener("click", onClick); };
+    }
+    // ---- Password modal (0.18.0). The row says whether the account has one (`password_set`).
+    function closeAccountPassword() {
+      const backdrop = $("account-password-backdrop");
+      if (backdrop.hidden) return;
+      $("account-password-body").textContent = "";
+      backdrop.hidden = true;
+      const release = accountsUi.passwordRelease;
+      accountsUi.passwordRelease = null;
+      if (release) release();
+    }
+    function openAccountPassword(a) {
+      closeAccountPassword();
+      if (typeof a.password_set !== "boolean") throw new Error(`GET /admin/accounts row ${a.id} has no boolean "password_set" (0.18.0 seam).`);
+      const own = Boolean(a.own);
+      const body = $("account-password-body");
+      body.textContent = "";
+      $("account-password-title").textContent = `Password — ${a.id}`;
+      const lead = document.createElement("p");
+      lead.className = "account-modal-lead";
+      lead.textContent = a.password_set
+        ? `${own ? "You sign" : `${a.id} signs`} in with the account id and a password. Setting a new one signs ${own ? "your other browsers" : "them"} out; the token keeps working for apps and automation.`
+        : `${own ? "You have" : `${a.id} has`} no password yet: sign-in takes the token. Set one to sign in with ${a.id} and a password; the token keeps working for apps and automation.`;
+      const form = document.createElement("form");
+      form.className = "af-form";
+      form.noValidate = true;
+      const field = (id, label, help) => {
+        const wrap = document.createElement("div");
+        wrap.className = "af-form__field";
+        const l = document.createElement("label");
+        l.className = "af-form__label";
+        l.setAttribute("for", id);
+        l.textContent = label;
+        const input = document.createElement("input");
+        input.id = id;
+        input.type = "password";
+        input.setAttribute("autocomplete", id.endsWith("current") ? "current-password" : "new-password");
+        wrap.append(l, input);
+        if (help) { const h = document.createElement("p"); h.className = "af-form__help"; h.textContent = help; wrap.append(h); }
+        form.append(wrap);
+        return input;
+      };
+      const current = own && a.password_set ? field("account-password-current", "Current password", "") : null;
+      const next = field("account-password-new", "New password", "At least 10 characters with at least 5 different ones; not the account name. A few words make a good one.");
+      const confirm = field("account-password-confirm", "Confirm the new password", "");
+      const note = document.createElement("p");
+      note.className = "inline-state";
+      note.setAttribute("role", "status");
+      note.setAttribute("aria-live", "polite");
+      const actions = document.createElement("div");
+      actions.className = "modal-actions";
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = a.password_set ? "Change password" : "Set password";
+      if (!own && a.password_set) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "secondary";
+        remove.textContent = "Remove password";
+        remove.onclick = async () => {
+          try {
+            await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/password?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "DELETE" });
+            a.password_set = false;
+            note.textContent = `Removed: ${a.id} signs in with the token only.`;
+            note.className = "inline-state ok";
+            refreshUsersOnly();
+          } catch (e) { note.textContent = `Not removed: ${emailErrorText(e)}`; note.className = "inline-state error"; }
+        };
+        actions.append(remove);
+      }
+      actions.append(save);
+      form.append(actions, note);
+      form.onsubmit = async (event) => {
+        if (event && event.preventDefault) event.preventDefault();
+        note.textContent = "";
+        note.className = "inline-state";
+        if (String(next.value || "").length < 10) { note.textContent = "Use at least 10 characters."; note.className = "inline-state error"; return; }
+        if (next.value !== confirm.value) { note.textContent = "The two passwords are different."; note.className = "inline-state error"; return; }
+        save.disabled = true;
+        try {
+          if (own) {
+            const payload = { new_password: next.value, new_password_confirm: confirm.value };
+            if (current) payload.current_password = current.value;
+            await api("/api/gateway/me/password", { method: "PUT", body: JSON.stringify(payload) });
+          } else {
+            await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/password?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ password: next.value }) });
+          }
+          a.password_set = true;
+          next.value = ""; confirm.value = ""; if (current) current.value = "";
+          note.textContent = own ? "Saved: sign in with your account and this password." : `Saved: ${a.id} signs in with ${a.id} and this password.`;
+          note.className = "inline-state ok";
+          refreshUsersOnly();
+        } catch (e) {
+          note.textContent = `Not saved: ${emailErrorText(e)}`;
+          note.className = "inline-state error";
+        } finally {
+          save.disabled = false;
+        }
+      };
+      body.append(lead, form);
+      const backdrop = $("account-password-backdrop");
+      backdrop.hidden = false;
+      accountsUi.passwordRelease = bindAccountModal(backdrop, closeAccountPassword);
     }
     // ---- OpenAI API modal (round 5): PUT /admin/accounts/{id}/openai-api {enabled} -> the row.
     function closeAccountOpenAI() {
@@ -15415,11 +15581,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function gatewayBaseUrl() {
       return String(location.origin);
     }
-    function renderFirstRunApps() {
+    async function renderFirstRunApps() {
       // Install / Open / Start / Stop through the gateway's apps service
       // (routes/apps.py): cards with one primary action each, Node.js
       // installed for the user, the npx line only behind "Technical details".
-      mountAppCards("first-run", $("first-run-apps-body"));
+      // Operator QA (0.18.0): apps are proposed only once a default text model exists (an app
+      // with no model answers nothing); until then the step points back to the Model step.
+      const box = $("first-run-apps-body");
+      let routes = [];
+      try {
+        const payload = await api("/api/gateway/config/capability-defaults");
+        routes = Array.isArray(payload && payload.routes) ? payload.routes : [];
+      } catch { routes = null; }
+      const hasText = routes === null || routes.some((r) => r && (defaultRowKey(r) === "output.text" || defaultRowKey(r) === "input.text") && rowHasProviderModel(r));
+      if (!hasText) {
+        unmountAppCards("first-run");
+        box.innerHTML = `<div class="first-run-panel" data-apps-gate="no-text-model"><p><strong>Choose a default text model first.</strong></p>
+          <p class="muted">The apps talk to your models through this gateway; without a default text model they have nothing to answer with.</p>
+          <div class="modal-actions"><button type="button" id="first-run-apps-to-model">Back to the model step</button></div></div>`;
+        const back = $("first-run-apps-to-model");
+        if (back) back.onclick = () => firstRunGoto("model");
+        return;
+      }
+      mountAppCards("first-run", box);
     }
     function renderFirstRunDone() {
       const box = $("first-run-done-body");
@@ -15457,6 +15641,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       } catch (err) {
         renderAccount(null);
         $("login-section").classList.remove("hidden");
+        await loadOnboarding();
         return;
       }
       renderAccount(me);
@@ -15516,33 +15701,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // for them, and the runtimes branch above already covers it.
       }
     }
+    // ---- Sign-in method (0.18.0): Password first, Token behind one quiet link (the token stays
+    // for automation and the apps). POST /session/login takes {user_id, password} or {user_id, token}.
+    const signinMode = { method: "password" };
+    function setSigninMethod(method) {
+      signinMode.method = method === "token" ? "token" : "password";
+      const token = signinMode.method === "token";
+      $("login-password-field").hidden = token;
+      $("login-token-field").hidden = !token;
+      $("login-method-switch").textContent = token ? "Sign in with a password instead" : "Sign in with a token instead";
+      $("login-lede").textContent = token ? "Use the token your gateway admin gave you." : "Sign in with your account and password.";
+      signinFieldError("login-password", "login-password-error", "");
+      signinFieldError("login-token", "login-token-error", "");
+      signinShow("login-message", "");
+      try { $(token ? "login-token" : "login-password").focus(); } catch {}
+    }
     async function login() {
       signinShow("login-message", "");
       signinFieldError("login-user", "login-user-error", "");
       signinFieldError("login-token", "login-token-error", "");
+      signinFieldError("login-password", "login-password-error", "");
+      const byToken = signinMode.method === "token";
       const user = $("login-user").value.trim();
-      const token = $("login-token").value.trim();
-      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your gateway user."); return; }
-      if (!token) { signinFieldError("login-token", "login-token-error", "Paste the token your gateway admin gave you."); return; }
+      const secret = byToken ? $("login-token").value.trim() : String($("login-password").value || "");
+      const field = byToken ? ["login-token", "login-token-error"] : ["login-password", "login-password-error"];
+      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your account."); return; }
+      if (!secret) { signinFieldError(field[0], field[1], byToken ? "Paste the token your gateway admin gave you." : "Enter your password."); return; }
       const btn = $("login-button");
       btn.disabled = true;
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Signing in…";
       try {
-        await api("/api/gateway/session/login", {
-          method: "POST",
-          body: JSON.stringify({ user_id: user, token, remember: $("login-remember").checked })
-        });
+        const body = byToken
+          ? { user_id: user, token: secret, remember: $("login-remember").checked }
+          : { user_id: user, password: secret, remember: $("login-remember").checked };
+        const res = await api("/api/gateway/session/login", { method: "POST", body: JSON.stringify(body) });
         // The OpenAI API page shows this person's key from what this browser keeps here (never a
         // server reveal): this tab only, or this browser when "Remember this browser" is on.
-        oaiKeepToken(user, token, $("login-remember").checked);
+        if (byToken) oaiKeepToken(user, secret, $("login-remember").checked);
         $("login-token").value = "";
-        setLoginStatus(`Signed in as ${user}`, "ok");
+        $("login-password").value = "";
+        const who = (res && res.principal && res.principal.user_id) || user;
+        setLoginStatus(`Signed in as ${who}`, "ok");
         await refresh();
       } catch (err) {
-        if (err && (err.status === 401 || err.status === 403) && !/origin/i.test(String(err.message || ""))) {
-          signinFieldError("login-token", "login-token-error", "This token was refused.");
-          setLoginStatus("Token refused", "warn");
+        const code = err && err.detail && err.detail.reason_code;
+        if (err && err.status === 429) {
+          signinFieldError(field[0], field[1], String(err.message || "Too many attempts. Try again later."));
+          setLoginStatus("Try again later", "warn");
+        } else if (err && (err.status === 401 || err.status === 403) && !/origin/i.test(String(err.message || ""))) {
+          if (byToken) signinFieldError(field[0], field[1], "This token was refused.");
+          else signinFieldError(field[0], field[1], code === "password_refused" ? "That account and password don't match." : String(err.message || err));
+          setLoginStatus(byToken ? "Token refused" : "Password refused", "warn");
         } else if (err && !err.status) {
           signinShow("login-message", signinUnreachableText());
           setLoginStatus("Not signed in", "neutral");
@@ -15554,6 +15764,101 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         btn.disabled = false;
         btn.removeAttribute("aria-busy");
         btn.textContent = "Sign in";
+      }
+    }
+    // ---- First-run onboarding (0.18.0). GET /session/onboarding (public) says whether this
+    // gateway is UNCLAIMED (fresh data dir, the admin has no password, no admin ever signed in).
+    // Then the card shows "Set up your gateway" instead of the sign-in form: the admin's name,
+    // a password (twice) and, when the gateway asks for it (`setup_code_required`: this browser
+    // is not on the gateway's own machine), the six-word setup code. Submitting sets the password,
+    // signs this browser in and opens the setup guide (the first-run wizard). Once claimed the
+    // same address shows the sign-in form.
+    const onboarding = { state: null, busy: false };
+    function showOnboarding(st) {
+      const unclaimed = Boolean(st && st.unclaimed);
+      onboarding.state = unclaimed ? st : null;
+      $("onboarding-form").hidden = !unclaimed;
+      $("login-form").hidden = unclaimed;
+      if (unclaimed) {
+        $("recovery-section").hidden = true;
+        $("login-title").textContent = "Set up your gateway";
+        $("login-lede").textContent = "This gateway is new. Choose the admin password: it signs you in and opens the setup guide.";
+        $("onboard-account").textContent = String(st.account || "admin");
+        if (!$("onboard-name").value) $("onboard-name").value = String(st.account || "admin");
+        if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
+        $("onboard-code-field").hidden = !st.setup_code_required;
+        if (st.setup_code_required && st.setup_code_reason) {
+          $("onboard-code-help").textContent = `${st.setup_code_reason} Six words: the installer printed them, or run abstractgateway claim --code on the gateway's machine.`;
+        }
+        setLoginStatus("Not set up yet", "neutral");
+      } else {
+        $("login-title").textContent = "Sign in";
+        $("login-lede").textContent = signinMode.method === "token" ? "Use the token your gateway admin gave you." : "Sign in with your account and password.";
+        if (state.recoveryAvailable && $("recovery-code-step").hidden) $("recovery-section").hidden = false;
+      }
+      return unclaimed;
+    }
+    async function loadOnboarding() {
+      let st = null;
+      try { st = await api("/api/gateway/session/onboarding"); } catch { st = null; }
+      return showOnboarding(st);
+    }
+    function onboardingErrors() {
+      for (const [input, err] of [["onboard-name", "onboard-name-error"], ["onboard-password", "onboard-password-error"],
+                                  ["onboard-password-confirm", "onboard-password-confirm-error"], ["onboard-code", "onboard-code-error"]]) {
+        signinFieldError(input, err, "");
+      }
+      signinShow("login-message", "");
+    }
+    const ONBOARD_FIELDS = { password: ["onboard-password", "onboard-password-error"], password_confirm: ["onboard-password-confirm", "onboard-password-confirm-error"],
+                             setup_code: ["onboard-code", "onboard-code-error"], display_name: ["onboard-name", "onboard-name-error"] };
+    async function submitOnboarding() {
+      if (onboarding.busy) return;
+      onboardingErrors();
+      const st = onboarding.state || {};
+      const password = String($("onboard-password").value || "");
+      const confirm = String($("onboard-password-confirm").value || "");
+      const min = Number(st.password_min_length) || 10;
+      if (password.length < min) { signinFieldError("onboard-password", "onboard-password-error", `Use at least ${min} characters.`); return; }
+      if (confirm !== password) { signinFieldError("onboard-password-confirm", "onboard-password-confirm-error", "The two passwords are different."); return; }
+      const code = String($("onboard-code").value || "").trim();
+      if (st.setup_code_required && !code) { signinFieldError("onboard-code", "onboard-code-error", "Enter the six-word setup code."); return; }
+      const btn = $("onboard-button");
+      onboarding.busy = true;
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Setting up…";
+      try {
+        const body = { display_name: $("onboard-name").value.trim() || null, password, password_confirm: confirm, remember: $("onboard-remember").checked };
+        if (code) body.setup_code = code;
+        const res = await api("/api/gateway/session/onboarding", { method: "POST", body: JSON.stringify(body) });
+        $("onboard-password").value = "";
+        $("onboard-password-confirm").value = "";
+        $("onboard-code").value = "";
+        firstRun.claimed = true;
+        showOnboarding(null);
+        $("login-user").value = (res && res.principal && res.principal.user_id) || "admin";
+        setLoginStatus("Signed in", "ok");
+        await refresh();
+      } catch (err) {
+        const d = (err && err.detail) || {};
+        const target = ONBOARD_FIELDS[d.field];
+        if (d.reason_code === "already_claimed") {
+          await loadOnboarding();
+          signinShow("login-message", String(err.message || err));
+        } else if (target) {
+          signinFieldError(target[0], target[1], String(err.message || err));
+          if (d.field === "setup_code") $("onboard-code-field").hidden = false;
+        } else if (err && !err.status) {
+          signinShow("login-message", signinUnreachableText());
+        } else {
+          signinShow("login-message", String((err && err.message) || err));
+        }
+      } finally {
+        onboarding.busy = false;
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Set up and sign in";
       }
     }
     // Sign-in by email (DESIGN §4): ONE quiet link requests a `sign_in` code;
@@ -15569,7 +15874,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const out = await api("/api/gateway/session/recovery");
         available = Boolean(out && out.available);
       } catch { available = false; }
-      $("recovery-section").hidden = !available || !$("recovery-code-step").hidden;
+      $("recovery-section").hidden = !available || !$("recovery-code-step").hidden || Boolean(onboarding.state);
       state.recoveryAvailable = available;
     }
     function recoveryCooldownTick() {
@@ -15609,8 +15914,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const link = $("recovery-link");
       link.disabled = false;
       link.removeAttribute("aria-busy");
-      link.textContent = "Forgot your token? Email me a sign-in code";
-      try { $("login-token").focus(); } catch {}
+      link.textContent = "Forgot your password? Email me a sign-in code";
+      try { $(signinMode.method === "token" ? "login-token" : "login-password").focus(); } catch {}
     }
     async function requestRecoveryCode(fromResend = false) {
       if (recoveryState.busy) return;
@@ -15636,7 +15941,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         control.removeAttribute("aria-busy");
       }
       if (out && out.sent) {
-        if (!fromResend) { control.disabled = false; control.textContent = "Forgot your token? Email me a sign-in code"; }
+        if (!fromResend) { control.disabled = false; control.textContent = "Forgot your password? Email me a sign-in code"; }
         recoveryShowCodeStep(String(out.message || `A sign-in code is on its way to ${out.to || "your email address"}.`));
         return;
       }
@@ -15648,7 +15953,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         recoveryStartCooldown(retry);
       } else {
         control.disabled = false;
-        control.textContent = "Forgot your token? Email me a sign-in code";
+        control.textContent = "Forgot your password? Email me a sign-in code";
         signinShow("recovery-request-message", text);
       }
     }
@@ -15705,6 +16010,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         runtime_id: $("new-runtime").value.trim() || null,
         roles: [$("new-roles").value || "user"],
       };
+      const newPassword = String($("new-password").value || "");
+      if (newPassword) payload.password = newPassword;
       if (!payload.user_id) {
         $("user-create-message").textContent = "Enter a User ID.";
         $("user-create-message").className = "message error";
@@ -15715,9 +16022,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         renderIssuedToken($("user-create-token"), res.user.tenant_id && res.user.tenant_id !== "default" ? `${res.user.tenant_id}/${res.user.user_id}` : res.user.user_id, res.token);
         $("user-create-form").classList.add("hidden");
         $("user-create-done").classList.remove("hidden");
+        if (res.user && res.user.password_set) {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = `${res.user.user_id} can also sign in with their User ID and the password you set.`;
+          $("user-create-token").append(note);
+        }
         $("new-user").value = "";
         $("new-email").value = "";
         $("new-runtime").value = "";
+        $("new-password").value = "";
         await refresh();
       } catch (err) {
         $("user-create-message").textContent = String(err.message || err);
@@ -16069,6 +16383,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }
     $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
+    $("onboarding-form").onsubmit = (event) => { event.preventDefault(); submitOnboarding(); };
+    $("login-method-switch").onclick = () => setSigninMethod(signinMode.method === "token" ? "password" : "token");
     $("recovery-link").onclick = () => requestRecoveryCode(false);
     $("recovery-resend").onclick = () => requestRecoveryCode(true);
     $("recovery-back").onclick = recoveryBackToToken;
@@ -16076,6 +16392,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     $("recovery-code-input").oninput = recoveryCodeInput;
     $("recovery-code-input").onkeydown = (event) => { if (event && event.key === "Enter" && !$("recovery-use").disabled) useRecoveryCode(); };
     loadRecoveryOptions();
+	    const bindRevealToggle = (buttonId, inputId, noun) => {
+	      $(buttonId).onclick = () => {
+	        const input = $(inputId);
+	        const visible = input.type === "text";
+	        input.type = visible ? "password" : "text";
+	        $(buttonId).textContent = visible ? "Show" : "Hide";
+	        $(buttonId).setAttribute("aria-label", visible ? `Show ${noun}` : `Hide ${noun}`);
+	        $(buttonId).setAttribute("aria-pressed", visible ? "false" : "true");
+	      };
+	    };
+	    bindRevealToggle("toggle-password", "login-password", "password");
+	    bindRevealToggle("toggle-onboard-password", "onboard-password", "password");
 	    $("toggle-token").onclick = () => {
 	      const input = $("login-token");
 	      const visible = input.type === "text";
@@ -16217,6 +16545,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("accounts-create-entity").onclick = openEntityCreate;
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-openai-close").onclick = closeAccountOpenAI;
+	    $("account-password-close").onclick = closeAccountPassword;
 	    $("account-preferences-close").onclick = closeAccountPreferences;
 	    $("account-workspace-close").onclick = closeAccountWorkspace;
 	    $("gateway-workspace-close").onclick = closeGatewayWorkspace;
