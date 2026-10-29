@@ -221,7 +221,7 @@ async function fetch(path, options = {}) {
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
@@ -555,6 +555,10 @@ if (scenario.name === "simple-mode") {
   const badges = html.slice(html.indexOf('class="dm-groups"'));
   if (/qwen\//.test(badges) || /@4bit/.test(badges)) fail("a badge shows a model id (ADR 0043: readable names only)");
   if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("Simple mode must hide the tables and catalog below");
+  // A download repaints the Multimodal table too, which queries its own rows: this scenario's fake
+  // elements answer selector queries with nothing (each scenario runs in its own process).
+  Element.prototype.querySelectorAll = function () { return []; };
+  Element.prototype.querySelector = function (sel) { return new Element(`q:${sel}`); };
   // The one button: recommended routes without force, then the recommended downloads as one job.
   await dmClick("first-run-default-models", { dmRecommended: "1" });
   const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
@@ -562,7 +566,7 @@ if (scenario.name === "simple-mode") {
   const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
   if (!dl || JSON.parse(dl.body).recommended !== true) fail("Use recommended did not start the recommended downloads");
   html = el("first-run-default-models").innerHTML;
-  if (!html.includes("data-dl-group=") || !html.includes("ui-dl-child")) fail("no per-download progress after Use recommended: " + html.slice(0, 800));
+  if (!html.includes("data-dl-group=") || !html.includes("ui-dl-child")) fail("no per-download progress after Use recommended. message: " + el("first-run-message").textContent + " / dl calls: " + JSON.stringify(calls.filter((c) => c.path.includes("/models/download")).map((c) => [c.method, c.path])));
   // Guided choice: recommended first, other models that fit, an API key (text).
   await dmClick("first-run-default-models", { dmBadge: "in-text" });
   if (String(el("dm-choice-backdrop").className).includes("hidden")) fail("the badge did not open its choice");
@@ -669,7 +673,8 @@ def test_default_models_simple_mode_badges_recommended_flow_and_guided_choice() 
 
 
 def test_default_models_step_lists_every_capability_and_sets_them() -> None:
-    result = _run({"name": "default-models", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True})
+    result = _run({"name": "default-models", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "textModel": "qwen/qwen3.5-4b"})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 

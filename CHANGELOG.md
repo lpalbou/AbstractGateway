@@ -44,12 +44,13 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".
 
-- **First-run guide: "Default models"** (root backlog 1069). The model step opens on one row per capability in
-  the framework's vocabulary (Text, Image, Video, Voice out, Voice in, Music, 3D, Embeddings, Rankers) with what goes
-  in and what comes out, the model set now and AbstractCore's pick for this computer (engine, model, memory tier,
-  downloaded or not); per row **Use recommended** (`apply-recommended` `{only, force}`), **Download** and **Choose…**
-  (the Multimodal route editor); **Use recommended for all**; and **Use a subscription for text** (an OpenAI or
-  Anthropic key becomes a gateway-wide provider connection, one of its models the text default). The picks stay
+- **First-run guide: "Default models", Simple and Advanced** (root backlog 1069). Simple (the default): one
+  **Use recommended** (AbstractCore's picks where you have not chosen your own, the downloads with a progress row
+  each), then the capabilities as coloured badges grouped Input (Text, Image, Voice, Video, Files) and Output (Text,
+  Image, Video, Voice, Music, 3D, Embeddings, Rankers), each with its state in readable names; a badge opens a guided
+  choice (the recommendation first, other models that fit, all engines, and an API key for text). Advanced: one row
+  per capability with engine and model ids. A model set here clears the route's old server address and reasoning
+  effort; an API key is checked before it is stored and never replaces an existing connection. The picks stay
   AbstractCore's; first-run.md has the rule per memory band, today's and the operator's target (root backlog 1072).
 
 ### Changed
