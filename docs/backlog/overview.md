@@ -136,7 +136,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
-| 0934 | [`service uninstall` waits for the gateway process tree](planned/0934_service_uninstall_waits_for_the_gateway_process_tree.md) | planned · P1 | `bootout` returns before the tree exits; detached children keep writing; the installer stops the tree itself for now |
+| 0934 | [`service uninstall` waits for the gateway process tree](completed/0934_service_uninstall_waits_for_the_gateway_process_tree.md) | completed 2026-10-29 (unreleased) | the tree is captured before `bootout`/`disable --now`, waited for, then TERM/KILL; reported; fails naming survivors; XDG autostart stopped too |
 
 ## Proposed Items
 
