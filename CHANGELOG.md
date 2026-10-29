@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
   `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
   `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+### Fixed
+
+- **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
+  8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
+  so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
+  usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
+  data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
+  hand-over). Apps of the dev stack that name no gateway are listed as before.
 
 ## [0.18.0] - 2026-10-28
 
