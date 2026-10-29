@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
+  nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
