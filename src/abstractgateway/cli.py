@@ -192,11 +192,22 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
 
 
 def _stderr_is_a_service_log() -> bool:
-    """stderr is captured by a service manager's log: systemd sets
-    JOURNAL_STREAM (and INVOCATION_ID) for a unit's processes; launchd sets
-    XPC_SERVICE_NAME for an agent (not "0", the value a Terminal session has)."""
-    if os.environ.get("JOURNAL_STREAM") or os.environ.get("INVOCATION_ID"):
-        return True
+    """stderr is captured by a service manager's log.
+
+    systemd: JOURNAL_STREAM names the journal stream's `device:inode`, and it counts only when
+    fd 2 IS that stream. A child of a unit inherits the variable with its stderr piped elsewhere
+    (a CI runner's job, a shell started from a unit), and its stderr is a terminal or a pipe.
+    INVOCATION_ID is set for every process of a unit, so it is not read. launchd: XPC_SERVICE_NAME
+    names an agent (not "0", the value a Terminal session has, nor an `application.` app)."""
+    stream = str(os.environ.get("JOURNAL_STREAM") or "").strip()
+    if stream:
+        try:
+            dev, ino = (int(x) for x in stream.split(":", 1))
+            st = os.fstat(2)
+            if (st.st_dev, st.st_ino) == (dev, ino):
+                return True
+        except (ValueError, OSError):
+            pass
     xpc = str(os.environ.get("XPC_SERVICE_NAME") or "").strip()
     return bool(xpc) and xpc != "0" and not xpc.startswith("application.")
 

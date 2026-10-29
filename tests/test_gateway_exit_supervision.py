@@ -5,6 +5,7 @@ without its fix."""
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -56,14 +57,25 @@ def test_idle_pool_workers_are_stopped_before_the_belt() -> None:
     assert not any(t.name.startswith("gw-light") and t.is_alive() for t in threading.enumerate())
 
 
+def _fd2_stream() -> str:
+    st = os.fstat(2)
+    return f"{st.st_dev}:{st.st_ino}"
+
+
 def test_the_admin_token_is_never_printed_into_a_service_log(tmp_path, monkeypatch, capsys) -> None:
-    """Under systemd (JOURNAL_STREAM set) a loopback gateway names the token file, never the token."""
+    """Under systemd (fd 2 IS the JOURNAL_STREAM) a loopback gateway names the token file, never the token."""
     for var in ("JOURNAL_STREAM", "INVOCATION_ID", "XPC_SERVICE_NAME"):
         monkeypatch.delenv(var, raising=False)
     assert cli._stderr_is_a_service_log() is False
-    monkeypatch.setenv("JOURNAL_STREAM", "8:12345")
+    monkeypatch.setenv("JOURNAL_STREAM", _fd2_stream())
     assert cli._stderr_is_a_service_log() is True
+    # A unit's child whose stderr is piped elsewhere (a CI runner's job, a shell started from a
+    # unit) inherits JOURNAL_STREAM and INVOCATION_ID: its stderr is not the journal.
+    monkeypatch.setenv("JOURNAL_STREAM", "8:12345")
+    monkeypatch.setenv("INVOCATION_ID", "0123456789abcdef0123456789abcdef")
+    assert cli._stderr_is_a_service_log() is False
     monkeypatch.delenv("JOURNAL_STREAM")
+    monkeypatch.delenv("INVOCATION_ID")
     monkeypatch.setenv("XPC_SERVICE_NAME", "0")
     assert cli._stderr_is_a_service_log() is False, "a Terminal session"
     monkeypatch.setenv("XPC_SERVICE_NAME", "dev.abstractframework.gateway")
@@ -77,7 +89,7 @@ def test_a_loopback_gateway_under_systemd_names_the_file_not_the_token(tmp_path,
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     if service:
-        monkeypatch.setenv("JOURNAL_STREAM", "8:12345")
+        monkeypatch.setenv("JOURNAL_STREAM", _fd2_stream())
     cli._maybe_bootstrap_user_auth_admin(host="127.0.0.1", port=9999)
     token = (tmp_path / "runtime" / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
     err = capsys.readouterr().err

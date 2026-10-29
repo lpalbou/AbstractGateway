@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alive, so a port-in-use start under systemd (`Restart=on-failure`) was never retried (OVH 2026-10-28). The off-loop
   pools are stopped before the belt, and the belt exits with the pending code (3 for uvicorn's startup failure).
 - **The bootstrap admin token is no longer printed into a service log** (systemd's journal, a launchd agent's log):
-  a loopback gateway under a service manager names the token file only.
+  a loopback gateway under a service manager names the token file only. systemd is recognised when fd 2 IS the
+  `JOURNAL_STREAM` (its `device:inode`), so a unit's child whose stderr goes elsewhere (a CI job, a shell started
+  from a unit) still prints the token.
 
 ## [0.17.2] - 2026-10-28
 

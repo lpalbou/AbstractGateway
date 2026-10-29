@@ -22,8 +22,11 @@
   for a port in use, 1 for an exception, 0 for a clean stop or Ctrl-C).
 - `work_pools.shutdown_all()`: the off-loop pools are stopped (queued work cancelled, idle workers joined, 2 s)
   before the belt, so idle workers are no longer reported as stragglers.
-- A loopback gateway whose stderr is a service log (systemd `JOURNAL_STREAM` / `INVOCATION_ID`, a launchd agent's
-  `XPC_SERVICE_NAME`) names the token file and never prints the token.
+- A loopback gateway whose stderr is a service log (systemd: fd 2 is the `JOURNAL_STREAM` `device:inode`; a launchd
+  agent's `XPC_SERVICE_NAME`) names the token file and never prints the token. `INVOCATION_ID` is not read: systemd
+  sets it for every process of a unit, a GitHub Actions runner's jobs included, so on CI the loopback token
+  disappeared (review: the merge desk's CI reds on 3.10-3.13). `JOURNAL_STREAM` and `XPC_SERVICE_NAME` are in the env
+  registry.
 
 ## Tests
 
