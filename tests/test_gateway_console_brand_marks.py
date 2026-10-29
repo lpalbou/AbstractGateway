@@ -73,3 +73,29 @@ def test_engine_cards_draw_the_kit_marks_not_two_letter_badges() -> None:
 
     assert "ENGINE_MARKS" not in CONSOLE_UI_JS
     assert CONSOLE_UI_JS.count("${uiBrandMark(") >= 2
+
+
+def test_the_compatible_cards_ride_on_abstractcores_openai_compatible_provider() -> None:
+    """The OVH preset and the generic card are AbstractCore's `openai-compatible` provider with a base
+    URL; the kit shows them only when the registry lists it (read live here), and the vendored bundle
+    carries the OVH preset at its documented URL."""
+    from abstractcore.providers.registry import get_provider_registry
+
+    assert "openai-compatible" in get_provider_registry().list_provider_names()
+    node = require_node()
+    probe = (
+        "const vm = require('node:vm'); const fs = require('node:fs');"
+        "const sb = { console }; sb.globalThis = sb; sb.window = sb; vm.createContext(sb);"
+        "vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), sb);"
+        "const c = sb.AfConsoleIslands.cloudProviders; const r = async (p) => ({ items: [{ name: 'openai', display_name: 'OpenAI', local_provider: false }, { name: 'openai-compatible', local_provider: true }] });"
+        "c.client(r, '/api/gateway').listCards().then((cards) => console.log(JSON.stringify(cards)));"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as f:
+        f.write(ISLANDS_JS)
+        bundle = f.name
+    out = subprocess.run([node, "-e", probe, bundle], capture_output=True, text=True, check=True, timeout=60)
+    cards = json.loads(out.stdout.strip().splitlines()[-1])
+    assert [c["id"] for c in cards] == ["openai", "ovh", "openai-compatible"]
+    ovh = cards[1]
+    assert ovh["family"] == "openai-compatible" and ovh["baseUrl"] == "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
+    assert ovh["docs"].startswith("https://docs.ovhcloud.com/")

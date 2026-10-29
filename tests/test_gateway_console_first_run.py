@@ -320,6 +320,7 @@ if (scenario.name === "claim") {
 
   context.firstRunStep(1); await settle();
   if (hidden("first-run-step-engines") || !hidden("first-run-step-welcome")) fail("step panels did not switch");
+  if (el("first-run-step-lede").textContent !== "Run AI models on this computer. Cloud accounts come in the next step.") fail("Local engines subtitle is one simple line: " + el("first-run-step-lede").textContent);
   if (mounts.some((x) => x.kind === "engines")) fail("engines must render as console cards, not mount AbstractCore's table: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
   const engines = el("first-run-engines-body").innerHTML;
   if (engines.includes("<table")) fail("engines must not render as a table");
@@ -360,6 +361,8 @@ if (scenario.name === "claim") {
   context.firstRunStep(1); await settle();
   if (hidden("first-run-step-cloud") || !hidden("first-run-step-engines")) fail("the Cloud providers step did not open after Local engines");
   if (el("first-run-step-title").textContent !== "Cloud providers") fail("cloud step title: " + el("first-run-step-title").textContent);
+  // The step's subtitle is ONE short line (operator 2026-10-29).
+  if (el("first-run-step-lede").textContent !== "Paste a provider's API key to use its models; the key stays on this gateway.") fail("cloud step lede: " + el("first-run-step-lede").textContent);
   if (el("first-run-kicker").textContent !== "Step 3 of 6") fail("cloud step kicker: " + el("first-run-kicker").textContent);
   const cm = cloudMounts.find((m) => m.id === "first-run-cloud-body");
   if (!cm) fail("the cloud provider cards were not mounted in the guide: " + JSON.stringify(cloudMounts.map((m) => m.id)));
@@ -473,7 +476,8 @@ if (scenario.name === "claim") {
     // (the connection editor); the guide's copy was unmounted when the guide closed.
     const tabCards = cloudMounts.find((m) => m.id === "cloud-providers-root");
     if (!tabCards) fail("the Providers tab did not mount the cloud provider cards: " + JSON.stringify(cloudMounts.map((m) => m.id)));
-    if (tabCards.props.base !== "/api/gateway" || typeof tabCards.props.onConfigure !== "function" || tabCards.props.heading !== false) fail("Providers tab cards props: " + JSON.stringify(tabCards.props));
+    // One action per card (operator 2026-10-29): no "More settings" on the cards.
+    if (tabCards.props.base !== "/api/gateway" || tabCards.props.onConfigure !== undefined || tabCards.props.heading !== false) fail("Providers tab cards props: " + JSON.stringify(tabCards.props));
     const guideCards = cloudMounts.find((m) => m.id === "first-run-cloud-body");
     if (guideCards && guideCards.unmounted !== 1) fail("the guide's cards were not unmounted when the guide closed");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
