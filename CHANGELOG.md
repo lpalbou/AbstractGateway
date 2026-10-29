@@ -30,6 +30,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Fixed
 
+- **A stop signal stops the gateway in under a second, even with live streams open** (`shutdown_drain.py`). One
+  open stream (the console's `/me/events/stream`, a run's ledger stream, the tray's polling) held a SIGTERM for the
+  whole graceful-shutdown timeout (120 s), so supervisors and people killed the gateway first. Now the moment the
+  signal arrives every GET request sees its client leave (streams end; clients reconnect with their cursor),
+  requests in flight get 10 s (`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`, was 120), and
+  a SIGTERM exits 0 instead of 143. Measured: a real `serve` with a live stream exits 0 in 0.2-0.4 s (before:
+  120.7 s); `tests/test_gateway_sigterm_bounded_shutdown.py`.
 - **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
   AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
   guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
