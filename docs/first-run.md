@@ -118,13 +118,36 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, transcription (speech input), images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Default models | Two views, **Simple** first. **Simple**: one **Use recommended** button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, **Input** (what it understands: Text, Image, Voice, Video, Files) and **Output** (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: *Not set* (with the recommended model's name when there is one), *Recommended* (the pick is in use), *Your choice*, or *Covered* (read by the text model). A badge opens a guided choice: the model recommended for this computer first (**Use it**, **Use it and download**), then **Other models that fit** (the catalog filtered to that capability, fits-this-computer on) and **All engines and models…** (the Multimodal route editor), and for text **Or use an API key** (OpenAI or Anthropic: the key is checked first, then kept as a NEW provider connection, never replacing one you have). **Advanced**: one table row per capability with the engine and model ids, **Use recommended**, **Download** and **Choose…** per row, and **Use recommended for all**; below it the recommended downloads (**Download all**), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide |
 | Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
 **What "recommended" means on this computer.** AbstractCore picks the
-recommended text model; the gateway shows that pick and holds no list of its
-own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+recommended model for each capability (`recommended_models(host)`, see
+AbstractCore's `docs/recommended-models.md`); the gateway shows those picks and
+holds no list of its own.
+
+The rule per memory band. "Memory" is the GPU's memory on an NVIDIA computer
+and the unified memory on a Mac. The **Today** column is what AbstractCore
+answers now; the **Target** column is the operator's table (2026-10-28), which
+AbstractCore adopts once each pick is measured on real hardware (root backlog
+1072); until then the guide shows the **Today** pick.
+
+| Capability | Band | Today (AbstractCore) | Target |
+|---|---|---|---|
+| Text | Mac, below 24 GB | Qwen3.5 9B, MLX 4-bit | the 8–14B class, or a lower quant of Qwen3.8 27B that fits whole |
+| Text | Mac, 24 to 128 GB | Qwen3.8 27B, MLX 4-bit (128 GB and up: Qwen3.8 Flash-Next) | Qwen3.8 27B 4-bit on MLX (24–64 GB) |
+| Text | NVIDIA, 24 to 64 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B 4-bit: `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` (16.5 GB) on llama.cpp |
+| Text | NVIDIA, 16 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B `UD-Q3_K_XL` (13.1 GB, fits whole), or the 8–14B class |
+| Image (text to image, image to image) | 12 GB and up | FLUX.2 klein 4B (MLX-Gen 8-bit on a Mac, Diffusers on NVIDIA) | FLUX.2 klein 4B |
+| Voice out | every computer | Supertonic 3 | Supertonic 3; Qwen3-TTS when 8 GB are free and voice cloning is wanted |
+| Voice in | every computer | Whisper large-v3 (faster-whisper; an Apple silicon Mac with MLX: MLX Whisper) | Whisper large-v3-turbo from 6 GB, else Whisper small |
+| Video | Mac, where it fits (not on small-memory Macs) | Wan2.2 TI2V 5B, MLX-Gen 8-bit | Wan 2.2 TI2V 5B from 16 GB, 14B from 32 GB, MiniMax H3 from 64 GB |
+| Video | NVIDIA | none | as above, on Diffusers (`Wan-AI/Wan2.2-TI2V-5B-Diffusers`, `Wan-AI/Wan2.2-T2V-A14B-Diffusers`) |
+| Music | every computer | none in the guide: AbstractCore's music recommendation is opt-in (ACE-Step 1.5 XL turbo, set it with Choose…) | (no target given) |
+| 3D, Embeddings, Rankers | every computer | none: Choose… | (no target given) |
+
+The Apple text tiers in detail: on a Mac with Apple silicon the pick is an MLX build chosen by the
 computer's memory:
 
 | Memory | Recommended text model |
@@ -271,8 +294,13 @@ Details:
   (`--no-claim` to skip).
 - `--dry-run` prints the files and commands without changing anything.
   `--no-start` registers the service without starting it now.
-- On Linux, a user unit runs while you are logged in. To keep it running after
-  logout or start it at boot, run `loginctl enable-linger "$USER"` once.
+- On Linux, a user unit runs while you are logged in. When lingering is off
+  (`loginctl show-user "$USER" -p Linger` answers `Linger=no`, the default),
+  `service install`, `service enable` and `service status` say so in one line:
+  "On a server, this service stops when you log out and does not start at boot
+  until you run once: sudo loginctl enable-linger <user>". The consoles' Start at
+  login switch shows the same sentence. The gateway never runs it for you (it
+  needs an administrator); `install.sh --server` does.
 
 ## Where the data lives
 

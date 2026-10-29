@@ -804,6 +804,19 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         except Exception as e:  # noqa: BLE001
             boot_warnings.append(f"skills shelf seed failed: {type(e).__name__}: {e}")
 
+        # 0958: a fresh install's seeded text route names AbstractCore's portable pick (LM Studio off
+        # Apple silicon); on a server where that engine is missing and llama.cpp is installed, the
+        # seeded route moves to a GGUF model that fits, through llama.cpp. Only an untouched seed moves.
+        try:
+            from .core_config import correct_seeded_text_route
+
+            moved = correct_seeded_text_route()
+            if moved:
+                logging.getLogger("abstractgateway.service").warning("text model: %s/%s -> %s/%s (%s)", moved["from"]["provider"], moved["from"]["model"],
+                               moved["to"]["provider"], moved["to"]["model"], moved["because"])
+        except Exception as e:  # noqa: BLE001 - a recommendation never blocks a start
+            boot_warnings.append(f"installed-engine text pick failed: {type(e).__name__}: {e}")
+
         # Fresh-install UX (card 013): ensure the shipped catalog bundles
         # (docs-qa — the console drawer's transport) are published into THIS
         # tenant's catalog before the host scans the catalog dir, so a fresh
@@ -868,6 +881,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     from .events_stream import plane_owner, stream_for
 
     runner.attach_user_stream(stream_for(cfg.data_dir, *plane_owner(cfg)))
+    runner.set_plane_owner(*plane_owner(cfg))
 
     policy = load_gateway_auth_policy_from_env()
 

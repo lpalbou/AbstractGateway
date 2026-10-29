@@ -499,6 +499,10 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         # additive-optional memory wave fields
         "est_weights_bytes",
         "cache_bytes",
+        # additive-optional KV/holder wave (Linux test server, 2026-10-29)
+        "kv_cache_bytes",
+        "kv_cache_estimated",
+        "held_by",
         "expires_at",
         "context_length",
         "loaded_at",
@@ -1031,3 +1035,36 @@ def test_host_state_carries_residency_diagnostics_like_models_loaded(
     with client:
         state = client.get("/api/gateway/host/state", headers=headers).json()
     assert state["residency_diagnostics"] == {}
+
+
+def test_row_v1_carries_the_kv_cache_the_context_and_readable_holders() -> None:
+    """The Models page says what the cache is and who holds the model (ADR 0043).
+    MUTANT: drop the fields from the normalizer -> the console falls back to
+    "+ 8.3 GiB cache" with no context and no holder -> RED."""
+    import abstractgateway.routes.gateway as gateway_routes
+
+    row = gateway_routes._normalize_model_residency_row_v1({
+        "runtime_id": "local:text_generation:huggingface:m", "provider": "huggingface", "model": "m",
+        "resident": True, "est_weights_bytes": 5_769_121_792, "cache_bytes": 2_600_000_000,
+        "kv_cache_bytes": 2_202_370_048, "kv_cache_estimated": True, "context_length": 65536,
+        "held_by": ["the runtime of account default/admin (loaded)"],
+    })
+    assert row["kv_cache_bytes"] == 2_202_370_048 and row["kv_cache_estimated"] is True
+    assert row["context_length"] == 65536
+    assert row["held_by"] == ["the runtime of account default/admin (loaded)"]
+    bare = gateway_routes._normalize_model_residency_row_v1({"provider": "ollama", "model": "q"})
+    assert bare["kv_cache_bytes"] is None and bare["kv_cache_estimated"] is None and bare["held_by"] is None
+
+
+def test_row_v1_held_by_hides_other_accounts_from_a_non_admin(monkeypatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+    from types import SimpleNamespace
+
+    held = ["the runtime of account default/alice (loaded)", "the runtime of account default/bob (loaded)"]
+    bob = SimpleNamespace(tenant_id="default", user_id="bob", is_admin=lambda: False)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: bob)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == [
+        "another account's runtime (loaded)", "the runtime of account default/bob (loaded)"]
+    admin = SimpleNamespace(tenant_id="default", user_id="admin", is_admin=lambda: True)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: admin)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == held

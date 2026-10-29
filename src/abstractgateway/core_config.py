@@ -504,11 +504,45 @@ def apply_recommended_gateway_capability_defaults(
         config_file=scoped_config_path,
         apply_env=scoped_config_path is None,
     )
+    if not only or "text" in [str(x) for x in only]:
+        report = _apply_installed_text_engine_to_report(report, dry_run=bool(dry_run), base_dir=base_dir)
     payload = dict(gateway_capability_defaults_payload(base_dir=base_dir))
     if own_keys is not None:
         report = _stamp_inherited_route_unavailable(report, own_keys=own_keys, grid=payload.get("routes"))
     payload["applied_recommended"] = report
     return payload
+
+
+def _apply_installed_text_engine_to_report(report: Any, *, dry_run: bool, base_dir: Optional[Path]) -> Any:
+    """0958 in "Use recommended": a text route that AbstractCore set (or left) at its pick whose engine
+    is missing here is written with the installed-engine pick instead; the report row says so."""
+    if not isinstance(report, dict) or not isinstance(report.get("routes"), list):
+        return report
+    text = next((e for e in report["routes"] if isinstance(e, dict) and e.get("key") == "input.text" and e.get("action") in {"apply", "overwrite", "already"}), None)
+    if text is None or not _rule_may_apply(((text.get("after") or {}) if isinstance(text.get("after"), dict) else {}).get("provider")):
+        return report
+    found = _text_pick_with_installed_engine()
+    if not found:
+        return report
+    core, pick = found["core"], found["pick"]
+    core_pair = (str(core.get("route_provider") or core.get("provider") or ""), str(core.get("route_model") or core.get("artifact") or ""))
+    routes = []
+    wrote = False
+    for entry in report["routes"]:
+        e = dict(entry) if isinstance(entry, dict) else entry
+        if isinstance(e, dict) and e.get("key") == "input.text" and e.get("action") in {"apply", "overwrite", "already"}:
+            after = e.get("after") if isinstance(e.get("after"), dict) else {}
+            if (str(after.get("provider") or ""), str(after.get("model") or "")) == core_pair:
+                if not dry_run and not wrote:
+                    save_gateway_capability_default("input", "text", provider=pick["route_provider"], model=pick["route_model"], base_url="", base_dir=base_dir)
+                    wrote = True
+                e["after"] = dict(after, provider=pick["route_provider"], model=pick["route_model"])
+                e["action"] = "overwrite" if e.get("action") == "already" else e.get("action")
+                e["changed"] = True
+                e["download"] = {"provider": pick["provider"], "artifact": pick["artifact"]}
+                e["installed_engine"] = {"because": pick["chosen_because"], "instead_of": {"provider": core_pair[0], "model": core_pair[1]}}
+        routes.append(e)
+    return dict(report, routes=routes)
 
 
 INHERITED_ROUTE_NOTE = "inherited from the gateway store (admin)"
@@ -724,6 +758,223 @@ def _mark_recommended_route_gaps(plan: Dict[str, Any], rows: list) -> Dict[str, 
     return config_facade.mark_recommended_route_gaps(plan, rows)
 
 
+# ---------------------------------------------------------------------------
+# 0958: recommend a text engine that is installed here
+# ---------------------------------------------------------------------------
+#
+# AbstractCore's portable text pick off Apple silicon is LM Studio (operator ruling 2026-08-01). On a
+# headless Linux server LM Studio is not installed (a desktop app), while llama.cpp is (the installer
+# puts its CUDA or CPU build in): the setup guide recommended an engine that cannot answer, and the
+# fresh-install defaults pointed `input.text` at it. The gateway keeps AbstractCore's pick wherever its
+# engine runs; only when the plan says the pick's engine is missing AND llama.cpp is installed does it
+# recommend a GGUF build that fits this computer, through llama.cpp (AbstractCore's `huggingface`
+# provider), naming the original pick as the alternative. The engine-aware pick itself belongs in
+# AbstractCore (separate item); this is the gateway's half.
+
+TEXT_ROUTES = ("input.text", "output.text")
+# The local engine behind a text provider id (AbstractCore's engine inventory ids).
+PROVIDER_ENGINE = {"lmstudio": "lmstudio", "ollama": "ollama", "mlx": "mlx"}
+ENGINE_LABEL = {"lmstudio": "LM Studio", "ollama": "Ollama", "mlx": "MLX"}
+LLAMACPP_ENGINE = "llamacpp"
+GGUF_PROVIDER = "huggingface"
+GGUF_QUANT = ":Q4_K_M"
+
+
+def _engine_installed(engine_id: str) -> Optional[bool]:
+    """True/False from AbstractCore's engine inventory (no probe), None when it cannot be read."""
+    try:
+        inv = config_facade.engine_inventory(probe=False)
+    except Exception:
+        return None
+    for row in (inv.get("engines") if isinstance(inv, dict) else None) or []:
+        if isinstance(row, dict) and row.get("id") == engine_id:
+            return bool(row.get("installed"))
+    return None
+
+
+SERVER_ENGINES = ("lmstudio", "ollama")
+
+
+def stamp_server_engine_missing(payload: Any) -> Any:
+    """A CONFIGURED route on a server engine (LM Studio, Ollama) that this computer has not installed
+    is not "configured": every call to it fails ("Circuit breaker open for LMStudioProvider", OVH
+    8443, 2026-10-29). AbstractCore's `engine_missing` covers in-process engines only, so the gateway
+    stamps the same shape {engine, name, reason, install, engine_row} from the engine inventory; the
+    console then shows "engine missing" with the Providers tab's Install, never a green "configured".
+    One inventory read; a route already flagged by AbstractCore is left as it is."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("routes"), list):
+        return payload
+    rows = payload["routes"]
+    wanted = {str((r or {}).get("provider") or "") for r in rows if isinstance(r, dict) and (r.get("provider") and r.get("model"))}
+    engines = [e for e in SERVER_ENGINES if e in {PROVIDER_ENGINE.get(p) for p in wanted}]
+    if not engines:
+        return payload
+    missing = {e for e in engines if _engine_installed(e) is False}
+    if not missing:
+        return payload
+    out = []
+    for r in rows:
+        engine = PROVIDER_ENGINE.get(str((r or {}).get("provider") or "")) if isinstance(r, dict) else None
+        if engine in missing and r.get("model") and not r.get("engine_missing") and not r.get("route_unavailable"):
+            label = ENGINE_LABEL.get(engine, engine)
+            r = dict(r, engine_missing={"engine": engine, "name": label, "engine_row": engine, "install": "",
+                                         "reason": f"{label} is not installed on this computer, so this route cannot answer"})
+        out.append(r)
+    return dict(payload, routes=out)
+
+
+def _family(model_id: Any) -> str:
+    """`qwen3.5-9b` -> `qwen`, `qwen/qwen3.5-9b@q4_k_m` -> `qwen`, `llama-3.2-1b` -> `llama`."""
+    import re as _re
+
+    text = str(model_id or "").lower().split("/")[-1]
+    m = _re.match(r"[a-z]+", text)
+    return m.group(0) if m else ""
+
+
+def _pick_engine_missing(rec: Dict[str, Any]) -> bool:
+    """AbstractCore flags `engine_missing` for in-process engines only; a server engine (LM Studio,
+    Ollama) shows as `status: unknown` with "the `lms` CLI is not installed" (OVH, 2026-10-29), so the
+    engine inventory decides for those."""
+    if rec.get("engine_missing"):
+        return True
+    engine = PROVIDER_ENGINE.get(str(rec.get("route_provider") or rec.get("provider") or ""))
+    return bool(engine) and _engine_installed(engine) is False
+
+
+def installed_text_engine_pick(rec: Any, *, catalog: Optional[Dict[str, Any]] = None, llamacpp_installed: Optional[bool] = None) -> Optional[Dict[str, Any]]:
+    """The recommendation to show instead of `rec` (a text row of AbstractCore's plan whose engine is
+    missing), or None to keep `rec`. The pick: a catalog text model with a GGUF build (`repo:Q4_K_M`)
+    whose fit verdict here is `fits`, of the same family as AbstractCore's pick when one fits, else the
+    largest that fits with native tool calling; largest = most parameters."""
+    if not isinstance(rec, dict) or rec.get("route") not in TEXT_ROUTES or not _pick_engine_missing(rec):
+        return None
+    if llamacpp_installed is None:
+        llamacpp_installed = _engine_installed(LLAMACPP_ENGINE)
+    if not llamacpp_installed:
+        return None
+    if catalog is None:
+        try:
+            catalog = config_facade.model_catalog(None, engine=None, fits_only=False, hub=False, tags=None)
+        except Exception:
+            return None
+    rows = catalog.get("rows") if isinstance(catalog, dict) else None
+    pick_row_id = None
+    for row in rows or []:
+        for a in (row.get("artifacts") if isinstance(row, dict) else None) or []:
+            if isinstance(a, dict) and a.get("artifact") in (rec.get("artifact"), rec.get("route_model")):
+                pick_row_id = row.get("id")
+    family = _family(pick_row_id or rec.get("route_model") or rec.get("artifact"))
+    candidates = []
+    for row in rows or []:
+        if not isinstance(row, dict) or not (row.get("capabilities") or {}).get("text"):
+            continue
+        for a in row.get("artifacts") or []:
+            art = str((a or {}).get("artifact") or "")
+            fit = ((a or {}).get("fit") or {}).get("verdict")
+            if (a or {}).get("provider") == GGUF_PROVIDER and art.endswith(GGUF_QUANT) and fit == "fits" and (a or {}).get("supported_on_host", True) is not False:
+                candidates.append((row, a))
+    if not candidates:
+        return None
+
+    def size(item: Any) -> float:
+        return float(item[0].get("params_total") or 0)
+
+    same = [c for c in candidates if family and _family(c[0].get("id")) == family]
+    tools = [c for c in candidates if (c[0].get("capabilities") or {}).get("tools") == "native"]
+    row, art = max(same or tools or candidates, key=size)
+    presence = (art.get("presence") or {}).get("status")
+    alt = {k: rec.get(k) for k in ("provider", "artifact", "route_provider", "route_model", "status", "engine_missing", "tier") if rec.get(k) is not None}
+    out = dict(rec)
+    out.pop("engine_missing", None)
+    out.pop("tier", None)
+    out.update({
+        "provider": GGUF_PROVIDER,
+        "artifact": art["artifact"],
+        "route_provider": GGUF_PROVIDER,
+        "route_model": art["artifact"],
+        "status": "installed" if presence == "installed" else "absent",
+        "download_bytes": art.get("download_bytes"),
+        "display_name": row.get("display_name") or row.get("id"),
+        "chosen_because": "llama.cpp is installed on this computer and this model fits it",
+        "alternative": dict(alt, reason=f"{ENGINE_LABEL.get(str(alt.get('route_provider') or alt.get('provider')), alt.get('route_provider') or alt.get('provider'))} is not installed here"),
+    })
+    return out
+
+
+def _apply_installed_text_engine_rule(recommended: Any) -> Any:
+    """Swap the plan's text rows whose engine is missing (see `installed_text_engine_pick`) in every
+    list of the recommended summary. One catalog read, one inventory read."""
+    if not isinstance(recommended, dict):
+        return recommended
+    rows = recommended.get("recommended") if isinstance(recommended.get("recommended"), list) else []
+    text = [r for r in rows if isinstance(r, dict) and r.get("route") in TEXT_ROUTES]
+    if not text or not _engine_installed(LLAMACPP_ENGINE):
+        return recommended
+    text = [r for r in text if _pick_engine_missing(r)]
+    if not text:
+        return recommended
+    try:
+        catalog = config_facade.model_catalog(None, engine=None, fits_only=False, hub=False, tags=None)
+    except Exception:
+        return recommended
+    swaps = {}
+    for r in text:
+        alt = installed_text_engine_pick(r, catalog=catalog, llamacpp_installed=True)
+        if alt is not None:
+            swaps[(r.get("route"), r.get("artifact"))] = alt
+    if not swaps:
+        return recommended
+    out = dict(recommended)
+    for key, value in recommended.items():
+        if isinstance(value, list):
+            out[key] = [swaps.get((v.get("route"), v.get("artifact")), v) if isinstance(v, dict) else v for v in value]
+    return out
+
+
+def _rule_may_apply(provider: Any) -> bool:
+    """Cheap facts first (the engine inventory, no model listing): the provider's engine is reported
+    NOT installed and llama.cpp is. Only then are the plan and the catalog read (they probe engines)."""
+    engine = PROVIDER_ENGINE.get(str(provider or ""))
+    return bool(engine) and _engine_installed(engine) is False and bool(_engine_installed(LLAMACPP_ENGINE))
+
+
+def _text_pick_with_installed_engine() -> Optional[Dict[str, Any]]:
+    """(AbstractCore's text row, the gateway's replacement) when the rule applies here, else None."""
+    try:
+        plan = config_facade.recommended_model_plan()
+    except Exception:
+        return None
+    rows = plan.get("recommended") if isinstance(plan, dict) else None
+    for r in rows or []:
+        if isinstance(r, dict) and r.get("route") in TEXT_ROUTES:
+            alt = installed_text_engine_pick(r)
+            if alt is not None:
+                return {"core": r, "pick": alt}
+    return None
+
+
+def correct_seeded_text_route(*, base_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Gateway boot: a FRESH-INSTALL seeded `input.text` that still names AbstractCore's pick whose
+    engine is missing here is moved to the installed-engine pick (0958). Never touches a route the
+    operator chose (it must equal the seeded pick exactly). Returns what changed, or None."""
+    if core_server_base_url() or not _seed_marker():
+        return None
+    if not _rule_may_apply((capability_default_rows(base_dir=base_dir).get("input.text") or {}).get("provider")):
+        return None
+    found = _text_pick_with_installed_engine()
+    if not found:
+        return None
+    core, pick = found["core"], found["pick"]
+    rows = capability_default_rows(base_dir=base_dir)
+    row = rows.get("input.text") or {}
+    if str(row.get("provider") or "") != str(core.get("route_provider") or core.get("provider") or "") or str(row.get("model") or "") != str(core.get("route_model") or core.get("artifact") or ""):
+        return None
+    save_gateway_capability_default("input", "text", provider=pick["route_provider"], model=pick["route_model"], base_url="", base_dir=base_dir)
+    return {"route": "input.text", "from": {"provider": row.get("provider"), "model": row.get("model")},
+            "to": {"provider": pick["route_provider"], "model": pick["route_model"]}, "because": pick["chosen_because"]}
+
+
 def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     """The capability grid, annotated with local weight availability.
 
@@ -773,6 +1024,11 @@ def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Di
             )
         except Exception as exc:
             out["errors"].append(f"recommended model probe failed: {exc}")
+        else:
+            try:
+                out["recommended"] = _apply_installed_text_engine_rule(out["recommended"])
+            except Exception as exc:  # the rule never takes the plan down
+                out["errors"].append(f"installed-engine text pick failed: {exc}")
     return out
 
 
@@ -873,6 +1129,31 @@ def core_model_download(
 CoreTooOld = config_facade.AbstractCoreTooOld
 HostActionRefused = config_facade.HostActionRefused
 
+
+class RuntimeTooOld(NotImplementedError):
+    """The installed AbstractRuntime's facade predates a seam argument the gateway was asked to
+    pass (-> 501 `abstractruntime_too_old`, in words). Never a silent fallback to the old answer."""
+
+    def __init__(self, feature: str, *, missing: str):
+        self.feature = str(feature)
+        self.missing = str(missing)
+        super().__init__(
+            f"{self.feature} needs a newer AbstractRuntime on this gateway (its facade has no {self.missing}). "
+            "Upgrade it with: pip install -U abstractruntime"
+        )
+
+
+def _accepts_kwargs(fn: Any, names: Any) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return True  # not introspectable: let the call itself answer
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return all(n in params for n in names)
+
 #: The CLI that job cards and `cli_equivalent` name on this entry point.
 GATEWAY_CLI = "abstractgateway"
 _CORE_CLI_PREFIX = "abstractcore "
@@ -953,10 +1234,16 @@ def core_model_catalog(
     fits_only: bool = False,
     hub: bool = False,
     tags: Optional[list] = None,
+    **paging: int,
 ) -> Dict[str, Any]:
-    """Contract C (`model_catalog_v1`)."""
+    """Contract C (`model_catalog_v1`). `paging`: `hub_page` / `hub_page_size`, passed only when
+    asked (the facade refuses them in words on an AbstractCore without Hugging Face pages)."""
 
-    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags)
+    if paging and not _accepts_kwargs(config_facade.model_catalog, paging):
+        if "extended" in paging and not _accepts_kwargs(config_facade.model_catalog, ["extended"]):
+            raise RuntimeTooOld("Every quant of a model", missing="model_catalog(extended=)")
+        raise RuntimeTooOld("Hugging Face search pages", missing="model_catalog(hub_page=, hub_page_size=)")
+    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags, **paging)
 
 
 def core_installed_models(provider: Optional[str] = None) -> Dict[str, Any]:

@@ -1097,3 +1097,39 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at `/v1` only (anywhere under `/api/gateway/`, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (`openai_key_change`: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read `[redacted]`), readable by an admin for every request and by each account for its own. See [openai-api.md](./openai-api.md).
 
 **Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
+
+## Security incidents
+
+Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
+found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
+
+### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
+
+- **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
+  `abstractnote.gateway.router` under `/api/gateway/note` (`abstractnote_seam.py`). Its 14 write routes
+  (`POST .../claims/{claim_id}/retract`, `.../communities/recompute`, `.../entities/normalize`,
+  `.../entities/{entity_id}/unmerge`, `.../insights/{note_id}/ack`, `.../notes/{note_id}/archive`,
+  `.../notes/{note_id}/redate`, `.../processor/ensure`, `.../queue/{note_id}/priority`, `.../queue/{note_id}/retry`,
+  `.../refile`, `.../review/{review_id}/confirm`, `.../tasks/{task_id}/close`, `PUT .../settings`) carried no
+  `GATEWAY_ROUTE_POLICIES` row and were not on the contract test's user-level allowlist.
+- **Effect**: no admin requirement applied, so every route was reachable by ANY signed-in principal (member or
+  admin); an anonymous caller got 401 as for every other write. Each handler resolves the caller's principal and
+  plane itself and acts on that plane's own notebook. In a plane of their own a member could only change their own
+  notebook. In a SHARED plane (several accounts bound to one runtime, or an entity's plane) twelve routes are
+  account-stamped, reversible knowledge edits; two act on the whole plane — `PUT /settings` (filing and answering
+  models, schedules) and `POST /processor/ensure` (archives automations another account may have created and
+  recreates them under the caller) — and a member could run them. Nothing was open to the unauthenticated.
+- **Since**: the seam mount (checkpoint 840af7e9, 2026-10-22) with abstractnote 0.2.0 (the routes exist since
+  2026-10-19). Gateway CI never installs abstractnote, so
+  `tests/test_gateway_route_authorization_contract.py::test_every_write_route_has_an_explicit_authorization_decision`
+  stayed green in CI and failed on every real install.
+- **Found**: 2026-10-29 by a worker running that test on a machine with abstractnote installed; confirmed by the
+  merge desk against the PyPI 0.2.0 wheel.
+- **Decision** (PR #55): all 14 recorded user-level with the reason above; no runtime behaviour changed. An admin row
+  would break the Note app for every member, so the shared-plane gate for `PUT /settings` and `POST /processor/ensure`
+  (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
+  backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).
+- **Rule since** (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today `abstractnote>=0.2.0`, step "Install the seam packages") and
+  `tests/test_gateway_seams_mounted.py` fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.

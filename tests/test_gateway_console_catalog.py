@@ -114,6 +114,10 @@ const ctx = vm.createContext({
     if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
     if (path.startsWith("/api/gateway/models/catalog?")) {
       if (HUB === null) throw new Error("hub search failed (offline?): connection refused");
+      if (HUB.__pages) {  // one answer per `hub_page` (page 1 when absent)
+        const m = /[?&]hub_page=(\d+)/.exec(path);
+        return JSON.parse(JSON.stringify(HUB.__pages[(m ? Number(m[1]) : 1) - 1]));
+      }
       return JSON.parse(JSON.stringify(HUB));
     }
     if (path === "/api/gateway/models/installed") {
@@ -193,6 +197,36 @@ if (__SCRIPT__ === "hf") {
   await settle();
   snap("second");
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "host") {
+  out.host = vm.runInContext("mcHostMarkup()", ctx);
+}
+if (__SCRIPT__ === "hfmore") {
+  out.html1 = root.innerHTML;
+  const more = () => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "hub-more" } } : null) } });
+  more(); await settle(); snap("page2"); out.html2 = root.innerHTML;
+  more(); await settle(); snap("page3"); out.html3 = root.innerHTML;
+  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "beside") {
+  out.html = root.innerHTML;
+  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  // Switching to Hugging Face mode with the same words reuses the answer (no second request).
+  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  await settle();
+  snap("hf"); out.hfHtml = root.innerHTML;
+  out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+}
+if (__SCRIPT__ === "every") {
+  out.calls1 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
+  await settle();
+  snap("every"); out.html = root.innerHTML;
+  out.calls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: false } });
+  await settle();
+  snap("plain");
+  out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
 }
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
@@ -276,7 +310,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [n, n, total_arts] and out["cleared"]["hash"] == "#catalog"
-    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
+    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "every": False, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
@@ -411,6 +445,87 @@ def test_hugging_face_texts() -> None:
     for text in ("Hugging Face has no model matching", "Hugging Face could not be searched right now.", "Hugging Face could not be reached, so these results may be incomplete."):
         assert text in js
     assert "export " not in js and "HF_TOKEN" not in js and "environment variable" not in js
+
+
+@pytest.mark.parametrize("profile,expected,absent", [
+    ({"accelerator": "cuda", "gpu_name": "Quadro RTX 5000", "unified_memory": False, "ram_bytes": 28734308352,
+      "vram_bytes": 16106127360, "ceiling_bytes": 16106127360}, ["Quadro RTX 5000", "16.1 GB VRAM", "28.7 GB RAM"], ["models up to", "memory"]),
+    ({"accelerator": "metal", "unified_memory": True, "ram_bytes": 137438953472, "ceiling_bytes": 103079215104},
+     ["137 GB unified memory", "models up to about"], ["VRAM"]),
+])
+def test_the_machine_line_shows_vram_and_ram_separately(profile, expected, absent) -> None:
+    """QA 2026-10-28 (e): a 16 GB GPU + 26 GB RAM server read "28.7 GB memory · models up to 16.1 GB"."""
+    cat = dict(_catalog(2), host_profile=profile)
+    host = _run(cat, "host")["host"]
+    for text in expected:
+        assert text in host, host
+    for text in absent:
+        assert text not in host, host
+
+
+def _hub_page(first: int, n: int, *, page: int, more: bool, handle: str | None = None, found: bool = True) -> dict:
+    cat = _hub(first + n)
+    cat["rows"] = cat["rows"][first:]
+    cat["hub"]["search"] = {"query": "smol lm", "page": page, "page_size": n, "rows": n, "has_more": more,
+                            "handle": handle, "handle_found": bool(handle) and found}
+    return cat
+
+
+def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
+    """Backlog 0864 (front item 4): the count says how many Hugging Face results are shown and
+    whether more exist; "Show more results" appends the next page; the last page has no button."""
+    hub = {"__pages": [_hub_page(0, 4, page=1, more=True), _hub_page(4, 4, page=2, more=True), _hub_page(8, 2, page=3, more=False)]}
+    out = _run(_catalog(10), "hfmore", "#catalog?hf=smol%20lm", hub=hub)
+    assert out["initial"]["cards"] == 4
+    assert 'data-mc-hub-count="4">Showing 4 Hugging Face results; more are available.' in out["html1"]
+    assert 'data-mc-action="hub-more"' in out["html1"]
+    assert out["page2"]["cards"] == 8 and 'data-mc-hub-count="8"' in out["html2"]
+    assert out["page3"]["cards"] == 10 and 'data-mc-hub-count="10">Showing 10 Hugging Face results.</span>' in out["html3"]
+    assert 'data-mc-action="hub-more"' not in out["html3"]
+    assert out["hubCalls"] == [
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=2",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=3",
+    ]
+
+
+def test_a_handle_hugging_face_does_not_have_is_said() -> None:
+    hub = _hub_page(0, 2, page=1, more=False, handle="nobody/Smol-LM", found=False)
+    out = _run(_catalog(10), "hash", "#catalog?hf=nobody%2FSmol-LM", hub=hub)
+    assert out["fromhash"]["cards"] == 2
+    html = _run(_catalog(10), "hfmore", "#catalog?hf=nobody%2FSmol-LM", hub=hub)["html1"]
+    assert "Hugging Face has no repo named “nobody/Smol-LM”; these models match its name." in html
+
+
+def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
+    """Batch item (a): searching the catalog also asks Hugging Face for the same words; its
+    results come below the catalog's cards, and Hugging Face mode reuses that answer."""
+    cat = _catalog(10)
+    hub = _hub_page(0, 3, page=1, more=True)
+    hub["rows"].insert(0, dict(cat["rows"][0], source="curated"))  # a curated row also in the answer: drawn once
+    out = _run(cat, "beside", "#catalog?q=org-1", hub=hub)
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true"]
+    assert '<h4 class="mc-hub-beside__title">From Hugging Face</h4>' in out["html"]
+    assert 'data-mc-hub-beside="3"' in out["html"]
+    assert out["html"].count('data-mc-model="hf:') == 3
+    assert 'data-mc-hub-count="3">Showing 3 Hugging Face results; more are available.' in out["html"]
+    assert out["hubCalls2"] == out["hubCalls"]  # the mode switch asked nothing new
+    assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
+
+
+def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
+    """Batch item (b): "Every quant" asks the catalog with `hub=true&extended=true` (AbstractCore 0865)
+    and draws the extra quants as rows of the same cards; off, the plain catalog again; in the link."""
+    cat = _catalog(10)
+    extended = json.loads(json.dumps(cat))
+    for row in extended["rows"]:
+        row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", extended=True))
+    out = _run(cat, "every", "", hub=extended)
+    assert out["calls1"] == ["/api/gateway/models/catalog"]
+    assert out["calls2"][-1] == "/api/gateway/models/catalog?hub=true&extended=true"
+    assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
+    assert 'data-mc-every="1" checked' in out["html"]
+    assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
 
 
 def _gpu_limit_catalog() -> dict:

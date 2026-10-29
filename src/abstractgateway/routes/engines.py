@@ -171,7 +171,8 @@ async def engine_install_start(engine_id: str, request: Request, req: Optional[E
             "refused",
             "engine installs are disabled on this gateway (allow_engine_install is off"
             + (f"; bound to {bind}" if bind else "")
-            + "). An admin can enable them with "
+            + "). An admin can turn them on in the console (Engines tab: Allow engine installs), with "
+            "`abstractgateway-config set allow_engine_install on`, or with "
             "`POST /api/gateway/admin/runtime-config {\"allow_engine_install\": true}`; a dry run is always allowed.",
             reason="not_allowed",
             install_policy=policy,

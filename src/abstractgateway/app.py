@@ -209,6 +209,12 @@ from .loop_watchdog import InflightRequests  # noqa: E402
 
 app.add_middleware(InflightRequests)
 
+# Outermost of all (2026-10-29, shutdown_drain.py): when a stop signal arrives, every GET request
+# sees its client leave, so live streams end at once instead of holding the shutdown.
+from .shutdown_drain import EndStreamsOnShutdown  # noqa: E402
+
+app.add_middleware(EndStreamsOnShutdown)
+
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
 from .routes.session_tools import router as session_tools_router  # noqa: E402
@@ -774,4 +780,11 @@ async def health_check():
         pass
     if runner_snapshot.get("degraded"):
         body["status"] = "degraded"
+    # A move to "degraded" leaves an incident record on disk (health_incidents.py).
+    try:
+        from .health_incidents import note as _note_health
+
+        _note_health(body)
+    except Exception:
+        pass
     return body

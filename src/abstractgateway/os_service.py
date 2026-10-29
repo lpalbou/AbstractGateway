@@ -7,7 +7,7 @@ per user, without admin rights.
 - Linux: a systemd USER unit `~/.config/systemd/user/abstractgateway.service`
   (`Restart=on-failure`), enabled with `systemctl --user enable --now`. It runs
   only while the user is logged in unless lingering is enabled
-  (`loginctl enable-linger $USER`, printed as a hint, never run for you).
+  (`sudo loginctl enable-linger <user>`, printed when lingering is off, never run for you).
   Where no systemd user manager answers (non-systemd distros, WSL, some
   containers) the fallback is an XDG autostart entry
   `~/.config/autostart/abstractgateway.desktop`, started by the desktop
@@ -854,10 +854,8 @@ def build_install_plan(
         plan.commands.append(["systemctl", "--user", "daemon-reload"])
         plan.commands.append(["systemctl", "--user", "enable", "--now", systemd_unit()])
         plan.notes.append(f"Logs: journalctl --user -u {systemd_unit()} -f")
-        plan.notes.append(
-            "A user unit runs while you are logged in. To keep it running after logout / start it at boot, "
-            "run once: loginctl enable-linger \"$USER\" (may ask for your password)."
-        )
+        # 0957: the lingering sentence is printed only when lingering is OFF (`autostart.linger_note`, read
+        # after the install), never as an unconditional hint.
     else:
         plan.experimental = True
         logf = log_dir("windows", home, data_dir) / "gateway.log"
@@ -1247,6 +1245,16 @@ def launch_main(argv: Optional[List[str]] = None) -> None:
     rest = list(args.rest or [])
     if rest and rest[0] == "--":
         rest = rest[1:]
+    # The Windows Run entry and the XDG autostart entry start the machine's gateway service through
+    # this launcher: that service shows the tray (tray_supervisor.service_launch). `--tray` on the
+    # command line keeps it across a relaunch from the tray, which re-runs `abstractgateway serve`.
+    from .tray_supervisor import mark_service_launch
+
+    mark_service_launch("Windows Run entry" if sys.platform == "win32" else "XDG autostart entry")
+    # `serve ...` or `--instance NAME serve ...` (instances.py).
+    if "serve" in rest and "--tray" not in rest and "--no-tray" not in rest:
+        i = rest.index("serve")
+        rest = [*rest[: i + 1], "--tray", *rest[i + 1:]]
     from .cli import main as gateway_main
 
     gateway_main(rest)

@@ -728,7 +728,18 @@ The filter bar above the cards:
   the Hub it says "Hugging Face could not be searched right now" (the raw
   reason sits behind **Show details**), and results the Hub only partly
   answered carry a warning. The query is part of the address:
-  `/console#catalog?hf=smollm`.
+  `/console#catalog?hf=smollm`. Below the cards, a line says how many Hugging
+  Face results are shown and whether more exist. **Show more results** appends
+  the next page. An exact repo handle (`Qwen/Qwen3.5-9B`) lists that repo first,
+  then the builds of its name. When the Hub has no such repo, the line says so.
+  The catalog's own models that match the words are listed too.
+  In **Catalog** mode, a search of three characters or more also asks Hugging Face
+  once typing pauses. Its results come under **From Hugging Face**, below the
+  catalog's cards, with the same filters, count and **Show more results**.
+  Switching to **Hugging Face** mode then reuses that answer.
+- **Every quant**: the switch beside **Fits this computer**. It lists, for each model, every quantization
+  its own repositories ship (from 1-bit to BF16), each with its size and its fit on this computer. The
+  first time, it asks Hugging Face, and the answer is cached for 24 hours.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).

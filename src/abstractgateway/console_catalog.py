@@ -90,6 +90,9 @@ CATALOG_CSS = r"""
        organisation, parameters, licence, capability tags, badges) and each
        artifact is one 44 px row. */
     .mc-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; min-width: 0; }
+    .mc-hub-beside { display: grid; gap: 10px; min-width: 0; margin-top: 6px; }
+    .mc-hub-beside__title { margin: 6px 0 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-secondary); }
+    .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 8px 14px 4px; }
     .mc-card.is-starter { border-color: var(--accent-border, var(--ui-border-2)); }
     .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; padding: 2px 0; }
@@ -171,6 +174,9 @@ CATALOG_JS = r"""
     const MC_QUANT_CHIPS = [["all", "All"], ["4bit", "4-bit"], ["8bit", "8-bit"], ["other", "Other"]];
     const MC_STATUS_CHIPS = [["all", "All"], ["downloaded", "Downloaded"], ["not_downloaded", "Not downloaded"]];
     const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
+    // Catalog mode asks Hugging Face for the same words once typing pauses (AbstractCore caches 24 h).
+    const MC_HUB_BESIDE_MIN = 3;
+    const MC_HUB_BESIDE_MS = 700;
     const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images & video", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
     const MC_WEIGHTS = { installed: ["Downloaded", "ok"], absent: ["Not downloaded", "muted"], unknown: ["Unknown", "muted"], not_applicable: ["Remote", "muted"] };
     // needs_gpu_limit (AbstractCore 2.18): fits once the Mac's GPU memory limit
@@ -190,7 +196,7 @@ CATALOG_JS = r"""
       installed: null, installedError: "", extraNotice: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
-    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
+    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, every: false, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
@@ -208,6 +214,7 @@ CATALOG_JS = r"""
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
         else if (key === "status" && ["downloaded", "not_downloaded"].includes(value)) f.status = value;
         else if (key === "fits") f.fits = value === "1" || value === "true";
+        else if (key === "every") f.every = value === "1" || value === "true";
         else if (key === "hf") f.hf = value;
       }
       return f;
@@ -220,6 +227,7 @@ CATALOG_JS = r"""
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
       if (f.fits) parts.push("fits=1");
+      if (f.every) parts.push("every=1");
       if (mcHfMode(f)) parts.push(`hf=${encodeURIComponent(f.hf)}`);
       return parts.length ? `#catalog?${parts.join("&")}` : "#catalog";
     }
@@ -408,8 +416,13 @@ CATALOG_JS = r"""
       const bits = [];
       const chip = p.gpu_name || p.accelerator || "";
       if (chip) bits.push(`<b>${esc(chip)}</b>`);
-      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : "memory"}`);
-      if (uiNum(p.ceiling_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
+      // A GPU with its own memory: VRAM and RAM side by side (QA 2026-10-28 (e): "28.7 GB memory ·
+      // models up to 16.1 GB" hid a 16 GB card behind the RAM figure). Unified memory: one figure.
+      const vram = !p.unified_memory && uiNum(p.vram_bytes) && p.vram_bytes > 0;
+      if (vram) bits.push(`${esc(uiBytes(p.vram_bytes))} VRAM`);
+      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : vram ? "RAM" : "memory"}`);
+      // The model ceiling only when it says something the figures above do not.
+      if (uiNum(p.ceiling_bytes) && !(vram && p.ceiling_bytes === p.vram_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
       return bits.length ? `<span class="mc-host__facts">This computer: ${bits.join(" · ")}</span>` : "";
     }
     function mcChip(group, value, label, on, count, disabled) {
@@ -497,6 +510,14 @@ CATALOG_JS = r"""
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
     function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
+    // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
+    function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
+    function mcDefaultMarkup(provider, artifact, attrs, admin) {
+      const cur = mcCurrentDefault();
+      if (cur && cur.provider === provider && cur.model === servedModelId(provider, artifact)) return uiPill("Default text model", "info");
+      return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>`;
+    }
     function mcActionMarkup(row, a, job) {
       const key = mcKey(a);
       const admin = !!(state.principal && state.principal.admin);
@@ -617,7 +638,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
         + `<div class="mc-art__chips">${chips}</div>`
         + `</div>`
-        + `<div class="mc-art__action">${mcDeleteButton(r, attrs, admin)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? mcDefaultMarkup(r.provider, r.artifact, attrs, admin) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
         + `</li>`;
     }
@@ -677,7 +698,56 @@ CATALOG_JS = r"""
           + `<span>${esc(mcRows().length ? "Change or clear the filters to see the rest of the catalog." : "This gateway's catalog is empty.")}</span>`
           + (mcRows().length ? `<button type="button" class="ui-btn is-ghost" data-mc-action="clear">Clear filters</button>` : "") + `</div>` + mcExtrasMarkup(view, extras);
       }
-      return list.map(mcCardMarkup).join("") + mcExtrasMarkup(view, extras);
+      return list.map(mcCardMarkup).join("") + mcExtrasMarkup(view, extras)
+        + (mcHfMode(view.filters) ? mcHubMoreMarkup(mcData()) : mcHubBesideMarkup(view));
+    }
+    // ---- Hugging Face pages (AbstractCore's `hub.search`) ----
+    function mcHubSearchInfo(d) { const s = d && d.hub && d.hub.search; return s && typeof s === "object" ? s : null; }
+    function mcHubRowCount(d) { return mcRowsOf(d).filter((r) => r.source === "hf_search").length; }
+    // How many Hugging Face results are shown, whether more exist, and the
+    // button that asks for the next page. Nothing when the answer has no
+    // `hub.search` (an AbstractCore without pages).
+    function mcHubMoreMarkup(d) {
+      const s = mcHubSearchInfo(d);
+      if (!s) return "";
+      const hub = mcStore.hub;
+      const n = mcHubRowCount(d);
+      const parts = [];
+      if (s.handle && s.handle_found === false) {
+        parts.push(`<span data-mc-hub-handle="missing">Hugging Face has no repo named “${esc(s.handle)}”; these models match its name.</span>`);
+      }
+      parts.push(`<span data-mc-hub-count="${esc(n)}">${n ? `Showing ${esc(mcPlural(n, "Hugging Face result", "Hugging Face results"))}${s.has_more ? "; more are available" : ""}.` : "No other Hugging Face result."}</span>`);
+      if (s.has_more) {
+        parts.push(`<button type="button" class="ui-btn is-ghost" data-mc-action="hub-more"${hub.loadingMore ? " disabled" : ""}>${hub.loadingMore ? "Loading more results..." : "Show more results"}</button>`);
+      }
+      if (hub.moreError) parts.push(`<span class="tone-err" role="alert">The next page did not load: ${esc(hub.moreError)}</span>`);
+      return `<div class="mc-hub-more" role="status" aria-live="polite">${parts.join("")}</div>`;
+    }
+    // Catalog mode: the Hugging Face results for the same words, below the
+    // catalog's cards (the same cards, the same filters).
+    function mcHubBesideMarkup(view) {
+      const q = String(view.filters.q || "").trim();
+      const hub = mcStore.hub;
+      if (q.length < MC_HUB_BESIDE_MIN || hub.q !== q) return "";
+      const title = `<h4 class="mc-hub-beside__title">From Hugging Face</h4>`;
+      if (hub.loading) return `<section class="mc-hub-beside" data-mc-hub-beside="loading">${title}<div class="ui-empty">Searching Hugging Face for “${esc(q)}”...</div></section>`;
+      if (hub.error && !hub.data) {
+        return `<section class="mc-hub-beside" data-mc-hub-beside="error">${title}<div class="ui-alert tone-warn" role="alert"><strong>Hugging Face could not be searched right now.</strong>`
+          + `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(hub.error)}</pre></details></div></section>`;
+      }
+      if (!hub.data) return "";
+      const quantOn = mcQuantReported();
+      const items = [];
+      for (const row of mcRowsOf(hub.data)) {
+        if (row.source !== "hf_search") continue;
+        if (view.filters.cap !== "all" && !mcRowCaps(row).includes(view.filters.cap)) continue;
+        const arts = mcOrdered(row).filter((a) => mcArtMatches(row, a, view.filters, quantOn, []));
+        if (arts.length) items.push({ row, arts });
+      }
+      return `<section class="mc-hub-beside" data-mc-hub-beside="${esc(items.length)}">${title}`
+        + items.map(mcCardMarkup).join("")
+        + (items.length || !mcHubRowCount(hub.data) ? "" : `<div class="ui-empty">No Hugging Face result matches these filters.</div>`)
+        + mcHubMoreMarkup(hub.data) + `</section>`;
     }
     function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search by model, organisation or artifact id"; }
     function mcModeMarkup(view) {
@@ -694,6 +764,7 @@ CATALOG_JS = r"""
         + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
         + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
         + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
+        + `<label class="ui-switch" title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
         + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
         + `<div class="mc-filters" data-mc-part="controls"></div>`
@@ -743,6 +814,8 @@ CATALOG_JS = r"""
       }
       const box = el.querySelector("[data-mc-fits]");
       if (box) box.checked = !!view.filters.fits;
+      const everyBox = el.querySelector("[data-mc-every]");
+      if (everyBox) everyBox.checked = !!view.filters.every;
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
       const want = hf ? view.filters.hf : view.filters.q;
@@ -824,7 +897,8 @@ CATALOG_JS = r"""
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
         : null;
       try {
-        const data = await api("/api/gateway/models/catalog", { slow: true });
+        // "Every quant" (batch item b): the catalog with each row's whole quant set (AbstractCore 0865).
+        const data = await api(mcStore.every ? "/api/gateway/models/catalog?hub=true&extended=true" : "/api/gateway/models/catalog", { slow: true });
         if (seq !== mcStore.seq) return;
         if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
           throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -857,31 +931,75 @@ CATALOG_JS = r"""
     }
     // Hugging Face mode: the catalog route with `hub=true` and the query.
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
+    async function mcHubFetch(q, page) {
+      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
+      if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
+        throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
+      }
+      return data;
+    }
+    async function mcHubLoad(q) {
+      const seq = ++mcStore.hub.seq;
+      mcStore.hub = { q, data: null, error: "", loading: true, seq, page: 1, loadingMore: false, moreError: "" };
+      mcRender();
+      try {
+        const data = await mcHubFetch(q, 1);
+        if (seq !== mcStore.hub.seq) return;
+        mcStore.hub = { q, data, error: "", loading: false, seq, page: 1, loadingMore: false, moreError: "" };
+      } catch (err) {
+        if (seq !== mcStore.hub.seq) return;
+        mcStore.hub = { q, data: null, error: String((err && err.message) || err), loading: false, seq, page: 1, loadingMore: false, moreError: "" };
+      }
+      mcRender();
+    }
     async function mcHubSearch(view, query) {
       const q = String(query || "").trim();
       view.filters = Object.assign({}, view.filters, { hf: q });
       mcWriteHash(view);
       if (!q) { mcRenderView(view); return; }
-      const seq = ++mcStore.hub.seq;
-      mcStore.hub = { q, data: null, error: "", loading: true, seq };
+      await mcHubLoad(q);
+    }
+    // The next page: its new rows are appended (a row already shown stays once).
+    async function mcHubMore() {
+      const hub = mcStore.hub;
+      const s = mcHubSearchInfo(hub.data);
+      if (!hub.data || hub.loadingMore || !s || !s.has_more) return;
+      const seq = hub.seq;
+      const page = (hub.page || 1) + 1;
+      hub.loadingMore = true;
+      hub.moreError = "";
       mcRender();
       try {
-        const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true`, { slow: true });
+        const next = await mcHubFetch(hub.q, page);
         if (seq !== mcStore.hub.seq) return;
-        if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
-          throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
-        }
-        mcStore.hub = { q, data, error: "", loading: false, seq };
+        const seen = new Set(mcRowsOf(hub.data).map((r) => r.id));
+        const rows = mcRowsOf(hub.data).concat(mcRowsOf(next).filter((r) => !seen.has(r.id)));
+        mcStore.hub = Object.assign({}, hub, { data: Object.assign({}, hub.data, { rows, hub: next.hub }), page, loadingMore: false });
       } catch (err) {
         if (seq !== mcStore.hub.seq) return;
-        mcStore.hub = { q, data: null, error: String((err && err.message) || err), loading: false, seq };
+        mcStore.hub = Object.assign({}, hub, { loadingMore: false, moreError: String((err && err.message) || err) });
       }
       mcRender();
+    }
+    // Catalog mode: the same words asked of Hugging Face once typing pauses.
+    function mcHubBeside(view) {
+      if (mcHfMode(view.filters)) return;
+      const q = String(view.filters.q || "").trim();
+      const hub = mcStore.hub;
+      if (q.length < MC_HUB_BESIDE_MIN || (hub.q === q && (hub.data || hub.loading))) return;
+      mcHubLoad(q);
     }
     function mcSetMode(view, mode) {
       const hf = mode === "hf";
       if (hf === mcHfMode(view.filters)) return;
-      if (hf) { const q = view.filters.q; view.filters = Object.assign({}, view.filters, { q: "" }); mcHubSearch(view, q); return; }
+      if (hf) {
+        const q = String(view.filters.q || "").trim();
+        view.filters = Object.assign({}, view.filters, { q: "" });
+        const hub = mcStore.hub;
+        if (q && hub.q === q && (hub.data || hub.loading)) { mcSetFilter(view, { hf: q }); return; }  // already asked beside the catalog
+        mcHubSearch(view, q);
+        return;
+      }
       mcSetFilter(view, { hf: null });
     }
     function mcSetFilter(view, patch) {
@@ -981,8 +1099,15 @@ CATALOG_JS = r"""
       mcRender();
     }
     function mcAction(view, action, b) {
+      if (action === "hub-more") { mcHubMore(); return; }
       if (action === "refresh") { view.message = null; mcStore.extraNotice = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
-      if (action === "clear") { view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf }); mcWriteHash(view); mcRenderView(view); return; }
+      if (action === "clear") {
+        view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf });
+        mcWriteHash(view);
+        mcRenderView(view);
+        if (mcStore.every) { mcStore.every = false; mcLoad(); }
+        return;
+      }
       if (action === "mode") { mcSetMode(view, b.dataset.mcMode); return; }
       if (action === "hf-search") {
         const box = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector("[data-mc-search]") : null;
@@ -1025,10 +1150,16 @@ CATALOG_JS = r"""
         if (mcHfMode(view.filters)) return;  // Hugging Face: one search per Enter
         clearTimeout(view.debounce);
         view.debounce = setTimeout(() => mcSetFilter(view, { q: String(t.value || "") }), 120);
+        clearTimeout(view.hubDebounce);
+        view.hubDebounce = setTimeout(() => mcHubBeside(view), MC_HUB_BESIDE_MS);
       };
       el.onchange = (event) => {
         const t = event && event.target;
         if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
+        if (t && t.dataset && t.dataset.mcEvery) {
+          mcSetFilter(view, { every: !!t.checked });
+          if (mcStore.every !== !!t.checked) { mcStore.every = !!t.checked; mcLoad(); }
+        }
       };
       el.onkeydown = (event) => {
         const t = event && event.target;
@@ -1044,8 +1175,10 @@ CATALOG_JS = r"""
       mcRenderView(view);
       mcWatchStuck(view);
       mcWriteHash(view);
+      if (view.filters.every) mcStore.every = true;  // a `#catalog?every=1` link asks for the whole set
       mcLoad();
       if (mcHfMode(view.filters) && view.filters.hf && !(mcStore.hub.q === view.filters.hf && (mcStore.hub.data || mcStore.hub.loading))) mcHubSearch(view, view.filters.hf);
+      else mcHubBeside(view);
       // A reload re-attaches to running downloads, so their bars come back.
       if (!known) uiRestoreDownloads();
     }

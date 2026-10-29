@@ -232,6 +232,10 @@ log is `<data dir>/logs/model-host.log`, and `GET /api/health` shows
 `model_host`. `--model-host in-process` keeps everything in one process. See
 [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 
+**A stop is quick.** On SIGTERM (`systemctl stop`, `launchctl`, `docker stop`) the gateway ends its live
+streams at once (clients reconnect with their cursor), gives requests in flight 10 s
+(`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`), runs its shutdown steps and exits 0, typically in under a second.
+
 **Incident files.** Before it exits, the watchdog writes
 `<data dir>/incidents/watchdog-<UTC stamp>.json` and
 `watchdog-<stamp>.threads.txt` (every thread's stack). The JSON
