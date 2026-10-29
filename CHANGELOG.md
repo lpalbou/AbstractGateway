@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
+  AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
+  guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
+  pick's engine is not installed (AbstractCore's engine inventory) and llama.cpp is, the guide, "Use recommended" and
+  an untouched fresh-install text route use a GGUF build that fits this computer through llama.cpp (the pick's own
+  family when one fits; on the OVH 16 GB server: Qwen3 8B, Q4_K_M), and the card says why ("instead of LM Studio,
+  which is not installed here"). Wherever the pick's engine is installed, nothing changes.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
