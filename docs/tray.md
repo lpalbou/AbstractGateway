@@ -127,10 +127,16 @@ shows the same graphs.
 
 At `abstractgateway serve` time the gateway decides, and says why on stderr:
 
-**While the gateway runs, the icon is there.** There is no setting to turn it
-off and no *Hide* item in its menu, because the icon is how people who never
-open a terminal reach their gateway. It is absent only for one of these
-reasons:
+**While the machine's gateway service runs, the icon is there.** The service is
+the gateway started at login by `abstractgateway service install` or the
+installer: the LaunchAgent (launchd job `ai.abstractframework.gateway`), the
+systemd user unit (`abstractgateway.service`), the XDG autostart entry or the
+Windows Run entry. A `serve` started any other way (a terminal, a test, an e2e
+harness, a script) shows no icon unless it is started with `--tray`, so a
+scratch gateway never puts a second icon next to yours (operator ruling
+2026-10-29). There is no setting to turn the service's icon off and no *Hide*
+item in its menu, because the icon is how people who never open a terminal
+reach their gateway. It is absent only for one of these reasons:
 
 | Situation | Outcome |
 |---|---|
@@ -138,7 +144,8 @@ reasons:
 | No display (SSH session, container, Windows service, macOS daemon, CI) | not started (reason `headless`) |
 | `serve --reload` (development) | not started (the app runs in uvicorn's reloader child) |
 | A runner-only process (`abstractgateway runner`) | not started; the tray belongs to the process that serves the console |
-| `serve --no-tray` (a test or scratch gateway next to your usual one) | not started for this run (reason `no_tray_flag`) |
+| Not the machine's gateway service and no `--tray` (a terminal, a test, a harness) | not started (reason `not_service`) |
+| `serve --no-tray` | not started for this run (reason `no_tray_flag`), even for the service |
 | A test gateway start: `--host 127.0.0.1`, a `--port` other than the configured one (the network setting's, else 8080) and `--print-token` | not started (reason `test_gateway`), said in one line at start |
 | Otherwise | started; `Desktop tray: started (pid …)` |
 

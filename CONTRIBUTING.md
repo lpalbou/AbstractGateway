@@ -92,8 +92,10 @@ latency checks use the helper, never a bare `assert elapsed < ...`.
    - `docs/getting-started.md` and `docs/first-run.md` are the step-by-step
      guides; `docs/faq.md` answers recurring questions and
      `docs/troubleshooting.md` holds symptom → cause → fix entries.
-   - Describe current behavior. Put what changed, and any upgrade steps, in
-     `CHANGELOG.md`.
+   - Describe current behavior. Put what changed, and any upgrade steps, in a
+     changelog fragment: a new file `changelog.d/<pr-number-or-slug>.md`, never an
+     edit of `CHANGELOG.md` ([changelog.d/README.md](./changelog.d/README.md); CI
+     fails a PR that changes `src/` without one).
    - `llms.txt` indexes the docs and is also the corpus of the console's docs
      assistant; update it when a key fact changes, then regenerate the
      snapshot: `python scripts/generate-llms-full.py` (updates `llms-full.txt`).
@@ -116,7 +118,8 @@ bundle has a contract test (for example
 
 ## Release checklist (maintainers)
 
-1. Update `CHANGELOG.md`.
+1. Assemble the changelog: `python scripts/changelog.py assemble X.Y.Z` (writes
+   `## [X.Y.Z] - <date>` from `changelog.d/` and deletes the fragments).
 2. Bump version in:
    - `pyproject.toml`
    - `src/abstractgateway/__init__.py`
