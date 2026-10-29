@@ -45,6 +45,7 @@ nav:
   - Consoles (web + terminal): console.md
   - Browser & Terminal Apps: apps.md
   - Local Engines: engines.md
+  - Engine Installation: engines-install.md
   - Model Downloads: model-downloads.md
   - Desktop Tray: tray.md
   - Shipped Workflows: shipped-workflows.md
