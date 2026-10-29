@@ -872,3 +872,53 @@ def test_a_new_llamacpp_restarts_the_model_host_child(tmp_path, monkeypatch):
     job = reg.get(snap["job_id"]).snapshot()
     assert job["state"] == "done" and killed and "llama.cpp updated" in killed[0]
     assert job["result"]["message"] == "The model host restarts with the new llama.cpp; the next model load uses it"
+
+
+def test_linux_host_with_nvidia_smi_is_cuda(monkeypatch):
+    """OVH 8080 (2026-10-29): the installer was built with accelerator=None, so the CUDA branch never
+    ran and "Update llama.cpp" chose the CPU wheel. MUTANT: no detection -> None -> RED."""
+    import subprocess as sp
+    monkeypatch.setattr(ei.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(ei.shutil, "which", lambda n: "/usr/bin/nvidia-smi" if n == "nvidia-smi" else None)
+    monkeypatch.setattr(ei.subprocess, "run", lambda argv, **k: sp.CompletedProcess(argv, 0, "GPU 0: Quadro RTX 5000 (UUID: x)\\n", ""))
+    assert ei.detect_host().accelerator == "cuda"
+    monkeypatch.setattr(ei.shutil, "which", lambda n: None)
+    assert ei.detect_host().accelerator is None
+
+
+def _cuda_update(tmp_path, *, offload=True, cuda_lib="12"):
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[1:2] == ["-c"] and "m.version('llama-cpp-python')" in a[2], lambda a: (0, "0.3.35\n"))
+    sysd.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\n"))
+    sysd.on(lambda a: a[1:2] == ["-c"] and "libggml-cuda" in a[2], lambda a: (0, cuda_lib + "\n"))
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1],
+            lambda a: (0, '__AG_VERIFY__{"version": "0.3.36", "gpu_offload": %s}' % ("true" if offload else "false")))
+    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
+    snap, _ = reg.start("llamacpp", run_inline=True)
+    return sysd, reg.get(snap["job_id"]).snapshot()
+
+
+def test_an_update_installs_llama_cpp_alone_without_its_dependencies(tmp_path):
+    """Re-resolving abstractcore[gpu] built stable-diffusion-cpp-python from source (no compiler on
+    the server). MUTANT: the core spec on an update -> RED."""
+    sysd, job = _cuda_update(tmp_path)
+    assert job["state"] == "done", job
+    pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert pip and not any(x.startswith("abstractcore") for x in pip[0]), pip
+    assert "--no-deps" in pip[0] and "llama-cpp-python==0.3.36" in pip[0] and any("/cu125/" in x for x in pip[0])
+
+
+def test_a_cuda_wheel_without_gpu_offload_fails_the_job_readably(tmp_path):
+    """8080: the CPU build stayed in place with only a log warning. MUTANT: warn instead of fail -> RED."""
+    _, job = _cuda_update(tmp_path, offload=False)
+    text = json.dumps(job)
+    assert job["state"] == "failed", job
+    assert "installed from the cu125 index but reports no GPU offload" in text and "Nothing else was changed" in text
+
+
+def test_a_cuda_wheel_without_libggml_cuda_fails_the_job_readably(tmp_path):
+    """The installed wheel must carry libggml-cuda. MUTANT: no library check -> RED."""
+    _, job = _cuda_update(tmp_path, cuda_lib="")
+    assert job["state"] == "failed", job
+    assert "carries no libggml-cuda library" in json.dumps(job)
