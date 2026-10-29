@@ -133,3 +133,25 @@ def test_the_page_has_no_second_list() -> None:
     html = gateway_console_html()
     panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
     assert "On this computer" not in panel and "catalog-core-root" not in panel
+
+
+def test_a_text_model_outside_the_catalog_can_be_the_default() -> None:
+    """QA 2026-10-28 (c): an installed model outside the catalog that the engine says generates
+    text (AbstractCore 0866, from the GGUF's header) offers **Use as default**; a TTS GGUF or an
+    embedding model does not."""
+    cat, installed, _covered = _fixture()
+    text = {**EXTRA_HF, "artifact": "mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF", "kind": "model", "tasks": ["text_generation"]}
+    tts = {**EXTRA_HF, "artifact": "Serveurperso/Qwen3-TTS-GGUF", "kind": "model", "tasks": ["text_to_speech"]}
+    embed = {**EXTRA_HF, "artifact": "Qwen/Qwen3-Embedding-0.6B-GGUF", "kind": "embedding", "tasks": ["text_embedding"]}
+    installed["rows"] += [text, tts, embed]
+    html = _run(cat, "merged", installed=installed)["html"]
+
+    def row(artifact: str) -> str:
+        m = re.search(rf'<li class="mc-art is-extra"[^>]*data-mc-art="huggingface/{re.escape(artifact)}"[^>]*>(.*?)</li>', html, re.S)
+        assert m, artifact
+        return m.group(1)
+
+    assert 'data-mc-action="default"' in row(text["artifact"])
+    assert 'data-mc-action="default"' not in row(tts["artifact"])
+    assert 'data-mc-action="default"' not in row(embed["artifact"])
+    assert 'data-mc-action="default"' not in row(EXTRA_HF["artifact"]), "unknown tasks: not offered"
