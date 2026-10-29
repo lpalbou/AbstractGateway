@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **Models page: "Keep loaded" and refused loads (AbstractCore ADR 0010).** The lock toggle reads "🔓 Keep loaded" /
-  "🔒 Kept loaded" with a tooltip that says what it does (a kept model is never evicted to make room for another
-  model); the last load the fit check refused shows as an error line with its sentence ("X needs 13.7 GB but only
-  6.1 GB is free on the GPU (kept: ...). Choose a smaller model, for example ..."), from the runtime's residency
-  diagnostics (`refusals`).
-
 ### Fixed
 
 - **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
@@ -100,6 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime client is labelled so ("kept in memory: ... still in use by runtime client
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
+
+### Added
+
+- **Models page: "Keep loaded" and refused loads (AbstractCore ADR 0010).** The lock toggle reads "🔓 Keep loaded" /
+  "🔒 Kept loaded" with a tooltip that says what it does (a kept model is never evicted to make room for another
+  model); the last load the fit check refused shows as an error line with its sentence ("X needs 13.7 GB but only
+  6.1 GB is free on the GPU (kept: ...). Choose a smaller model, for example ..."), from the runtime's residency
+  diagnostics (`refusals`).
 
 ## [0.18.0] - 2026-10-28
 
