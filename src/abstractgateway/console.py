@@ -11870,7 +11870,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // EXPLICIT CONTEXT (AbstractCore ADR 0010 point 8): what the model advertises and why
 	        // the loaded context differs, in words, with a per-model setting a person controls.
 	        if (typeof row.context_length === "number" && typeof row.advertised_context_length === "number" && row.advertised_context_length > row.context_length) {
-	          ctxTd.textContent = `${row.context_length.toLocaleString()} (model advertises ${row.advertised_context_length.toLocaleString()}; limited by memory)`;
+	          const buf = typeof row.memory_buffer === "number" ? `, ${Math.round(row.memory_buffer * 100)} % buffer` : "";
+	          ctxTd.textContent = `${row.context_length.toLocaleString()} of ${row.advertised_context_length.toLocaleString()}; limited by memory${buf}`;
 	        } else if (row.context_source === "configured" && typeof row.context_length === "number") {
 	          ctxTd.textContent = `${row.context_length.toLocaleString()} (set for this model)`;
 	        }

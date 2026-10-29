@@ -27066,6 +27066,7 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         # why the loaded one differs ("memory", "configured", "explicit", "advertised").
         "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
         "context_source": _row_v1_str(record, "context_source"),
+        "memory_buffer": record.get("memory_buffer") if isinstance(record.get("memory_buffer"), (int, float)) and not isinstance(record.get("memory_buffer"), bool) else None,
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =

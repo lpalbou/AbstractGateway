@@ -18,7 +18,7 @@ def test_console_says_limited_by_memory_and_offers_the_setting():
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    assert "(model advertises ${row.advertised_context_length.toLocaleString()}; limited by memory)" in html
+    assert "${row.context_length.toLocaleString()} of ${row.advertised_context_length.toLocaleString()}; limited by memory${buf}" in html
     assert '"/api/gateway/models/context"' in html and "Set context" in html
 
 
