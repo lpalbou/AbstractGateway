@@ -795,7 +795,7 @@ def test_linux_lmstudio_without_libatomic_and_without_root_says_what_installs_he
     plan = inst.plan("lmstudio")
     assert not plan.available and not plan.needs_admin and not plan.needs_tools
     assert "libatomic1" in plan.notes and "Apple" not in plan.notes and "sudo" not in plan.notes
-    assert "Installs here for this account:" in plan.notes and "llama.cpp" in plan.notes
+    assert "Installs on this computer without an administrator:" in plan.notes and "llama.cpp" in plan.notes
     row = ei.engine_row(inst, {"id": "lmstudio", "installed": False}, active_job=None, install_allowed=True)
     assert not any(a.get("id") == "install" for a in row.get("actions") or [])
 
@@ -894,39 +894,141 @@ def test_linux_host_with_nvidia_smi_is_cuda(monkeypatch):
     assert ei.detect_host().accelerator is None
 
 
-def _cuda_update(tmp_path, *, offload=True, cuda_lib="12"):
-    sysd = FakeSystem(tmp_path)
-    sysd.on(lambda a: a[1:2] == ["-c"] and "m.version('llama-cpp-python')" in a[2], lambda a: (0, "0.3.35\n"))
-    sysd.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\n"))
-    sysd.on(lambda a: a[1:2] == ["-c"] and "libggml-cuda" in a[2], lambda a: (0, cuda_lib + "\n"))
-    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1],
-            lambda a: (0, '__AG_VERIFY__{"version": "0.3.36", "gpu_offload": %s}' % ("true" if offload else "false")))
-    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
-    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
-    snap, _ = reg.start("llamacpp", run_inline=True)
-    return sysd, reg.get(snap["job_id"]).snapshot()
+class _LlamaHost:
+    """A fake gateway Python with llama.cpp `installed` (None: absent): pip calls with `--target`
+    stage a copy, the others replace the installed one; the load check answers for either."""
+
+    def __init__(self, tmp_path, *, installed="0.3.35", staged=None, after_install=None,
+                 stage_rc=0, stage_out="", install_rc=0):
+        import re as _re
+        self.sysd = FakeSystem(tmp_path)
+        self.installed = installed
+        self.good = {"gpu_offload": True, "cuda_lib": True}
+        self.staged = dict(self.good, **(staged or {}))
+        self.after_install = dict(self.good, **(after_install or {}))
+        self.installed_props = dict(self.good)
+        s = self.sysd
+
+        def version(a):
+            return (0, self.installed + "\n") if self.installed else (1, "PackageNotFoundError")
+
+        def pip(a):
+            v = next(x.split("==")[1] for x in a if x.startswith("llama-cpp-python=="))
+            if "--target" in a:
+                return stage_rc, stage_out
+            if install_rc:
+                return install_rc, "error: install failed"
+            self.installed = v
+            self.installed_props = dict(self.after_install) if v != "0.3.35" else dict(self.good)
+            return 0, ""
+
+        def check(a):
+            m = _re.search(r"sys.path.insert\(0, '([^']+)'\)", a[2])
+            if m:
+                props, ver, f = self.staged, "0.3.36", m.group(1) + "/llama_cpp/__init__.py"
+            else:
+                props, ver, f = self.installed_props, self.installed, "/gw/site-packages/llama_cpp/__init__.py"
+            return 0, "__AG_LLAMA_CHECK__" + json.dumps(dict(props, version=ver, file=f)) + "\n"
+
+        s.on(lambda a: a[1:2] == ["-c"] and "m.version('llama-cpp-python')" in a[2], version)
+        s.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\n"))
+        s.on(lambda a: a[1:2] == ["-c"] and "libggml-cuda" in a[2] and "__AG_LLAMA_CHECK__" not in a[2], lambda a: (0, "12\n"))
+        s.on(lambda a: a[1:2] == ["-c"] and "__AG_LLAMA_CHECK__" in a[2], check)
+        s.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"] and any(x.startswith("llama-cpp-python==") for x in a), pip)
+        s.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1] and "__AG_LLAMA_CHECK__" not in a[-1],
+             lambda a: (0, '__AG_VERIFY__{"version": "0.3.36", "gpu_offload": true}'))
+
+    def run(self, tmp_path):
+        host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+        reg = _registry(_installer(tmp_path, self.sysd, host=host), tmp_path)
+        snap, _ = reg.start("llamacpp", run_inline=True)
+        job = reg.get(snap["job_id"]).snapshot()
+        pips = [c for c in self.sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+        return job, pips
 
 
-def test_an_update_installs_llama_cpp_alone_without_its_dependencies(tmp_path):
+def _job_text(job):
+    return json.dumps(job)
+
+
+def test_an_update_stages_and_checks_the_wheel_then_installs_llama_cpp_alone(tmp_path):
     """Re-resolving abstractcore[gpu] built stable-diffusion-cpp-python from source (no compiler on
-    the server). MUTANT: the core spec on an update -> RED."""
-    sysd, job = _cuda_update(tmp_path)
+    the server). The update stages the new wheel, checks it loads with GPU offload, then installs
+    llama-cpp-python alone. MUTANT: the core spec on an update, or no staging -> RED."""
+    h = _LlamaHost(tmp_path)
+    job, pips = h.run(tmp_path)
     assert job["state"] == "done", job
-    pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
-    assert pip and not any(x.startswith("abstractcore") for x in pip[0]), pip
-    assert "--no-deps" in pip[0] and "llama-cpp-python==0.3.36" in pip[0] and any("/cu125/" in x for x in pip[0])
+    assert len(pips) == 2 and "--target" in pips[0] and "--target" not in pips[1], pips
+    for c in pips:
+        assert not any(x.startswith("abstractcore") for x in c), c
+        assert "--no-deps" in c and "llama-cpp-python==0.3.36" in c and any("/cu125/" in x for x in c)
+    assert h.installed == "0.3.36"
 
 
-def test_a_cuda_wheel_without_gpu_offload_fails_the_job_readably(tmp_path):
-    """8080: the CPU build stayed in place with only a log warning. MUTANT: warn instead of fail -> RED."""
-    _, job = _cuda_update(tmp_path, offload=False)
-    text = json.dumps(job)
+def test_a_staged_cuda_wheel_without_gpu_offload_never_replaces_the_working_one(tmp_path):
+    """8080: the update left llama.cpp broken. MUTANT: install without the staged check -> RED."""
+    h = _LlamaHost(tmp_path, staged={"gpu_offload": False})
+    job, pips = h.run(tmp_path)
     assert job["state"] == "failed", job
-    assert "installed from the cu125 index but reports no GPU offload" in text and "Nothing else was changed" in text
+    assert "llama.cpp 0.3.35 stays installed and unchanged" in _job_text(job) and "reports no GPU offload" in _job_text(job)
+    assert [c for c in pips if "--target" not in c] == [] and h.installed == "0.3.35"
 
 
-def test_a_cuda_wheel_without_libggml_cuda_fails_the_job_readably(tmp_path):
-    """The installed wheel must carry libggml-cuda. MUTANT: no library check -> RED."""
-    _, job = _cuda_update(tmp_path, cuda_lib="")
+def test_a_staged_cuda_wheel_without_libggml_cuda_never_replaces_the_working_one(tmp_path):
+    h = _LlamaHost(tmp_path, staged={"cuda_lib": False})
+    job, pips = h.run(tmp_path)
     assert job["state"] == "failed", job
-    assert "carries no libggml-cuda library" in json.dumps(job)
+    assert "stays installed and unchanged" in _job_text(job) and "carries no libggml-cuda library" in _job_text(job)
+    assert h.installed == "0.3.35"
+
+
+def test_an_update_whose_wheel_does_not_download_never_asks_for_a_compiler(tmp_path):
+    """8080: "building from source needs a C/C++ compiler" after a failed update.
+    MUTANT: fall through to the source build -> needs_tools -> RED."""
+    h = _LlamaHost(tmp_path, stage_rc=1, stage_out="error: Failed to download llama-cpp-python")
+    job, pips = h.run(tmp_path)
+    assert job["state"] == "failed", job
+    t = _job_text(job)
+    assert "stays installed and unchanged" in t and "compiler" not in t and "from source" not in t
+    assert h.installed == "0.3.35" and len(pips) == 1
+
+
+def test_an_installed_wheel_that_does_not_load_puts_the_old_one_back(tmp_path):
+    """MUTANT: no rollback -> the job leaves 0.3.36 broken -> RED."""
+    h = _LlamaHost(tmp_path, after_install={"gpu_offload": False})
+    job, pips = h.run(tmp_path)
+    assert job["state"] == "failed", job
+    assert "0.3.35 is installed again and serves as before" in _job_text(job), job
+    assert "llama-cpp-python==0.3.35" in pips[-1] and h.installed == "0.3.35"
+
+
+def test_a_first_cuda_install_that_does_not_offload_fails_readably(tmp_path):
+    """The first install (no llama.cpp yet): a cu* wheel without GPU offload is a failure, never a
+    warning in the log. MUTANT: warn instead of fail -> RED."""
+    h = _LlamaHost(tmp_path, installed=None, after_install={"gpu_offload": False})
+    job, _ = h.run(tmp_path)
+    assert job["state"] == "failed", job
+    assert "reports no GPU offload: the CUDA build did not load" in _job_text(job)
+
+
+def test_a_failed_update_keeps_the_card_ready_and_says_why():
+    """The card of an installed engine whose update failed stays Ready (engineState never reads a
+    failed job) and shows the job's sentence. MUTANT: drop the branch -> RED."""
+    from abstractgateway import console_ui
+    src = console_ui.__dict__.get("CONSOLE_UI_JS") or open(console_ui.__file__, encoding="utf-8").read()
+    assert 'if (job && job.state === "failed" && e.installed === true)' in src
+    assert "data-engine-update-failed" in src
+
+
+def test_engine_install_texts_never_say_for_this_account():
+    """The gateway's service account serves every user: an engine installs for this computer.
+    MUTANT: restore "for this account" in the Ollama notes -> RED."""
+    from pathlib import Path
+    from abstractgateway import console_ui
+    root = Path(ei.__file__).parent
+    for f in (root / "engines_install.py", root / "routes" / "engines.py"):
+        text = f.read_text(encoding="utf-8")
+        assert "this account" not in text and "your account" not in text, f
+    ui = Path(console_ui.__file__).read_text(encoding="utf-8")
+    cards = ui[ui.index("function engineLocationChoice"):ui.index("function engineCardMarkup")]
+    assert "your account" not in cards and "only your account" not in cards

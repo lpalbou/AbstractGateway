@@ -50,6 +50,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -1080,6 +1081,75 @@ class EngineInstaller:
         major = (out or "").strip().splitlines()[-1].split(".")[0] if rc == 0 and (out or "").strip() else ""
         return LLAMA_CUDA_BUILDS.get(major)
 
+    def _llama_only_argv(self, version: str, links: str, *extra: str) -> List[str]:
+        return [*self.pip_prefix(), f"llama-cpp-python=={version}", "--find-links", links,
+                "--only-binary", "llama-cpp-python", "--no-deps", *extra]
+
+    def _llama_build_problem(self, ctx: _JobContext, backend: str, version: str, stage: Optional[Path] = None) -> Optional[str]:
+        """Why this llama.cpp (the staged copy, or the installed one) is not fit to serve, or None.
+        Loads it in a child Python with the CUDA libraries preloaded, as the gateway does."""
+        code = (
+            "import json, pathlib, sys\n"
+            + (f"sys.path.insert(0, {str(stage)!r})\n" if stage else "")
+            + "from abstractcore.utils.windows_dll import prepare_llama_cpp_import\n"
+            "prepare_llama_cpp_import()\n"
+            "import llama_cpp\n"
+            "lib = pathlib.Path(llama_cpp.__file__).parent / 'lib'\n"
+            "print('__AG_LLAMA_CHECK__' + json.dumps({'version': llama_cpp.__version__, 'file': llama_cpp.__file__, "
+            "'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload()), 'cuda_lib': bool(sorted(lib.glob('libggml-cuda*')))}))\n"
+        )
+        rc, out = ctx.run([self.python, "-c", code], timeout=180)
+        info: Dict[str, Any] = {}
+        for line in (out or "").splitlines():
+            if line.startswith("__AG_LLAMA_CHECK__"):
+                try:
+                    info = json.loads(line[len("__AG_LLAMA_CHECK__"):])
+                except Exception:
+                    info = {}
+        if rc != 0 or not info:
+            return f"does not load ({_last_error_line(out) or 'see the job log'})"
+        if stage and not str(info.get("file") or "").startswith(str(stage)):
+            return "was not the copy that loaded (the check found another llama.cpp first)"
+        if str(info.get("version")) != version:
+            return f"loads as version {info.get('version')}, not {version}"
+        if backend.startswith("cu") and not info.get("cuda_lib"):
+            return f"came from the {backend} index but carries no libggml-cuda library"
+        if (backend.startswith("cu") or backend == "metal") and not info.get("gpu_offload"):
+            return f"came from the {backend} index but reports no GPU offload"
+        return None
+
+    def _update_llamacpp(self, ctx: _JobContext, old: str, pin: str, backend: str, links: str) -> Dict[str, Any]:
+        keep = f"llama.cpp {old} stays installed and unchanged"
+        reinstall = ["--reinstall-package", "llama-cpp-python"] if self.pip_prefix()[1:3] == ["pip", "install"] else []
+        stage = Path(tempfile.mkdtemp(prefix="ag-llama-stage-"))
+        try:
+            ctx.state("downloading", f"Downloading the prebuilt llama.cpp {backend} wheel {pin} to check it before it replaces {old}", percent=5)
+            rc, out = self._pip(ctx, self._llama_only_argv(pin, links, "--target", str(stage)), lo=5, hi=60)
+            if rc != 0:
+                raise InstallFailed(f"{keep}: the prebuilt {backend} wheel {pin} did not download ({_last_error_line(out) or 'see the job log'}).", code="update_refused")
+            ctx.state("installing", f"Checking that llama.cpp {pin} loads before it replaces {old}", percent=62)
+            problem = self._llama_build_problem(ctx, backend, pin, stage)
+            if problem:
+                raise InstallFailed(f"{keep}: the {backend} wheel {pin} {problem}.", code="update_refused")
+            ctx.state("installing", f"Replacing llama.cpp {old} by the checked {backend} wheel {pin}", percent=70)
+            rc, out = self._pip(ctx, self._llama_only_argv(pin, links, *reinstall), lo=70, hi=90)
+            problem = (f"its install failed: {_last_error_line(out) or 'see the job log'}" if rc != 0
+                       else self._llama_build_problem(ctx, backend, pin))
+            if problem:
+                ctx.log(f"llama.cpp {pin} did not take its place ({problem}); putting {old} back")
+                back_rc, _ = self._pip(ctx, self._llama_only_argv(old, links, *reinstall), lo=90, hi=95)
+                back = back_rc == 0 and self._llama_build_problem(ctx, backend, old) is None
+                raise InstallFailed(
+                    f"llama.cpp {pin} did not take its place ({problem}); "
+                    + (f"{old} is installed again and serves as before." if back
+                       else f"putting {old} back failed too: re-run the installer to repair llama.cpp."),
+                    code="update_failed")
+            importlib.invalidate_caches()
+            return {"installed": True, "version": pin, "previous_version": old, "gpu_offload": backend != "cpu",
+                    "location": self.python, "method": f"{backend} wheel (update)", "message": _llama_takes_effect()}
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+
     def _installed_llama_version(self) -> Optional[str]:
         rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('llama-cpp-python'))"], timeout=60)
         v = (out or "").strip().splitlines()[-1] if rc == 0 and (out or "").strip() else ""
@@ -1208,7 +1278,7 @@ class EngineInstaller:
                 apps, admin = self.app_target(location)
                 return InstallPlan(
                     eid, True, "app", target=str(apps / "Ollama.app"), needs_admin=admin,
-                    admin_reason=(f"{apps} is not writable by this account; placing Ollama.app there needs an administrator." if admin else None),
+                    admin_reason=(f"{apps} is not writable by the account the gateway runs as; placing Ollama.app there needs an administrator." if admin else None),
                     notes=f"Downloads Ollama's signed macOS app from its official GitHub release, checks its SHA-256 and signature, places it in {apps} and starts it.",
                     command_preview=[f"download {OLLAMA_RELEASES}/latest/download/{OLLAMA_MAC_ASSET}", f"place {apps}/Ollama.app", "open -j -a Ollama.app --args hidden"],
                     steps=["download (about 200 MB)", "verify checksum and signature", f"place in {apps}", "start the server"],
@@ -1223,7 +1293,7 @@ class EngineInstaller:
                 apps, admin = self.app_target(location)
                 return InstallPlan(
                     eid, True, "app", target=str(apps / "LM Studio.app"), needs_admin=admin,
-                    admin_reason=(f"{apps} is not writable by this account; placing LM Studio.app there needs an administrator." if admin else None),
+                    admin_reason=(f"{apps} is not writable by the account the gateway runs as; placing LM Studio.app there needs an administrator." if admin else None),
                     notes=f"Downloads LM Studio's signed disk image from lmstudio.ai, checks its signature, copies the app to {apps} and starts its local server.",
                     command_preview=[f"download {LMSTUDIO_MAC_LATEST}", "hdiutil attach -readonly -nobrowse", f"ditto 'LM Studio.app' {apps}", "hdiutil detach", "lms server start"],
                     steps=["download (about 570 MB)", "verify signature", f"copy to {apps}", "start the local server"],
@@ -1238,7 +1308,7 @@ class EngineInstaller:
                     notes=("LM Studio's Linux daemon needs the libatomic1 system library, which this machine does not have; "
                            "a system library is installed by the machine's administrator (the AbstractFramework server "
                            "installer adds it). "
-                           + (f"Installs here for this account: {here}." if here else "No other engine installs here for this account either.")),
+                           + (f"Installs on this computer without an administrator: {here}." if here else "No other engine installs on this computer without an administrator either.")),
                 )
             prompt = self._libatomic_prompt()
             return InstallPlan(eid, True, "script", needs_tools=not atomic,
@@ -1250,7 +1320,7 @@ class EngineInstaller:
         return InstallPlan(eid, False, "unsupported", notes=f"unknown engine {eid}")
 
     def _user_space_engines(self, *, exclude: str = "") -> str:
-        """The engines that install here for this account, no administrator ("llama.cpp, Ollama and vLLM")."""
+        """The engines that install on this computer with no administrator ("llama.cpp, Ollama and vLLM")."""
         names = []
         for other in ("llamacpp", "ollama", "vllm", "huggingface", "mlx"):
             if other == exclude:
@@ -1388,39 +1458,33 @@ class EngineInstaller:
                 "(re-run the installer with --profile gpu), then update llama.cpp.",
                 code="needs_cuda_stack",
             )
+        old = self._installed_llama_version()
+        if old:
+            # AN UPDATE (OVH 8080, 2026-10-29): it never leaves the engine broken. The new wheel is
+            # downloaded into a staging folder and checked there; only a wheel that loads (with GPU
+            # offload on a GPU build) replaces the old one, llama.cpp alone (`--no-deps`: re-resolving
+            # AbstractCore's gpu setting built stable-diffusion-cpp-python from source); never a
+            # source build, never a compiler.
+            if not wheel:
+                raise InstallFailed(
+                    f"llama.cpp {old} stays installed and unchanged: no prebuilt llama.cpp wheel exists for "
+                    f"{h.os_id} {h.arch}, and an update never builds from source.", code="update_refused")
+            return self._update_llamacpp(ctx, old, *wheel)
         if wheel:
             pin, backend, links = wheel
-            updating = bool(self._installed_llama_version())
-            if updating:
-                # AN UPDATE: llama.cpp alone (its dependencies are there). Re-resolving AbstractCore's
-                # setting pulled the gpu extras' sdists (stable-diffusion-cpp-python) the root
-                # installer overrides away, and needed a C compiler on the OVH server.
-                ctx.state("downloading", f"Updating llama.cpp to the prebuilt {backend} wheel {pin}", percent=5)
-                argv = [*self.pip_prefix(), f"llama-cpp-python=={pin}", "--find-links", links,
-                        "--only-binary", "llama-cpp-python", "--no-deps"]
-                if self.pip_prefix()[1:3] == ["pip", "install"]:
-                    argv += ["--reinstall-package", "llama-cpp-python"]
-                rc, out = self._pip(ctx, argv, lo=5, hi=90)
-            else:
-                ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
-                rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links, version), *pins], lo=5, hi=90)
+            ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
+            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links, version), *pins], lo=5, hi=90)
             if rc == 0:
-                info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
+                info = self._verify_import(ctx, "from abstractcore.utils.windows_dll import prepare_llama_cpp_import as _p; _p(); import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
                     ctx.log("warning: llama.cpp loaded but reports no GPU offload (Metal)")
                 if backend.startswith("cu"):
                     # A CUDA wheel that does not offload is a FAILURE, never a warning in the log
-                    # (OVH 8080, 2026-10-29: the CPU wheel stayed in place silently).
-                    has_cuda_lib = self._installed_llama_cuda_build() is not None
-                    if not has_cuda_lib or not info.get("gpu_offload"):
-                        what = "carries no libggml-cuda library" if not has_cuda_lib else "reports no GPU offload"
-                        raise InstallFailed(
-                            f"llama.cpp {info.get('version') or pin} installed from the {backend} index but {what}: "
-                            "the CUDA build did not load. "
-                            + ("Nothing else was changed. " if updating else "")
-                            + "See the job log.",
-                            code="cuda_build_not_loaded",
-                        )
+                    # (OVH 8080, 2026-10-29: the CPU build stayed in place silently).
+                    problem = self._llama_build_problem(ctx, backend, pin)
+                    if problem:
+                        raise InstallFailed(f"llama.cpp {pin} {problem}: the CUDA build did not load. See the job log.",
+                                            code="cuda_build_not_loaded")
                 importlib.invalidate_caches()
                 return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python,
                         "method": f"{backend} wheel", "message": _llama_takes_effect()}
@@ -1510,7 +1574,7 @@ class EngineInstaller:
                 cmd += f" && /usr/sbin/chown -R {shlex.quote(user)}:admin {shlex.quote(str(dest))}"
             prompt = AdminPrompt(
                 key=f"place:{dest}",
-                reason=f"Copying {staged.name} into {apps_dir}, which this account cannot write, needs an administrator.",
+                reason=f"Copying {staged.name} into {apps_dir}, which the account the gateway runs as cannot write, needs an administrator.",
                 command=cmd,
                 method="osascript",
                 prompt_text=f"AbstractGateway wants to install {vendor} in {apps_dir}.",
@@ -1641,7 +1705,7 @@ class EngineInstaller:
         return InstallPlan(
             "ollama", True, "user_archive", target=str(dest),
             notes=(f"Downloads Ollama's official Linux build ({asset}, about 1.5 GB) from its GitHub release, checks its "
-                   f"SHA-256, unpacks it into {dest} (bin/ollama, lib/ollama) for this account, no administrator, and "
+                   f"SHA-256, unpacks it into {dest} (bin/ollama, lib/ollama) for this computer (the gateway's service account serves every user), no administrator, and "
                    "starts `ollama serve` on its default port as a user service."),
             command_preview=[f"download {OLLAMA_RELEASES}/latest/download/{asset}", f"zstd -d | tar -x -C {dest}",
                              f"systemctl --user enable --now {OLLAMA_USER_UNIT}"],
@@ -1691,7 +1755,7 @@ class EngineInstaller:
             unit_dir.mkdir(parents=True, exist_ok=True)
             host = urllib.parse.urlparse(self.ollama_url).netloc
             (unit_dir / OLLAMA_USER_UNIT).write_text(
-                "# Written by AbstractGateway (Ollama installed for this account in ~/.local).\n"
+                "# Written by AbstractGateway (Ollama installed for this computer, in the gateway service account's ~/.local).\n"
                 "[Unit]\nDescription=Ollama (user)\nAfter=network-online.target\n\n"
                 f"[Service]\nExecStart={_systemd_exec_path(binary)} serve\nEnvironment=OLLAMA_HOST={host}\nRestart=on-failure\nRestartSec=3\n\n"
                 "[Install]\nWantedBy=default.target\n",
