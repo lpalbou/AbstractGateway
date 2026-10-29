@@ -675,6 +675,30 @@ def test_split_runner_kill_switch_closes_and_deletes_the_live_file(gw, monkeypat
     assert "split-run" not in ld._file_sink_for(scope)._fds, "and its descriptor closed"
 
 
+def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """0.15.2 has the floor's whole API but moves the run store's change token on every index build
+    (gateway backlog 0965), so `require_runtime_features` refuses it by version, naming both versions;
+    0.15.3 and a source checkout without metadata ("unknown") pass that probe."""
+    import types
+
+    from abstractgateway import live_deltas as ld
+
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.15.3"
+    assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert not (ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
+    with pytest.raises(ld.RuntimeTooOld) as info:
+        ld.require_runtime_features(runtime)
+    text = str(info.value)
+    assert "(0.15.2)" in text and "abstractruntime>=0.15.3" in text and "0965" in text
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.3")
+    ld.require_runtime_features(runtime)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
+    ld.require_runtime_features(runtime)
+
+
 def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """REVIEW/19 G2: the deny prefixes and the live sink need a recent runtime;
     an older one must stop the host from building, loudly."""

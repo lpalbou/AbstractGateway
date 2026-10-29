@@ -544,6 +544,12 @@ def isolate_home_and_network(request, monkeypatch, tmp_path_factory):
     """Per-test home under tmp, operator path knobs scrubbed, network guard armed."""
     for knob in _operator_path_knobs():
         monkeypatch.delenv(knob, raising=False)
+    # The developer's provider keys never reach a test (2026-10-29, backlog 0972): with a seam's
+    # workflows loaded (AbstractNote's), a capability-default write warms that provider, and a real
+    # OPENAI_API_KEY made the OpenAI provider validate the model at api.openai.com. A test that
+    # needs a key sets its own.
+    for key in [k for k in os.environ if k.endswith("_API_KEY")]:
+        monkeypatch.delenv(key, raising=False)
     home = Path(str(tmp_path_factory.mktemp("home")))
     for key, value in _hermetic_env(home).items():
         monkeypatch.setenv(key, value)
@@ -891,6 +897,12 @@ def _no_real_terminal_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> 
 
 def pytest_configure(config):
     _register_hermetic_markers(config)
+    config.addinivalue_line(
+        "markers",
+        "note_workflows: the gateway under test loads AbstractNote's workflows (backlog 0972). Without the "
+        "marker an installed abstractnote mounts its routes (the route contracts walk them) but adds no "
+        "workflows, so a test's gateway builds the same runtimes as on an install without it.",
+    )
     import node_requirement
 
     node_requirement.ALLOW_SKIP_JS = bool(config.getoption("--allow-skip-js", default=False))
@@ -927,3 +939,18 @@ def _no_engine_inventory_probe(monkeypatch):
     except Exception:  # noqa: BLE001 - a collection without the package
         return
     monkeypatch.setattr(_cc, "_engine_installed", lambda engine_id: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _abstractnote_workflows_only_when_asked(request, monkeypatch):
+    """Backlog 0972: CI installs abstractnote so its routes are covered. Its workflows carry LLM
+    nodes, so loading them gives every test gateway an LLM runtime that warms a default model at
+    boot (LM Studio on localhost:1234 on a machine without MLX) and builds model clients the test
+    did not ask for. Tests get the workflows only with @pytest.mark.note_workflows."""
+    if request.node.get_closest_marker("note_workflows") is not None:
+        yield
+        return
+    from abstractgateway import abstractnote_seam
+
+    monkeypatch.setattr(abstractnote_seam, "note_bundle_paths", lambda _root: [])
+    yield
