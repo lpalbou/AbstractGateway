@@ -101,7 +101,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="endpoint-capabilities"' not in console.text
     assert 'id="endpoint-profiles-table"' in console.text
     assert "virtual provider" in console.text
-    assert "Remote providers" in console.text and "Local providers" in console.text
+    assert "Cloud providers" in console.text and "Local providers" in console.text and 'id="cloud-providers-root"' in console.text
     assert "Use Test to preview discovery" in console.text
     assert "Confirm" in console.text
     assert "provider-modal" in console.text

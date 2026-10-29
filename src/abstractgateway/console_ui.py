@@ -1202,7 +1202,27 @@ CONSOLE_UI_JS = r"""
     // (engine_install_job_v1) on /engines/jobs/{id}, with
     // /continue {approve_admin|install_tools|recheck} and /cancel. The
     // job's `message` is already one plain sentence; `details` is the log.
-    const ENGINE_MARKS = { ollama: "Ol", lmstudio: "LM", mlx: "MLX", llamacpp: "cpp", vllm: "vL", huggingface: "HF" };
+    // An engine's (or cloud provider's) mark: the brand's official logo from the kit (islands
+    // `brandMarks`, ui-kit 0.9.9: brand_icons.tsx inlines each mark with its source, licence and
+    // date; a brand whose terms forbid its logo keeps a readable text badge there). A bundle without
+    // brandMarks is a vendoring defect: logged once, and the card shows the name's initials.
+    let uiBrandMarksMissingLogged = false;
+    function uiKitBrandMarks() {
+      try {
+        const w = typeof window !== "undefined" ? window : null;
+        const lib = w && w.AfConsoleIslands;
+        return lib && lib.brandMarks && typeof lib.brandMarks.html === "function" ? lib.brandMarks : null;
+      } catch { return null; }
+    }
+    function uiBrandMark(id, name) {
+      const marks = uiKitBrandMarks();
+      if (marks) return marks.html(String(id || ""), String(name || id || ""));
+      if (!uiBrandMarksMissingLogged) {
+        uiBrandMarksMissingLogged = true;
+        console.error("AbstractGateway console: the abstractuic islands bundle has no brandMarks (ui-kit 0.9.9+ required); engine cards show initials instead of logos.");
+      }
+      return `<span class="ui-mark" aria-hidden="true">${esc(String(name || id || "?").slice(0, 2))}</span>`;
+    }
     const ENGINE_DOWNLOAD_LINKS = [
       { id: "ollama", name: "Ollama", url: "https://ollama.com/download" },
       { id: "lmstudio", name: "LM Studio", url: "https://lmstudio.ai/download" },
@@ -1380,7 +1400,7 @@ CONSOLE_UI_JS = r"""
       const learn = docs && docs.url ? `<span class="ui-spacer"></span><a class="ui-link" href="${esc(docs.url)}" target="_blank" rel="noopener noreferrer">Learn more</a>` : "";
       const tone = view.key === "installing" ? " is-busy" : (failed || view.key === "waiting" ? " is-attention" : "");
       return `<article class="ui-card engine-card${tone}" data-engine-card="${esc(e.id)}">`
-        + `<div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[e.id] || String(e.name || e.id || "?").slice(0, 2))}</span>`
+        + `<div class="ui-card__head">${uiBrandMark(e.id, e.name)}`
         + `<div class="ui-card__titles"><div class="ui-card__title">${esc(e.name || e.id)}</div>`
         + `<span class="ui-card__status">${view.pill}</span></div></div>`
         + `<div class="ui-card__blurb">${esc(e.description || "")}</div>`
@@ -1407,7 +1427,7 @@ CONSOLE_UI_JS = r"""
         // offer the two desktop engines' own downloads (never a dead end).
         const upgrade = CORE_CONSOLE.available ? "" : ` ${coreConsoleUnavailableText()}`;
         // A view's extras (the Providers tab: the server connection) still apply.
-        const links = ENGINE_DOWNLOAD_LINKS.map((d) => { const more = (typeof extra === "function" && extra({ id: d.id, name: d.name })) || {}; return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[d.id] || "")}</span>`
+        const links = ENGINE_DOWNLOAD_LINKS.map((d) => { const more = (typeof extra === "function" && extra({ id: d.id, name: d.name })) || {}; return `<article class="ui-card"><div class="ui-card__head">${uiBrandMark(d.id, d.name)}`
           + `<div class="ui-card__titles"><div class="ui-card__title">${esc(d.name)}</div></div></div>`
           + (more.body ? `<div class="ui-card__body">${more.body}</div>` : "")
           + `<div class="ui-card__actions"><a class="ui-btn is-ghost" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">Download ${esc(d.name)}</a>${more.actions || ""}</div></article>`; }).join("");

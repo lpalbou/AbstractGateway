@@ -886,7 +886,7 @@ def test_console_presents_provider_connections_without_capability_form() -> None
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    assert "Remote providers" in html
+    assert "Cloud providers" in html and 'id="cloud-providers-root"' in html
     assert "LM Studio" in html
     assert "Ollama" in html
     assert "Portkey" in html
