@@ -54,7 +54,7 @@ KIT_FILTER_BAR_CSS = r"""
  * the top of the scroller while the facet rows scroll away. Consoles that vendor an older
  * kit copy this block verbatim until their vendored kit carries it. */
 .af-filterbar {
-  --af-filterbar-label-w: 7rem;
+  --af-filterbar-label-w: 7.5rem;
   --af-filterbar-chip-h: 28px;
   --af-filterbar-pad-x: 16px;
   --af-filterbar-top: 0px;
@@ -334,7 +334,6 @@ KIT_FILTER_BAR_CSS = r"""
 }
 @media (max-width: 479.98px) {
   .af-filterbar {
-    --af-filterbar-label-w: 6rem;
     --af-filterbar-pad-x: 12px;
   }
   .af-filterbar__lead {
@@ -374,6 +373,8 @@ CATALOG_CSS = r"""
        flush under the header; the guide's scroller has no padding. The console only
        places the bar: */
     .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
+    /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
+    .mc-filterbar label.af-switch { text-transform: none; letter-spacing: normal; }
     /* Sticky mode: the bar's two parts are items of .mc-root (gap 18px); they read as one surface. */
     .mc-filterbar > .af-filterbar__facets { margin-top: -18px; }
     .mc-count { color: var(--text-secondary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
