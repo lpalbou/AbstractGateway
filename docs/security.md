@@ -1126,7 +1126,7 @@ found, what was decided. The runtime incident ledger (unavailability, restarts) 
   gateway's in-memory route, `input.text` from the profile that holds the relay URL; verified against
   `GET /api/gateway/config/capability-defaults` on 8080. Later probe runs set `ABSTRACTCORE_CONFIG_FILE` to a file
   under their scratch dir and the shared store stayed untouched (checked after each run).
-- **Decision**: backlog 0978 — a gateway given a data dir never writes outside it: the Core config dir is derived
+- **Decision**: backlog 0979 — a gateway given a data dir never writes outside it: the Core config dir is derived
   from the data dir by default (as the instances runner already does), the machine store is used only by a
   gateway with no explicit data dir, and a test starts a gateway with a data dir, PUTs a capability default and
   asserts the shared store is byte-identical. Rule for every seat until then: a scratch gateway is started with

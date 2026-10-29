@@ -1,4 +1,4 @@
-# 0978 — A gateway with `--data-dir` never writes outside it (the Core config dir is derived from the data dir by default)
+# 0979 — A gateway with `--data-dir` never writes outside it (the Core config dir is derived from the data dir by default)
 
 **Status**: planned · **Priority**: P1 (security: isolation) · **Created**: 2026-10-29 (lead ruling after the residency audit incident; filed by the merge desk)
 > Root link: AbstractFramework recurrent 1060 (security, resilience and latency standing duty).
