@@ -53,16 +53,17 @@ def _git(repo: Path, *args: str) -> None:
 
 def test_check_needs_a_fragment_when_src_changes(tmp_path: Path, monkeypatch, capsys) -> None:
     repo = tmp_path / "repo"
-    (repo / "src").mkdir(parents=True)
+    src = cl.SOURCE_PREFIXES[0].rstrip("/")
+    (repo / src).mkdir(parents=True)
     (repo / "changelog.d").mkdir()
-    (repo / "src" / "a.py").write_text("x = 1\n")
+    (repo / src / "a.py").write_text("x = 1\n")
     (repo / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n")
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "base")
     _git(repo, "checkout", "-q", "-b", "pr")
     monkeypatch.setattr(cl, "ROOT", repo)
-    (repo / "src" / "a.py").write_text("x = 2\n")
+    (repo / src / "a.py").write_text("x = 2\n")
     _git(repo, "commit", "-qam", "change src")
     assert cl.check("main") == 1
     assert "adds no changelog fragment" in capsys.readouterr().out
