@@ -433,6 +433,14 @@ def _serve_connection(conn: Any, host: _Host) -> None:
             conn.close()
 
 
+def _warm_imports() -> None:
+    for name in ("abstractruntime.integrations.abstractcore.llm_client", "abstractcore.providers.registry"):
+        try:
+            __import__(name)
+        except Exception:  # noqa: BLE001 - the first build reports the real error
+            logger.debug("model host: warm import of %s failed", name, exc_info=True)
+
+
 def _watch_parent(stdin) -> None:
     """EOF on stdin: the gateway is gone (or stopping us). Exit without waiting for generations."""
     with contextlib.suppress(Exception):
@@ -486,6 +494,10 @@ def main() -> int:
     # a full pipe would block whichever thread printed.
     with contextlib.suppress(OSError, ValueError):
         os.dup2(sys.stderr.fileno(), 1)
+    # Warm the imports every client build needs (AbstractRuntime's client, Core's provider
+    # registry) after the readiness line, so a restart is not slower and the first request does
+    # not pay for them (a fresh interpreter: ~1 s on a Mac with MLX).
+    threading.Thread(target=_warm_imports, name="model-host-warm-imports", daemon=True).start()
     while True:
         try:
             conn = listener.accept()

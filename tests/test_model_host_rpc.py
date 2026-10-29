@@ -202,9 +202,9 @@ def test_incident_files_are_private_and_bounded(tmp_path):
 
 
 def test_mode_defaults():
-    assert mh.default_mode(platform="linux") == mh.MODE_PROCESS
-    assert mh.default_mode(platform="darwin") == mh.MODE_IN_PROCESS
-    assert mh.default_mode(platform="win32") == mh.MODE_IN_PROCESS
+    # Operator ruling 2026-10-29: one default on every OS.
+    for platform in ("linux", "darwin", "win32"):
+        assert mh.default_mode(platform=platform) == mh.MODE_PROCESS
     assert mh.active() is False  # nothing in the test process started one
 
 

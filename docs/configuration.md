@@ -1520,15 +1520,15 @@ Core catalog proxy settings:
 ## Model host: the models run in a supervised child process
 
 ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
-`--model-host process` (the default on Linux) the gateway process loads no model and calls no
+`--model-host process` (the default on every OS) the gateway process loads no model and calls no
 provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
 shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
 memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
 `/api/health` keep answering.
 
 ```bash
-abstractgateway serve                         # Linux: --model-host process
-abstractgateway serve --model-host in-process # everything in one process (macOS and Windows default)
+abstractgateway serve                         # every OS: --model-host process
+abstractgateway serve --model-host in-process # everything in one process (development, --reload)
 ```
 
 | Work | gateway process | model host child |
@@ -1538,8 +1538,9 @@ abstractgateway serve --model-host in-process # everything in one process (macOS
 | Every AbstractCore provider call and model load (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
 | The OpenAI-compatible `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it (Core's app, the same model pool) |
 
-- **The default**: `process` on Linux (servers), `in-process` on macOS and Windows (the menu-bar tray;
-  Apple unified memory) and with `--reload`. A gateway embedded without the CLI (tests) is in-process.
+- **The default**: `process` on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
+  the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
+  `in-process` only with `--reload` or when chosen. A gateway embedded without the CLI (tests) is in-process.
   `serve --no-runner` (the split API process) holds no model and starts no child; the split `runner`
   takes the same flags and starts the child itself.
 - **Limits**: `--model-host-memory-gb GB` kills and restarts the child when its resident memory passes
@@ -1632,8 +1633,8 @@ Most-used:
   environment variable.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
-  - `--model-host process|in-process`: where the models run (default `process` on Linux, `in-process`
-    on macOS, Windows and with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
+  - `--model-host process|in-process`: where the models run (default `process` on every OS,
+    `in-process` with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
     child's limits ([model host](#model-host-the-models-run-in-a-supervised-child-process)).
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and

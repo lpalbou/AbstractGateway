@@ -838,7 +838,7 @@ def _add_model_host_args(p: argparse.ArgumentParser) -> None:
         help="Where the models run (ADR 0002). `process`: in a child process the gateway starts, watches and restarts, "
         "so a provider crash, a native abort or a memory blow-up costs the requests in flight, never the gateway; "
         "every crash is recorded in <data dir>/incidents. `in-process`: in the gateway process itself. Default: "
-        "process on Linux, in-process on macOS and Windows (the menu-bar tray) and with --reload. "
+        "process on every OS; in-process only with --reload (the app runs in uvicorn's reloader child). "
         "There is no environment variable.",
     )
     p.add_argument(
