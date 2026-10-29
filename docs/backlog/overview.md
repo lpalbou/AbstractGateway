@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 19
+- Planned: 20
 - Proposed: 48
 - Completed: 34
 - Deprecated: 3
@@ -133,6 +133,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0969_instances_registry_file_lock.md](planned/0969_instances_registry_file_lock.md) | P3. `instances.json` slot assignment is guarded by a threading lock only: two installers started in the same second can draw the same slot; add an inter-process file lock (merge desk review of #37). |
 | [0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md](planned/0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md) | P1. The console's vendored kit (`console_islands.py`, kit 0.9.4) is behind ui-kit 0.9.6: its approval card still shows the pre-0068 rendering. Re-sync it and add a CI-visible pin. Done when the console's approval card reads in words on 8443/8080 at a stated sha. |
 | [0976_console_about_adopts_the_kit_about_dialog.md](planned/0976_console_about_adopts_the_kit_about_dialog.md) | P2. The console About (local dialog with the update controls) becomes the kit `AfAboutDialog` with the controls as `about.extra`, once AbstractUIC #37 is released and the islands are resynced. Done when the operator's instance shows the kit About and its update controls work. |
+| [0978_one_weights_copy_and_the_visible_model_queue.md](planned/0978_one_weights_copy_and_the_visible_model_queue.md) | P0. Core ADR 0011, the gateway half: gateway-side generations borrow the principal's pool (R2), one copy after a model-host restart, the pool fields and the queued sentence on the Models row, `/api/health`, chat status and `/v1`; the audit probe as a test; the 1064 benchmark with real models. |
 | [0977_console_browser_tests_expect_the_old_first_screen.md](planned/0977_console_browser_tests_expect_the_old_first_screen.md) | P2. The console's four browser tests fail on main since the first-run onboarding: a fresh gateway opens on the setup screen; drive the setup (or start claimed), assert the setup screen once, wire the lane into CI. |
 | [0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md](planned/0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md) | P1 (security). Gateway CI installs only `.[dev]`, so the routers it mounts from other packages (abstractnote) never exist in CI: the route authorization contract stayed green while 14 note write routes had no decision on every real install (security incident 2026-10-29, PR #55). Install every seam package in CI and assert the seam is mounted. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
