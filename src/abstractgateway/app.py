@@ -763,4 +763,11 @@ async def health_check():
         pass
     if runner_snapshot.get("degraded"):
         body["status"] = "degraded"
+    # A move to "degraded" leaves an incident record on disk (health_incidents.py).
+    try:
+        from .health_incidents import note as _note_health
+
+        _note_health(body)
+    except Exception:
+        pass
     return body

@@ -84,6 +84,11 @@ LLAMA_CPU_PIN = "0.3.35"
 # --- Ollama -----------------------------------------------------------------------
 OLLAMA_RELEASES = "https://github.com/ollama/ollama/releases"
 OLLAMA_MAC_ASSET = "Ollama-darwin.zip"
+# Ollama's Linux build, as its own installer fetches it (`ollama-linux-<arch>.tar.zst`: bin/ollama and
+# lib/ollama), unpacked into ~/.local for the account running the gateway: no administrator, ever
+# (operator 2026-10-29: "the gateway never requires admin rights for an engine").
+OLLAMA_LINUX_ARCH = {"x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
+OLLAMA_USER_UNIT = "ollama.service"
 #: Developer ID team that signs Ollama.app ("Infra Technologies, Inc").
 OLLAMA_TEAM_ID = "3MU9H2V9Y9"
 OLLAMA_BUNDLE_ID = "com.electron.ollama"
@@ -856,6 +861,13 @@ class InstallPlan:
         }
 
 
+def _systemd_exec_path(path: Any) -> str:
+    """A unit's ExecStart program, always double-quoted: a home directory with a space keeps one
+    argument; `"` and `\\` are escaped, and a literal `%` is not read as a systemd specifier."""
+    text = str(path).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
 class EngineInstaller:
     """Plans and runs one engine install. Every path and URL is a parameter so a
     scratch prefix can be tested for real without touching the host's own."""
@@ -1138,12 +1150,7 @@ class EngineInstaller:
             if h.is_root:
                 return InstallPlan(eid, True, "script", notes="Runs Ollama's official Linux installer (installs to /usr/local and a systemd service).",
                                    command_preview=["sh", "-c", OLLAMA_LINUX_SCRIPT], steps=["run the vendor installer", "check the server"])
-            return InstallPlan(
-                eid, True, "script", needs_admin=True,
-                admin_reason="Ollama's Linux installer writes /usr/local and creates the `ollama` system service; it needs root.",
-                notes="Runs Ollama's official Linux installer after an administrator approves it.",
-                command_preview=["sh", "-c", OLLAMA_LINUX_SCRIPT], steps=["administrator approval", "run the vendor installer", "check the server"],
-            )
+            return self._ollama_user_plan()
         if eid == "lmstudio":
             if h.os_id == "darwin":
                 apps, admin = self.app_target(location)
@@ -1441,8 +1448,8 @@ class EngineInstaller:
         return None
 
     # Ollama -------------------------------------------------------------------------------
-    def _ollama_release(self, ctx: _JobContext) -> Tuple[str, str, Optional[str]]:
-        """(tag, zip url, expected sha256) from Ollama's official GitHub release."""
+    def _ollama_release(self, ctx: _JobContext, asset: str = OLLAMA_MAC_ASSET) -> Tuple[str, str, Optional[str]]:
+        """(tag, asset url, expected sha256) from Ollama's official GitHub release."""
 
         loc = ""
         try:
@@ -1459,13 +1466,13 @@ class EngineInstaller:
             sums = self.system.fetch_text(f"{base}/sha256sum.txt")
             for line in sums.splitlines():
                 parts = line.split()
-                if len(parts) == 2 and parts[1].lstrip("./") == OLLAMA_MAC_ASSET:
+                if len(parts) == 2 and parts[1].lstrip("./") == asset:
                     expected = parts[0].lower()
         except Exception as exc:
             ctx.log(f"sha256sum.txt unavailable: {exc}")
         if not expected:
-            raise InstallFailed(f"Ollama {tag} publishes no checksum for {OLLAMA_MAC_ASSET}; not installing an unverified download.", code="checksum_unavailable")
-        return tag, f"{base}/{OLLAMA_MAC_ASSET}", expected
+            raise InstallFailed(f"Ollama {tag} publishes no checksum for {asset}; not installing an unverified download.", code="checksum_unavailable")
+        return tag, f"{base}/{asset}", expected
 
     def _install_ollama(self, ctx: _JobContext) -> Dict[str, Any]:
         if self.host.os_id == "linux":
@@ -1505,33 +1512,107 @@ class EngineInstaller:
         status = self.start_ollama(ctx)
         return {"installed": True, "location": str(placed), "version": self.app_version(placed), "release": tag, "sha256": expected, "signature": signature, **status}
 
-    def _install_ollama_linux(self, ctx: _JobContext) -> Dict[str, Any]:
-        if self.system.which("ollama") and not ctx.job.force:
-            return {"installed": True, "already_installed": True, **self.start_ollama(ctx)}
-        if self.host.is_root:
-            ctx.state("installing", "Running Ollama's official Linux installer", percent=10)
-            rc, out = ctx.stream(["sh", "-c", OLLAMA_LINUX_SCRIPT])
-            if rc != 0:
-                raise InstallFailed("Ollama's installer failed: " + (_last_error_line(out) or "see the log"), code="installer_failed")
-        else:
-            prompt = AdminPrompt(
-                key="ollama-linux-script",
-                reason="Ollama's Linux installer writes /usr/local and creates the `ollama` system service (systemd); it needs root.",
-                command=OLLAMA_LINUX_SCRIPT,
-                method="pkexec" if (self.system.which("pkexec") and self.host.gui_session) else "manual",
-                prompt_text="AbstractGateway wants to run Ollama's official installer.",
+    def ollama_user_binary(self) -> Path:
+        return self.home / ".local" / "bin" / "ollama"
+
+    def _ollama_binary(self) -> Optional[str]:
+        """The `ollama` on PATH, else the one this gateway unpacked into ~/.local (a service's PATH
+        often leaves ~/.local/bin out)."""
+        found = self.system.which("ollama")
+        if found:
+            return found
+        user = self.ollama_user_binary()
+        return str(user) if user.exists() else None
+
+    def _ollama_user_plan(self) -> "InstallPlan":
+        arch = OLLAMA_LINUX_ARCH.get(self.host.arch)
+        if arch is None:
+            return InstallPlan("ollama", False, "unsupported", notes=f"Ollama publishes no Linux build for {self.host.arch}.")
+        if not self.system.which("zstd"):
+            return InstallPlan(
+                "ollama", False, "unsupported",
+                notes=("Ollama's Linux build is a .tar.zst archive and this machine has no `zstd` to unpack it. "
+                       "The AbstractFramework server installer adds it; or install it with the system's packages."),
             )
-            if prompt.method == "manual":
-                prompt.command = f"sudo sh -c {shlex.quote(OLLAMA_LINUX_SCRIPT)}"
-                if prompt.key in ctx.job.approved_admin:
-                    ctx.job.approved_admin.discard(prompt.key)
-                    if not self.system.which("ollama") and self.system.http_json(self.ollama_url + "/api/version") is None:
-                        raise NeedsAdmin(prompt, message="Ollama is not installed yet. Run the command in a terminal on the gateway host, then re-check.")
-                else:
-                    raise NeedsAdmin(prompt)
-            else:
-                ctx.state("installing", "Running Ollama's official Linux installer (administrator)", percent=10)
-                ctx.run_admin(prompt)
+        asset = f"ollama-linux-{arch}.tar.zst"
+        dest = self.home / ".local"
+        return InstallPlan(
+            "ollama", True, "user_archive", target=str(dest),
+            notes=(f"Downloads Ollama's official Linux build ({asset}, about 1.5 GB) from its GitHub release, checks its "
+                   f"SHA-256, unpacks it into {dest} (bin/ollama, lib/ollama) for this account, no administrator, and "
+                   "starts `ollama serve` on its default port as a user service."),
+            command_preview=[f"download {OLLAMA_RELEASES}/latest/download/{asset}", f"zstd -d | tar -x -C {dest}",
+                             f"systemctl --user enable --now {OLLAMA_USER_UNIT}"],
+            steps=["download (about 1.5 GB)", "verify checksum", f"unpack into {dest}", "start the server"],
+        )
+
+    def _install_ollama_user(self, ctx: _JobContext) -> Dict[str, Any]:
+        """Ollama for the account running the gateway: the verified archive into ~/.local, then
+        `ollama serve` as a systemd user service (a detached process when there is no user bus)."""
+        plan = self._ollama_user_plan()
+        if not plan.available:
+            raise InstallFailed(plan.notes, code="unsupported")
+        arch = OLLAMA_LINUX_ARCH[self.host.arch]
+        asset = f"ollama-linux-{arch}.tar.zst"
+        ctx.state("downloading", "Finding the current Ollama release", percent=1)
+        tag, url, expected = self._ollama_release(ctx, asset)
+        archive = self.cache_dir / "downloads" / f"{tag}-{asset}"
+        if archive.exists() and sha256_file(archive) == expected:
+            ctx.log(f"reusing the verified download {archive}")
+        else:
+            ctx.state("downloading", f"Downloading Ollama {tag}", percent=2)
+            got = ctx.download(url, archive, lo=2, hi=80)
+            if got["sha256"] != expected:
+                archive.unlink(missing_ok=True)
+                raise InstallFailed("The Ollama download does not match its published SHA-256; it was deleted and not installed.", code="checksum_mismatch")
+            ctx.log(f"sha256 verified: {expected}")
+        dest = self.home / ".local"
+        dest.mkdir(parents=True, exist_ok=True)
+        ctx.state("installing", f"Unpacking Ollama into {dest}", percent=82)
+        rc, _ = ctx.run(["sh", "-c", f"zstd -d -c {shlex.quote(str(archive))} | tar -xf - -C {shlex.quote(str(dest))}"], timeout=1800)
+        binary = self.ollama_user_binary()
+        if rc != 0 or not binary.exists():
+            raise InstallFailed("The Ollama download could not be unpacked; the log shows why.", code="unpack_failed")
+        archive.unlink(missing_ok=True)
+        ctx.state("installing", "Starting Ollama", percent=92)
+        started = self._start_ollama_user_service(ctx, binary)
+        got = self._wait_http(ctx, self.ollama_url + "/api/version", "Ollama")
+        return {"installed": True, "location": str(binary), "release": tag, "sha256": expected, "service": started,
+                "running": got is not None, "server_version": (got or {}).get("version"), "base_url": self.ollama_url}
+
+    def _start_ollama_user_service(self, ctx: _JobContext, binary: Path) -> str:
+        """`ollama serve` under the user's systemd (restarts with it, starts at boot when lingering is
+        on), else a detached process of this gateway. Returns which one."""
+        rc, _ = ctx.run(["systemctl", "--user", "show-environment"], timeout=15) if self.system.which("systemctl") else (1, "")
+        if rc == 0:
+            unit_dir = self.home / ".config" / "systemd" / "user"
+            unit_dir.mkdir(parents=True, exist_ok=True)
+            host = urllib.parse.urlparse(self.ollama_url).netloc
+            (unit_dir / OLLAMA_USER_UNIT).write_text(
+                "# Written by AbstractGateway (Ollama installed for this account in ~/.local).\n"
+                "[Unit]\nDescription=Ollama (user)\nAfter=network-online.target\n\n"
+                f"[Service]\nExecStart={_systemd_exec_path(binary)} serve\nEnvironment=OLLAMA_HOST={host}\nRestart=on-failure\nRestartSec=3\n\n"
+                "[Install]\nWantedBy=default.target\n",
+                encoding="utf-8",
+            )
+            ctx.run(["systemctl", "--user", "daemon-reload"], timeout=30)
+            rc2, out = ctx.run(["systemctl", "--user", "enable", "--now", OLLAMA_USER_UNIT], timeout=60)
+            if rc2 == 0:
+                return "systemd-user"
+            ctx.log(f"systemctl --user could not start {OLLAMA_USER_UNIT}: {_last_error_line(out) or out[-300:]}")
+        self._spawn_ollama_serve(None, ctx.log, binary=str(binary))
+        return "detached"
+
+    def _install_ollama_linux(self, ctx: _JobContext) -> Dict[str, Any]:
+        if self._ollama_binary() and not ctx.job.force:
+            return {"installed": True, "already_installed": True, **self.start_ollama(ctx)}
+        if not self.host.is_root:
+            return self._install_ollama_user(ctx)
+        # A gateway running as root: Ollama's own installer (/usr/local, a system service).
+        ctx.state("installing", "Running Ollama's official Linux installer", percent=10)
+        rc, out = ctx.stream(["sh", "-c", OLLAMA_LINUX_SCRIPT])
+        if rc != 0:
+            raise InstallFailed("Ollama's installer failed: " + (_last_error_line(out) or "see the log"), code="installer_failed")
         got = self._wait_http(ctx, self.ollama_url + "/api/version", "Ollama")
         return {"installed": True, "running": got is not None, "server_version": (got or {}).get("version"), "base_url": self.ollama_url}
 
@@ -1552,8 +1633,8 @@ class EngineInstaller:
                 self._spawn_ollama_serve(app, log)
         elif app is not None:
             self._spawn_ollama_serve(app, log)
-        elif self.system.which("ollama"):
-            self._spawn_ollama_serve(None, log)
+        elif self._ollama_binary():
+            self._spawn_ollama_serve(None, log, binary=self._ollama_binary())
         else:
             return {"running": False, "base_url": self.ollama_url, "started": False, "message": "Ollama is not installed"}
         got = self._wait_http(ctx, self.ollama_url + "/api/version", "Ollama")
@@ -1561,8 +1642,8 @@ class EngineInstaller:
             raise InstallFailed(f"Ollama was installed but its server did not answer at {self.ollama_url} within {int(self.start_timeout_s)} s.", code="start_failed")
         return {"running": True, "server_version": got.get("version"), "base_url": self.ollama_url, "started": True}
 
-    def _spawn_ollama_serve(self, app: Optional[Path], log: Callable[[str], None]) -> None:
-        binary = str(app / "Contents" / "Resources" / "ollama") if app else (self.system.which("ollama") or "ollama")
+    def _spawn_ollama_serve(self, app: Optional[Path], log: Callable[[str], None], *, binary: Optional[str] = None) -> None:
+        binary = binary or (str(app / "Contents" / "Resources" / "ollama") if app else (self.system.which("ollama") or "ollama"))
         env = dict(os.environ)
         env["OLLAMA_HOST"] = urllib.parse.urlparse(self.ollama_url).netloc
         env["HOME"] = str(self.home)
@@ -1933,6 +2014,9 @@ def engine_row(installer: EngineInstaller, core_row: Dict[str, Any], *, active_j
             installed = True
             location = location if location and str(location).endswith(".app") else str(app)
             version = version or installer.app_version(app)
+    if installer.host.os_id == "linux" and eid == "ollama" and not installed and installer.ollama_user_binary().exists():
+        # Installed by this gateway for its account (~/.local/bin, often off the service's PATH).
+        installed, location = True, str(installer.ollama_user_binary())
     if eid == "mlx" and installed and not supported:
         installed = False  # a stray wheel on an unsupported host is not a working engine
     plan = installer.plan(eid)

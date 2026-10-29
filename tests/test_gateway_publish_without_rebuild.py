@@ -693,3 +693,22 @@ def test_runtime_initiated_resume_of_a_pinned_run_uses_its_pinned_spec(tmp_path:
     new_spec = host.workflow_registry.get("ask@0.0.1:root")  # what the runtime's own lookup returns
     host.runtime.resume(workflow=new_spec, run_id=rid, wait_key=waiting.waiting.wait_key, payload={"response": "yes"}, max_steps=50)
     assert [c["prompt"] for c in FakeEngine.calls] == ["answer-before"], FakeEngine.calls
+
+
+def test_each_runtime_client_is_named_by_its_account(tmp_path: Path, fake_engine) -> None:
+    """ADR 0043: the Models page said "kept in memory: ... still in use by
+    runtime client 70a5b844f350, runtime client 70a72f833890". The host names
+    its runtime's client by account. MUTANT: no label -> RED."""
+    bundles = tmp_path / "bundles"
+    _write_bundle(bundles, bundle_id="chat", version="0.0.1", flow=_llm_flow("root", prompt="hi"))
+    from abstractruntime.storage.artifacts import InMemoryArtifactStore
+    from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
+    from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
+
+    host = WorkflowBundleGatewayHost.load_from_dir(
+        bundles_dir=bundles, data_dir=tmp_path / "data", run_store=InMemoryRunStore(),
+        ledger_store=InMemoryLedgerStore(), artifact_store=InMemoryArtifactStore(),
+        catalog_tenant_id="default", catalog_user_id="bob", catalog_runtime_id="bob",
+    )
+    client = host.runtime._abstractcore_llm_client
+    assert client.residency_owner_label == "the runtime of account default/bob"
