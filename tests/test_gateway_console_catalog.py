@@ -30,6 +30,7 @@ from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 from abstractgateway.console_catalog import CATALOG_CSS, CATALOG_JS
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_ui import CONSOLE_UI_JS
 
 pytestmark = pytest.mark.basic
@@ -135,6 +136,16 @@ const ctx = vm.createContext({
     return {};
   },
 });
+// The REAL vendored kit bundle (console_islands.py): the catalog's filter bar is its
+// filterBarFacetsHtml / filterBarScopeButtonsHtml (no console copy).
+if (__KIT__) {
+  const kit = vm.createContext({ console });
+  kit.globalThis = kit;
+  kit.window = kit;
+  vm.runInContext(__ISLANDS__, kit);
+  const lib = kit.AfConsoleIslands;
+  ctx.window.AfConsoleIslands = { filterBarFacetsHtml: lib.filterBarFacetsHtml, filterBarScopeHtml: lib.filterBarScopeHtml, filterBarScopeButtonsHtml: lib.filterBarScopeButtonsHtml };
+}
 vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const out = {};
@@ -161,8 +172,15 @@ const snap = (name) => {
     progress: /class="ui-progress"[^>]*data-state="downloading"/.test(html) && html.includes('aria-valuenow="37"') && html.includes('data-mc-action="cancel" data-job="dl-live"'),
   };
 };
-vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: true, filters: mcParseHash(location.hash) })`, Object.assign(ctx, { ROOT: root }));
-await settle();
+try {
+  vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: true, filters: mcParseHash(location.hash) })`, Object.assign(ctx, { ROOT: root }));
+  await settle();
+} catch (err) {
+  if (__KIT__) throw err;
+  out.error = String((err && err.message) || err);
+  console.log(JSON.stringify(out));
+  process.exit(0);
+}
 snap("initial");
 if (__SCRIPT__ === "filters") {
   chip("quant", "8bit"); snap("quant8");
@@ -262,7 +280,7 @@ console.log(JSON.stringify(out));
 EMPTY_INSTALLED = {"schema": "models_installed_v1", "rows": [], "errors": {}}
 
 
-def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None, installed: dict | None = EMPTY_INSTALLED) -> dict:
+def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None, installed: dict | None = EMPTY_INSTALLED, kit: bool = True) -> dict:
     node = require_node()
     source = js if js is not None else CONSOLE_UI_JS + CATALOG_JS
     harness = (
@@ -272,6 +290,8 @@ def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub
         .replace("__INSTALLED__", json.dumps(installed))
         .replace("__HASH__", json.dumps(hash_))
         .replace("__SCRIPT__", json.dumps(script))
+        .replace("__KIT__", "true" if kit else "false")
+        .replace("__ISLANDS__", json.dumps(ISLANDS_JS))
     )
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:
         f.write(harness)

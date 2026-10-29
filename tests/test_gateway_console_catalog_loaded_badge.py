@@ -11,14 +11,24 @@ import tempfile
 from node_requirement import require_node
 
 from abstractgateway.console_catalog import CATALOG_JS
+from abstractgateway.console_islands import ISLANDS_JS
 
 _SCRIPT = r"""
 import vm from "node:vm";
 const clicks = [];
 const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+// The REAL vendored kit bundle: the catalog's filter bar is its filterBar* (no console copy).
+const KIT_WINDOW = (() => {
+  const kit = vm.createContext({ console });
+  kit.globalThis = kit;
+  kit.window = kit;
+  vm.runInContext(__ISLANDS__, kit);
+  const lib = kit.AfConsoleIslands;
+  return { AfConsoleIslands: { filterBarFacetsHtml: lib.filterBarFacetsHtml, filterBarScopeHtml: lib.filterBarScopeHtml, filterBarScopeButtonsHtml: lib.filterBarScopeButtonsHtml } };
+})();
 const ctx = vm.createContext({
   console, setTimeout, clearTimeout, encodeURIComponent, decodeURIComponent,
-  location: { hash: "", pathname: "/console", search: "" }, history: { replaceState() {} }, document: { activeElement: null }, window: {},
+  location: { hash: "", pathname: "/console", search: "" }, history: { replaceState() {} }, document: { activeElement: null }, window: KIT_WINDOW,
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   ICONS: { trash: "<svg data-icon=\"trash\"></svg>", lock: "<svg data-icon=\"lock\"></svg>" },
   $: (id) => ({ click: () => clicks.push(id) }),
@@ -52,7 +62,7 @@ console.log(JSON.stringify(out));
 
 def test_the_catalog_row_says_loaded_or_kept_and_opens_resources():
     node = require_node()
-    src = _SCRIPT.replace("__SOURCE__", json.dumps(CATALOG_JS))
+    src = _SCRIPT.replace("__SOURCE__", json.dumps(CATALOG_JS)).replace("__ISLANDS__", json.dumps(ISLANDS_JS))
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False) as f:
         f.write(src)
     proc = subprocess.run([node, f.name], capture_output=True, text=True, timeout=60)

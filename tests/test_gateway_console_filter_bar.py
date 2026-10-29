@@ -33,7 +33,7 @@ from node_requirement import require_node
 
 from abstractgateway import console_catalog, console_islands_sync
 from abstractgateway.console import gateway_console_html
-from abstractgateway.console_catalog import CATALOG_JS, KIT_FILTER_BAR_CSS
+from abstractgateway.console_catalog import CATALOG_JS
 from abstractgateway.console_islands import ISLANDS_CSS
 from abstractgateway.console_ui import CONSOLE_UI_CSS
 from test_gateway_console_catalog import _catalog, _hub_page, _run
@@ -117,70 +117,22 @@ def _block(css: str) -> str | None:
     return css[begin : end + len("/* af-filterbar:end */")] if begin >= 0 and end > begin else None
 
 
-def test_the_page_serves_the_kit_filter_bar_css_until_the_vendored_kit_carries_it() -> None:
-    if ".af-filterbar__facet" in ISLANDS_CSS:
-        pytest.fail("the vendored kit (console_islands.py) now carries the af-filterbar block: delete KIT_FILTER_BAR_CSS in "
-                    "console_catalog.py, its splice in console.py and the markup port (afFilter* in CATALOG_JS); use "
-                    "the islands' filterBarFacetsHtml / filterBarScopeButtonsHtml")
-    assert _block(KIT_FILTER_BAR_CSS) == KIT_FILTER_BAR_CSS.strip(), "KIT_FILTER_BAR_CSS must be the kit block, markers included"
+def test_the_filter_bar_comes_from_the_vendored_kit_only() -> None:
+    """The console holds NO copy of the kit's filter bar: its CSS is the vendored ISLANDS_CSS block
+    (served once, before the catalog's own placement rules) and its markup is the bundle's
+    filterBarFacetsHtml / filterBarScopeButtonsHtml. Red the day a copy comes back."""
+    assert ".af-filterbar__facet {" in ISLANDS_CSS, "the vendored kit (console_islands.py) must carry the af-filterbar block"
+    assert not hasattr(console_catalog, "KIT_FILTER_BAR_CSS"), "a console copy of the kit's af-filterbar CSS came back"
+    assert "AF_FILTER_ESC" not in CATALOG_JS and "function afFilterChipHtml" not in CATALOG_JS, "a console port of the kit's filter-bar markup came back"
+    assert "afFilterKit().filterBarFacetsHtml(" in CATALOG_JS and "afFilterKit().filterBarScopeButtonsHtml(" in CATALOG_JS
     html = gateway_console_html()
-    # Served once, comments stripped, before the catalog's own placement rules (which override it).
     base = ".af-filterbar__facet {\n  display: grid;"
-    assert html.count(base) == 1
+    assert html.count(base) == 1, "the kit filter bar CSS must be served exactly once (from the vendored kit)"
     assert html.index(base) < html.index(".mc-filterbar > .af-filterbar__facets {") < html.index(".mc-card {")
 
 
-def _kit_dir() -> Path:
-    kit = console_islands_sync.locate_kit()
-    if kit is None:
-        pytest.skip("abstractuic ui-kit not present (non-monorepo checkout)")
-    return kit
-
-
-def test_interim_css_is_the_kit_block_verbatim() -> None:
-    kit = _kit_dir()
-    block = _block((kit / "src" / "theme.css").read_text(encoding="utf-8"))
-    if block is None:
-        pytest.skip(f"{kit} has no af-filterbar block yet (the kit PR is not merged there): set "
-                    "ABSTRACTUIC_SRC=<abstractuic checkout with backlog 0074>/ui-kit/src to run this pin")
-    assert KIT_FILTER_BAR_CSS.strip() == block, "KIT_FILTER_BAR_CSS drifted from the kit's af-filterbar block: copy it again"
-
-
-_PORT_PROBE = r"""
-import vm from "node:vm";
-const kit = await import(process.argv[2]);
-const ctx = vm.createContext({});
-vm.runInContext(process.argv[3], ctx);
-const facets = [
-  { id: "quant", label: "Quantization", value: "8bit", options: [{ value: "all", label: "All" }, { value: "4bit", label: "4-bit", count: 186 }, { value: "8bit", label: "8-bit", count: 128 }, { value: "other", label: "Other", count: 0 }] },
-  { id: "status", label: "Status", value: "all", disabled: true, options: [{ value: "all", label: "All" }, { value: "x", label: "X", count: 2, title: "it's" }] },
-  { id: 'q"x', label: "<b>&</b>", value: "a", options: [{ value: 'a"b', label: "<i>", disabled: true }] },
-];
-const trailing = { quant: "<span>switch</span>" };
-const scope = [{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging <Face>" }];
-console.log(JSON.stringify({
-  kit: [kit.afFilterFacetsHtml(facets, trailing), kit.afFilterFacetsHtml(facets), kit.afFilterScopeButtonsHtml(scope, "hf")],
-  port: [ctx.afFilterFacetsHtml(facets, trailing), ctx.afFilterFacetsHtml(facets), ctx.afFilterScopeButtonsHtml(scope, "hf")],
-}));
-"""
-
-
-def test_console_markup_port_is_the_kit_core() -> None:
-    """The console's afFilter* functions produce byte-for-byte the kit core's markup."""
-    kit = _kit_dir()
-    core = kit / "src" / "af_filter_bar_core.ts"
-    if not core.is_file():
-        pytest.skip(f"{core} is missing (the kit PR is not merged there): set ABSTRACTUIC_SRC=<abstractuic checkout with backlog 0074>/ui-kit/src")
-    node = require_node()
-    start = CATALOG_JS.index("    const AF_FILTER_ESC = ")
-    end = CATALOG_JS.index("    // The kit's native switch")
-    port = CATALOG_JS[start:end]
-    with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:
-        f.write(_PORT_PROBE)
-        probe = f.name
-    r = subprocess.run([node, "--experimental-strip-types", "--no-warnings", probe, str(core), port], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr
-    got = json.loads(r.stdout.strip().splitlines()[-1])
-    assert got["port"] == got["kit"]
-    assert "&lt;i&gt;" in got["kit"][1] and 'disabled=""' in got["kit"][1]
-    assert console_catalog.KIT_FILTER_BAR_CSS  # the port and the CSS copy go together
+def test_a_bundle_without_the_filter_bar_says_so() -> None:
+    """A vendored bundle without filterBarFacetsHtml is a vendoring defect: the Models page fails
+    loudly instead of drawing some other bar."""
+    out = _run(_catalog(3), "unloadable", kit=False)
+    assert "has no filterBarFacetsHtml" in out.get("error", ""), out

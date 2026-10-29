@@ -92,6 +92,10 @@ const cloudMounts = [];
 const kitIslands = {
   cloudProviders: kitLib.cloudProviders,
   brandMarks: kitLib.brandMarks,
+  // The catalog's filter bar is the kit's (no console copy).
+  filterBarFacetsHtml: kitLib.filterBarFacetsHtml,
+  filterBarScopeHtml: kitLib.filterBarScopeHtml,
+  filterBarScopeButtonsHtml: kitLib.filterBarScopeButtonsHtml,
   mountCloudProviderCards(el, props) {
     const rec = { id: el.id, props, updates: 0, unmounted: 0 };
     cloudMounts.push(rec);

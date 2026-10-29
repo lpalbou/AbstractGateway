@@ -24,6 +24,7 @@ import pytest
 from node_requirement import require_node
 
 from abstractgateway.console_catalog import CATALOG_JS
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_ui import CONSOLE_UI_JS
 from test_gateway_console_catalog import _catalog
 
@@ -39,9 +40,18 @@ const history = { replaceState() {} };
 class El { constructor(id) { this.id = id; this.innerHTML = ""; this.dataset = {}; } }
 const root = new El("catalog-cards-root");
 const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+// The REAL vendored kit bundle: the catalog's filter bar is its filterBar* (no console copy).
+const KIT_WINDOW = (() => {
+  const kit = vm.createContext({ console });
+  kit.globalThis = kit;
+  kit.window = kit;
+  vm.runInContext(__ISLANDS__, kit);
+  const lib = kit.AfConsoleIslands;
+  return { AfConsoleIslands: { filterBarFacetsHtml: lib.filterBarFacetsHtml, filterBarScopeHtml: lib.filterBarScopeHtml, filterBarScopeButtonsHtml: lib.filterBarScopeButtonsHtml } };
+})();
 const ctx = vm.createContext({
   console, setTimeout: (fn, ms) => { const t = setTimeout(fn, Math.min(ms || 0, 5)); t.unref(); return t; }, clearTimeout,
-  encodeURIComponent, decodeURIComponent, location, history, document: { activeElement: null }, window: {},
+  encodeURIComponent, decodeURIComponent, location, history, document: { activeElement: null }, window: KIT_WINDOW,
   state: { principal: { admin: __ADMIN__ }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
@@ -116,6 +126,7 @@ def _run(fixture: dict, target: dict, lms: dict, admin: bool = True, js: str | N
     node = require_node()
     harness = (
         _HARNESS.replace("__SOURCE__", json.dumps(js if js is not None else CONSOLE_UI_JS + CATALOG_JS))
+        .replace("__ISLANDS__", json.dumps(ISLANDS_JS))
         .replace("__FIXTURE__", json.dumps(fixture))
         .replace("__TARGET__", json.dumps(target))
         .replace("__LMS__", json.dumps(lms))
