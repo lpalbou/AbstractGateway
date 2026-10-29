@@ -3066,6 +3066,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
 	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
 	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
+	          <label id="modal-default-device-label" class="hidden" title="Where the embedding model runs. The GPU is fast; the CPU leaves the GPU memory to the text model. Default: the GPU when there is room.">Device<select id="modal-default-device">
+	            <option value="">GPU when there is room (default)</option><option value="gpu">GPU</option><option value="cpu">CPU</option>
+	          </select><span id="modal-default-device-status" class="subtle"></span></label>
 	          <label id="modal-default-speculation-label" class="hidden" title="Core-owned default policy. Explicit request overrides win; unsupported backends do not enable MTP merely because a default is saved.">MTP<select id="modal-default-speculation">
 	            <option value="">inherit (no override)</option><option value="off">off</option>
 	            <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
@@ -3915,7 +3918,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, me: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -9159,7 +9162,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
-	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok, text);
+	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok);
 	      // Signed out = the assistant has no session to run with; close the
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
@@ -9579,6 +9582,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!value) return "MTP execution not reported";
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
 	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
+	    }
+	    // DEVICE of a local embedding model (AbstractCore: route `options.device`, the person's
+	    // choice; operator ruling 2026-10-29) with what the loaded one takes now, in words.
+	    function isEmbeddingDefault(row) { return String(row?.key || "").startsWith("embedding."); }
+	    function embeddingDeviceStatus() {
+	      const models = Array.isArray(state.hostState?.models) ? state.hostState.models : [];
+	      const m = models.find((r) => r && r.task === "embedding" && r.resident === true);
+	      if (!m) return "Not loaded now.";
+	      const d = m.details || {};
+	      const where = String(d.device || "").toLowerCase().startsWith("cpu") ? "the CPU" : (d.device ? "the GPU" : "");
+	      const bytes = typeof d.device_bytes === "number" ? ` (${_fmtBytes(d.device_bytes)} of GPU memory, measured)` : "";
+	      return where ? `Now on ${where}${bytes}.${d.device_note ? " " + d.device_note + "." : ""}` : "Loaded.";
+	    }
+	    function loadDefaultDevice(row) {
+	      const on = isEmbeddingDefault(row);
+	      $("modal-default-device-label").classList.toggle("hidden", !on);
+	      if (!on) return;
+	      const dev = String(row?.options?.device || "").toLowerCase();
+	      $("modal-default-device").value = dev === "gpu" || dev === "cpu" ? dev : "";
+	      $("modal-default-device-status").textContent = embeddingDeviceStatus();
 	    }
 	    function loadDefaultSpeculation(row) {
 	      const label = $("modal-default-speculation-label");
@@ -11325,6 +11348,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       const label = (e) => [e && e.provider, e && e.model].filter((v) => v !== undefined && v !== null && String(v) !== "").join("/") || "a model";
       const out = [];
+      // LOADS THE FIT CHECK REFUSED (AbstractCore ADR 0010): the sentence says
+      // what the model needs, what is free, what was kept and smaller choices.
+      const refusals = Array.isArray(diag.refusals) ? diag.refusals.filter((e) => e && typeof e === "object") : [];
+      for (const r of refusals.slice(-1)) {
+        if (r.message) out.push({ tone: "err", text: `Not loaded: ${String(r.message)}` });
+      }
       const pending = Array.isArray(diag.pending_ejects) ? diag.pending_ejects.filter((e) => e && typeof e === "object") : [];
       const pendingKeys = new Set(pending.map(label));
       for (const e of pending) out.push({ tone: "warn", text: `Will eject ${label(e)} when the in-flight call ends.` });
@@ -11703,7 +11732,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const path = locking ? "/api/gateway/models/lock" : "/api/gateway/models/unlock";
 	        _modelsMutationResult(await api(path, { method: "POST", body: JSON.stringify(modelUnloadTarget(row)) }));
-	        msg.textContent = `${locking ? "Locked" : "Unlocked"} ${name}.`;
+	        msg.textContent = locking ? `${name} is kept loaded: it will not be evicted for another model.` : `${name} is no longer kept loaded.`;
 	        msg.className = "message ok";
 	      } catch (e) {
 	        msg.textContent = String(e.message || e);
@@ -11911,14 +11940,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            const lockBtn = document.createElement("button");
 	            lockBtn.className = "secondary";
 	            lockBtn.type = "button";
-	            lockBtn.textContent = row.locked === true ? "Unlock" : "Lock";
+	            // "Keep loaded" (AbstractCore ADR 0010): a kept model is never evicted
+	            // to make room for another load. Icon + words; the tooltip says why.
+	            lockBtn.textContent = row.locked === true ? "Kept loaded" : "Keep loaded";
+	            const lockIcon = document.createElement("span");
+	            lockIcon.className = "button-icon";
+	            lockIcon.innerHTML = ICONS.lock;  // the registry SVG, never an emoji
+	            lockBtn.prepend(lockIcon);
 	            lockBtn.title = row.locked === true
 	              ? (row.resident === true
-	                ? "Release the memory lock so this model can be unloaded or evicted"
+	                ? "Kept loaded: never evicted to make room for another model. Click to release it (it can then be unloaded or evicted when memory is needed)"
 	                : "Release a lock whose model is no longer in memory (the lock still blocks unloads)")
 	              : (row.source === "provider_server"
 	                ? "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
-	                : "Lock this model in memory so nothing can evict it");
+	                : "Keep this model loaded: it is never evicted to make room for another model");
 	            lockBtn.onclick = () => toggleModelLock(row, lockBtn);
 	            act.append(lockBtn);
 	          }
@@ -12553,6 +12588,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
+	      // The whole /me body, for the kit account widget (topBarIslandProps
+	      // connection.me); null when signed out, so no stale identity remains.
+	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
 		        document.body.classList.remove("signed-in");
@@ -14772,6 +14810,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
 	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
+      if (shownOptions && String(row?.key || "").startsWith("embedding.")) delete shownOptions.device;
 	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
 	        ? JSON.stringify(shownOptions, null, 2)
 	        : "";
@@ -14789,7 +14828,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        options: $("modal-default-options").value,
 	        voice: defaultVoiceValue(row),
 	        speculation: speculationChoice(row?.options?.speculation),
+	        device: String(row?.options?.device || ""),
 	      };
+	      if (typeof loadDefaultDevice === "function") loadDefaultDevice(row);
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      if (isVoiceOutputDefault(row)) {
@@ -15789,8 +15830,30 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // ---- Guided choice (a badge's dialog): recommended first, other models that fit, an API key.
     function dmCapById(id) { return DM_INPUTS.concat(DM_OUTPUTS).find((c) => c.id === id) || null; }
     const DM_OTHER_ENGINES = ["mlx-gen", "diffusers", "lmstudio", "ollama", "huggingface"];
+    // The engine that runs an artifact here, from this computer's engine inventory (GET /engines,
+    // `engineStore`): a GGUF on Hugging Face runs on llama.cpp, any other Hugging Face model on
+    // Transformers; LM Studio, Ollama, MLX and vLLM are their own engines. Null when no engine row
+    // names the provider (in-process engines AbstractCore judges itself: `supported_on_host`).
+    function dmEngineFor(provider, artifact) {
+      const rows = (engineStore.data && Array.isArray(engineStore.data.engines)) ? engineStore.data.engines : [];
+      const p = String(provider || "");
+      const id = p === "huggingface" ? (/gguf/i.test(String(artifact || "")) ? "llamacpp" : "huggingface") : p;
+      return rows.find((e) => e && e.id === id) || null;
+    }
+    // The readable engine name for a guided-choice row: the engine's own name ("llama.cpp",
+    // "Ollama"), else the provider's label without its id; never "HuggingFace (huggingface)".
+    function dmEngineName(provider, artifact) {
+      const e = dmEngineFor(provider, artifact);
+      if (e && e.name) return String(e.name);
+      const label = String(state.providerLabels.get(provider) || provider || "");
+      const suffix = ` (${provider})`;
+      return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+    }
+    // Models whose engine this computer has installed (the 0958 rule): a model on an engine that is
+    // not installed would set a route that cannot answer. Null while the inventory is unknown.
     function dmOtherModels(cap) {
       if (!cap.catalog) return [];
+      if (!engineStore.data) return null;
       const out = [];
       for (const row of dmCatalogRows()) {
         const caps = row.capabilities || {};
@@ -15803,6 +15866,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (cap.catalog !== "text" && !DM_OTHER_ENGINES.includes(a.provider)) continue;
           // GGUF files are llama.cpp's text format: no embeddings engine here loads them (review 1069).
           if (cap.catalog === "embedding" && /gguf/i.test(String(a.artifact || ""))) continue;
+          const engine = dmEngineFor(a.provider, a.artifact);
+          if (engine && engine.installed !== true) continue;
           out.push({ name: row.display_name || row.id, provider: a.provider, artifact: a.artifact, model: servedModelId(a.provider, a.artifact),
                      bytes: a.download_bytes, quant: a.quant_class, installed: Boolean(a.presence && a.presence.status === "installed"),
                      options: a.options && typeof a.options === "object" ? a.options : {} });
@@ -15821,6 +15886,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // below keeps its own Escape), backdrop click, focus back to the badge (review 1069).
       if (!reopen) dmUi.release = bindAccountModal($("dm-choice-backdrop"), closeDmChoice);
       if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+      if (cap.catalog && !engineStore.data && !engineStore.loading) dmLoadEngines();
+    }
+    // "Other models that fit" needs this computer's engine inventory (the Local engines step loads it;
+    // a guide opened straight on this step loads it here).
+    async function dmLoadEngines() {
+      await engineRefresh();
+      if (dmUi.choice) renderDmChoice();
     }
     function closeDmChoice() {
       if (!dmUi.choice) return;
@@ -15855,12 +15927,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
           parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><p class="muted">${esc(why || "AbstractCore has no recommendation for this on this computer yet.")}</p></section>`);
         }
-        const others = dmOtherModels(cap);
+        const othersOrNull = dmOtherModels(cap);
+        const others = othersOrNull || [];
         const capRow = findDefaultRow(state.defaults, cap.route);
         const rowReadOnly = Boolean(capRow && defaultRowReadOnly(capRow));
         parts.push(`<section class="dm-choice__part"><h3>Other models that fit</h3>`
           + (cap.catalog && !dmUi.catalog ? `<p class="muted">${esc(dmUi.catalogError || "Reading the catalog…")}</p>` : "")
-          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([state.providerLabels.get(o.provider) || o.provider, o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
+          + (cap.catalog && othersOrNull === null ? `<p class="muted">${esc(engineStore.error ? `Could not check the engines on this computer: ${engineStore.error}` : "Checking the engines on this computer…")}</p>` : "")
+          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([dmEngineName(o.provider, o.artifact), o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
           // A read-only row (input.image covered by the text model) has no editor to open (review 1069).
           + (rowReadOnly ? "" : `<div class="modal-actions"><button type="button" class="secondary" data-dmc="any">All engines and models…</button></div>`) + `</section>`);
         if (cap.key) parts.push(dmKeyMarkup());
@@ -15937,7 +16011,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (act === "any") { const route = cap.route; closeDmChoice(); return dmChooseAny(route); }
       if (act === "use-rec") { await dmUseRecommendedFor(cap.route); return renderDmChoice(); }
       if (act === "use-other") {
-        const o = dmOtherModels(cap)[Number(b.dataset.i)];
+        const o = (dmOtherModels(cap) || [])[Number(b.dataset.i)];
         if (!o || dmUi.busy.has(cap.route)) return;
         dmUi.busy.add(cap.route);
         b.disabled = true;
@@ -16904,6 +16978,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          delete options.speculation;
 	          if (value !== undefined && value !== null) options.speculation = value;
 	          if (changed) optionsEdited = true;
+	        }
+	        if (String(row?.key || "").startsWith("embedding.")) {
+	          if (Object.prototype.hasOwnProperty.call(options, "device")) throw new Error("Use the Device selector; the options box edits the remaining provider settings.");
+	          const dev = $("modal-default-device").value;
+	          if (dev) options.device = dev; else delete options.device;
+	          if (dev !== String(prefill.device || "")) optionsEdited = true;
 	        }
 	        if (optionsEdited) body.options = options;
 	        // Slow lane: see apply-recommended. A 60s abort on a PUT is

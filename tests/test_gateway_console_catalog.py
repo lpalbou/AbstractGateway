@@ -228,6 +228,15 @@ if (__SCRIPT__ === "every") {
   snap("plain");
   out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
 }
+if (__SCRIPT__ === "hfevery") {
+  const hubCalls = () => calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?q=")).map((c) => c.path);
+  out.hubCalls1 = hubCalls();
+  out.html = root.innerHTML;
+  // The Catalog's switch never re-asks Hugging Face (its search is always every quant).
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
+  await settle();
+  out.hubCalls2 = hubCalls();
+}
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
   root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
@@ -250,6 +259,9 @@ if (__SCRIPT__ === "merged") {
   click("delete-confirm"); await settle(); await settle(); snap("afterDelete"); out.afterDeleteHtml = root.innerHTML;
   out.deletes = calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => JSON.parse(c.body));
   }
+}
+if (__SCRIPT__ === "unloadable") {
+  out.html = root.innerHTML;
 }
 if (__SCRIPT__ === "unreported") {
   chip("quant", "8bit", true); snap("clicked");
@@ -409,7 +421,7 @@ def _hub(rows: int) -> dict:
 def check_hf(out: dict, hub: dict) -> None:
     n = len(hub["rows"])
     arts = sum(len(r["artifacts"]) for r in hub["rows"])
-    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true"]
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true"]
     # The Hub answer is drawn as the SAME cards and rows, every one of them.
     assert out["initial"]["cards"] == n and out["initial"]["arts"] == arts
     assert out["initial"]["count"] == [n, n, arts]
@@ -420,7 +432,7 @@ def check_hf(out: dict, hub: dict) -> None:
     assert set(out["initial"]["boldQuant"]) == {"8-bit", "Not stated"}
     assert 'data-mc-action="download"' in out["html"]
     assert out["backToCatalog"]["hash"] == "#catalog" and out["backToCatalog"]["cards"] == 80
-    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true"
+    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true&extended=true"
     assert out["second"]["hash"] == "#catalog?hf=qwen%20coder"
 
 
@@ -483,9 +495,9 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
     assert out["page3"]["cards"] == 10 and 'data-mc-hub-count="10">Showing 10 Hugging Face results.</span>' in out["html3"]
     assert 'data-mc-action="hub-more"' not in out["html3"]
     assert out["hubCalls"] == [
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=2",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=3",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=2",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=3",
     ]
 
 
@@ -504,7 +516,7 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     hub = _hub_page(0, 3, page=1, more=True)
     hub["rows"].insert(0, dict(cat["rows"][0], source="curated"))  # a curated row also in the answer: drawn once
     out = _run(cat, "beside", "#catalog?q=org-1", hub=hub)
-    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true"]
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true&extended=true"]
     assert '<h4 class="mc-hub-beside__title">From Hugging Face</h4>' in out["html"]
     assert 'data-mc-hub-beside="3"' in out["html"]
     assert out["html"].count('data-mc-model="hf:') == 3
@@ -526,6 +538,20 @@ def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
     assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
     assert 'data-mc-every="1" checked' in out["html"]
     assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
+
+
+def test_a_hugging_face_search_lists_every_quant_and_has_no_switch() -> None:
+    """Operator ruling (2026-10-29): "this is a Hugging Face search, it should show what's available,
+    period". OVH 8443 showed 2 of the 24 quants of unsloth/Qwen3.8-27B-GGUF. The Hugging Face tab now
+    always asks `extended=true` and shows no "Every quant" switch (the Catalog tab keeps it)."""
+    cat = _catalog(10)
+    hub = _hub_page(0, 3, page=1, more=False)
+    out = _run(cat, "hfevery", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
+    assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"]
+    assert re.search(r'data-mc-every-switch="1" hidden', out["html"]), out["html"][:600]
+    assert out["hubCalls2"] == out["hubCalls1"]
+    catalog = _run(cat, "every", "", hub=hub)  # the Catalog tab keeps its switch, shown
+    assert 'data-mc-every-switch="1" title=' in catalog["html"] and 'data-mc-every-switch="1" hidden' not in catalog["html"]
 
 
 def _gpu_limit_catalog() -> dict:
@@ -566,3 +592,48 @@ def test_fits_filter_matches_abstractcore_fits_filter_verdicts() -> None:
     m = re.search(r"const MC_FITS_FILTER_VERDICTS = (\[[^\]]*\]);", CATALOG_JS)
     assert m, "the console names its fits-filter verdicts"
     assert tuple(json.loads(m.group(1))) == tuple(FITS_FILTER_VERDICTS)
+
+
+def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() -> None:
+    """AbstractCore 0867/0868 (OVH: XHToken/Spark-X2.6-4B-GGUF, architecture spark2_5): a build the gateway's
+    llama.cpp cannot load is never offered for download or as the default; the button is greyed with the
+    sentence as its tooltip. Downloaded: the installed row's `loadable: false` (0867); not yet: the catalog
+    artifact's, from the Hub's architecture (0868)."""
+    reason = "This computer's llama.cpp (llama-cpp-python 0.3.16) cannot load the spark2_5 architecture. Update llama-cpp-python, or choose another model."
+    cat = _catalog(2)
+    row = cat["rows"][1]
+    assert row["capabilities"]["text"] is True and not row["capabilities"]["embedding"]
+    a0, a1, a2 = row["artifacts"]
+    # Not downloaded, the Hub says spark2_5: core marks it not downloadable with the reason.
+    a1.update(loadable=False, unloadable_reason=reason, downloadable=False, gguf_architecture="spark2_5")
+    # Downloaded: the installed row (GET /models/installed) carries the reason.
+    a0["presence"] = {"status": "installed", "location": None, "evidence": None}
+    installed = {"schema": "models_installed_v1", "errors": {}, "rows": [
+        {"provider": a0["provider"], "artifact": a0["artifact"], "loadable": False, "unloadable_reason": reason},
+        # A downloaded model outside the catalog (#45's "Use as default"): greyed the same way.
+        {"provider": "huggingface", "artifact": "XHToken/Spark-X2.6-4B-GGUF", "kind": "model", "tasks": ["text_generation"],
+         "loadable": False, "unloadable_reason": reason},
+    ]}
+    html = _run(cat, "unloadable", installed=installed)["html"]
+    card = html[html.index('data-mc-model="model-1"'):]
+    greyed = f'<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="{reason.replace(chr(39), "&#39;")}">'
+    assert greyed + "Download</button>" in card
+    assert greyed + "Use as default</button>" in card
+    # The other build of the same model is offered as usual.
+    assert f'data-mc-action="download" data-provider="{a2["provider"]}" data-artifact="{a2["artifact"]}"' in card
+    extra = html[html.index("XHToken/Spark-X2.6-4B-GGUF"):]
+    assert greyed + "Use as default</button>" in extra and 'data-mc-action="default" data-provider="huggingface" data-artifact="XHToken/Spark-X2.6-4B-GGUF"' not in extra
+    # Model 0's downloaded build (no flag) keeps its working buttons.
+    assert 'data-mc-unloadable' not in html[:html.index('data-mc-model="model-1"')]
+
+
+
+def test_an_unloadable_gguf_a_newer_llamacpp_loads_offers_the_update() -> None:
+    """AbstractCore `llamacpp_update`: "Update llama.cpp" instead of only greying (operator
+    2026-10-29). MUTANT: greyed Download only -> RED."""
+    from abstractgateway.console import gateway_console_html
+
+    html = gateway_console_html()
+    assert 'data-mc-action="llama-update"' in html and "Update llama.cpp" in html
+    assert '/api/gateway/engines/llamacpp/install' in html
+    assert "mcLlamaUpdateMarkup(a, unloadable, admin) ||" in html, "the greyed button stays only without an update"

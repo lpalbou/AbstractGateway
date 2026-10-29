@@ -510,6 +510,33 @@ CATALOG_JS = r"""
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
     function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    // A GGUF this computer's llama.cpp cannot load (AbstractCore 0867/0868): the catalog
+    // artifact says so from the Hub's architecture (`loadable: false`), a downloaded one from its
+    // file (the installed row of GET /models/installed). The sentence, or "".
+    function mcUnloadable(a) {
+      if (a && a.loadable === false) return String(a.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      for (const r of mcInstalledRows()) {
+        if (r.loadable === false && mcSameFiles(a, r)) return String(r.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      }
+      return "";
+    }
+    // A NEWER llama.cpp loads it (AbstractCore `llamacpp_update`: the newest llama-cpp-python
+    // release knows the architecture): the row offers "Update llama.cpp" (one click, the engine
+    // install path) instead of only greying. `{architecture, installed, update_to}` or null.
+    function mcLlamaUpdate(a) {
+      if (a && a.llamacpp_update && a.llamacpp_update.update_to) return a.llamacpp_update;
+      for (const r of mcInstalledRows()) {
+        if (r.llamacpp_update && r.llamacpp_update.update_to && mcSameFiles(a, r)) return r.llamacpp_update;
+      }
+      return null;
+    }
+    function mcLlamaUpdateMarkup(a, unloadable, admin) {
+      const up = mcLlamaUpdate(a);
+      if (!up) return "";
+      if (mcStore.llamaUpdating) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Updating llama.cpp...</button>`;
+      const tip = `${unloadable} Installs llama-cpp-python ${up.update_to} through the engine installer (it keeps this computer's GPU build).`;
+      return `<button type="button" class="ui-btn is-primary" data-mc-action="llama-update" title="${esc(tip)}"${admin ? "" : ' disabled title="Only an admin can update llama.cpp"'}>Update llama.cpp</button>`;
+    }
     // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
     // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
     function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
@@ -528,13 +555,17 @@ CATALOG_JS = r"""
         return dlCancelMarkup(jid, "Cancel", { attrs: ` data-mc-action="cancel" data-job="${esc(jid)}"` });
       }
       if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
+      const unloadable = mcUnloadable(a);
       if (mcInstalled(a)) {
         const del = mcDeleteButton(a, attrs, admin);
         if (!mcCanBeDefault(row)) return del;
+        // Greyed with the reason: a default it cannot load would fail at the first call.
+        if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Use as default</button>`) + del;
         const cur = mcCurrentDefault();
         if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
         return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
       }
+      if (unloadable) return mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Download</button>`;
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
         return `<span class="mc-muted" title="${esc(why)}">Not available here</span>`;
@@ -638,7 +669,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
         + `<div class="mc-art__chips">${chips}</div>`
         + `</div>`
-        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? mcDefaultMarkup(r.provider, r.artifact, attrs, admin) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(mcUnloadable(r))}">Use as default</button>`) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
         + `</li>`;
     }
@@ -764,7 +795,7 @@ CATALOG_JS = r"""
         + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
         + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
         + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
-        + `<label class="ui-switch" title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
+        + `<label class="ui-switch" data-mc-every-switch="1"${mcHfMode(f) ? " hidden" : ""} title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
         + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
         + `<div class="mc-filters" data-mc-part="controls"></div>`
@@ -818,6 +849,9 @@ CATALOG_JS = r"""
       if (everyBox) everyBox.checked = !!view.filters.every;
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
+      // The Hugging Face tab always lists every quant: no switch there.
+      const everySwitch = el.querySelector("[data-mc-every-switch]");
+      if (everySwitch) everySwitch.hidden = hf;
       const want = hf ? view.filters.hf : view.filters.q;
       if (search && search.value !== want && document.activeElement !== search) search.value = want;
       if (search) { search.placeholder = mcSearchPlaceholder(view.filters); search.setAttribute("aria-label", hf ? "Search Hugging Face" : "Search the model catalog"); }
@@ -932,7 +966,9 @@ CATALOG_JS = r"""
     // Hugging Face mode: the catalog route with `hub=true` and the query.
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
-      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
+      // A Hugging Face search shows what is available, period (operator, 2026-10-29): every quant of
+      // every matching repo, always (`extended=true`); the "Every quant" switch is the Catalog's only.
+      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
       }
@@ -1006,6 +1042,27 @@ CATALOG_JS = r"""
       view.filters = Object.assign({}, view.filters, patch);
       mcWriteHash(view);
       mcRenderView(view);
+    }
+    // "Update llama.cpp": the engine installer's own job (POST /engines/llamacpp/install), polled
+    // until it ends; then the catalog and the installed rows are read again.
+    async function mcLlamaUpdateRun() {
+      if (mcStore.llamaUpdating) return;
+      mcStore.llamaUpdating = true;
+      mcRender();
+      try {
+        const res = await api("/api/gateway/engines/llamacpp/install", { slow: true, method: "POST", body: JSON.stringify({ dry_run: false, location: "auto" }) });
+        let job = (res && res.job_id) ? res : ((res && res.job) || null);
+        const deadline = Date.now() + 30 * 60 * 1000;
+        while (job && job.job_id && !["done", "failed", "cancelled", "succeeded", "completed"].includes(String(job.status || job.state || "")) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          job = await api(`/api/gateway/engines/jobs/${encodeURIComponent(job.job_id)}`);
+        }
+      } catch (e) {
+        mcStore.message = `Could not update llama.cpp: ${String((e && e.message) || e)}`;
+      } finally {
+        mcStore.llamaUpdating = false;
+        await mcLoad();
+      }
     }
     async function mcDownload(view, provider, artifact) {
       const key = downloadJobKey(provider, artifact);
@@ -1121,6 +1178,7 @@ CATALOG_JS = r"""
       }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
+      if (action === "llama-update") { mcLlamaUpdateRun(); return; }
       if (action === "cancel") { dlCancel(b.dataset.job, b, b.dataset.dlStep); return; }
       if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); return; }
       if (action === "delete-ask") { mcDeleteAsk(b.dataset.provider, b.dataset.artifact); return; }
@@ -1158,7 +1216,10 @@ CATALOG_JS = r"""
         if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
         if (t && t.dataset && t.dataset.mcEvery) {
           mcSetFilter(view, { every: !!t.checked });
-          if (mcStore.every !== !!t.checked) { mcStore.every = !!t.checked; mcLoad(); }
+          if (mcStore.every !== !!t.checked) {
+            mcStore.every = !!t.checked;
+            mcLoad();
+          }
         }
       };
       el.onkeydown = (event) => {

@@ -17,6 +17,9 @@ class EmbeddingRouteConfig:
     authority: str = "abstractcore.local"
     remote_core_url: Optional[str] = None
     remote_core_token: Optional[str] = None
+    # Where a LOCAL embedding model runs: "gpu" | "cpu" (the route's `options.device`, the
+    # person's choice); None = the GPU when there is room.
+    device: Optional[str] = None
 
 
 def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
@@ -56,7 +59,14 @@ def resolve_embedding_config(*, base_dir: Path) -> EmbeddingRouteConfig:
         authority=str(payload.get("authority") or "abstractcore.local") if isinstance(payload, dict) else "abstractcore.local",
         remote_core_url=remote_core_url,
         remote_core_token=core_config.core_server_token() if remote_core_url else None,
+        device=_route_device(route),
     )
+
+
+def _route_device(route: Dict[str, Any]) -> Optional[str]:
+    options = route.get("options") if isinstance(route.get("options"), dict) else {}
+    device = str(options.get("device") or "").strip().lower()
+    return device if device in ("gpu", "cpu") else None
 
 
 def build_embedding_client(route: EmbeddingRouteConfig, *, cache_dir: Path, strict: bool = True) -> Any:
@@ -69,6 +79,8 @@ def build_embedding_client(route: EmbeddingRouteConfig, *, cache_dir: Path, stri
         "cache_dir": cache_dir,
         "strict": bool(strict),
     }
+    if route.device:
+        manager_kwargs["device"] = route.device
     if route.base_url:
         manager_kwargs["provider_kwargs"] = {"base_url": route.base_url}
 
