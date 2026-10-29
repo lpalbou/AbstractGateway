@@ -22,9 +22,9 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 16
-- Proposed: 49
+- Proposed: 48
 - Completed: 34
-- Deprecated: 2
+- Deprecated: 3
 - Recurrent: 0
 
 <!-- 2026-10-29: 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
@@ -215,6 +215,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Reason |
 | --- | --- |
+| [0944_openai_endpoint_as_a_separately_supervised_process.md](deprecated/0944_openai_endpoint_as_a_separately_supervised_process.md) | Superseded by ADR 0002 (2026-10-29): `/v1` is served by the model host child (a separate `/v1` process would load every model twice); drill and controls in 0968 |
 | [deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md](deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md) | Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram. |
 
 ## Planning Notes

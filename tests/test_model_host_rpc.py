@@ -206,3 +206,84 @@ def test_mode_defaults():
     assert mh.default_mode(platform="darwin") == mh.MODE_IN_PROCESS
     assert mh.default_mode(platform="win32") == mh.MODE_IN_PROCESS
     assert mh.active() is False  # nothing in the test process started one
+
+
+class _OnlyHere:
+    """Importable in the test process only: the child cannot unpickle it."""
+
+
+def test_an_unreadable_request_fails_alone_and_the_connection_stays_usable(tmp_path, fake):
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+        client.generate(prompt="warm")
+        pid = sup.pid
+        with pytest.raises(mh.ModelHostRemoteError) as info:
+            client.generate(prompt="x", params={"odd": _OnlyHere()})
+        assert "could not read this request" in str(info.value)
+        assert "after" in client.generate(prompt="after")["content"]
+        assert sup.pid == pid and not mh.read_incidents(tmp_path / "data")
+    finally:
+        sup.stop()
+
+
+def test_a_refused_setter_is_not_replayed_after_a_restart(tmp_path, fake):
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="multi", ctor=_ctor(fake))
+        client.generate(prompt="warm")
+        try:
+            client.set_default_provider_model(provider="no-such-provider", model="x")
+        except Exception:  # noqa: BLE001 - refused or accepted lazily: either way it must not poison
+            pass
+        client.set_default_provider_model(provider="openai-compatible", model="fake-model",
+                                          llm_kwargs={"base_url": fake.base_url, "api_key": "fake-key"})
+        pid = sup.pid
+        os.kill(pid, signal.SIGKILL)
+        assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
+        assert "after" in client.generate(prompt="after")["content"]
+    finally:
+        sup.stop()
+
+
+def test_configuration_reads_and_fresh_setters_never_wait_for_the_child(tmp_path, fake):
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="multi", ctor=_ctor(fake))
+        client.generate(prompt="warm")
+        os.kill(sup.pid, signal.SIGSTOP)  # a frozen child
+        try:
+            t0 = time.monotonic()
+            assert client._llm_kwargs["base_url"] == fake.base_url
+            assert client._default_provider == "openai-compatible"
+            assert callable(client.voice_library) and callable(client.list_model_residency)
+            fresh = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+            fresh.set_provider_endpoint_profile_resolver(lambda name: None)
+            assert time.monotonic() - t0 < 0.5
+        finally:
+            os.kill(sup.pid, signal.SIGCONT)
+    finally:
+        sup.stop()
+
+
+def test_stop_gives_the_process_back_its_in_process_defaults(tmp_path):
+    from abstractruntime.integrations.abstractcore.llm_client import default_model_warmup
+
+    before = default_model_warmup()
+    mh.set_mode("process", source="test")
+    mh.start(tmp_path / "data", nice=0)
+    try:
+        assert mh.active() and mh.mode() == mh.MODE_PROCESS and default_model_warmup() is False
+    finally:
+        mh.stop()
+    assert not mh.active() and mh.mode() == mh.MODE_IN_PROCESS and default_model_warmup() is before
+
+
+@pytest.mark.skipif(not os.path.isdir("/proc"), reason="reads /proc/<pid>/fd")
+def test_the_child_stdout_goes_to_its_log_after_ready(tmp_path):
+    sup = _sup(tmp_path)
+    try:
+        pid = sup.pid
+        assert os.readlink(f"/proc/{pid}/fd/1") == os.readlink(f"/proc/{pid}/fd/2")
+    finally:
+        sup.stop()

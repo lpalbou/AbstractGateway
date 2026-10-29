@@ -914,3 +914,14 @@ def pytest_sessionfinish(session, exitstatus):
 
 def pytest_unconfigure(config):
     _hermetic_unconfigure()
+
+
+@pytest.fixture(autouse=True)
+def _model_host_process_state_reset():
+    """ADR 0002: a test that drives `cli.main(["serve"...])` on Linux starts a model host child;
+    whatever happens, the next test starts in-process with the default warm-up."""
+    yield
+    from abstractgateway import model_host as _mh
+
+    if _mh.active() or _mh._mode is not None:
+        _mh.stop()

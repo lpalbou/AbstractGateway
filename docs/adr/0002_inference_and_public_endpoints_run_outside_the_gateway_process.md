@@ -39,7 +39,12 @@ no MCP endpoint of its own (it is an MCP client).
    objects (the runtime's retry classification sees the provider's own exception). Transport: an
    authenticated local socket (Unix socket in a 0700 folder, a Windows named pipe), a per-boot
    32-byte key handed over stdin, pickle framing between two copies of the same installed code;
-   it is never reachable from the network.
+   it is never reachable from the network. Configuration (`set_*` calls) is recorded only once the
+   child accepted it (the last call per name) and replayed in order after a restart; one made
+   before the first build is checked by that build, and a replay the child refuses is logged and
+   dropped. Method lookups (from the runtime class) and configuration reads (`_llm_kwargs`,
+   `_provider`, ...) are answered in the gateway, so the event loop never waits on the child for
+   them.
 3. **`/v1` is served by the model host**, behind the gateway: the gateway admits the request
    (key, Who can connect, Guest, size caps, the request log) and forwards it to Core's app on the
    child's loopback port with the per-boot secret (the split-mode forwarder). `/v1` does not get
@@ -68,8 +73,9 @@ no MCP endpoint of its own (it is an MCP client).
    request with the provider's own error. The child dying during a request fails it within a
    second with a sentence naming the exit ("The model host stopped while answering (killed by
    signal 9) ...; send the message again in a few seconds"), status 424, not retried
-   automatically: the request may be what crashed it, and a retry would feed a crash loop. A
-   request while the child is restarting fails at once with status 503 (retryable).
+   automatically: the request may be what crashed it, and a retry would feed a crash loop. 424 is
+   used only when the process died; a broken connection to a child that is still running, or a
+   request while the child is restarting, fails at once with status 503 (retryable).
 8. **Modes.** `serve --model-host process|in-process` (also on `runner`). Default: `process` on
    Linux (servers), `in-process` on macOS and Windows (the menu-bar tray, Apple unified memory)
    and with `--reload`. Embedding the app without the CLI (tests, `create_app`) is `in-process`.
@@ -78,6 +84,24 @@ no MCP endpoint of its own (it is an MCP client).
 9. **Latency budget (root 1060).** The hop may add at most 2 ms p50 to a chat step on localhost,
    measured with `scripts/bench_model_host_hop.py` (in-process versus through the model host, the
    same provider) and recorded in the release report.
+
+## What this settles in the backlog
+
+- **Root 1054, structural item 2** ("the runner and the in-process model in their own process by
+  default; the API process must never share the GIL with ticks and model calls"). Stage 1 (0967)
+  delivers the model half: in the `process` mode no model call and no model load runs in the
+  gateway process, so the API never shares the GIL with inference. It is the default on Linux now
+  (this release line); macOS and Windows stay `in-process` by default until 0968 has measured the
+  tray machines (Apple unified memory, MLX prompt caches) with the child, then the default moves
+  there too, in the release that ships 0968. The tick half is not changed here: run ticking stays
+  in the gateway process unless split mode (`serve --no-runner` + `runner`, opt-in) is used; making
+  split mode the default remains 1054 item 2's open half, with the runner process supervised under
+  this ADR's rules when it is.
+- **Gateway 0944** ("the OpenAI-compatible endpoint as a separately supervised process"):
+  rejected as asked and deprecated. A `/v1` process of its own would either load every model a
+  second time (inference must use the one model pool) or forward to the model host anyway: one
+  more hop, the same failure domain. `/v1` is served by the supervised model host child, behind
+  the gateway's admission (decision 3). 0944's load drill and console controls moved to 0968.
 
 ## Consequences
 
@@ -120,7 +144,7 @@ no MCP endpoint of its own (it is an MCP client).
   p50 (macOS) / +0.52 ms p50 (Linux, 4 vCPU), streamed with live deltas within noise; budget 2 ms.
 
 ## Backlog links
-- 0944 (endpoint as a supervised process: `/v1` through the model host), 0943 (incident ledger:
+- 0944 (deprecated by this ADR: `/v1` is served by the model host child), root 1054 item 2 (the model half), 0943 (incident ledger:
   first non-watchdog writer), 0967 (stage 1, this ADR's implementation), 0968 (stage 2: the remaining in-process engines, MCP), root 1060.
 
 ## Related

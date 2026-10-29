@@ -25,13 +25,17 @@ import queue
 import signal
 import sys
 import threading
+import time
 import traceback
 import types
 import weakref
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .model_host import ModelHostRemoteError, _portable_exception
+from .model_host import CONFIG_ATTRS, ModelHostRemoteError, _portable_exception
+
+SYNC_CALLBACK_TIMEOUT_S = 60.0
+_STRONG_HANDLES_MAX = 256
 
 logger = logging.getLogger("abstractgateway.model_host.child")
 
@@ -42,8 +46,9 @@ _HANDLE_MODULE_PREFIXES = ("abstractcore.providers", "abstractruntime.integratio
 
 
 class _Host:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, generation: int = 0) -> None:
         self.data_dir = data_dir
+        self.generation = int(generation)
         self.clients: Dict[str, Any] = {}
         self._handles: "weakref.WeakValueDictionary[str, Any]" = weakref.WeakValueDictionary()
         self._strong: Dict[str, Any] = {}
@@ -69,10 +74,21 @@ class _Host:
             hid = f"h{next(self._ids)}"
             try:
                 self._handles[hid] = obj
-            except TypeError:  # not weakly referenceable
+                key = id(obj)
+                weakref.finalize(obj, self._forget, key, hid)
+            except TypeError:  # not weakly referenceable: kept, bounded (oldest dropped)
                 self._strong[hid] = obj
+                while len(self._strong) > _STRONG_HANDLES_MAX:
+                    old_hid = next(iter(self._strong))
+                    old = self._strong.pop(old_hid)
+                    self._handle_ids.pop(id(old), None)
             self._handle_ids[id(obj)] = hid
             return hid
+
+    def _forget(self, key: int, hid: str) -> None:
+        with self.lock:
+            if self._handle_ids.get(key) == hid:
+                self._handle_ids.pop(key, None)
 
     def resolve(self, target: Tuple[str, str]) -> Any:
         kind, ident = target
@@ -116,6 +132,7 @@ class _Channel:
         rid = next(self._rids)
         box: "queue.Queue[Tuple[bool, Any]]" = queue.Queue(maxsize=1)
         self.replies[rid] = box
+        deadline = time.monotonic() + SYNC_CALLBACK_TIMEOUT_S
         try:
             self.send(("cbq", rid, cid, method, args, kwargs))
             while True:
@@ -125,6 +142,9 @@ class _Channel:
                 except queue.Empty:
                     if self.closed.is_set():
                         raise RuntimeError("model host: the gateway went away during a callback")
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(f"model host: the gateway did not answer a callback within "
+                                           f"{SYNC_CALLBACK_TIMEOUT_S:.0f} s (its request has ended)")
         finally:
             self.replies.pop(rid, None)
         if ok:
@@ -234,6 +254,8 @@ class _ChildUnpickler(pickle.Unpickler):
         if kind == "client":
             return self._channel.host.resolve(("c", pid[1]))
         if kind == "handle":
+            if len(pid) > 2 and int(pid[2]) != self._channel.host.generation:
+                raise LookupError("this object lived in an earlier model host process (it restarted since)")
             return self._channel.host.resolve(("h", pid[1]))
         raise pickle.UnpicklingError(f"unknown gateway reference {kind!r}")
 
@@ -270,6 +292,20 @@ def _error(exc: BaseException) -> Tuple[Any, ...]:
     return ("err", portable, _portable_exception(cause) if cause is not None else None)
 
 
+def _config_attrs(obj: Any, names: Any = CONFIG_ATTRS) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for name in names:
+        if not hasattr(obj, name):
+            continue
+        value = getattr(obj, name)
+        try:
+            pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:  # noqa: BLE001 - not a plain value: read through the child instead
+            continue
+        out[name] = value
+    return out
+
+
 def _build_client(kind: str, ctor: Dict[str, Any]) -> Any:
     from abstractruntime.integrations.abstractcore import llm_client as lc
 
@@ -292,7 +328,10 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
             client = _build_client(kind, ctor)
             with host.lock:
                 host.clients[cid] = client
-            channel.send(("ok", None))
+            channel.send(("ok", {"attrs": _config_attrs(client)}))
+        elif op == "getattrs":
+            _, target, names = req
+            channel.send(("ok", _config_attrs(host.resolve(target), names)))
         elif op == "drop":
             with host.lock:
                 host.clients.pop(req[1], None)
@@ -323,6 +362,9 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
                     channel.send(("err", ModelHostRemoteError(
                         f"the result of {method} ({type(result).__name__}) cannot cross to the gateway: {exc}",
                         remote_type=type(exc).__name__), None))
+        elif op == "unreadable":
+            channel.send(("err", ModelHostRemoteError(f"the model host could not read this request: {req[1]}",
+                                                      remote_type=type(req[1]).__name__), None))
         else:
             channel.send(("err", ModelHostRemoteError(f"unknown model host request {op!r}"), None))
     except (OSError, EOFError):
@@ -341,7 +383,11 @@ def _reader(channel: _Channel) -> None:
     try:
         while True:
             data = channel.conn.recv_bytes()
-            msg = _ChildUnpickler(data, channel).load()
+            try:
+                msg = _ChildUnpickler(data, channel).load()
+            except Exception as exc:  # noqa: BLE001 - that request fails; the connection stays in step
+                channel.requests.put(("unreadable", exc))
+                continue
             kind = msg[0]
             if kind == "set":
                 ev = channel.events.get(msg[1])
@@ -389,6 +435,10 @@ def _watch_parent(stdin) -> None:
 
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C in a terminal is the gateway's to handle
+    # A service manager's stop signals the whole group: the gateway stops this child itself (it
+    # closes our stdin), so a SIGTERM here is not a crash to record and restart.
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     line = sys.stdin.buffer.readline()
@@ -396,6 +446,7 @@ def main() -> int:
         hs = json.loads(line.decode("utf-8"))
         authkey = bytes.fromhex(hs["authkey"])
         family, address, data_dir = hs["family"], hs["address"], Path(hs["data_dir"])
+        generation, nice = int(hs.get("generation") or 0), int(hs.get("nice") or 0)
     except Exception as exc:  # noqa: BLE001
         sys.stdout.write(json.dumps({"ready": False, "reason": f"bad handshake: {exc}"}) + "\n")
         sys.stdout.flush()
@@ -404,7 +455,10 @@ def main() -> int:
     os.environ["ABSTRACTGATEWAY_DATA_DIR"] = str(data_dir)
     from multiprocessing.connection import Listener
 
-    host = _Host(data_dir)
+    if nice and hasattr(os, "nice"):
+        with contextlib.suppress(OSError):
+            os.nice(nice)
+    host = _Host(data_dir, generation)
     try:
         listener = Listener(address, family=family, authkey=authkey, backlog=64)
         if family == "AF_UNIX":
@@ -420,6 +474,10 @@ def main() -> int:
     logger.info("model host pid %s: RPC on %s, Core's app on %s", os.getpid(), address, http.url)
     sys.stdout.write(json.dumps({"ready": True, "pid": os.getpid(), "http": http.url}) + "\n")
     sys.stdout.flush()
+    # From here on, anything printed goes to the log: the gateway reads no more of our stdout, and
+    # a full pipe would block whichever thread printed.
+    with contextlib.suppress(OSError, ValueError):
+        os.dup2(sys.stderr.fileno(), 1)
     while True:
         try:
             conn = listener.accept()

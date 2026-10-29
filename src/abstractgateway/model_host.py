@@ -135,20 +135,35 @@ def start(data_dir: Path, *, memory_ceiling_bytes: Optional[int] = None, nice: i
         sup = ModelHostSupervisor(Path(data_dir), memory_ceiling_bytes=memory_ceiling_bytes, nice=nice,
                                   process_label=process_label)
         _supervisor = sup
-    from abstractruntime.integrations.abstractcore.llm_client import set_default_model_warmup
+    from abstractruntime.integrations.abstractcore.llm_client import default_model_warmup, set_default_model_warmup
 
+    global _warmup_before
+    _warmup_before = default_model_warmup()
     # This process holds no model: a runtime built here never warms one (the child does).
     set_default_model_warmup(False)
+    import atexit
+
+    atexit.register(stop)
     sup.start()
     return sup
 
 
+_warmup_before: Optional[bool] = None
+
+
 def stop() -> None:
-    global _supervisor
+    """Stop the child and give this process back its in-process defaults (mode, warm-up)."""
+    global _supervisor, _mode, _mode_source, _warmup_before
     with _state_lock:
         sup, _supervisor = _supervisor, None
+        warmup, _warmup_before = _warmup_before, None
+        _mode, _mode_source = None, "default"
     if sup is not None:
         sup.stop()
+    if warmup is not None:
+        from abstractruntime.integrations.abstractcore.llm_client import set_default_model_warmup
+
+        set_default_model_warmup(warmup)
 
 
 def health_snapshot() -> Dict[str, Any]:
@@ -177,11 +192,14 @@ def default_memory_ceiling_bytes() -> Optional[int]:
 
 
 def rss_bytes(pid: int) -> Optional[int]:
-    """Resident memory of `pid`: /proc on Linux, psutil elsewhere; None when unreadable."""
+    """Resident anonymous memory of `pid` (/proc RssAnon on Linux; psutil's RSS elsewhere); None when
+    unreadable."""
     try:
         with open(f"/proc/{int(pid)}/status", "r", encoding="ascii", errors="replace") as fh:
             for line in fh:
-                if line.startswith("VmRSS:"):
+                # Anonymous memory only (heap, KV cache, tensors): a memory-mapped GGUF's file pages
+                # are reclaimable and must not trip the ceiling.
+                if line.startswith("RssAnon:"):
                     return int(line.split()[1]) * 1024
     except OSError:
         pass
@@ -248,6 +266,9 @@ def _file_artifact_store_base(obj: Any) -> Optional[str]:
     return None
 
 
+_CALLBACK_IDS = itertools.count(1)
+
+
 class _CallContext:
     """Callbacks and events of ONE request, by id (the parent answers the child's callbacks)."""
 
@@ -255,10 +276,10 @@ class _CallContext:
         self.callbacks: Dict[str, Any] = {}
         self.events: Dict[str, threading.Event] = {}
         self.persistent = persistent
-        self._ids = itertools.count(1)
-
     def new_id(self, prefix: str) -> str:
-        return f"{prefix}{next(self._ids)}"
+        # Unique across requests: a callback the child makes late (a provider thread finishing after
+        # its request ended) must never match the next request's callback on a pooled connection.
+        return f"{prefix}{next(_CALLBACK_IDS)}"
 
     def callback(self, cid: str) -> Any:
         if cid in self.callbacks:
@@ -391,7 +412,7 @@ class _Exchange:
             msg = self._next(timeout_s=timeout_s)
             if msg[0] == "iter":
                 streaming = True
-                return self._stream(token)
+                return _Stream(self, token)
             return self._finish(msg)
         finally:
             if not streaming:
@@ -416,26 +437,6 @@ class _Exchange:
             raise exc
         raise ModelHostRemoteError(f"the model host answered an unknown message {kind!r}")
 
-    def _stream(self, token: Any):
-        try:
-            while True:
-                msg = self._next(timeout_s=None)
-                if msg[0] == "item":
-                    yield msg[1]
-                elif msg[0] == "end":
-                    return
-                else:
-                    self._finish(msg)
-                    return
-        except GeneratorExit:
-            # Abandoned mid-stream: the connection's position is unknown; drop it (the child stops
-            # on the broken pipe).
-            if self.conn is not None:
-                self.conn.close()
-            raise
-        finally:
-            self.host._inflight_remove(token)
-            self._release()
 
     def _watch_events(self) -> None:
         for eid, ev in self.ctx.events.items():
@@ -494,6 +495,54 @@ class _Exchange:
                     raise self.host._crashed_error(conn.generation, during="answering") from exc
                 continue
             return msg
+
+
+class _Stream:
+    """A stream answer (a generator in the child): items arrive as the consumer pulls them. Closed,
+    abandoned or garbage-collected before its end, it drops its connection (the child stops on the
+    broken pipe) and its in-flight entry."""
+
+    def __init__(self, exchange: "_Exchange", token: Any) -> None:
+        self._exchange = exchange
+        self._token = token
+        self._done = False
+
+    def __iter__(self) -> "_Stream":
+        return self
+
+    def __next__(self) -> Any:
+        if self._done:
+            raise StopIteration
+        try:
+            msg = self._exchange._next(timeout_s=None)
+        except BaseException:
+            self._end(clean=False)
+            raise
+        if msg[0] == "item":
+            return msg[1]
+        if msg[0] == "end":
+            self._end(clean=True)
+            raise StopIteration
+        self._end(clean=True)
+        self._exchange._finish(msg)
+        raise StopIteration
+
+    def _end(self, *, clean: bool) -> None:
+        if self._done:
+            return
+        self._done = True
+        ex = self._exchange
+        if not clean and ex.conn is not None:
+            ex.conn.close()
+        ex.host._inflight_remove(self._token)
+        ex._release()
+
+    def close(self) -> None:
+        self._end(clean=False)
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
+            self._end(clean=False)
 
 
 def _portable_exception(exc: BaseException) -> BaseException:
@@ -557,13 +606,40 @@ class _RemoteHandle:
         return f"<{self._mh_type} in the model host>"
 
 
+# Configuration attributes the gateway reads off the client (`getattr(client, "_llm_kwargs")`, the
+# effect handlers' `_provider`/`_model`): kept here, refreshed at every build and after every
+# successful `set_*`, so reading them never waits for the child (or blocks the event loop).
+CONFIG_ATTRS = ("_llm_kwargs", "_default_provider", "_default_model", "_provider", "_model",
+                "_core_config_file", "_bloc_root_dir", "_prompt_cache_export_root_dir",
+                "_capability_defaults", "_capability_defaults_explicit")
+
+
+def _class_callables(kind: str) -> frozenset:
+    from abstractruntime.integrations.abstractcore import llm_client as lc
+
+    cls = lc.MultiLocalAbstractCoreLLMClient if kind == "multi" else lc.LocalAbstractCoreLLMClient
+    names = set()
+    for name in dir(cls):
+        if name.startswith("__"):
+            continue
+        attr = getattr(cls, name, None)
+        if callable(attr) and not isinstance(attr, type):
+            names.add(name)
+    return frozenset(names)
+
+
 class ModelHostClient:
     """An AbstractRuntime LLM client that lives in the model host (ADR 0002).
 
     `kind` is `multi` (`MultiLocalAbstractCoreLLMClient`) or `local` (`LocalAbstractCoreLLMClient`);
     `ctor` are the constructor's keyword arguments. The child builds the client when this proxy is
-    created (warming the default model there, in the loading phase) and again after every restart;
-    the `set_*` calls made since are replayed in order.
+    created (warming the default model there, in the loading phase) and again after every restart.
+
+    `set_*` calls are configuration: one that succeeds in the child is recorded (the last call per
+    name) and replayed, in order, at every rebuild; one the child refuses raises and is not
+    recorded. Made before the first build, it is recorded and checked by that build: a replay the
+    child refuses is logged and dropped, never retried forever. Method names come from the runtime
+    class, the configuration attributes (CONFIG_ATTRS) from a local copy: neither needs the child.
     """
 
     def __init__(self, host: "ModelHostSupervisor", *, kind: str, ctor: Dict[str, Any]) -> None:
@@ -574,10 +650,18 @@ class ModelHostClient:
         self._mh_ctor = dict(ctor)
         self._mh_id = uuid.uuid4().hex
         self._mh_built_generation: Optional[int] = None
-        self._mh_lock = threading.Lock()
+        self._mh_lock = threading.Lock()  # one build at a time
+        self._mh_setters_lock = threading.Lock()
+        self._mh_setters_version = 0
         self._mh_setters: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
         self._mh_persistent: Dict[str, Any] = {}
-        self._mh_callable_names: set = set()
+        self._mh_callable_names = _class_callables(kind)
+        self._mh_config: Dict[str, Any] = {}
+        if isinstance(ctor.get("llm_kwargs"), dict):
+            self._mh_config["_llm_kwargs"] = dict(ctor["llm_kwargs"])
+        if kind == "multi":
+            self._mh_config["_default_provider"] = str(ctor.get("provider") or "").strip().lower()
+            self._mh_config["_default_model"] = str(ctor.get("model") or "").strip()
         # Read in the gateway by the tool executor's late-bound resolver getter
         # (`build_effect_handlers`), so it is kept here as well as forwarded.
         self._provider_endpoint_profile_resolver: Any = None
@@ -585,36 +669,71 @@ class ModelHostClient:
         # The child's copy goes when this proxy does (gateway-side clients are made per request).
         weakref.finalize(self, host._drop_later, self._mh_id)
 
+    def _mh_built(self) -> bool:
+        return self._mh_built_generation == self._mh_host.generation and self._mh_host.generation_alive()
+
+    def _mh_refresh_config(self, attrs: Any) -> None:
+        if isinstance(attrs, dict):
+            self._mh_config.update(attrs)
+
     # -- building in the child
     def _mh_ensure(self) -> None:
-        host = self._mh_host
-        if self._mh_built_generation == host.generation and host.generation_alive():
+        if self._mh_built():
             return
+        host = self._mh_host
         with self._mh_lock:
-            generation = host.generation
-            if self._mh_built_generation == generation and host.generation_alive():
+            if self._mh_built():
                 return
-            _Exchange(host, self, ("new", self._mh_id, self._mh_kind, self._mh_ctor),
-                      what={"method": "build", **_describe_target(self, "build")}).run()
-            for name, (args, kwargs) in list(self._mh_setters.items()):
-                _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
-                          persistent=self._mh_persistent, persistent_callbacks=True,
-                          what=_describe_target(self, name)).run()
+            generation = host.generation
+            info = _Exchange(host, self, ("new", self._mh_id, self._mh_kind, self._mh_ctor),
+                             what={"method": "build", **_describe_target(self, "build")}).run()
+            self._mh_refresh_config((info or {}).get("attrs") if isinstance(info, dict) else None)
+            replayed = -1
+            for _ in range(3):  # setters recorded while replaying are replayed too
+                with self._mh_setters_lock:
+                    version = self._mh_setters_version
+                    items = list(self._mh_setters.items())
+                if version == replayed:
+                    break
+                for name, (args, kwargs) in items:
+                    try:
+                        _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
+                                  persistent=self._mh_persistent, persistent_callbacks=True,
+                                  what=_describe_target(self, name)).run()
+                    except (ModelHostUnavailable, ModelHostCrashed):
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - a refused configuration is dropped, loudly
+                        logger.warning("model host: %s refused by the child (%s); dropped from the replay", name, exc)
+                        with self._mh_setters_lock:
+                            if self._mh_setters.get(name) == (args, kwargs):
+                                self._mh_setters.pop(name, None)
+                replayed = version
+            attrs = _Exchange(host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
+                              what={"method": "getattrs"}).run()
+            self._mh_refresh_config(attrs)
             self._mh_built_generation = generation
 
     def _mh_call(self, name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
         if name.startswith("set_"):
-            # Configuration: recorded and replayed at every build. Not built yet (the warm thread
-            # is building it, or the host is restarting): the build replays it.
-            with self._mh_lock:
+            if not self._mh_built():
+                # Not built yet (the warm thread is building it, or the host restarts): recorded,
+                # and the build applies and checks it. Never waits here (this may be the loop).
+                with self._mh_setters_lock:
+                    self._mh_setters.pop(name, None)
+                    self._mh_setters[name] = (tuple(args), dict(kwargs))
+                    self._mh_setters_version += 1
+                return None
+            result = _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
+                               persistent=self._mh_persistent, persistent_callbacks=True,
+                               what=_describe_target(self, name)).run()
+            with self._mh_setters_lock:
                 self._mh_setters.pop(name, None)
                 self._mh_setters[name] = (tuple(args), dict(kwargs))
-                built = self._mh_built_generation == self._mh_host.generation and self._mh_host.generation_alive()
-            if not built:
-                return None
-            return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
-                             persistent=self._mh_persistent, persistent_callbacks=True,
-                             what=_describe_target(self, name)).run()
+                self._mh_setters_version += 1
+            with contextlib.suppress(ModelHostUnavailable, ModelHostCrashed):
+                self._mh_refresh_config(_Exchange(self._mh_host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
+                                                  what={"method": "getattrs"}).run())
+            return result
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                          persistent=self._mh_persistent, what=_describe_target(self, name)).run()
@@ -628,11 +747,17 @@ class ModelHostClient:
             raise AttributeError(name)
         if name in self._mh_callable_names:
             return _RemoteMethod(self, name)
+        if name in CONFIG_ATTRS:
+            config = self._mh_config
+            if name in config:
+                value = config[name]
+                return dict(value) if isinstance(value, dict) else value
+            if self._mh_built():
+                raise AttributeError(name)  # the child's client has no such attribute
         self._mh_ensure()
         value = _Exchange(self._mh_host, self, ("getattr", ("c", self._mh_id), name),
                           what=_describe_target(self, name)).run()
         if value is _CALLABLE or value == _CALLABLE:
-            self._mh_callable_names.add(name)
             return _RemoteMethod(self, name)
         return value
 
@@ -844,16 +969,9 @@ class ModelHostSupervisor:
         log = self._open_log()
         log.write(f"\n--- model host generation {generation} starting {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
         log.flush()
-        preexec = None
-        if os.name == "posix" and self.nice:
-            nice = self.nice
-
-            def preexec() -> None:  # runs in the child before exec
-                with contextlib.suppress(OSError):
-                    os.nice(nice)
         try:
             proc = subprocess.Popen(self._child_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
-                                    env=env, cwd=str(self.data_dir), preexec_fn=preexec, close_fds=True)
+                                    env=env, cwd=str(self.data_dir), close_fds=True)
         except OSError as exc:
             log.close()
             self._on_spawn_failed(generation, f"could not start: {exc}")
@@ -863,7 +981,7 @@ class ModelHostSupervisor:
                 log.close()
         handshake = {"authkey": self._authkey.hex(), "family": family, "address": address,
                      "data_dir": str(self.data_dir), "parent_pid": os.getpid(), "generation": generation,
-                     "process_label": self.process_label}
+                     "process_label": self.process_label, "nice": self.nice}
         try:
             assert proc.stdin is not None
             proc.stdin.write((json.dumps(handshake) + "\n").encode())
@@ -877,6 +995,11 @@ class ModelHostSupervisor:
         threading.Thread(target=self._monitor, args=(proc, generation), name=f"model-host-monitor-{generation}",
                          daemon=True).start()
         ready = self._read_ready(proc)
+        if ready.get("ready"):
+            # The child points its stdout at its log after the readiness line; nothing more to read.
+            with contextlib.suppress(Exception):
+                if proc.stdout:
+                    proc.stdout.close()
         with self._lock:
             if generation != self.generation or self._stopping:
                 return
@@ -1157,7 +1280,16 @@ class ModelHostSupervisor:
         with self._lock:
             self._inflight.pop(token, None)
 
-    def _crashed_error(self, generation: int, *, during: str) -> ModelHostCrashed:
+    def _crashed_error(self, generation: int, *, during: str) -> RuntimeError:
+        proc = self._proc
+        if proc is not None and generation == self.generation:
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                # Still running: this connection broke, the model host did not crash.
+                return ModelHostUnavailable(
+                    f"The connection to the model host broke while {during}; the model host is still running. "
+                    "Send it again.")
         # Let the monitor record the exit first (a kill -9 is seen in milliseconds), so the
         # sentence names it and the incident file exists when the caller reads it.
         with self._lock:
