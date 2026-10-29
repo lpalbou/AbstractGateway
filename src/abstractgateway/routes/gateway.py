@@ -15818,7 +15818,11 @@ def about_payload() -> Dict[str, Any]:
         except metadata.PackageNotFoundError:
             return None
 
+    from ..instances import current_instance
+
     return {
+        # The gateway instance (instances.py): "default", or the name of a second gateway on this machine.
+        "instance": current_instance(),
         "abstractframework": installed_framework_version(_v("abstractframework")),
         "abstractgateway": _v("abstractgateway"),
         "packages": dict(sorted(packages.items())),
@@ -26976,6 +26980,22 @@ def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
     return None
 
 
+def _row_v1_held_by_for_caller(value: Any) -> Optional[list[str]]:
+    """`held_by` as the caller may read it: the operator sees every account's
+    runtime by name; a signed-in non-admin sees only its own account by name,
+    any other account's runtime as "another account's runtime"."""
+    if not isinstance(value, list):
+        return None
+    holders = [str(h) for h in value]
+    principal = current_gateway_principal()
+    if principal is None or principal.is_admin():
+        return holders
+    mine = f"the runtime of account {safe_principal_component(principal.tenant_id, default='default')}/"
+    mine += safe_principal_component(principal.user_id, default="user")
+    return [h if (h.startswith(mine + " ") or h == mine or not h.startswith("the runtime of account "))
+            else "another account's runtime" + (h[h.index(" ("):] if " (" in h else "") for h in holders]
+
+
 def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
     """Coerce one runtime residency record into the frozen `model_residency_row_v1` shape.
 
@@ -27020,6 +27040,12 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         # pair — nan/inf/bool/junk coerce to null, never a guess.
         "est_weights_bytes": _row_v1_int(record, "est_weights_bytes", "estWeightsBytes"),
         "cache_bytes": _row_v1_int(record, "cache_bytes", "cacheBytes"),
+        # What the cache is (GGUF): the KV cache llama.cpp allocated for the
+        # loaded `context_length`, estimated from the file geometry.
+        "kv_cache_bytes": _row_v1_int(record, "kv_cache_bytes", "kvCacheBytes"),
+        "kv_cache_estimated": True if record.get("kv_cache_estimated") is True else None,
+        # Who keeps it in memory, in words (ADR 0043).
+        "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
@@ -28385,6 +28411,25 @@ def _with_capability_default_warnings(
     return out
 
 
+async def _refuse_voice_not_downloaded(kind: str, modality: str, req: Any) -> Optional[JSONResponse]:
+    """A voice can be selected if and only if its model is downloaded (operator ruling 2026-10-29):
+    setting the default voice to a local model whose weights are not on disk is refused HERE, at
+    selection time, with the sentence (`detail`, a string every client prints) and the download
+    action (`error.download`). Synthesis never checks. An unknown state does not refuse."""
+    if str(kind).strip().lower() != "output" or str(modality).strip().lower() != "voice":
+        return None
+    provider = str(getattr(req, "provider", "") or "").strip()
+    model = str(getattr(req, "model", "") or "").strip()
+    if not provider or not model:
+        return None
+    from ..core_config import model_not_downloaded
+
+    missing = await off_loop("light", model_not_downloaded, provider, model)
+    if not missing:
+        return None
+    return JSONResponse(status_code=409, content={"detail": str(missing.get("message") or ""), "error": missing})
+
+
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
     """Persist one execution-host Core/Runtime capability route default.
@@ -28395,6 +28440,9 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
     config store warns here instead of refusing.
     """
     svc = get_gateway_service()
+    refused = await _refuse_voice_not_downloaded(kind, modality, req)
+    if refused is not None:
+        return refused
     try:
         save_gateway_capability_default(
             kind,

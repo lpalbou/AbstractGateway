@@ -802,7 +802,7 @@ def _serve_never_exits_the_test_process(monkeypatch: pytest.MonkeyPatch) -> None
 
     from abstractgateway import cli as _cli
 
-    def _name_stragglers() -> None:
+    def _name_stragglers(exit_code: int = 0) -> None:
         stragglers = [t.name for t in threading.enumerate()
                       if t is not threading.main_thread() and t.is_alive() and not t.daemon]
         if stragglers:
