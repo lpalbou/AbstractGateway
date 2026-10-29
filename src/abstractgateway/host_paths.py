@@ -88,20 +88,24 @@ def user_data_dir(
     env: Optional[Mapping[str, str]] = None,
     home: Optional[Path] = None,
 ) -> Path:
-    """The per-OS, per-user data directory for AbstractGateway (not created)."""
+    """The per-OS, per-user data directory for AbstractGateway (not created). A named instance
+    (`ABSTRACTGATEWAY_INSTANCE`, instances.py) gets its own: the same folder name with `-NAME`."""
     env = os.environ if env is None else env
     home = Path(home) if home is not None else Path.home()
     plat = normalize_platform(system)
+    from .instances import current_instance, suffix
+
+    sfx = suffix(current_instance(env))
     if plat == "darwin":
-        return home / "Library" / "Application Support" / "AbstractGateway"
+        return home / "Library" / "Application Support" / f"AbstractGateway{sfx}"
     if plat == "windows":
         local = str(env.get("LOCALAPPDATA") or "").strip()
         base = Path(local) if local else home / "AppData" / "Local"
-        return base / "AbstractGateway"
+        return base / f"AbstractGateway{sfx}"
     xdg = str(env.get("XDG_DATA_HOME") or "").strip()
     # The XDG spec: a relative XDG_DATA_HOME is invalid and must be ignored.
     base = Path(xdg) if xdg and Path(xdg).is_absolute() else home / ".local" / "share"
-    return base / "abstractgateway"
+    return base / f"abstractgateway{sfx}"
 
 
 def user_cache_dir(
