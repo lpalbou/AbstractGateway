@@ -1519,7 +1519,7 @@ Core catalog proxy settings:
 
 ## Model host: the models run in a supervised child process
 
-ADR [0002](./adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md). With
+ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
 `--model-host process` (the default on Linux) the gateway process loads no model and calls no
 provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
 shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a

@@ -23,6 +23,8 @@ class FakeOpenAIServer:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            # Headers and body are two writes: without this, Nagle + delayed ACK add ~40 ms on Linux.
+            disable_nagle_algorithm = True
 
             def log_message(self, *args: Any) -> None:  # quiet
                 return

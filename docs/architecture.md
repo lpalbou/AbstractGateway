@@ -843,7 +843,7 @@ flowchart LR
 - **Single process**: `abstractgateway serve` starts the HTTP API and the
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
-- **Model host** (ADR [0002](./adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md),
+- **Model host** (ADR 0002,
   `--model-host process`, the default on Linux): the models and every
   AbstractCore provider call run in one child process the gateway supervises;
   the runtime's LLM clients in the gateway are proxies with the same API, and

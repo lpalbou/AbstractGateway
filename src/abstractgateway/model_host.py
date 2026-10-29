@@ -767,6 +767,7 @@ class ModelHostSupervisor:
         self._restarts: Deque[float] = deque()
         self._stopping = False
         self._kill_reason: Optional[str] = None
+        self._recorded_generation = 0
         self._idle: List[_Connection] = []
         self._inflight: Dict[int, Dict[str, Any]] = {}
         self._inflight_ids = itertools.count(1)
@@ -944,6 +945,9 @@ class ModelHostSupervisor:
         for conn in idle:
             conn.close()
         if stopping:
+            with self._lock:
+                self._recorded_generation = generation
+                self._cond.notify_all()
             return
         while self._restarts and now - self._restarts[0] > self.restart_window_s:
             self._restarts.popleft()
@@ -963,7 +967,9 @@ class ModelHostSupervisor:
         path = write_incident(self.data_dir, doc)
         with self._lock:
             self.last_incident = {"kind": kind, "at": now, "file": path.name if path else None,
-                                  "description": doc["description"]}
+                                  "description": doc["description"], "generation": generation}
+            self._recorded_generation = generation
+            self._cond.notify_all()
         logger.error("model host: pid %s stopped (%s) with %d request(s) in flight; %s", pid, doc["description"],
                      len(inflight), "giving up after %d restarts in %.0f s" % (len(self._restarts), self.restart_window_s)
                      if give_up else f"restarting in {backoff:g} s")
@@ -1152,17 +1158,19 @@ class ModelHostSupervisor:
             self._inflight.pop(token, None)
 
     def _crashed_error(self, generation: int, *, during: str) -> ModelHostCrashed:
-        # Let the monitor see the exit first, so the sentence names it (a kill -9 is seen in ms).
-        proc = self._proc
-        if proc is not None:
-            with contextlib.suppress(Exception):
-                proc.wait(timeout=1.0)
-        code = proc.poll() if proc is not None else None
-        what = describe_exit(code) if code is not None else "the connection broke"
+        # Let the monitor record the exit first (a kill -9 is seen in milliseconds), so the
+        # sentence names it and the incident file exists when the caller reads it.
+        with self._lock:
+            self._cond.wait_for(lambda: self._recorded_generation >= generation, timeout=1.5)
+            recorded = self._recorded_generation >= generation
+            last_exit = dict(self.last_exit or {}) if recorded else {}
+            incident = dict(self.last_incident or {}) if recorded else {}
+        what = last_exit.get("description") or "the connection broke"
+        where = f"<data dir>/incidents/{incident['file']}" if incident.get("file") else "<data dir>/incidents"
         return ModelHostCrashed(
             f"The model host (the process that runs the models) stopped while {during} ({what}). "
-            "The gateway is fine and is restarting it; send the message again in a few seconds. "
-            "The incident is recorded in <data dir>/incidents.")
+            f"The gateway is fine and is restarting it; send the message again in a few seconds. "
+            f"The incident is recorded in {where}.")
 
     # -- reporting
     def snapshot(self) -> Dict[str, Any]:
