@@ -380,7 +380,7 @@ class _Exchange:
         self._sent_events: set = set()
 
     def run(self, *, timeout_s: Optional[float] = None) -> Any:
-        self.conn = self.host._acquire()
+        self.conn = self.host._acquire(connect_timeout_s=timeout_s)
         token = self.host._inflight_add(self.what)
         streaming = False
         try:
@@ -1085,7 +1085,7 @@ class ModelHostSupervisor:
         self._wake.set()
 
     # -- connections
-    def _acquire(self) -> _Connection:
+    def _acquire(self, *, connect_timeout_s: Optional[float] = None) -> _Connection:
         with self._lock:
             if self._stopping:
                 raise ModelHostUnavailable("The model host is stopped (the gateway is shutting down).")
@@ -1107,9 +1107,9 @@ class ModelHostSupervisor:
                     return conn
                 conn.close()
             address, family = self._address, self._family
-        return _Connection(self._connect(address, family), generation)
+        return _Connection(self._connect(address, family, timeout_s=connect_timeout_s), generation)
 
-    def _connect(self, address: Optional[str], family: Optional[str]) -> Any:
+    def _connect(self, address: Optional[str], family: Optional[str], *, timeout_s: Optional[float] = None) -> Any:
         """A new authenticated connection, or ModelHostUnavailable within CONNECT_TIMEOUT_S: the
         key exchange needs the child to answer, and a frozen child must not freeze the caller (the
         watcher kills it; the helper thread then ends on the closed socket)."""
@@ -1125,7 +1125,7 @@ class ModelHostSupervisor:
 
         t = threading.Thread(target=_dial, name="model-host-connect", daemon=True)
         t.start()
-        t.join(CONNECT_TIMEOUT_S)
+        t.join(min(CONNECT_TIMEOUT_S, timeout_s) if timeout_s else CONNECT_TIMEOUT_S)
         if "conn" in box:
             return box["conn"]
         if t.is_alive():
