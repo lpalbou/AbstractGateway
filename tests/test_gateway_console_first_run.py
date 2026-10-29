@@ -149,7 +149,13 @@ async function fetch(path, options = {}) {
       jobs: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] });
     return res(200, { job: { job_id: `dl_${body.artifact}`, provider: body.provider, artifact: body.artifact, status: "running", state: "downloading" } });
   }
-  if (path === "/api/gateway/config/capability-defaults/apply-recommended") return res(200, { applied_recommended: { routes: [{ route: "input.text", action: "applied" }] } });
+  if (path === "/api/gateway/config/capability-defaults/apply-recommended") {
+    // AbstractCore's report rows (plan_recommended_capability_defaults): `key`, `action`
+    // (apply | overwrite | already | kept | unavailable | cleared), `changed`, before/after.
+    const action = scenario.applyAction || "apply";
+    return res(200, { applied_recommended: { routes: [{ key: "input.text", action, changed: action === "apply",
+      before: action === "kept" ? { provider: "ollama", model: "llama3.2:3b" } : {}, after: { provider: "lmstudio", model: "qwen/qwen3.5-9b@4bit" } }] } });
+  }
   if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
   if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
   if (path === "/api/gateway/session/onboarding" && method === "POST") {
@@ -563,6 +569,15 @@ if (scenario.name === "simple-mode") {
   await dmClick("first-run-default-models", { dmRecommended: "1" });
   const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
   if (!apply || JSON.parse(apply.body).force !== false) fail("Use recommended must keep the person's own choices (force false): " + (apply && apply.body));
+  const said = el("first-run-message").textContent;
+  if (/input\.text|lmstudio|qwen\//.test(said)) fail("Simple mode's message shows route keys or model ids (ADR 0043): " + said);
+  if (scenario.applyAction === "kept") {
+    // Review 1069: the route you configured differently is kept, and its recommended model is NOT downloaded.
+    if (calls.some((c) => c.path === "/api/gateway/models/download" && c.method === "POST")) fail("a kept route's recommended model was downloaded");
+    if (!/kept/.test(said)) fail("the message does not say your choice is kept: " + said);
+    console.log("OK");
+    process.exit(0);
+  }
   const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
   if (!dl || JSON.parse(dl.body).recommended !== true) fail("Use recommended did not start the recommended downloads");
   html = el("first-run-default-models").innerHTML;
@@ -575,6 +590,35 @@ if (scenario.name === "simple-mode") {
     if (!choice.includes(want)) fail("guided choice missing " + want + ": " + choice.slice(0, 900));
   }
   if (choice.includes("Big Model")) fail("a model that does not fit this computer is offered");
+  // A half-typed key survives the catalog's re-render (review 1069).
+  // A real browser rebuilds the input when the body's HTML is replaced: the fake does too.
+  const bodyEl = el("dm-choice-body");
+  let bodyHtml = bodyEl.innerHTML;
+  Object.defineProperty(bodyEl, "innerHTML", { configurable: true, get() { return bodyHtml; }, set(v) { bodyHtml = v; el("dm-key-value").value = ""; } });
+  el("dm-key-value").value = "sk-half";
+  vm.runInContext("renderDmChoice()", context);
+  if (el("dm-key-value").value !== "sk-half") fail("a re-render wiped the half-typed API key");
+  // One Escape closes one layer: the dialog, never the guide below it.
+  if (!vm.runInContext("typeof dmUi.release === 'function'", context)) fail("the choice dialog is not bound as a modal (bindModal: focus trap, Escape, focus back)");
+  // Review 1069: a covered input (the grid copies the text model onto it) reads Covered; Ollama tags
+  // stay distinct; GGUF is no embeddings model; output.video needs text-to-video.
+  const checks = vm.runInContext(`(() => {
+    const savedDefaults = state.defaults, savedCatalog = dmUi.catalog;
+    state.defaults = savedDefaults.concat([{ key: "input.image", kind: "input", modality: "image", provider: "lmstudio", model: "qwen/qwen3.5-9b", covered_by: "input.text" }]);
+    const covered = dmState(dmCapById("in-image")).kind;
+    dmUi.catalog = { rows: [
+      { id: "e", display_name: "E", capabilities: { embedding: true }, artifacts: [{ provider: "huggingface", artifact: "x/E-GGUF:Q4_K_M" }, { provider: "huggingface", artifact: "x/E" }] },
+      { id: "v", display_name: "V", capabilities: { video_generation: true, text_to_video: false, image_to_video: true }, artifacts: [{ provider: "diffusers", artifact: "v/i2v" }] },
+    ] };
+    const emb = dmOtherModels(dmCapById("out-embeddings")).map((o) => o.artifact);
+    const vid = dmOtherModels(dmCapById("out-video")).length;
+    state.defaults = savedDefaults; dmUi.catalog = savedCatalog;
+    return { covered, emb, vid, ollamaSame: dmReadableName("ollama", "qwen3:8b") === dmReadableName("ollama", "qwen3:14b") };
+  })()`, context);
+  if (checks.covered !== "covered") fail("a covered input reads " + checks.covered + ", not Covered");
+  if (checks.emb.length !== 1 || checks.emb[0] !== "x/E") fail("embeddings offered a GGUF artifact: " + JSON.stringify(checks.emb));
+  if (checks.vid !== 0) fail("output.video offered an image-to-video-only model");
+  if (checks.ollamaSame) fail("two Ollama tags read the same name");
   // The key is checked before anything is stored, and an existing connection is never overwritten.
   el("dm-key-family").value = "anthropic";
   el("dm-key-value").value = "sk-ant-test-key";
@@ -668,6 +712,13 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
 def test_default_models_simple_mode_badges_recommended_flow_and_guided_choice() -> None:
     result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
                    "existingProfiles": ["anthropic-key"]})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_use_recommended_keeps_your_route_and_does_not_download_its_recommendation() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"], "applyAction": "kept"})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 
