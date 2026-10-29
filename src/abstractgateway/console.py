@@ -2613,7 +2613,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <div class="section-head">
 	              <div>
 	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Cloud providers</span></h2>
-	                <p class="section-note">Paste a key, check it, save it. Keys stay on the gateway; only fingerprints show.</p>
+	                <p class="section-note">Paste a provider's API key to use its models; the key stays on this gateway.</p>
 	              </div>
 	            </div>
 	            <!-- The kit's CloudProviderCards (islands mountCloudProviderCards), the SAME cards
@@ -2621,8 +2621,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <div id="cloud-providers-root" class="cloud-providers-root"></div>
 	            <div class="section-head provider-custom-head">
 	              <div>
-	                <h3 class="section-title">OpenAI-compatible servers</h3>
-	                <p class="section-note">Any other /v1 server: vLLM, llama.cpp, LocalAI.</p>
+	                <h3 class="section-title">Advanced connection</h3>
+	                <p class="section-note">Every setting: allowed models, a server on your network.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -10159,7 +10159,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         scope: state.principal && state.principal.admin ? "gateway" : "user",
         heading: opts.heading !== false,
         refreshKey: cloudCards.refresh,
-        onConfigure: opts.configure ? (family) => openEndpointModalForFamily(family) : undefined,
         onSaved: () => { void cloudCardsSaved(); },
       };
     }
@@ -15163,9 +15162,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // AbstractCore's table: one card per engine, one primary action per
         // state, plus the provider's connection (localProviderExtras).
         mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras, onClick: onLocalProviderClick });
-        // Cloud providers: the kit cards, the same as the setup guide's step; "More settings"
-        // opens this tab's connection editor (base URL, allowed models).
-        mountCloudProviderCards("providers", $("cloud-providers-root"), { heading: false, configure: true });
+        // Cloud providers: the kit cards, the same as the setup guide's step (one Connect per card).
+        mountCloudProviderCards("providers", $("cloud-providers-root"), { heading: false });
         return;
       }
       if (tab === "catalog") {
@@ -15354,8 +15352,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     };
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
-      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; to use a cloud account instead, the next step takes its API key." },
-      cloud: { title: "Cloud providers", hint: "OpenAI, Anthropic, OpenRouter...", lede: "Use models from a cloud account: paste its API key, check it, then save it. The key stays on this gateway and is never shown again; billing is the provider's, per use. The same cards are on the Providers tab." },
+      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Run AI models on this computer. Cloud accounts come in the next step." },
+      cloud: { title: "Cloud providers", hint: "OpenAI, Anthropic, OpenRouter...", lede: "Paste a provider's API key to use its models; the key stays on this gateway." },
       model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
