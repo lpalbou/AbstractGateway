@@ -789,3 +789,20 @@ def test_the_console_crate_request_shapes_are_accepted(facade, tmp_path, monkeyp
         assert ins["schema"] == "engine_install_job_v1" and ins["job_id"] and ins["status"] in {"queued", "running", "completed"}
         legacy = client.get(f"/api/gateway/jobs/{ins['job_id']}", headers=h).json()
         assert legacy["schema"] == "host_job_v1" and legacy["kind"] == "engine_install" and legacy["engine"] == "ollama"
+
+
+def test_llamacpp_update_is_refused_while_a_gguf_is_loaded(facade, tmp_path, monkeypatch) -> None:
+    """Merge desk review: llama.cpp cannot be replaced under a model it holds (in-process or
+    in the model host child). MUTANT: no guard -> the install starts -> RED."""
+    import abstractgateway.routes.engines as eng
+
+    monkeypatch.setattr(eng, "loaded_llamacpp_models", lambda: ["mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF"])
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        r = client.post("/api/gateway/engines/llamacpp/install", headers=h, json={"dry_run": False})
+        assert r.status_code == 409, r.text
+        body = r.json()
+        assert body["reason"] == "llamacpp_model_loaded"
+        assert body["message"] == ("Unload mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF first: "
+                                   "llama.cpp cannot be updated while it holds a model.")
+        assert client.post("/api/gateway/engines/llamacpp/install", headers=h, json={"dry_run": True}).status_code == 200
