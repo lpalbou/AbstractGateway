@@ -40,7 +40,7 @@ class EngineInstallRequest(BaseModel):
     force: bool = Field(default=False, description="Install again even when the engine is already installed.")
     location: str = Field(
         default="auto",
-        description="Apps only (Ollama, LM Studio on macOS): auto = /Applications when this account can write it, else ~/Applications; "
+        description="Apps only (Ollama, LM Studio on macOS): auto = /Applications when the account the gateway runs as can write it, else ~/Applications; "
         "user = ~/Applications; system = /Applications (administrator prompt when not writable).",
     )
 
