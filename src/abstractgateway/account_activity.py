@@ -120,6 +120,7 @@ REQUEST_EVENTS: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("POST", f"{API}/session/login"): ("sign_in", "Signed in"),
     ("POST", f"{API}/session/claim"): ("sign_in", "Signed in"),
     ("POST", f"{API}/session/recovery/redeem"): ("sign_in", "Signed in"),
+    ("POST", f"{API}/session/onboarding"): ("sign_in", "Signed in"),
     ("POST", f"{API}/apps/desktop-handover"): ("sign_in", "Signed in"),
     ("POST", f"{API}/session/logout"): ("sign_in", "Signed out"),
     ("POST", f"{API}/runs/start"): ("run", "Run started"),
@@ -129,12 +130,16 @@ REQUEST_EVENTS: Dict[Tuple[str, str], Tuple[str, str]] = {
     ("POST", f"{API}/automations/{{automation_id}}/commands"): ("automation", "Automation command"),
     ("PATCH", f"{API}/admin/users/{{user_id}}"): ("account", "Account changed"),
     ("PUT", f"{API}/admin/accounts/{{account_id}}/active"): ("account", "Account changed"),
+    ("PUT", f"{API}/admin/accounts/{{account_id}}/password"): ("account", "Password set"),
+    ("DELETE", f"{API}/admin/accounts/{{account_id}}/password"): ("account", "Password removed"),
+    ("PUT", f"{API}/me/password"): ("account", "Password changed"),
     ("PUT", f"{API}/accounts/{{account}}/preferences"): ("account", "Preferences changed"),
 }
 
 SIGN_IN_DETAIL: Dict[str, str] = {
     f"{API}/session/login": "With a token.",
     f"{API}/session/claim": "With a setup link.",
+    f"{API}/session/onboarding": "Set up this gateway (first admin password).",
     f"{API}/session/recovery/redeem": "With a code sent by email.",
     f"{API}/apps/desktop-handover": "From the Assistant.",
 }
@@ -290,6 +295,8 @@ def _classify(doc: Dict[str, Any], user_id: str, tenant_id: str) -> Optional[Dic
             if not mine_as_signed_in and not mine_as_actor:
                 return None
             out["detail"] = SIGN_IN_DETAIL.get(template)
+            if doc.get("sign_in_method") == "password":
+                out["detail"] = "With a password."
             rec = doc.get("recovery") if isinstance(doc.get("recovery"), dict) else None
             if rec and rec.get("token_rotated"):
                 out["kind"], out["title"] = "token", "Token reset with a code sent by email"

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-28
+
+A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
+password, and password sign-in next to tokens. New routes, additive fields; no route removed, no
+dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-the-admin-password) and
+[security.md](docs/security.md#sign-in-passwords-tokens-and-the-first-run-window).
+
+### Added
+
+- **"Set up your gateway"** (first-run onboarding). A fresh data folder is *unclaimed*: the console shows,
+  instead of the sign-in form, a form to choose the admin's display name and password and give the six-word
+  **setup code** (always: a proxy that adds no forwarding headers is indistinguishable from a local browser; the
+  person at the machine keeps the no-code one-time link). Submitting sets the password, signs
+  in and opens the setup guide. Before, a fresh server reached through a proxy or Tailscale Funnel showed
+  "Use the token your gateway admin gave you" and refused the one-time link ("loopback, not through a
+  proxy"): there was no way in without SSH. `GET|POST /api/gateway/session/onboarding` (public, browser only,
+  5 refused codes per address and 20 per gateway per 15 minutes, every claim logged with the client address).
+  Any admin sign-in, or an admin creating an account, closes the window for good and deletes pending one-time
+  links; a data folder that was not fresh when 0.18.0 first ran (accounts, or a shared-token deployment) is never
+  unclaimed.
+- **The setup code** (`<data dir>/auth/onboarding.json`, 0600): `abstractgateway claim --code` prints it;
+  `abstractgateway service install` and `service enable` print it in their summary; `serve` says where to get
+  it (the code itself stays out of service logs).
+- **Password sign-in.** `POST /api/gateway/session/login` takes `{user_id, password}` as well as
+  `{user_id, token}` (exactly one); `user_id` may also be the account's display name. scrypt hashes on the
+  account record; decaying attempt limits per address (10 / 15 min; IPv6 per /64), per account from one address
+  (5 in a row, 30 s doubling to 15 min) and per account from all addresses (every 20 / 15 min: 15 min doubling to
+  24 h, addresses that signed the account in before are not held); the token keeps working. The console's sign-in form asks for the password first; **Sign in with a
+  token instead** switches to the token.
+- **Setting passwords.** `PUT /api/gateway/me/password` (anyone, the current password once one is set),
+  `PUT|DELETE /api/gateway/admin/accounts/{id}/password` (admins), and an optional `password` on
+  `POST /api/gateway/admin/users`. In the console: a **Password** field in **Create user**, and a key button on
+  each account row. Setting, changing or removing a password signs the account's other browsers out at once.
+- Account rows (`GET /admin/accounts`, `/me/accounts`) carry `password_set`, `display_name` and
+  `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
+  carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".
+
+### Changed
+
+- **First-run guide: Apps after a model.** The Apps step proposes apps only once a default text model exists;
+  until then it says **Choose a default text model first** with a button back to the model step.
+- **LM Studio on Linux checks `libatomic1` first** (operator QA on a fresh Ubuntu server, where LM Studio's
+  installer failed half-way): the plan says so, and the job stops in *needs tools* with
+  `sudo apt-get install -y libatomic1` before the vendor script runs; **re-check** continues.
+- Sign-in copy: "Forgot your password? Email me a sign-in code"; "Back to sign-in".
+
 ## [0.17.2] - 2026-10-28
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.

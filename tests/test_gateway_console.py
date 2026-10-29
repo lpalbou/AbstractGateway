@@ -114,7 +114,10 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "window.prompt(" not in console.text
     assert 'id="login-form"' in console.text
     assert 'id="toggle-token"' in console.text
-    assert "<h2>Sign in</h2>" in console.text and "Use the token your gateway admin gave you." in console.text
+    # 0.18.0: Password first, Token behind one link; a fresh gateway shows the onboarding form.
+    assert '<h2 id="login-title">Sign in</h2>' in console.text and "Sign in with your account and password." in console.text
+    assert 'id="login-method-switch"' in console.text and ">Sign in with a token instead</button>" in console.text
+    assert 'id="onboarding-form"' in console.text and "/api/gateway/session/onboarding" in console.text
     # Operator IA (2026-07-13): Users & Entities | Runtimes | Providers |
     # Multimodal Capabilities | Sandbox. Entities are door principals and
     # live WITH users; runtimes split into their own tab; sandbox is last.
@@ -602,6 +605,7 @@ vm.runInContext(source, context);
 await new Promise((resolve) => setTimeout(resolve, 0));
 
 el("login-user").value = "admin";
+el("login-method-switch").onclick();  // Password is the default method; the token is behind the link.
 el("login-token").value = "test-token";
 el("login-form").onsubmit({{ preventDefault() {{}} }});
 await new Promise((resolve) => setTimeout(resolve, 0));

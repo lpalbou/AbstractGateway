@@ -98,6 +98,9 @@ class Element {
   get options() { return this.children; }
   get selectedOptions() { return this.children.filter((c) => c.selected); }
   append(...items) { this.children.push(...items); }
+  setAttribute(k, v) { (this._attrs = this._attrs || {})[k] = String(v); }
+  removeAttribute(k) { if (this._attrs) delete this._attrs[k]; }
+  getAttribute(k) { return this._attrs && k in this._attrs ? this._attrs[k] : null; }
   addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
   dispatch(type, event) { for (const fn of (this.listeners[type] || [])) fn(event); }
   get listeners() { if (!this._listeners) this._listeners = {}; return this._listeners; }
@@ -115,6 +118,8 @@ const location = { hash: scenario.hash, pathname: "/console", search: "", origin
 const history = { calls: [], replaceState(_s, _t, url) { this.calls.push({ url, hashAtCall: location.hash, claimCallsSoFar: calls.filter((c) => c.path.endsWith("/session/claim")).length }); location.hash = (String(url).match(/#.*$/) || [""])[0]; } };
 let loggedIn = Boolean(scenario.loggedIn);
 let firstRunCompleted = scenario.completed;
+// The Apps step is gated on a default text model (0.18.0): set by "Use as default" (PUT), or up front.
+let textDefaultSet = !scenario.noTextModel && Boolean(scenario.textDefault || scenario.catalogFail);
 const calls = [];
 const res = (status, payload) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) });
 async function fetch(path, options = {}) {
@@ -127,6 +132,16 @@ async function fetch(path, options = {}) {
     if (body.code !== scenario.code) return res(401, { detail: { reason_code: "claim_unknown", message: "already used" } });
     loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard";
     return res(200, Object.assign({ ok: true, claimed: true, principal: { admin: true } }, scenario.createdBy ? { claim: { created_by: scenario.createdBy } } : {}));
+  }
+  if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
+  if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
+  if (path === "/api/gateway/session/onboarding" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    if (scenario.onboarding && scenario.onboarding.setup_code_required && body.setup_code !== scenario.setupCode) {
+      return res(403, { detail: { reason_code: "setup_code_refused", message: "That setup code is not right. Check the six words and try again.", field: "setup_code" } });
+    }
+    loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard"; scenario.onboarding = { unclaimed: false };
+    return res(200, { ok: true, claimed: true, principal: { user_id: "admin", admin: true }, first_run: { completed: false } });
   }
   if (path === "/api/gateway/me") {
     if (!loggedIn) return res(401, { detail: "signed out" });
@@ -183,12 +198,13 @@ async function fetch(path, options = {}) {
     return res(200, CATALOG);
   }
   if (path === "/api/gateway/models/delete") return res(409, { ok: false, status: "refused", message: "refusing to delete: loaded (send force=true to override)", delete_blockers: ["loaded"], error: { message: "refusing to delete: loaded (send force=true to override)", type: "host_action_refused" } });
-  if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") return res(200, { ok: true });
+  if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") { textDefaultSet = true; return res(200, { ok: true }); }
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: [] });
+  // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
@@ -455,6 +471,62 @@ if (scenario.name === "create-user") {
     if (!el("user-create-message").textContent.includes("user accounts off, so a non-admin account could not sign in")) fail("the server's 409 message must be shown: " + el("user-create-message").textContent);
   }
 }
+if (scenario.name === "onboarding") {
+  // 0.18.0: a fresh (unclaimed) gateway shows "Set up your gateway" instead of the sign-in form.
+  if (el("onboarding-form").hidden !== false) fail("onboarding form not shown for an unclaimed gateway");
+  if (el("login-form").hidden !== true) fail("the sign-in form is still shown on an unclaimed gateway");
+  if (el("login-title").textContent !== "Set up your gateway") fail("title: " + el("login-title").textContent);
+  if (el("onboard-code-field").hidden !== !scenario.onboarding.setup_code_required) fail("setup code field visibility wrong");
+  if (el("onboard-name").value !== "admin") fail("display name not prefilled with the account: " + el("onboard-name").value);
+  const posts = () => calls.filter((c) => c.path === "/api/gateway/session/onboarding" && c.method === "POST");
+  const submit = async () => { el("onboarding-form").onsubmit({ preventDefault() {} }); await settle(); };
+  el("onboard-password").value = "lighthouse keeper 42";
+  el("onboard-password-confirm").value = "lighthouse keeper 41";
+  await submit();
+  if (posts().length !== 0) fail("a mismatched confirmation was sent");
+  if (!el("onboard-password-confirm-error").textContent.includes("different")) fail("no mismatch error");
+  el("onboard-password-confirm").value = "lighthouse keeper 42";
+  if (scenario.onboarding.setup_code_required) {
+    await submit();
+    if (posts().length !== 0) fail("sent without the required setup code");
+    if (!el("onboard-code-error").textContent) fail("no error for the missing setup code");
+    el("onboard-code").value = "wrong words entirely here now";
+    await submit();
+    if (!el("onboard-code-error").textContent.includes("not right")) fail("server refusal not shown on the code field: " + el("onboard-code-error").textContent);
+    if (String(document.body.className).includes("signed-in")) fail("signed in with a wrong code");
+    el("onboard-code").value = scenario.setupCode;
+  }
+  await submit();
+  const last = JSON.parse(posts().pop().body);
+  if (last.password !== "lighthouse keeper 42" || last.password_confirm !== "lighthouse keeper 42") fail("password not sent: " + JSON.stringify(last));
+  if (scenario.onboarding.setup_code_required && last.setup_code !== scenario.setupCode) fail("setup code not sent");
+  if (last.display_name !== "admin") fail("display name not sent");
+  if (!String(document.body.className).includes("signed-in")) fail("onboarding did not sign in");
+  if (el("onboard-password").value) fail("the password stayed in the field");
+  if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
+}
+if (scenario.name === "apps-gate") {
+  // No default text model yet: the Apps step proposes no app and points back to the model step.
+  await context.openFirstRunWizard("apps"); await settle();
+  const body = el("first-run-apps-body").innerHTML;
+  if (!body.includes("Choose a default text model first")) fail("apps proposed without a default text model: " + body.slice(0, 200));
+  if (body.includes("@abstractframework/")) fail("app cards rendered behind the gate");
+}
+if (scenario.name === "signin-password") {
+  // A claimed gateway: Password first, Token behind the link.
+  if (el("onboarding-form").hidden !== true) fail("onboarding form shown on a claimed gateway");
+  if (el("login-token-field").hidden === false) fail("token field shown by default");
+  el("login-user").value = "admin";
+  el("login-password").value = "lighthouse keeper 42";
+  el("login-form").onsubmit({ preventDefault() {} }); await settle();
+  const login = calls.find((c) => c.path === "/api/gateway/session/login");
+  if (!login) fail("no login POST");
+  const body = JSON.parse(login.body);
+  if (body.password !== "lighthouse keeper 42" || "token" in body) fail("password sign-in body: " + login.body);
+  el("login-method-switch").onclick();
+  if (el("login-token-field").hidden !== false || el("login-password-field").hidden !== true) fail("the link did not switch to the token");
+  if (el("login-method-switch").textContent !== "Sign in with a password instead") fail("switch label: " + el("login-method-switch").textContent);
+}
 if (scenario.name === "completed") {
   loggedIn = true;
   vm.runInContext("refresh()", context);
@@ -489,6 +561,29 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
         f.write(harness)
         path = f.name
     return subprocess.run([node, path], capture_output=True, text=True, check=False, timeout=60)
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(required: bool) -> None:
+    onboarding = {"unclaimed": True, "setup_code_required": required, "account": "admin",
+                  "setup_code_reason": "This browser is not on the gateway's own machine." if required else None,
+                  "password_rule": "At least 10 characters.", "password_min_length": 10}
+    result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
+                   "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_apps_step_waits_for_a_default_text_model() -> None:
+    result = _run({"name": "apps-gate", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "noTextModel": True})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_claimed_gateway_signs_in_with_a_password_first_and_a_token_behind_the_link() -> None:
+    result = _run({"name": "signin-password", "hash": "", "completed": True, "coreStub": True, "onboarding": {"unclaimed": False}})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
 
 
 def test_claim_link_signs_in_opens_and_completes_the_wizard() -> None:
