@@ -15525,6 +15525,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // (the recommendation itself never switches model on its own).
           + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          // 0958: the gateway replaced AbstractCore's pick because its engine is missing here.
+          + (r.chosen_because ? `<p class="ui-card__note first-run-installed-engine">${esc(firstRunCap(r.chosen_because))}${r.alternative && (r.alternative.route_provider || r.alternative.provider) ? ` (instead of ${esc(state.providerLabels.get(r.alternative.route_provider || r.alternative.provider) || r.alternative.route_provider || r.alternative.provider)}, which is not installed here).` : "."}</p>` : "")
           + engineMissingMarkup(r, "ui-alert tone-warn")
           + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
