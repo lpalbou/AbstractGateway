@@ -1390,7 +1390,7 @@ console.log(JSON.stringify(results));
     assert default_view["toggleText"] == "Show configured / cached (2)"
     assert len(default_view["rows"]) == 1, "default view is resident rows ONLY"
     assert default_view["rows"][0]["pill"] == "resident"
-    assert "Unload" in default_view["rows"][0]["buttons"] and "Unlock" in default_view["rows"][0]["buttons"]
+    assert "Unload" in default_view["rows"][0]["buttons"] and "\U0001F512 Kept loaded" in default_view["rows"][0]["buttons"]
 
     toggled = steps["toggled"]
     assert toggled["title"] == "Models (1 resident)", "the toggle must not inflate the resident count"
@@ -1413,7 +1413,7 @@ console.log(JSON.stringify(results));
     # and Unload stay absent (nothing is in memory to lock or unload).
     locked_evicted = steps["locked-evicted"]
     assert len(locked_evicted["rows"]) == 1
-    assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "Unlock"]
+    assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "\U0001F512 Kept loaded"]
 
 
 def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory() -> None:
@@ -2384,7 +2384,7 @@ els["models-table"].children.forEach((tr, i) => {{
   const found = walk(tr);
   rows[visible[i].model] = {{
     buttons: found.map((b) => b.text),
-    lockTitle: (found.find((b) => b.text === "Lock" || b.text === "Unlock") || {{}}).title || "",
+    lockTitle: (found.find((b) => b.text === "\U0001F513 Keep loaded" || b.text === "\U0001F512 Kept loaded") || {{}}).title || "",
     size: sizeCell(tr),
   }};
 }});
@@ -2393,21 +2393,21 @@ console.log(JSON.stringify([rows]));
     (rows,) = _node(harness)
     # A sweep-resident row (lockable UNREPORTED) now offers Lock: locking
     # adopts the externally loaded model.
-    assert rows["swept"]["buttons"] == ["Estimate", "Lock", "Unload"]
-    assert rows["managed"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    assert rows["swept"]["buttons"] == ["Estimate", "\U0001F513 Keep loaded", "Unload"]
+    assert rows["managed"]["buttons"] == ["Estimate", "\U0001F513 Keep loaded", "Unload"]
     # Only an explicit refusal withholds the control.
     assert rows["refused"]["buttons"] == ["Estimate", "Unload"]
-    assert rows["locked-swept"]["buttons"] == ["Estimate", "Unlock", "Unload"]
+    assert rows["locked-swept"]["buttons"] == ["Estimate", "\U0001F512 Kept loaded", "Unload"]
     # Locked-but-evicted keeps Unlock and nothing else: no lock is stranded.
-    assert rows["locked-evicted"]["buttons"] == ["Estimate", "Unlock"]
+    assert rows["locked-evicted"]["buttons"] == ["Estimate", "\U0001F512 Kept loaded"]
     # A configured row that is NOT in memory has nothing to lock or unload.
     assert rows["configured"]["buttons"] == ["Estimate"]
 
     # D1 — the GATE is unchanged (both rows still offer Lock); the WORDING is
     # what `source` now selects.
     adopt = "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
-    plain = "Lock this model in memory so nothing can evict it"
-    assert rows["adopt-me"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    plain = "Keep this model loaded: it is never evicted to make room for another model"
+    assert rows["adopt-me"]["buttons"] == ["Estimate", "\U0001F513 Keep loaded", "Unload"]
     assert rows["adopt-me"]["lockTitle"] == adopt
     assert rows["gateway-loaded"]["lockTitle"] == plain, (
         "a gateway-loaded row must not be told the lock adopts anything"
@@ -2718,6 +2718,9 @@ const cases = {{
     ] }} }}),
   deferredOnly: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [ {{ provider: "mlx", model: "a", deferred: true }} ] }} }}),
   empty: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [] }} }}),
+  refused: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [], refusals: [
+    {{ code: "model_does_not_fit", message: "old refusal" }},
+    {{ code: "model_does_not_fit", message: "b/14b needs 13.7 GB but only 6.1 GB is free on the GPU. Choose a smaller model." }} ] }} }}),
   missing: ejectStatusLines({{ models: [] }}),
   degraded: ejectStatusLines({{ models: null }}),
 }};
@@ -2733,6 +2736,8 @@ console.log(JSON.stringify([cases]));
     ]
     assert out["deferredOnly"] == [{"tone": "warn", "text": "Will eject mlx/a when the in-flight call ends."}]
     assert out["empty"] == []
+    # AbstractCore ADR 0010: the last refused load, its sentence, as an error line (MUTANT: dropped -> RED)
+    assert out["refused"] == [{"tone": "err", "text": "Not loaded: b/14b needs 13.7 GB but only 6.1 GB is free on the GPU. Choose a smaller model."}]
     assert out["missing"] == [
         {"tone": "muted", "text": "Eject status: this gateway's host snapshot does not report residency diagnostics."}
     ]
