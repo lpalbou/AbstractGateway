@@ -1,10 +1,16 @@
 """ADR 0002 with a REAL local model: ONE weights instance in the model host child, before and after a
-`kill -9` restart and after the next chats, and N concurrent requests completing on it.
+`kill -9` restart and after the next chats, with N concurrent requests answered without a 5xx.
 
 Opt-in: `ABSTRACT_E2E_MODEL_HOST_REAL_MODEL=<provider>:<model>` (a model already in the local cache;
 the test is offline), for example `mlx:mlx-community/Qwen1.5-0.5B-Chat-4bit` on a Mac or
 `huggingface:<gguf repo>` on a GPU server. Counts every provider instance the child builds for that
 model (the construction probe) and reads `GET /api/gateway/models/loaded`; prints the numbers.
+
+What it proves: ONE copy of the weights, and no 5xx from N concurrent requests on it. It does NOT prove
+that concurrency on one weights object is safe: on the mlx-lm lane the N generations run on one object
+from parallel threads with no lock or scheduler today, so a small model with short answers passing is
+luck, not safety. Scheduling is Core's (AbstractCore ADR 0011, core 0870). When that scheduler lands, add
+the ADR's assertions here: the queued state seen when slots are exhausted, and a wall-clock bound.
 """
 from __future__ import annotations
 
