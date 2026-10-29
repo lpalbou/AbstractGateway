@@ -116,7 +116,7 @@ def check(base: str) -> int:
         print("CHANGELOG.md was edited: add the entry as changelog.d/<pr-or-slug>.md instead (see changelog.d/README.md)")
         return 1
     if src and not frags:
-        print("This pull request changes src/ but adds no changelog fragment: add changelog.d/<pr-or-slug>.md "
+        print(f"This pull request changes {SOURCE_PREFIXES[0]} but adds no changelog fragment: add changelog.d/<pr-or-slug>.md "
               "(see changelog.d/README.md).\n  changed: " + ", ".join(src[:8]) + (" ..." if len(src) > 8 else ""))
         return 1
     print(f"changelog: {len(frags)} fragment(s) for {len(src)} changed source file(s)")
