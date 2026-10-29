@@ -336,6 +336,8 @@ if (scenario.name === "claim") {
   // AbstractCore's table, whatever the screens' state).
   if (mounts.some((x) => x.id === "first-run-model-catalog")) fail("the model step must show the catalog cards, not mount AbstractCore's table");
   const cat = el("first-run-model-catalog").innerHTML;
+  // test_gateway_console_filter_bar.py reads both catalogs' markup (the guide's here, the Models tab's below).
+  if (scenario.dumpCatalogs) console.log("CATALOG guide " + JSON.stringify(cat));
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
@@ -428,6 +430,7 @@ if (scenario.name === "claim") {
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
+    if (scenario.dumpCatalogs) console.log("CATALOG tab " + JSON.stringify(el("catalog-cards-root").innerHTML));
     if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {

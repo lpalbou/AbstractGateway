@@ -47,7 +47,7 @@ def _fixture() -> tuple[dict, dict, str]:
 
 
 def _chip_n(html: str, group: str, value: str) -> int:
-    m = re.search(rf'data-mc-filter="{group}" data-mc-value="{value}"[^>]*>[^<]*<span class="mc-chip__n">(\d+)</span>', html)
+    m = re.search(rf'data-af-facet="{group}" data-af-value="{value}"[^>]*><span class="af-chip__label">[^<]*</span><span class="af-filterbar__count" aria-hidden="true">(\d+)</span>', html)
     assert m, (group, value)
     return int(m.group(1))
 
@@ -72,7 +72,7 @@ def test_not_in_the_catalog_rows_join_the_one_list_with_right_counts() -> None:
     assert _chip_n(out["notDownloadedHtml"], "status", "downloaded") == downloaded + 2  # counts stay right on every chip
 
     assert out["ollamaHtml"].count('data-mc-extra-row="1"') == 1 and 'data-mc-art="ollama/my-own-model:7b"' in out["ollamaHtml"]
-    assert 'data-mc-filter="provider" data-mc-value="huggingface"' in out["html"]  # its provider gets a chip
+    assert 'data-af-facet="provider" data-af-value="huggingface"' in out["html"]  # its provider gets a chip
     assert out["visionHtml"].count('data-mc-extra-row="1"') == 0
     # A search that only an extra row matches shows it, not the empty state.
     assert out["search"]["count"] == [0, n, 1] and 'data-mc-empty="1"' not in out["searchHtml"]

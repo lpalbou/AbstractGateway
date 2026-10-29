@@ -76,6 +76,14 @@ def test_radius_scale_normalized(html: str) -> None:
     # is about the console's sheet.
     kit_start = html.index('<style id="af-kit-css">')
     html = html[:kit_start] + html[html.index("</style>", kit_start):]
+    # Same for the kit's af-filterbar block the console serves until its vendored kit carries it
+    # (console_catalog.KIT_FILTER_BAR_CSS, verbatim; test_gateway_console_filter_bar.py pins it).
+    from abstractgateway.console import _strip_css_comments
+    from abstractgateway.console_catalog import KIT_FILTER_BAR_CSS
+
+    kit_block = _strip_css_comments(KIT_FILTER_BAR_CSS).strip()
+    assert html.count(kit_block) == 1, "the served page must carry the kit filter bar block verbatim, once"
+    html = html.replace(kit_block, "")
     for m in re.finditer(r"border-radius:\s*([^;]+);", html):
         value = m.group(1).strip()
         if value.startswith("var(--radius-"):

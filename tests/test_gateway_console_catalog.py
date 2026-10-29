@@ -139,7 +139,8 @@ vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const out = {};
 const view = () => vm.runInContext("mcStore.views.get('tab')", ctx);
-const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-filter]" ? { disabled: !!disabled, dataset: { mcFilter: group, mcValue: value } } : null) } });
+const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-facet]" ? { disabled: !!disabled, dataset: { afFacet: group, afValue: value } } : null) } });
+const scope = (mode) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-scope]" ? { dataset: { afScope: mode } } : null) } });
 const snap = (name) => {
   const html = root.innerHTML;
   const m = /<b>(\d+)<\/b> of (\d+) models? · <b>(\d+)<\/b>/.exec(html);
@@ -151,7 +152,7 @@ const snap = (name) => {
     providers: [...html.matchAll(/<li class="mc-art[^"]*" data-mc-art="[^"]*" data-provider="([^"]*)"/g)].map((x) => x[1]),
     hash: String(location.hash),
     notice: html.includes('data-mc-notice="quant_class"') && html.includes("This gateway's catalog does not report quant_class yet"),
-    quantDisabled: /data-mc-filter="quant"[^>]*disabled/.test(html) && !/data-mc-filter="quant"[^>]*aria-pressed="true"/.test(html),
+    quantDisabled: /data-af-facet="quant"[^>]*disabled/.test(html) && !/data-af-facet="quant"[^>]*aria-pressed="true"/.test(html),
     boldQuant: [...html.matchAll(/<div class="mc-art__quant"[^>]*><b>([^<]*)<\/b>/g)].map((x) => x[1]),
     empty: html.includes('data-mc-empty="1"') && html.includes('data-mc-action="clear"'),
     hfEmpty: html.includes('data-mc-empty="hf"') && html.includes("Hugging Face has no model matching"),
@@ -192,9 +193,9 @@ if (__SCRIPT__ === "hf") {
   out.hubCalls = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
   out.html = root.innerHTML;
   // Back to the catalog, then Hugging Face again with a new query (Enter).
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "catalog" } } : null) } });
+  scope("catalog");
   snap("backToCatalog");
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  scope("hf");
   root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen coder", dataset: { mcSearch: "1" } } });
   await settle();
   snap("second");
@@ -214,7 +215,7 @@ if (__SCRIPT__ === "beside") {
   out.html = root.innerHTML;
   out.hubCalls = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
   // Switching to Hugging Face mode with the same words reuses the answer (no second request).
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  scope("hf");
   await settle();
   snap("hf"); out.hfHtml = root.innerHTML;
   out.hubCalls2 = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
@@ -528,7 +529,7 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
     assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog?quant=4bit"
     # The 4-bit chip's count is the full set's (the extended quants included).
-    assert re.search(r'data-mc-filter="quant" data-mc-value="4bit"[^>]*>4-bit<span class="mc-chip__n">' + str(a) + "<", out["html"]), out["html"][:2000]
+    assert re.search(r'data-af-facet="quant" data-af-value="4bit"[^>]*><span class="af-chip__label">4-bit</span><span class="af-filterbar__count" aria-hidden="true">' + str(a) + "<", out["html"]), out["html"][:2000]
     assert "data-mc-every" not in out["html"] and "Every quant" not in out["html"]
     linked = _run(cat, "hash", "#catalog?every=1")  # an old link: the parameter is ignored
     assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == total

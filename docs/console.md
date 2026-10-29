@@ -709,7 +709,12 @@ list.
   them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files).
   Every build the catalog knows is listed; nothing is cut off.
 
-The filter bar above the cards:
+The filter bar above the cards is the kit's filter bar (abstractuic `AfFilterBar`): a first line with
+the Catalog / Hugging Face switch, the search box and **Fits this computer**, then one row per filter with
+its name in a fixed left column and its chips on the right (they wrap under the chips, never under the
+name). Every chip has the same size; its number is the small grey figure after the label. The setup
+guide's model step shows the same bar.
+
 
 - **Search** matches model names, organisations and artifact ids (every word
   must match). **Escape** clears it.
