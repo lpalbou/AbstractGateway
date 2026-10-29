@@ -50,6 +50,12 @@ def add_claim_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
     p.add_argument("--ttl-s", type=int, default=600, help="Link lifetime in seconds (default: 600, max 3600)")
     p.add_argument("--open", action="store_true", help="Open the link in the default browser")
+    p.add_argument(
+        "--code",
+        action="store_true",
+        help="Print the six-word SETUP CODE instead of a link: a fresh gateway reached from another machine "
+        "(a proxy, Tailscale Funnel, the LAN) asks for it on its \"Set up your gateway\" page",
+    )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
 
@@ -63,8 +69,70 @@ def _claim_base_url(args: argparse.Namespace, data_dir: Path) -> Dict[str, Any]:
     return local_gateway(data_dir)
 
 
+def current_setup_code() -> Optional[str]:
+    """The setup code of this data dir while it is unclaimed (first_run "Onboarding"), creating
+    the bootstrap admin first exactly as `serve` would; None once claimed (or with the admin
+    bootstrap turned off). LOCAL: reads and writes the data dir, contacts nothing."""
+    from .first_run import setup_code_for_display
+    from .users import gateway_data_dir_from_env
+
+    flag = str(os.getenv("ABSTRACTGATEWAY_BOOTSTRAP_ADMIN") or os.getenv("ABSTRACTGATEWAY_AUTO_BOOTSTRAP_ADMIN") or "").strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return None
+    from .config_cli import ensure_bootstrap_admin_user
+
+    ensure_bootstrap_admin_user()
+    return setup_code_for_display(gateway_data_dir_from_env())
+
+
+def setup_code_lines(code: Optional[str], console_url: str = "") -> list:
+    if not code:
+        return []
+    where = f" ({console_url})" if console_url else ""
+    return [
+        f"Setup code: {code}",
+        f"           The console{where} asks for it on \"Set up your gateway\" when opened from another machine",
+        "           (through a proxy, Tailscale Funnel or the LAN). Choosing the admin password there claims the",
+        "           gateway; the code then stops working. Again: abstractgateway claim --code",
+    ]
+
+
+def _run_setup_code(args: argparse.Namespace) -> int:
+    from .first_run import read_onboarding
+    from .host_paths import apply_data_dir_default
+
+    _apply_data_dir_flag(getattr(args, "data_dir", None))
+    res = apply_data_dir_default()
+    code = current_setup_code()
+    if code:
+        payload = {"ok": True, "unclaimed": True, "setup_code": code, "data_dir": str(res.path)}
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(code)
+            _stderr("Setup code of this fresh gateway: enter it on the console's \"Set up your gateway\" page when it asks "
+                    "(a browser on another machine). It stops working once the admin password is set.")
+        return 0
+    rec = read_onboarding(res.path) or {}
+    if rec.get("state") == "claimed":
+        msg = (f"This gateway is already set up (claimed {rec.get('claimed_at') or ''} via {rec.get('claimed_via') or 'a sign-in'}): "
+               "there is no setup code any more. Sign in with your account and password, or print a sign-in link "
+               "for this machine with `abstractgateway claim`.")
+    else:
+        msg = ("This data dir has no setup code: it was not fresh when this gateway version first ran (or the admin "
+               "already has a password). Sign in with your account and password or the admin token, or print a "
+               "sign-in link for this machine with `abstractgateway claim`.")
+    if args.json:
+        print(json.dumps({"ok": False, "unclaimed": False, "reason_code": "no_setup_code", "message": msg, "data_dir": str(res.path)}, indent=2))
+    else:
+        _stderr(msg)
+    return 2
+
+
 def run_claim(args: argparse.Namespace) -> int:
     """Mint a one-time claim code and print its console link. Exit 0 / 2 (refused)."""
+    if getattr(args, "code", False):
+        return _run_setup_code(args)
     from .config_cli import ensure_bootstrap_admin_user
     from .first_run import claim_url, mint_claim
     from .host_paths import apply_data_dir_default
@@ -298,10 +366,20 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
             )
         else:
             out = autostart.disable_autostart(data_dir=data_dir, platform=plat, home=home_p, stop_now=bool(args.stop))
+        code = None
+        if args.service_cmd == "enable" and out.get("ok"):
+            try:
+                code = current_setup_code()
+            except Exception as exc:  # noqa: BLE001 - the code is a convenience; never fail the switch
+                _stderr(f"[WARN] could not read the setup code ({exc}); run `abstractgateway claim --code`.")
         if args.json:
+            if code:
+                out = dict(out, setup_code=code)
             print(json.dumps(out, indent=2, sort_keys=True, default=str))
         else:
             _print_autostart_result(out)
+            for line in setup_code_lines(code):
+                print(line)
         return 0 if out["ok"] else 1
 
     if args.service_cmd == "uninstall":
@@ -371,8 +449,15 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
             user = admin.get("user") if isinstance(admin.get("user"), dict) else {}
             minted = mint_claim(data_dir=data_dir, tenant_id=str(user.get("tenant_id") or "default"), user_id=str(user.get("user_id") or "admin"))
             claim = claim_url(plan.url, minted["code"])
+    setup_code: Optional[str] = None
+    if healthy is not False:
+        try:
+            setup_code = current_setup_code()
+        except Exception as exc:  # noqa: BLE001
+            if not args.json:
+                print(f"[WARN] could not read the setup code ({exc}); run `abstractgateway claim --code`.")
     if args.json:
-        print(json.dumps({"ok": True, "healthy": healthy, "claim_url": claim, "port_choice": chosen, **plan.public_dict(), "network_seed": seeded, "results": results}, indent=2, default=str))
+        print(json.dumps({"ok": True, "healthy": healthy, "claim_url": claim, "setup_code": setup_code, "port_choice": chosen, **plan.public_dict(), "network_seed": seeded, "results": results}, indent=2, default=str))
         return 0 if healthy is not False else 1
     for n in plan.notes:
         print(n)
@@ -382,4 +467,6 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
     print(f"Console: {plan.url}/console")
     if claim:
         print(f"First run: open {claim}")
+    for line in setup_code_lines(setup_code, f"{plan.url}/console"):
+        print(line)
     return 0

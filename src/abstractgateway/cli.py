@@ -254,6 +254,12 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None, prin
         _stderr(f"First run: open {claim_url(base, minted['code'])}")
         _stderr("           (one-time link, valid 10 minutes, works from this machine only; "
                 "a fresh one: `abstractgateway claim --open`)")
+        from .first_run import onboarding_unclaimed
+
+        if onboarding_unclaimed(data_dir) is not None:
+            # The code itself stays out of this output (it often lands in a service log).
+            _stderr("           From another machine, the console asks to set the admin password with the "
+                    "setup code: `abstractgateway claim --code`.")
     except Exception as exc:  # noqa: BLE001 - the link is a convenience; never block boot
         _stderr(f"[WARN] could not mint a first-run link ({exc}); run `abstractgateway claim`.")
 

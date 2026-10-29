@@ -51,14 +51,19 @@ def test_sign_in_card_is_the_design_card() -> None:
     # One status pill, no duplicate caption ("token: missing").
     assert card.count("af-gateway-signin__status ") == 1
     assert 'id="login-source"' not in html
-    assert ">Not signed in<" in card and "<h2>Sign in</h2>" in card
-    assert "Use the token your gateway admin gave you." in card
-    # Labels above fields; "Token" with the Show button inside the field.
+    assert ">Not signed in<" in card and '<h2 id="login-title">Sign in</h2>' in card
+    assert "Sign in with your account and password." in card
+    # Labels above fields; "Password" first, "Token" (hidden) behind one link, each with the
+    # Show button inside the field (0.18.0).
+    assert '<label class="af-gateway-signin__label" for="login-password">Password</label>' in card
+    assert '<div id="login-token-field" class="af-gateway-signin__field" hidden>' in card
     assert '<label class="af-gateway-signin__label" for="login-token">Token</label>' in card
     assert 'class="af-gateway-signin__token-input"' in card
-    # ONE quiet link, hidden until /session/recovery says it is on; the code step hidden.
-    assert card.count('class="af-gateway-signin__link"') == 2  # the link + "Send a new code"
-    assert ">Forgot your token? Email me a sign-in code</button>" in card
+    # Quiet links: the method switch, the email link and "Send a new code"; the code step hidden.
+    assert card.count('class="af-gateway-signin__link"') == 3
+    assert ">Forgot your password? Email me a sign-in code</button>" in card
+    # The first-run onboarding form lives in the same card, hidden until GET /session/onboarding says unclaimed.
+    assert '<form id="onboarding-form" class="af-gateway-signin__form" novalidate hidden>' in card
     assert 'id="recovery-section" class="af-gateway-signin__recovery" hidden' in card
     assert 'id="recovery-code-step" class="af-gateway-signin__code" hidden' in card
     assert 'inputmode="numeric" maxlength="8"' in card
@@ -178,7 +183,8 @@ def test_type_scale_root_cause_is_fixed_at_the_rule() -> None:
                 bad.append((sel.strip(), f"font-weight {w}"))
     assert bad == []
     # The reuse outside the card is gone too: only the sign-in card's own checkbox wears the class.
-    assert html.count('class="af-gateway-signin__checkbox"') == 1
+    # (0.18.0: the onboarding form in the same card has its own "Remember this browser".)
+    assert html.count('class="af-gateway-signin__checkbox"') == 2
 
 
 # ---------------------------------------------------------------------------- the kit's verb guard
@@ -328,7 +334,7 @@ def test_recovery_link_goes_busy_then_reveals_the_code_step() -> None:
     r = out["redeem"]
     assert r["useAt4"] is True and r["cleaned"] == "12345678" and r["useAt8"] is False
     assert r["refreshed"] == 1 and r["errorHidden"] is True
-    assert out["back"] == {"codeHidden": True, "linkHidden": False, "link": "Forgot your token? Email me a sign-in code"}
+    assert out["back"] == {"codeHidden": True, "linkHidden": False, "link": "Forgot your password? Email me a sign-in code"}
 
 
 def test_wrong_code_is_said_inline() -> None:

@@ -1038,6 +1038,30 @@ class EngineInstaller:
             return bool((self.system.which("cc") or self.system.which("gcc")) and (self.system.which("c++") or self.system.which("g++")))
         return True  # windows: not planned here (see legacy path)
 
+    _LIBATOMIC_DIRS = ("/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/lib/x86_64-linux-gnu",
+                       "/lib/aarch64-linux-gnu", "/usr/lib64", "/lib64", "/usr/lib")
+
+    def _libatomic_present(self) -> bool:
+        """LM Studio's Linux daemon (llmster) links libatomic.so.1, which minimal server images
+        (Ubuntu cloud, Debian slim) lack: its installer then fails half-way (operator QA on the
+        OVH test instance, 2026-10-28). Checked BEFORE the installer runs."""
+        if self.host.os_id != "linux":
+            return True
+        rc, out = self.system.run(["ldconfig", "-p"], timeout=10)
+        if rc == 0 and out.strip():
+            return "libatomic.so.1" in out
+        return any(Path(d, "libatomic.so.1").exists() for d in self._LIBATOMIC_DIRS)
+
+    def _libatomic_prompt(self) -> ToolsPrompt:
+        return ToolsPrompt(
+            "libatomic1",
+            "LM Studio's Linux daemon needs the libatomic1 system library, which this server does not have. "
+            "An administrator installs it once; then press re-check.",
+            "the libatomic1 system library",
+            "manual",
+            "sudo apt-get install -y libatomic1   # Fedora/RHEL: sudo dnf install -y libatomic",
+        )
+
     def _tools_prompt(self, reason: str) -> ToolsPrompt:
         if self.host.os_id == "darwin":
             return ToolsPrompt("xcode-clt", reason, "Apple command-line developer tools", "xcode_select_install", "xcode-select --install")
@@ -1130,8 +1154,14 @@ class EngineInstaller:
                     command_preview=[f"download {LMSTUDIO_MAC_LATEST}", "hdiutil attach -readonly -nobrowse", f"ditto 'LM Studio.app' {apps}", "hdiutil detach", "lms server start"],
                     steps=["download (about 570 MB)", "verify signature", f"copy to {apps}", "start the local server"],
                 )
-            return InstallPlan(eid, True, "script", notes="Runs LM Studio's official installer: the headless daemon (llmster) and the `lms` CLI under ~/.lmstudio; no admin.",
-                               command_preview=["bash", "-c", LMSTUDIO_LINUX_SCRIPT], steps=["run the vendor installer", "start the local server"])
+            atomic = self._libatomic_present()
+            prompt = self._libatomic_prompt()
+            return InstallPlan(eid, True, "script", needs_tools=not atomic,
+                               tools_action=prompt.public()["action"] if not atomic else None,
+                               notes="Runs LM Studio's official installer: the headless daemon (llmster) and the `lms` CLI under ~/.lmstudio; no admin."
+                               + ("" if atomic else " First, an administrator installs libatomic1 (" + prompt.command.split("   #")[0] + ")."),
+                               command_preview=["bash", "-c", LMSTUDIO_LINUX_SCRIPT],
+                               steps=(["check libatomic1"] if not atomic else []) + ["run the vendor installer", "start the local server"])
         return InstallPlan(eid, False, "unsupported", notes=f"unknown engine {eid}")
 
     def _mlx_argv(self, version: Optional[str] = None) -> List[str]:
@@ -1540,6 +1570,7 @@ class EngineInstaller:
         if self.host.os_id == "linux":
             if self.lms_cli() and not ctx.job.force:
                 return {"installed": True, "already_installed": True, "cli": self.lms_cli(), **self.start_lmstudio(ctx)}
+            ctx.require_tools(self._libatomic_present, self._libatomic_prompt())
             ctx.state("installing", "Running LM Studio's official installer (headless daemon and lms CLI)", percent=10)
             rc, out = ctx.stream(["bash", "-c", LMSTUDIO_LINUX_SCRIPT])
             if rc != 0:

@@ -35,6 +35,81 @@ The admin token is printed just above the link, and kept in
 `<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
 `abstractgateway serve --no-print-token` to keep it out of the output.
 
+## 1b. Set up your gateway: the admin password
+
+A fresh gateway (a new data folder) has an admin account but nobody holding a
+password for it. Open the console at the gateway's address, from this machine
+or any address the gateway accepts (a LAN address, Tailscale, a reverse
+proxy, Tailscale Funnel): instead of the sign-in form it shows **Set up your
+gateway**:
+
+| Field | What it is |
+|---|---|
+| Your name | The admin's display name in the console (default `admin`). You can sign in with it or with the account id `admin` |
+| Admin password, Confirm | At least 10 characters with at least 5 different ones, not the account name and not a well-known password. A few words make a good one |
+| Setup code | The six words printed when the gateway was installed (see below) |
+| Remember this browser | Keeps the session for 30 days instead of until the browser closes |
+
+**Set up and sign in** sets the password, signs this browser in as the admin
+and opens the first-run guide (section 2). From then on the same address shows
+the sign-in form, and the onboarding never comes back for this data folder.
+
+**The setup code.** Until the admin password is set, whoever reaches the
+console first could set it, so the form always asks for the six-word setup
+code, from any browser. (The gateway cannot tell a browser on its own machine
+from a proxy that relays strangers without saying so, such as a minimal nginx
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
+skip the form with the one-time link of section 3, which needs no code. Print
+the code on the gateway's machine:
+
+```bash
+abstractgateway claim --code
+moose bicycle honey camel ankle agent
+```
+
+`abstractgateway service install` and `abstractgateway service enable` print it
+too, and so does the AbstractFramework installer's summary. Case and
+separators do not matter (`Moose-Bicycle-...` works). The code stops working
+once the password is set; `abstractgateway claim --code` then says the gateway
+is already set up.
+
+**What closes the onboarding.** Setting the admin password here, or ANY admin
+sign-in (a one-time link from section 3, the admin token, a code sent by
+email), an admin setting the admin's password from the Accounts page, or an
+admin creating another account. When
+it closes, unused one-time links are deleted. A data folder that already had
+accounts when the gateway was upgraded to 0.18.0 is never "fresh": it keeps
+the sign-in form.
+
+**Limits.** 5 wrong setup codes from one address, or 20 from all addresses
+together, lock the form for 15 minutes (the second lock never applies to a
+browser on the gateway's own machine). Every claim is logged with the
+client address (a warning log line, the audit log, and
+`<data dir>/auth/onboarding.json`, mode `0600`).
+
+## Signing in
+
+The sign-in form asks for **Account** and **Password**. **Sign in with a
+token instead** switches to the token (the admin token from section 1, or a
+token an admin gave you); tokens stay for apps and automation. A password is
+set:
+
+- for the admin, by the onboarding above;
+- for anyone, by an admin: **Accounts** > **Create user** (optional
+  **Password** field), or the key button on an account's row (set, change or
+  remove);
+- by each person for themselves: the key button on their own row (it asks the
+  current password once one is set).
+
+Setting, changing or removing a password signs that account's other browsers
+out. Ten wrong passwords from one address lock that address for 15 minutes;
+five wrong passwords in a row for one account from one address lock that
+address out of that account for 30 seconds, doubling up to 15 minutes; every
+20 for one account from all addresses lock it for 15 minutes, doubling up to
+24 hours, except for addresses that signed it in before. Every lock ends, and
+the account's token keeps working. See
+[security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window).
+
 ## 2. The first-run guide
 
 The guide has five steps. Every step is optional:
@@ -44,7 +119,7 @@ The guide has five steps. Every step is optional:
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
 | Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, transcription (speech input), images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
-| Apps | "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
+| Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
 **What "recommended" means on this computer.** AbstractCore picks the
