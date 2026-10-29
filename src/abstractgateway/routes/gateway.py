@@ -18008,20 +18008,31 @@ def _merge_vision_provider_model_responses(*responses: Optional[Dict[str, Any]],
     }
 
 
+# Image and video engines that run only on Apple silicon (MLX). Off a Mac they are never offered.
+_APPLE_ONLY_VISION_PROVIDERS = frozenset({"mlx-gen", "mflux"})
+
+
 def _filter_vision_provider_models_response(
     response: Dict[str, Any],
     *,
     provider: Optional[str],
     providers_only: bool,
+    remote: bool = False,
 ) -> Dict[str, Any]:
     # Cached MLX weights are not proof that this execution host can run MLX.
-    # Only prune a LOCAL catalog; a remote Core may itself be on Apple Silicon.
+    # Only prune a LOCAL catalog; a remote Core (`base_url`) may itself be on Apple Silicon.
+    # The providers-only answer (`abstractruntime.discovery`, the runtime's local catalog) is
+    # local too: it listed mflux and mlx-gen on a Linux server (operator QA 2026-10-28, item d).
     source = str(response.get("upstream_source") or response.get("source") or "")
-    if source == "abstractvision.local" and platform.system() != "Darwin":
+    local = not remote and source in ("abstractvision.local", "abstractvision_local_cache", "abstractruntime.discovery")
+    if local and platform.system() != "Darwin":
         response = dict(response)
-        apple_only = {"mlx-gen", "mflux"}
-        for field in ("providers", "available_providers"):
-            response[field] = [p for p in response.get(field) or [] if str(p).lower() not in apple_only]
+        apple_only = _APPLE_ONLY_VISION_PROVIDERS
+        for field in ("providers", "available_providers", "image_providers"):
+            if field in response:
+                response[field] = [p for p in response.get(field) or [] if str(p).lower() not in apple_only]
+        if isinstance(response.get("details"), dict):
+            response["details"] = {k: v for k, v in response["details"].items() if str(k).lower() not in apple_only}
         response["models"] = [m for m in response.get("models") or []
                               if isinstance(m, dict) and str(m.get("provider") or m.get("owned_by") or "").lower() not in apple_only]
         response["models_by_provider"] = {p: v for p, v in (response.get("models_by_provider") or {}).items()
@@ -20208,6 +20219,7 @@ async def vision_provider_models_catalog(
                 ),
                 provider=provider,
                 providers_only=providers_only,
+                remote=bool(str(base_url or "").strip()),
             )
         )
     try:
@@ -20228,6 +20240,7 @@ async def vision_provider_models_catalog(
             _runtime_discovery_payload(payload),
             provider=provider,
             providers_only=providers_only,
+            remote=bool(str(base_url or "").strip()),
         )
     )
 
@@ -26980,6 +26993,22 @@ def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
     return None
 
 
+def _row_v1_held_by_for_caller(value: Any) -> Optional[list[str]]:
+    """`held_by` as the caller may read it: the operator sees every account's
+    runtime by name; a signed-in non-admin sees only its own account by name,
+    any other account's runtime as "another account's runtime"."""
+    if not isinstance(value, list):
+        return None
+    holders = [str(h) for h in value]
+    principal = current_gateway_principal()
+    if principal is None or principal.is_admin():
+        return holders
+    mine = f"the runtime of account {safe_principal_component(principal.tenant_id, default='default')}/"
+    mine += safe_principal_component(principal.user_id, default="user")
+    return [h if (h.startswith(mine + " ") or h == mine or not h.startswith("the runtime of account "))
+            else "another account's runtime" + (h[h.index(" ("):] if " (" in h else "") for h in holders]
+
+
 def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
     """Coerce one runtime residency record into the frozen `model_residency_row_v1` shape.
 
@@ -27024,6 +27053,12 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         # pair — nan/inf/bool/junk coerce to null, never a guess.
         "est_weights_bytes": _row_v1_int(record, "est_weights_bytes", "estWeightsBytes"),
         "cache_bytes": _row_v1_int(record, "cache_bytes", "cacheBytes"),
+        # What the cache is (GGUF): the KV cache llama.cpp allocated for the
+        # loaded `context_length`, estimated from the file geometry.
+        "kv_cache_bytes": _row_v1_int(record, "kv_cache_bytes", "kvCacheBytes"),
+        "kv_cache_estimated": True if record.get("kv_cache_estimated") is True else None,
+        # Who keeps it in memory, in words (ADR 0043).
+        "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
