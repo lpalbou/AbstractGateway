@@ -1212,7 +1212,9 @@ def prepare_serve_bind(
     elif setting["port_source"] == "stored":
         port, port_source = int(setting["port"]), "setting"
     else:
-        port, port_source = DEFAULT_PORT, "default"
+        from .instances import gateway_port
+
+        port, port_source = gateway_port(), "default"
 
     exports: Dict[str, str] = {}
     if host_source == "setting" and mode in ("lan", "internet") and not is_loopback_host(host):

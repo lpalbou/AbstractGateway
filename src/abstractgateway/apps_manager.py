@@ -1397,10 +1397,20 @@ class ExternalApp:
     argv: Tuple[str, ...] = ()
 
 
+def instance_app_offset() -> int:
+    """How far this gateway instance's app ports sit from the stack map (instances.py): 0 for the
+    default instance, 200 x slot for a named one, so two instances never take each other's ports."""
+    from .instances import app_port_offset, is_default
+
+    return 0 if is_default() else app_port_offset()
+
+
 def external_probe_ports() -> List[int]:
-    """Every port the probe asks, in priority order (stack map first)."""
+    """Every port the probe asks, in priority order (stack map first). A named instance asks its own
+    block only (the older launchers' ports belong to the default instance)."""
+    off = instance_app_offset()
     out: List[int] = []
-    for port in [p for _, p in STACK_PORTS] + list(LEGACY_PROBE_PORTS):
+    for port in [p + off for _, p in STACK_PORTS] + (list(LEGACY_PROBE_PORTS) if off == 0 else []):
         if port not in out:
             out.append(port)
     return out
@@ -2103,7 +2113,10 @@ class AppsManager:
 
     def port_range(self) -> Tuple[Tuple[int, int], bool]:
         explicit = parse_port_range(self._setting("ports"))
-        return (explicit or DEFAULT_PORT_RANGE), explicit is not None
+        if explicit:
+            return explicit, True
+        off = instance_app_offset()
+        return (DEFAULT_PORT_RANGE[0] + off, DEFAULT_PORT_RANGE[1] + off), False
 
     def install_allowed(self, *, same_machine: bool = False) -> bool:
         """The `allow_engine_install` rule for one caller: `same_machine` is
@@ -2927,12 +2940,41 @@ class AppsManager:
                 return str(rec["url"]).rstrip("/")
         except Exception:
             pass
-        return (os.environ.get("ABSTRACTGATEWAY_URL") or "http://127.0.0.1:8080").rstrip("/")
+        from .instances import gateway_port
+
+        return (os.environ.get("ABSTRACTGATEWAY_URL") or f"http://127.0.0.1:{gateway_port()}").rstrip("/")
+
+    def belongs_to_another_gateway(self, ext: ExternalApp) -> bool:
+        """An app found on a usual port that another gateway on this machine runs or serves
+        (operator P0, 2026-10-29: a second gateway on port 8443 listed the 8080 gateway's apps as
+        its own and opened them pointing at 8080, so the app asked to sign in to the other
+        gateway). Either signal is enough:
+        - its page names another gateway (`gateway_url`: another scheme/host/port);
+        - its command line runs ANOTHER data dir's app support (`<data dir>/apps/_support/...`,
+          which only a gateway's own launch adds), not this data dir's.
+        A leftover of this data dir is never another gateway's. An app whose page names no gateway
+        and whose command line is not a gateway's (the dev stack, `npx`) keeps the old meaning:
+        started outside the gateway, for whoever it serves."""
+        if self.external_kind(ext) == "leftover":
+            return False
+        if ext.gateway_url:
+            mine = _gateway_key(self.resolve_gateway_url())
+            theirs = _gateway_key(ext.gateway_url)
+            if mine is not None and theirs is not None and theirs != mine:
+                return True
+        marker = os.sep + "apps" + os.sep + "_support" + os.sep
+        for arg in ext.argv or ():
+            a = str(arg)
+            if (marker in a or "/apps/_support/" in a) and not self.runs_this_gateways_install([a]):
+                return True
+        return False
 
     def external_apps(self, *, refresh: bool = False) -> Dict[str, ExternalApp]:
         """Apps running without the gateway having started them (probed on
         the usual loopback ports, cached EXTERNAL_CACHE_TTL_S). Ports held by
-        an app this gateway runs are never probed."""
+        an app this gateway runs are never probed. Apps another gateway on
+        this machine runs or serves are left out (`belongs_to_another_gateway`):
+        this gateway starts its own copy, on a free port."""
         with self._lock:
             exclude = sorted(p.port for p in self._procs.values() if p.alive() and p.port)
         with self._external_lock:
@@ -2944,6 +2986,8 @@ class AppsManager:
             except Exception:  # noqa: BLE001 - a probe failure is "nothing found", never an error page
                 logger.warning("probing for apps started outside the gateway failed", exc_info=True)
                 found = {}
+            for app_id in [k for k, ext in found.items() if self.belongs_to_another_gateway(ext)]:
+                found.pop(app_id, None)
             self._external_cache = (_now(), found, exclude)
             return dict(found)
 
@@ -2989,7 +3033,7 @@ class AppsManager:
         state = self.app_state(spec.id)
         taken = [p.port for s, p in self._procs.items() if s != spec.id and p.alive() and p.port]
         port = allocate_port(
-            preferred=[state.get("port"), None if explicit else spec.default_port],
+            preferred=[state.get("port"), None if explicit else spec.default_port + instance_app_offset()],
             port_range=(lo, hi),
             taken=taken,
             host=self.bind_host,
