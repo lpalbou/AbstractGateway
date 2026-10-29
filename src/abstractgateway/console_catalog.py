@@ -497,6 +497,14 @@ CATALOG_JS = r"""
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
     function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
+    // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
+    function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
+    function mcDefaultMarkup(provider, artifact, attrs, admin) {
+      const cur = mcCurrentDefault();
+      if (cur && cur.provider === provider && cur.model === servedModelId(provider, artifact)) return uiPill("Default text model", "info");
+      return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>`;
+    }
     function mcActionMarkup(row, a, job) {
       const key = mcKey(a);
       const admin = !!(state.principal && state.principal.admin);
@@ -617,7 +625,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
         + `<div class="mc-art__chips">${chips}</div>`
         + `</div>`
-        + `<div class="mc-art__action">${mcDeleteButton(r, attrs, admin)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? mcDefaultMarkup(r.provider, r.artifact, attrs, admin) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
         + `</li>`;
     }

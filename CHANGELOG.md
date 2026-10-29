@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
+  **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
+  generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
