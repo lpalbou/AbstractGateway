@@ -281,6 +281,12 @@ class GatewayUserCreateRequest(BaseModel):
         default=None,
         description="Optional caller-provided bearer token. When omitted, Gateway generates one and returns it once.",
     )
+    password: Optional[str] = Field(
+        default=None,
+        max_length=1024,
+        description="Optional password (0.18.0): the person then signs in with their User ID and this password; "
+        "the token is still issued for apps and automation. Must meet the strength rule (400 password_too_weak).",
+    )
 
 
 class GatewayUserUpdateRequest(BaseModel):
@@ -312,8 +318,10 @@ class GatewayRuntimeReservationTransferRequest(BaseModel):
 class GatewaySessionLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(..., min_length=1)
-    token: str = Field(..., min_length=1)
+    user_id: str = Field(..., min_length=1, max_length=200, description="The account id (with a password: or the account's display name).")
+    token: Optional[str] = Field(default=None, min_length=1, description="The account's gateway token. Exactly one of token / password.")
+    password: Optional[str] = Field(default=None, min_length=1, max_length=1024, description="The account's password (0.18.0).")
+    tenant_id: str = Field(default="default", min_length=1, max_length=200)
     remember: bool = Field(default=False)
 
 
@@ -354,9 +362,16 @@ def _session_cookie_kwargs(request: Request, *, max_age: Optional[int] = None, h
 @router.get("/me")
 async def gateway_me(request: Request) -> Dict[str, Any]:
     principal = _principal_from_request(request)
+    account: Optional[Dict[str, Any]] = None
+    if principal.source == "user-registry":
+        rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+        if rec is not None:
+            # What the console shows for the signed-in person, and whether they can sign in with a password.
+            account = {"display_name": rec.display_name or None, "password_set": bool(rec.password_hash)}
     return {
         "ok": True,
         "principal": principal.public_dict(),
+        "account": account,
         "auth": {
             "mode": "users" if gateway_user_auth_enabled() else "legacy-token",
             "user_auth_enabled": bool(gateway_user_auth_enabled()),
@@ -386,10 +401,15 @@ def _issue_gateway_browser_session(
     principal: GatewayPrincipal,
     *,
     remember: bool,
+    via: str = "",
 ) -> Dict[str, Any]:
     """Create a browser session (httponly session cookie + readable CSRF
     cookie) for `principal` — ONE implementation for `/session/login` and the
-    first-run `/session/claim`, so both sessions are indistinguishable."""
+    first-run `/session/claim`, so both sessions are indistinguishable.
+
+    An ADMIN signing in here (any way: token, password, claim link, email code,
+    onboarding) claims a fresh gateway: the onboarding window closes for good
+    (first_run.close_onboarding)."""
     ttl_s = gateway_session_ttl_s()
     if bool(remember):
         try:
@@ -400,6 +420,12 @@ def _issue_gateway_browser_session(
 
     session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=ttl_s)
     _audit_signed_in(request, principal)
+    if principal.is_admin():
+        from .session_passwords import _close_onboarding_for
+
+        rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+        if rec is not None:
+            _close_onboarding_for(rec, request, via=via or request.url.path.rsplit("/", 1)[-1] or "sign_in")
     response.set_cookie(
         gateway_session_cookie_name(),
         session_value,
@@ -434,6 +460,13 @@ async def gateway_session_login(
     response: Response,
     payload: GatewaySessionLoginRequest,
 ) -> Dict[str, Any]:
+    if (payload.token is None) == (payload.password is None):
+        raise HTTPException(
+            status_code=400,
+            detail={"reason_code": "invalid_request", "message": "Send the account with exactly one of token or password."},
+        )
+    if payload.password is not None:
+        return await _password_session_login(request, response, payload)
     registry = GatewayUserRegistry()
     principal = registry.authenticate(payload.token)
     if principal is None and registry.openai_key_owner(str(payload.token or "").strip()) is not None:
@@ -460,7 +493,39 @@ async def gateway_session_login(
                 "message": user_accounts_off_sign_in_refusal(principal.user_id),
             },
         )
-    return _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
+    return _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember), via="token")
+
+
+async def _password_session_login(request: Request, response: Response, payload: GatewaySessionLoginRequest) -> Dict[str, Any]:
+    """`{user_id, password}`: attempt-limited (routes/session_passwords.py), one refusal
+    sentence for every unknown / wrong / disabled / password-less account."""
+    from .session_passwords import password_sign_in_principal
+
+    if not gateway_user_auth_enabled():
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "password_requires_user_auth",
+                    "message": "This gateway runs with a shared token only (no user accounts): sign in with the token."},
+        )
+    principal = await off_loop(
+        "light", password_sign_in_principal, request,
+        account=str(payload.user_id), password=str(payload.password), tenant_id=str(payload.tenant_id or "default"),
+    )
+    if principal_barred_from_shared_runtime(principal):
+        raise HTTPException(
+            status_code=401,
+            detail={"reason_code": "user_accounts_off_admin_only", "message": user_accounts_off_sign_in_refusal(principal.user_id)},
+        )
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["sign_in_method"] = "password"
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks a sign-in
+        pass
+    out = _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember), via="password")
+    out["sign_in"] = {"method": "password"}
+    return out
 
 
 class GatewaySessionClaimRequest(BaseModel):
@@ -529,7 +594,7 @@ async def gateway_session_claim(
             status_code=409,
             detail={"reason_code": "claim_user_not_admin", "message": "The user this link was minted for is not an admin."},
         )
-    out = _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember))
+    out = _issue_gateway_browser_session(request, response, principal, remember=bool(payload.remember), via="claim_link")
     out["claimed"] = True
     out["first_run"] = first_run_state(data_dir)
     # WHO minted the link (`serve` | `cli` | `tray` | ...), so the console can
@@ -729,6 +794,14 @@ async def gateway_admin_create_user(request: Request, payload: GatewayUserCreate
         )
     _refuse_unknown_roles(payload.roles)
     _refuse_non_admin_account_while_user_accounts_off(payload.roles)
+    password_hash = ""
+    if payload.password:
+        from ..passwords import hash_password, password_problem
+
+        problem = password_problem(payload.password, account=payload.user_id)
+        if problem:
+            raise HTTPException(status_code=400, detail={"reason_code": "password_too_weak", "message": problem, "field": "password"})
+        password_hash = await off_loop("light", hash_password, payload.password)
     registry = GatewayUserRegistry()
     try:
         record, issued_token = registry.create_user(
@@ -743,6 +816,16 @@ async def gateway_admin_create_user(request: Request, payload: GatewayUserCreate
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    if password_hash:
+        record = registry.set_password(user_id=record.user_id, tenant_id=record.tenant_id, password_hash=password_hash)
+    # A gateway whose admin creates accounts is in use: an open first-run window closes.
+    try:
+        from ..first_run import close_onboarding
+        from .session_passwords import client_address
+
+        close_onboarding(gateway_data_dir_from_env(), via="account_created", client_ip=client_address(request))
+    except Exception:  # noqa: BLE001
+        logger.exception("could not close the onboarding window")
     return {"user": record.public_dict(), "token": issued_token}
 
 

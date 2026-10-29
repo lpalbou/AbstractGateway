@@ -138,6 +138,8 @@ WORKSPACES_JS = r"""
       folder: ICONS.folder,
       openai: svgIcon('<path d="M4 8h13"></path><path d="m14 4.5 3.5 3.5-3.5 3.5"></path><path d="M20 16H7"></path><path d="m10 12.5-3.5 3.5 3.5 3.5"></path>'),
       manage: svgIcon('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"></path><circle cx="15" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="17" cy="18" r="2"></circle>'),
+      // Password (0.18.0): a key.
+      key: svgIcon('<circle cx="7.5" cy="15.5" r="3.5"></circle><path d="m10 13 9-9"></path><path d="m16 7 2.5 2.5"></path><path d="m13.5 9.5 2 2"></path>'),
       rotate: svgIcon('<circle cx="8" cy="15" r="3.5"></circle><path d="m10.5 12.5 7-7"></path><path d="m15.5 7.5 2 2"></path><path d="M14 4.5a8 8 0 0 1 5.5 5"></path><path d="M20 6v4h-4"></path>'),
       archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
       unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 17.5v-6"></path><path d="m9.5 14 2.5-2.5 2.5 2.5"></path>'),
@@ -166,6 +168,7 @@ WORKSPACES_JS = r"""
       workspace: (n) => `Workspaces ${n}'s agents may use`,
       preferences: (n) => `Default workflows of ${n}`,
       manage: (n) => `Manage ${n} (mind, voice, prompt…)`,
+      password: (n) => `Set or change ${n}'s password`,
       rotate: (n) => `Rotate ${n}'s sign-in token`,
       archive: (n) => `Archive ${n} (kept, hidden)`,
       unarchive: (n) => `Unarchive ${n} (comes back inactive)`,

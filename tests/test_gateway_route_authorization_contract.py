@@ -230,6 +230,13 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # Rotating YOUR OWN token (round 3): the handler acts only on the caller's own
     # registry record (resolved from the principal, never from a path or body id).
     ("POST", "/api/gateway/me/token/rotate"),
+    # Setting YOUR OWN password (0.18.0): the handler acts only on the caller's own registry
+    # record (from the principal, never a path or body id), asks the current password once one is
+    # set, under the sign-in attempt limits (routes/session_passwords.py).
+    ("PUT", "/api/gateway/me/password"),
+    # First-run onboarding (0.18.0, public, below): answers only while the data dir is
+    # unclaimed; see test_gateway_onboarding.py.
+    ("POST", "/api/gateway/session/onboarding"),
     # Account recovery by email (framework backlog 0992): the public writes
     # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
     # per account and client address, a constant answer (no enumeration);
@@ -505,6 +512,13 @@ PUBLIC_WRITES = {
     # or replayed id), rate limited per connection and client address, body capped;
     # it only appends to that connection's inbox stream and wakes its automations.
     ("POST", "/api/gateway/triggers/webhooks/{connection_id}"),
+    # First-run onboarding (0.18.0; see test_gateway_onboarding.py): only while the data dir is
+    # UNCLAIMED (fresh, admin without a password, no admin sign-in yet); browser requests only;
+    # 5 refused setup codes per address and 20 per gateway per 15 minutes; the six-word setup
+    # code unless the request comes straight from the gateway's machine. The GET is the
+    # gateway-wide "unclaimed / needs the code" answer (the admin account id while unclaimed).
+    ("POST", "/api/gateway/session/onboarding"),
+    ("GET", "/api/gateway/session/onboarding"),
 }
 
 
