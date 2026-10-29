@@ -2304,6 +2304,15 @@ class GatewayRunner:
         )
         if result.get("status") == "applied" and not result.get("duplicate") and typ == "automation.archive":
             self._stream_wake_cancelled(automation_id)
+        if result.get("status") == "applied" and not result.get("duplicate") and typ == "automation.revise":
+            # A revision that now grants a waiting run's tools answers that wait, for every client
+            # (operator QA 2026-10-29), by the person who saved it.
+            try:
+                from .automation_wait_resolver import resolve_covered_waits
+
+                resolve_covered_waits(self.run_store, self.command_store, automation_id, actor=rec.client_id)
+            except Exception:  # noqa: BLE001 - never fails the revise; the wait stays answerable by hand
+                logger.warning("GatewayRunner: resolving the waits revision %s grants failed", rec.command_id, exc_info=True)
         if result.get("status") == "applied" and not result.get("duplicate"):
             for listener in list(self._automation_command_listeners):
                 try:
