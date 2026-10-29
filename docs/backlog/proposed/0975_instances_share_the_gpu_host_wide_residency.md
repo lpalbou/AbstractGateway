@@ -1,10 +1,10 @@
-# 0975-gateway: [BUG] Instances on one host share the GPU: residency fit and eviction must be host-wide
+# 0975-gateway: [PROPOSED] Instances on one host share the GPU: residency fit and eviction must be host-wide
 
 > Package: abstractgateway (instances, model residency, setup guide); abstractcore (fit check, `ModelDoesNotFitError`)
 > Type: bug
-> Status: planned (not implemented)
+> Status: proposed (not planned): several instances on one machine is not a product goal (operator ruling, 2026-10-29)
 > Created: 2026-10-29
-> Priority: P1
+> Priority: P3
 > Labels: instances, gpu, residency, setup-guide
 > Root link: OVH release-test server, 2026-10-29 (instances `default` on 8080 and `fresh` on 8443, one Quadro RTX 5000 16 GB)
 
@@ -28,3 +28,9 @@ puts a Qwen3.5 4B Q4_K_M at about 7.1 GiB resident (measured 7,120 MiB after one
 - A text route can cap its context (the KV allocation), and the recommendation picks a context that fits beside the
   other instance.
 - A test with two instances on a fake 16 GB card: the second load counts the first instance's model.
+
+## Ruling (2026-10-29)
+
+The operator ruled that several gateway instances on one machine are not a product goal. The test server runs ONE
+gateway. For a fresh onboarding try, 8080's data dir is reset on request; no second instance runs. The OVH 8443
+instance "fresh" is stopped, and its data dir is kept on disk. This item stays as a record, in case the goal changes.
