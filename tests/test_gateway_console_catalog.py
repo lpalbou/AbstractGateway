@@ -217,6 +217,17 @@ if (__SCRIPT__ === "beside") {
   snap("hf"); out.hfHtml = root.innerHTML;
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
 }
+if (__SCRIPT__ === "every") {
+  out.calls1 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
+  await settle();
+  snap("every"); out.html = root.innerHTML;
+  out.calls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: false } });
+  await settle();
+  snap("plain");
+  out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+}
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
   root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
@@ -299,7 +310,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [n, n, total_arts] and out["cleared"]["hash"] == "#catalog"
-    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
+    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "every": False, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
@@ -500,6 +511,21 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     assert 'data-mc-hub-count="3">Showing 3 Hugging Face results; more are available.' in out["html"]
     assert out["hubCalls2"] == out["hubCalls"]  # the mode switch asked nothing new
     assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
+
+
+def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
+    """Batch item (b): "Every quant" asks the catalog with `hub=true&extended=true` (AbstractCore 0865)
+    and draws the extra quants as rows of the same cards; off, the plain catalog again; in the link."""
+    cat = _catalog(10)
+    extended = json.loads(json.dumps(cat))
+    for row in extended["rows"]:
+        row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", extended=True))
+    out = _run(cat, "every", "", hub=extended)
+    assert out["calls1"] == ["/api/gateway/models/catalog"]
+    assert out["calls2"][-1] == "/api/gateway/models/catalog?hub=true&extended=true"
+    assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
+    assert 'data-mc-every="1" checked' in out["html"]
+    assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
 
 
 def _gpu_limit_catalog() -> dict:

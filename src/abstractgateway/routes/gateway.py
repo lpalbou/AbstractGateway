@@ -27673,7 +27673,7 @@ async def model_downloads_stream(
 #   GET  /engines?probe=                             contract B (+ install_allowed)
 #   GET  /engines/{id}?probe=                        one contract-B row
 #   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
-#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=  contract C
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=&extended=  contract C
 #   GET  /models/installed?provider=                 contract D
 #   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
 #   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
@@ -27771,12 +27771,15 @@ async def models_catalog_get(
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
     hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
     hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
+    extended: bool = Query(False, description="With hub: every quant the rows' own GGUF repos ship (AbstractCore 0865)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
-    paging = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
+    paging: Dict[str, Any] = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
+    if extended:
+        paging["extended"] = True
     return await _core_host_call(
         core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
         **paging,

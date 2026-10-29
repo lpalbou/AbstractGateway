@@ -109,7 +109,30 @@ _role_lock = threading.Lock()
 #         (ledger_tail.py picks its reader by them; the replay view reads the cursor).
 # 0.15.0: the AbstractMemory facade (integrations.abstractmemory.memory_facade: MemoryFacade, the
 #         re-exported store classes and names) and LedgerStore.get_record (routes/memory.py, backlog 0948).
-ABSTRACTRUNTIME_FLOOR = "0.15.0"
+# 0.15.3: the run store's change token holds across the index build (JsonFileRunStore; AbstractRuntime
+#         backlog 0864, gateway 0965). 0.15.2 moved it on every boot, so the mail collector's change-driven
+#         pass reloaded every finished run; 0.15.2 is below the floor although its API is the same.
+ABSTRACTRUNTIME_FLOOR = "0.15.3"
+
+
+def _installed_runtime_version() -> str:
+    """The installed abstractruntime's version string ("unknown" when metadata is missing)."""
+    try:
+        from importlib.metadata import version
+
+        return version("abstractruntime")
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _version_tuple(text: str) -> tuple:
+    parts = []
+    for piece in text.split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
 
 
 class LiveDeltaError(RuntimeError):
@@ -921,13 +944,15 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("ledger rows by address (LedgerStore.get_record, AbstractRuntime 0.15.0)")
     except ImportError:
         missing.append("the AbstractMemory facade (abstractruntime.integrations.abstractmemory.memory_facade.MemoryFacade)")
+    installed = _installed_runtime_version()
+    # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
+    # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.15.3"):
+        missing.append(
+            "a change token that holds across the index build (JsonFileRunStore, AbstractRuntime 0.15.3; "
+            "0.15.2 reloads every finished run on boot, gateway backlog 0965)"
+        )
     if missing:
-        try:
-            from importlib.metadata import version
-
-            installed = version("abstractruntime")
-        except Exception:  # noqa: BLE001
-            installed = "unknown"
         raise RuntimeTooOld(
             f"this gateway needs abstractruntime>={ABSTRACTRUNTIME_FLOOR}; the installed abstractruntime "
             f"({installed}) lacks: {'; '.join(missing)}. Upgrade it: pip install -U 'abstractruntime>={ABSTRACTRUNTIME_FLOOR}'"
