@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Only the machine's gateway service shows the tray icon** (operator ruling 2026-10-29: two icons on one Mac, a
+  scratch e2e gateway's next to the service's). The service is the gateway that launchd (job
+  `ai.abstractframework.gateway`), systemd (`abstractgateway.service`), the XDG autostart entry or the Windows Run entry
+  started (`tray_supervisor.service_launch`, read from the launch itself: `XPC_SERVICE_NAME`, the systemd cgroup, the
+  service launcher); a `serve` from a terminal, a test or a harness shows none unless started with the new `--tray`
+  (reason `not_service` on the console's Gateway card). Named instances follow with gateway #37's instance names.
 ### Fixed
 
 - **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
