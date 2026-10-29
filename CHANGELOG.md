@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
+  server).
+  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
+    **Show more results** appends the next page.
+  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
+  - A catalog search of three characters or more also asks Hugging Face. Its results come under
+    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
+  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
+  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
 - **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
   degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
   and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned

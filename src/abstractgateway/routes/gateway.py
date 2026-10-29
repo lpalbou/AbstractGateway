@@ -27638,7 +27638,7 @@ async def model_downloads_stream(
 #   GET  /engines?probe=                             contract B (+ install_allowed)
 #   GET  /engines/{id}?probe=                        one contract-B row
 #   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
-#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=  contract C
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=  contract C
 #   GET  /models/installed?provider=                 contract D
 #   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
 #   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
@@ -27661,10 +27661,12 @@ def _host_action_error(status_code: int, status: str, message: str, **extra: Any
 
 async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Run one seam call off the event loop; map the facade's typed errors to HTTP."""
-    from ..core_config import CoreTooOld, HostActionRefused
+    from ..core_config import CoreTooOld, HostActionRefused, RuntimeTooOld
 
     try:
         return await off_loop("watchers", fn, *args, **kwargs)
+    except RuntimeTooOld as exc:
+        return _host_action_error(501, "unsupported", str(exc), reason="abstractruntime_too_old", missing=exc.missing)
     except HostActionRefused as exc:
         body = exc.payload()
         message = str(body.pop("message", "") or exc)
@@ -27732,13 +27734,17 @@ async def models_catalog_get(
     fits: bool = Query(False, description="Keep only artifacts that fit this host (fits or tight)."),
     hub: bool = Query(False, description="Enrich from the Hugging Face API (cached 24 h) and add hub search rows."),
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
+    hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
+    hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
+    paging = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
     return await _core_host_call(
-        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None
+        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
+        **paging,
     )
 
 
