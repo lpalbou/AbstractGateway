@@ -677,6 +677,28 @@ class ModelHostClient:
         if isinstance(attrs, dict):
             self._mh_config.update(attrs)
 
+    def _mh_fold_identity(self) -> None:
+        """A pool client's CURRENT default (after `set_default_provider_model`) becomes its constructor
+        identity, so a rebuild after a restart warms that model directly, once (pass three,
+        2026-10-29): rebuilding with the boot-time identity warmed the old default first, and the
+        replayed switch then asked for another copy."""
+        if self._mh_kind != "multi":
+            return
+        cfg = self._mh_config
+        if "_default_provider" in cfg and "_default_model" in cfg:
+            self._mh_ctor["provider"] = cfg["_default_provider"]
+            self._mh_ctor["model"] = cfg["_default_model"]
+        if isinstance(cfg.get("_llm_kwargs"), dict):
+            self._mh_ctor["llm_kwargs"] = dict(cfg["_llm_kwargs"])
+        if "_capability_defaults_explicit" in cfg:
+            self._mh_ctor["capability_defaults"] = (cfg.get("_capability_defaults")
+                                                    if cfg["_capability_defaults_explicit"] else None)
+        # The switch is in the constructor now: replaying it would only rebuild (and, with a local
+        # engine, load again) the model the constructor already warmed.
+        with self._mh_setters_lock:
+            if self._mh_setters.pop("set_default_provider_model", None) is not None:
+                self._mh_setters_version += 1
+
     # -- building in the child
     def _mh_ensure(self) -> None:
         if self._mh_built():
@@ -716,6 +738,7 @@ class ModelHostClient:
             attrs = _Exchange(host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                               what={"method": "getattrs"}).run()
             self._mh_refresh_config(attrs)
+            self._mh_fold_identity()
             self._mh_built_generation = generation
 
     def _mh_call(self, name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
@@ -738,6 +761,7 @@ class ModelHostClient:
             with contextlib.suppress(ModelHostUnavailable, ModelHostCrashed):
                 self._mh_refresh_config(_Exchange(self._mh_host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                                                   what={"method": "getattrs"}).run())
+            self._mh_fold_identity()
             return result
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
@@ -1033,8 +1057,7 @@ class ModelHostSupervisor:
                 self.last_error = None
                 self._cond.notify_all()
                 logger.info("model host: pid %s ready (generation %s)", proc.pid, generation)
-                for client in list(self._clients):
-                    self._warm_queue.append(weakref.ref(client))
+                self._queue_warm_builds()
                 self._wake.set()
             else:
                 self.last_error = str(ready.get("reason") or "the model host did not report ready")
@@ -1228,8 +1251,20 @@ class ModelHostSupervisor:
 
     def _register(self, client: ModelHostClient) -> None:
         self._clients.add(client)
-        self._warm_queue.append(weakref.ref(client))
-        self._wake.set()
+        if client._mh_kind == "multi":
+            self._warm_queue.append(weakref.ref(client))
+            self._wake.set()
+
+    def _queue_warm_builds(self) -> None:
+        """After a (re)start, rebuild the runtimes' pool clients at once (their default model warms in
+        the loading phase); a gateway-side client (`local`: a summary, Ask on a run, the sandbox,
+        entity chat) is rebuilt by its next call. Built eagerly, such a client loaded the model as
+        an instance of its own before the pool could, and the pool's copy was then a second one
+        (pass three, 2026-10-29: refused by the residency failsafe; chat broke after every
+        restart)."""
+        for client in list(self._clients):
+            if client._mh_kind == "multi":
+                self._warm_queue.append(weakref.ref(client))
 
     # -- connections
     def _acquire(self, *, connect_timeout_s: Optional[float] = None) -> _Connection:
