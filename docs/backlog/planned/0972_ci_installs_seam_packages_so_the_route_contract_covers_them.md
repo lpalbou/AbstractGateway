@@ -17,6 +17,10 @@ incident 2026-10-29; fixed by PR #55). A check whose absent-input case passes is
   route table), so a silently missing install cannot bring the old green back.
 - The contract test's note rows are then exercised on every run; a new seam write route goes red in CI the day it
   lands.
+- With abstractnote mounted, `tests/test_gateway_route_authorization_contract.py::test_user_accounts_on_a_non_admin_session_never_writes_gateway_wide_state`
+  errors at teardown: the seam probes local engines (the network guard refused 3 connections to 127.0.0.1:1234, a
+  LM Studio, or api.openai.com without one). Find what the mounted seam starts at import or app build (a processor,
+  an embedder) and make it inert under tests; this item is not done while that teardown error exists.
 - Document the rule in docs/security.md (route authorization) and in the seam module: a seam is covered by CI or
   it is not shipped.
 

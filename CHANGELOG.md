@@ -113,11 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac.
-- **Route authorization contract covers AbstractNote's write.** With `abstractnote` installed (every install
-  profile; the operator's instances) the gateway mounts `POST /api/gateway/note/claims/{claim_id}/retract`, and
-  `tests/test_gateway_route_authorization_contract.py` failed on main: a write route with no authorization
-  decision. Decided user-level: the note router gates it in the handler (the caller's own plane and account).
-  Gateway CI does not install abstractnote, so the contract was green there and red on every real install.
+- **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
+  install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
+  `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
+  with no authorization decision. All 14 are now recorded user-level (every handler resolves the caller's principal
+  and plane and acts on that plane's own notebook); the two plane-wide routes (`PUT /settings`,
+  `POST /processor/ensure`) get their shared-plane gate in abstractnote's handler (AbstractNote backlog 0040), not
+  an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
+  green there and red on every real install; security incident note in docs/security.md; planned 0972.
 
 ## [0.18.0] - 2026-10-28
 
