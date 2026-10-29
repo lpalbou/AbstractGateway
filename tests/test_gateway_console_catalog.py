@@ -137,7 +137,8 @@ vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const out = {};
 const view = () => vm.runInContext("mcStore.views.get('tab')", ctx);
-const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-filter]" ? { disabled: !!disabled, dataset: { mcFilter: group, mcValue: value } } : null) } });
+const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-facet]" ? { disabled: !!disabled, dataset: { afFacet: group, afValue: value } } : null) } });
+const scope = (mode) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-scope]" ? { dataset: { afScope: mode } } : null) } });
 const snap = (name) => {
   const html = root.innerHTML;
   const m = /<b>(\d+)<\/b> of (\d+) models? · <b>(\d+)<\/b>/.exec(html);
@@ -149,7 +150,7 @@ const snap = (name) => {
     providers: [...html.matchAll(/<li class="mc-art[^"]*" data-mc-art="[^"]*" data-provider="([^"]*)"/g)].map((x) => x[1]),
     hash: String(location.hash),
     notice: html.includes('data-mc-notice="quant_class"') && html.includes("This gateway's catalog does not report quant_class yet"),
-    quantDisabled: /data-mc-filter="quant"[^>]*disabled/.test(html) && !/data-mc-filter="quant"[^>]*aria-pressed="true"/.test(html),
+    quantDisabled: /data-af-facet="quant"[^>]*disabled/.test(html) && !/data-af-facet="quant"[^>]*aria-pressed="true"/.test(html),
     boldQuant: [...html.matchAll(/<div class="mc-art__quant"[^>]*><b>([^<]*)<\/b>/g)].map((x) => x[1]),
     empty: html.includes('data-mc-empty="1"') && html.includes('data-mc-action="clear"'),
     hfEmpty: html.includes('data-mc-empty="hf"') && html.includes("Hugging Face has no model matching"),
@@ -190,9 +191,9 @@ if (__SCRIPT__ === "hf") {
   out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
   out.html = root.innerHTML;
   // Back to the catalog, then Hugging Face again with a new query (Enter).
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "catalog" } } : null) } });
+  scope("catalog");
   snap("backToCatalog");
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  scope("hf");
   root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen coder", dataset: { mcSearch: "1" } } });
   await settle();
   snap("second");
@@ -212,7 +213,7 @@ if (__SCRIPT__ === "beside") {
   out.html = root.innerHTML;
   out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
   // Switching to Hugging Face mode with the same words reuses the answer (no second request).
-  root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
+  scope("hf");
   await settle();
   snap("hf"); out.hfHtml = root.innerHTML;
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
@@ -548,10 +549,10 @@ def test_a_hugging_face_search_lists_every_quant_and_has_no_switch() -> None:
     hub = _hub_page(0, 3, page=1, more=False)
     out = _run(cat, "hfevery", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
     assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"]
-    assert re.search(r'data-mc-every-switch="1" hidden', out["html"]), out["html"][:600]
+    assert "data-mc-every-switch" not in out["html"] and "Every quant" not in out["html"], out["html"][:600]
     assert out["hubCalls2"] == out["hubCalls1"]
     catalog = _run(cat, "every", "", hub=hub)  # the Catalog tab keeps its switch, shown
-    assert 'data-mc-every-switch="1" title=' in catalog["html"] and 'data-mc-every-switch="1" hidden' not in catalog["html"]
+    assert 'data-mc-every-switch="1" title=' in catalog["html"]
 
 
 def _gpu_limit_catalog() -> dict:

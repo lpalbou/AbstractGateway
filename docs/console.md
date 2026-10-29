@@ -709,7 +709,12 @@ list.
   them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files).
   Every build the catalog knows is listed; nothing is cut off.
 
-The filter bar above the cards:
+The filter bar above the cards is the kit's filter bar (abstractuic `AfFilterBar`): a first line with
+the Catalog / Hugging Face switch, the search box and **Fits this computer**, then one row per filter with
+its name in a fixed left column and its chips on the right (they wrap under the chips, never under the
+name). Every chip has the same size; its number is the small grey figure after the label. The setup
+guide's model step shows the same bar.
+
 
 - **Search** matches model names, organisations and artifact ids (every word
   must match). **Escape** clears it.
@@ -737,7 +742,8 @@ The filter bar above the cards:
   once typing pauses. Its results come under **From Hugging Face**, below the
   catalog's cards, with the same filters, count and **Show more results**.
   Switching to **Hugging Face** mode then reuses that answer.
-- **Every quant**: the switch beside **Fits this computer**. It lists, for each model, every quantization
+- **Every quant**: the switch at the end of the **Quantization** row (Catalog mode only; a Hugging Face
+  search always lists every quant). It lists, for each model, every quantization
   its own repositories ship (from 1-bit to BF16), each with its size and its fit on this computer. The
   first time, it asks Hugging Face, and the answer is cached for 24 hours.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)

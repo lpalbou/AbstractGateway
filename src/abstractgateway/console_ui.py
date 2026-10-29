@@ -559,16 +559,18 @@ CONSOLE_UI_CSS = r"""
        focused field), 14 px reading text. The visual glyphs keep their size;
        the boxes grow. The target floor is !important on purpose: it is a
        floor, and several control recipes (.ui-btn.is-quiet, #sandbox-reasoning,
-       the catalog's chips, later in this sheet) pin a desktop height with a
-       more specific selector. Exceptions (DESIGN §3.2): inline text links in
-       prose, disabled controls, the kit About dialog's link list. */
+       later in this sheet) pin a desktop height with a more specific selector.
+       Exceptions (DESIGN §3.2): inline text links in prose, disabled controls,
+       the kit About dialog's link list, and the kit's pills (af-chip--button,
+       the filter bar's scope buttons): they keep their pill geometry and the
+       kit grows an invisible 44 px hit area instead. */
     @media (pointer: coarse) {
-      button, .ui-btn, .af-topbar__btn, .af-topbar__pill, .mc-mode button, button.mc-chip, .entity-subtab,
+      button:not(.af-chip--button):not(.af-filterbar__scope-btn), .ui-btn, .af-topbar__btn, .af-topbar__pill, .entity-subtab,
       .first-run-step, .tab-button.shell_nav_item, .af-select-trigger, summary, .ui-card__actions a.ui-link,
       .acc-root .acc-btn, .acc-root .acc-tabs button { min-height: var(--tap-min, 44px) !important; }
       .ui-card__actions a.ui-link { display: inline-flex; align-items: center; }
       .mc-art .mc-id { min-height: var(--tap-min, 44px); display: flex; align-items: center; }
-      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close, .mc-chip { min-width: var(--tap-min, 44px) !important; }
+      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close { min-width: var(--tap-min, 44px) !important; }
       .sandbox-speak { height: var(--tap-min, 44px); }
       input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: var(--font-size-input, 16px) !important; min-height: var(--tap-min, 44px) !important; }
       input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
