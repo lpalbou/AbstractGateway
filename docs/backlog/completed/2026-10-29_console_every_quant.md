@@ -22,3 +22,7 @@
   red with the plain URL kept (mutation-checked).
 - `tests/test_gateway_models_engines.py`: `extended` reaches the facade.
 - Catalog, delete, models-engines and first-run console suites: 67 passed.
+
+## Changed 2026-10-29 (operator ruling)
+
+The switch is gone. The catalog always asks `hub=true&extended=true`; the quantization filter's "All" lists the whole set, and 4-bit, 8-bit and Other filter it. The `every` link parameter is ignored.

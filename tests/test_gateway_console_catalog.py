@@ -111,7 +111,9 @@ const ctx = vm.createContext({
   trackDownloadJob: (job) => { tracked.push(job); },
   api: async (path, opts) => {
     calls.push({ path, method: (opts && opts.method) || "GET", body: (opts && opts.body) || "" });
-    if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
+    // The console's catalog asks every quant of the rows' own repos (operator ruling 2026-10-29).
+    if (path === "/api/gateway/models/catalog?hub=true&extended=true") return JSON.parse(JSON.stringify(FIXTURE));
+    if (path === "/api/gateway/models/catalog") throw new Error("the console asked the catalog without extended=true");
     if (path.startsWith("/api/gateway/models/catalog?")) {
       if (HUB === null) throw new Error("hub search failed (offline?): connection refused");
       if (HUB.__pages) {  // one answer per `hub_page` (page 1 when absent)
@@ -187,7 +189,7 @@ if (__SCRIPT__ === "hash") {
   snap("fromhash");
 }
 if (__SCRIPT__ === "hf") {
-  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  out.hubCalls = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
   out.html = root.innerHTML;
   // Back to the catalog, then Hugging Face again with a new query (Enter).
   root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "catalog" } } : null) } });
@@ -196,7 +198,7 @@ if (__SCRIPT__ === "hf") {
   root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen coder", dataset: { mcSearch: "1" } } });
   await settle();
   snap("second");
-  out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  out.hubCalls2 = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
 }
 if (__SCRIPT__ === "host") {
   out.host = vm.runInContext("mcHostMarkup()", ctx);
@@ -206,36 +208,22 @@ if (__SCRIPT__ === "hfmore") {
   const more = () => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "hub-more" } } : null) } });
   more(); await settle(); snap("page2"); out.html2 = root.innerHTML;
   more(); await settle(); snap("page3"); out.html3 = root.innerHTML;
-  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  out.hubCalls = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
 }
 if (__SCRIPT__ === "beside") {
   out.html = root.innerHTML;
-  out.hubCalls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  out.hubCalls = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
   // Switching to Hugging Face mode with the same words reuses the answer (no second request).
   root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "mode", mcMode: "hf" } } : null) } });
   await settle();
   snap("hf"); out.hfHtml = root.innerHTML;
-  out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
+  out.hubCalls2 = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
 }
-if (__SCRIPT__ === "every") {
-  out.calls1 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
-  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
-  await settle();
-  snap("every"); out.html = root.innerHTML;
-  out.calls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
-  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: false } });
-  await settle();
-  snap("plain");
-  out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
-}
-if (__SCRIPT__ === "hfevery") {
-  const hubCalls = () => calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?q=")).map((c) => c.path);
-  out.hubCalls1 = hubCalls();
+if (__SCRIPT__ === "allquants") {
   out.html = root.innerHTML;
-  // The Catalog's switch never re-asks Hugging Face (its search is always every quant).
-  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
-  await settle();
-  out.hubCalls2 = hubCalls();
+  out.calls = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
+  chip("quant", "4bit"); snap("q4");
+  chip("quant", "all"); snap("all");
 }
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
@@ -322,7 +310,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [n, n, total_arts] and out["cleared"]["hash"] == "#catalog"
-    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "every": False, "hf": None}
+    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
@@ -525,33 +513,34 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
 
 
-def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
-    """Batch item (b): "Every quant" asks the catalog with `hub=true&extended=true` (AbstractCore 0865)
-    and draws the extra quants as rows of the same cards; off, the plain catalog again; in the link."""
+def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
+    """Operator ruling 2026-10-29: the "Every quant" switch made no sense beside the quantization
+    filter's "All". The console's catalog ALWAYS asks every quant of the rows' own repos
+    (`hub=true&extended=true`); "All" lists them, 4-bit / 8-bit / Other filter them, and the chip
+    counts count the full set. No switch, no `every` link parameter."""
     cat = _catalog(10)
-    extended = json.loads(json.dumps(cat))
-    for row in extended["rows"]:
-        row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", extended=True))
-    out = _run(cat, "every", "", hub=extended)
-    assert out["calls1"] == ["/api/gateway/models/catalog"]
-    assert out["calls2"][-1] == "/api/gateway/models/catalog?hub=true&extended=true"
-    assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
-    assert 'data-mc-every="1" checked' in out["html"]
-    assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
+    for row in cat["rows"]:
+        row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", quant="ud-q3_k_xl", quant_class="4bit", extended=True))
+    out = _run(cat, "allquants", "")
+    assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog?hub=true&extended=true"}
+    total = sum(len(r["artifacts"]) for r in cat["rows"])
+    assert out["all"]["arts"] == total and out["all"]["hash"] == "#catalog"
+    m, a = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
+    assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog?quant=4bit"
+    # The 4-bit chip's count is the full set's (the extended quants included).
+    assert re.search(r'data-mc-filter="quant" data-mc-value="4bit"[^>]*>4-bit<span class="mc-chip__n">' + str(a) + "<", out["html"]), out["html"][:2000]
+    assert "data-mc-every" not in out["html"] and "Every quant" not in out["html"]
+    linked = _run(cat, "hash", "#catalog?every=1")  # an old link: the parameter is ignored
+    assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == total
 
 
-def test_a_hugging_face_search_lists_every_quant_and_has_no_switch() -> None:
+def test_a_hugging_face_search_lists_every_quant() -> None:
     """Operator ruling (2026-10-29): "this is a Hugging Face search, it should show what's available,
-    period". OVH 8443 showed 2 of the 24 quants of unsloth/Qwen3.8-27B-GGUF. The Hugging Face tab now
-    always asks `extended=true` and shows no "Every quant" switch (the Catalog tab keeps it)."""
+    period". The Hugging Face tab always asks `extended=true`."""
     cat = _catalog(10)
     hub = _hub_page(0, 3, page=1, more=False)
-    out = _run(cat, "hfevery", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
-    assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"]
-    assert re.search(r'data-mc-every-switch="1" hidden', out["html"]), out["html"][:600]
-    assert out["hubCalls2"] == out["hubCalls1"]
-    catalog = _run(cat, "every", "", hub=hub)  # the Catalog tab keeps its switch, shown
-    assert 'data-mc-every-switch="1" title=' in catalog["html"] and 'data-mc-every-switch="1" hidden' not in catalog["html"]
+    out = _run(cat, "hf", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
+    assert out["hubCalls"][0] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"
 
 
 def _gpu_limit_catalog() -> dict:
