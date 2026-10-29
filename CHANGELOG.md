@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Models page says what a model's "cache" is and who keeps it in memory.** A GGUF row reads
+  "~5.4 GiB + ~2.0 GiB KV" with the loaded context in the Context column and, in the tooltip, that
+  the KV cache was allocated for that context when the model loaded (an estimate from the file;
+  it does not grow with use), then the session prompt caches. It used to read "+ 8.3 GiB cache"
+  with no context on a freshly restarted server (AbstractCore over-counted hybrid models' KV).
+  Rows carry `kv_cache_bytes`, `kv_cache_estimated` and `held_by`; the residency cell names the
+  holders in words ("held by the runtime of account default/bob (loaded)"), and every account's
+  runtime client is labelled so ("kept in memory: ... still in use by runtime client
+  70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
+  `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
+
 ## [0.17.2] - 2026-10-28
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.

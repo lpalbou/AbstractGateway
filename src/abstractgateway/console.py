@@ -11701,6 +11701,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.append(modelTd);
 	        const resTd = document.createElement("td");
 	        resTd.append(residencyPill(row));
+	        // WHO keeps it in memory, in words (ADR 0043): "the runtime of
+	        // account default/bob (loaded)", or that no runtime uses it.
+	        if (row.resident === true && Array.isArray(row.held_by) && row.held_by.length) {
+	          const held = document.createElement("div");
+	          held.className = "muted";
+	          held.textContent = `held by ${row.held_by.join("; ")}`;
+	          resTd.append(held);
+	        }
 	        tr.append(resTd);
 	        // SIZE (operator: "an estimate of the current memory footprint used
 	        // for each model currently loaded"). The coalesced display size
@@ -11714,14 +11722,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const sizeView = modelDisplaySize(row);
 	        const cacheBytes = modelCacheBytes(row);
 	        const sizeMark = sizeView.source === "est_weights_bytes" ? "~" : "";
+	        // GGUF rows say what the cache IS: the KV cache llama.cpp allocated
+	        // for the loaded context (an estimate from the file geometry), then
+	        // the session prompt caches. "+ 8.3 GiB cache" with no context read as
+	        // a leak on a freshly restarted server.
+	        const kvBytes = (typeof row.kv_cache_bytes === "number" && isFinite(row.kv_cache_bytes) && row.kv_cache_bytes >= 0) ? row.kv_cache_bytes : null;
+	        const sessionBytes = (kvBytes !== null && cacheBytes !== null) ? Math.max(0, cacheBytes - kvBytes) : null;
+	        const cacheText = kvBytes !== null
+	          ? `~${_fmtBytes(kvBytes)} KV${sessionBytes ? ` + ${_fmtBytes(sessionBytes)} session caches` : ""}`
+	          : (cacheBytes === null ? null : `${_fmtBytes(cacheBytes)} cache`);
 	        sizeTd.textContent = sizeView.bytes === null
-	          ? (cacheBytes === null ? "" : `${_fmtBytes(cacheBytes)} cache`)
-	          : (cacheBytes === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${_fmtBytes(cacheBytes)} cache`);
+	          ? (cacheText || "")
+	          : (cacheText === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${cacheText}`);
 	        const sizeTitle = [sizeView.bytes === null
 	          ? "size unknown — this host reported no size for the model"
 	          : `${sizeView.label} (${sizeView.source})`];
 	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
-	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        if (kvBytes !== null) {
+	          sizeTitle.push(`KV cache ~${_fmtBytes(kvBytes)}: allocated when the model loaded, for ${typeof row.context_length === "number" ? `its ${_fmtCtx(row.context_length)}-token context` : "its context"} (estimated from the model file; it does not grow with use)`);
+	          if (sessionBytes) sizeTitle.push(`session prompt caches ${_fmtBytes(sessionBytes)}`);
+	        } else if (cacheBytes !== null) {
+	          sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        }
 	        sizeTd.title = sizeTitle.join(" · ");
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");

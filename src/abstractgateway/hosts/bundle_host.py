@@ -2069,6 +2069,14 @@ class WorkflowBundleGatewayHost:
                             "default, download this model's weights (`abstractcore models status`), or "
                             "put provider/model on the flow's llm_call/agent nodes."
                         ) from _construct_err
+                # The words the Models page uses for this runtime wherever it
+                # keeps a model in memory (ADR 0043: never "runtime client
+                # 70a5b844f350"). Every account's service has its own runtime.
+                _llm_client = getattr(runtime, "_abstractcore_llm_client", None)
+                if _llm_client is not None:
+                    _llm_client.residency_owner_label = (
+                        f"the runtime of account {catalog_tenant or 'default'}/{catalog_user or 'admin'}"
+                    )
                 if provider_override:
                     try:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)

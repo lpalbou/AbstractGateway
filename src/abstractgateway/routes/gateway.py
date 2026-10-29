@@ -26937,6 +26937,12 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         # pair — nan/inf/bool/junk coerce to null, never a guess.
         "est_weights_bytes": _row_v1_int(record, "est_weights_bytes", "estWeightsBytes"),
         "cache_bytes": _row_v1_int(record, "cache_bytes", "cacheBytes"),
+        # What the cache is (GGUF): the KV cache llama.cpp allocated for the
+        # loaded `context_length`, estimated from the file geometry.
+        "kv_cache_bytes": _row_v1_int(record, "kv_cache_bytes", "kvCacheBytes"),
+        "kv_cache_estimated": True if record.get("kv_cache_estimated") is True else None,
+        # Who keeps it in memory, in words (ADR 0043).
+        "held_by": [str(h) for h in record.get("held_by")] if isinstance(record.get("held_by"), list) else None,
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
