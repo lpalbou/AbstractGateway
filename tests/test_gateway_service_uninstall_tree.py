@@ -55,6 +55,13 @@ def _wait_for(pred, timeout: float = 10.0) -> bool:
     return False
 
 
+@pytest.fixture(autouse=True)
+def _narrow_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CI runners set COLUMNS=80 and ps cut every command line there, so the fake serve's
+    # "abstractgateway" name (past column 80) went unseen; every test here runs that narrow.
+    monkeypatch.setenv("COLUMNS", "80")
+
+
 @pytest.fixture()
 def gateway(tmp_path: Path):
     data = tmp_path / "data"

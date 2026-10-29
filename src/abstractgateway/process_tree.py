@@ -61,7 +61,10 @@ def list_processes() -> List[Proc]:
     the recorded pids are then all that is known."""
     try:
         cp = subprocess.run(
-            ["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "stat=", "-o", "args="],
+            # -ww: never cut the command line to the terminal's width. ps honours COLUMNS (and a
+            # tty's width) and truncates `args`; a gateway whose "abstract*" name sits past the
+            # cut was then not recognised and nothing was stopped (CI runners set COLUMNS=80).
+            ["ps", "-A", "-ww", "-o", "pid=", "-o", "ppid=", "-o", "uid=", "-o", "stat=", "-o", "args="],
             capture_output=True,
             text=True,
             check=False,
