@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import signal
@@ -585,6 +586,30 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         hint = f": {decision.hint}" if decision.hint else ""
         _stderr(f"Desktop tray: not started ({decision.reason}{hint})")
 
+    # Bounded stop (2026-10-29, shutdown_drain.py): the moment uvicorn takes a stop signal, live
+    # streams are told their client left; and the SIGTERM uvicorn re-raises once it has drained
+    # lands on a handler here, so a requested stop exits 0 instead of dying with 143.
+    from . import shutdown_drain
+
+    shutdown_drain.reset()
+    _uvicorn_handle_exit = getattr(server, "handle_exit", None)  # a test double may have none
+
+    def _handle_exit(sig: int, frame: Any) -> None:
+        try:
+            name = signal.Signals(sig).name
+        except (ValueError, TypeError):
+            name = str(sig)
+        shutdown_drain.begin(name)
+        _uvicorn_handle_exit(sig, frame)
+
+    if callable(_uvicorn_handle_exit):
+        server.handle_exit = _handle_exit
+    _previous_sigterm = None
+    if hasattr(signal, "SIGTERM") and threading.current_thread() is threading.main_thread():
+        try:
+            _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
+        except (ValueError, OSError):
+            _previous_sigterm = None
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -598,6 +623,9 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         host_control.clear_requests()
         raise
     finally:
+        if _previous_sigterm is not None:
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signal.SIGTERM, _previous_sigterm)
         tray.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
@@ -1400,14 +1428,17 @@ def main(argv: list[str] | None = None) -> None:
             run_kwargs["log_level"] = _uvicorn_log_level(int(console_level))
 
             # Bounded graceful shutdown (resilience wave 2026-07-21, adversary
-            # P1-4): without this, a wedged in-flight request or a hung
-            # lifespan-shutdown step holds SIGTERM forever and the supervisor
-            # must SIGKILL. 120s covers the runner drain (30s) + bounded
-            # entity close_all (60s) with margin.
+            # P1-4; 2026-10-29 shutdown_drain.py): how long requests in flight
+            # may finish after a stop signal before uvicorn cancels them. Live
+            # streams end at once (EndStreamsOnShutdown); the lifespan steps
+            # after it (runner drain, entity homes) carry their own bounds, so
+            # this budget is for requests only: 10 s.
+            from .shutdown_drain import REQUEST_DRAIN_S
+
             try:
-                shutdown_s = int(str(os.getenv("ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S") or "120").strip())
+                shutdown_s = int(str(os.getenv("ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S") or REQUEST_DRAIN_S).strip())
             except ValueError:
-                shutdown_s = 120
+                shutdown_s = REQUEST_DRAIN_S
             if shutdown_s > 0:
                 run_kwargs["timeout_graceful_shutdown"] = shutdown_s
 
@@ -1448,6 +1479,9 @@ def main(argv: list[str] | None = None) -> None:
             # covers the bounded-but-silent class). Lifespan shutdown already
             # ran, so nothing durable is at risk: name the stragglers, dump
             # every stack for the root fix, then exit hard.
+            from .work_pools import shutdown_pools
+
+            shutdown_pools()
             _exit_now_if_nondaemon_stragglers()
         return
 

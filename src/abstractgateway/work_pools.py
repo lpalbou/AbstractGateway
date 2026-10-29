@@ -89,6 +89,24 @@ def get_pool(kind: str) -> ThreadPoolExecutor:
         return pool
 
 
+def shutdown_pools(*, timeout_s: float = 2.0) -> None:
+    """At process stop: cancel queued work and let idle workers leave (their threads are
+    non-daemon, so an idle pool otherwise counts as a stop-path straggler). A worker still running
+    a call after `timeout_s` is left to the straggler belt in the CLI."""
+    import time
+
+    with _guard:
+        pools = list(_pools.values())
+        _pools.clear()
+    threads = []
+    for pool in pools:
+        pool.shutdown(wait=False, cancel_futures=True)
+        threads.extend(list(getattr(pool, "_threads", ()) or ()))
+    end = time.monotonic() + max(0.0, float(timeout_s))
+    for t in threads:
+        t.join(max(0.0, end - time.monotonic()))
+
+
 async def off_loop(kind: str, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
     """Run `fn(*args, **kwargs)` in the `kind` pool and await its result (exceptions
     propagate). The caller's context variables travel with it, as with asyncio.to_thread."""

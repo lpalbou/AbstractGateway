@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A stop signal stops the gateway in under a second, even with live streams open** (`shutdown_drain.py`). One
+  open stream (the console's `/me/events/stream`, a run's ledger stream, the tray's polling) held a SIGTERM for the
+  whole graceful-shutdown timeout (120 s), so supervisors and people killed the gateway first. Now the moment the
+  signal arrives every GET request sees its client leave (streams end; clients reconnect with their cursor),
+  requests in flight get 10 s (`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`, was 120), the worker pools are shut down, and
+  a SIGTERM exits 0 instead of 143. Measured: a real `serve` with a live stream exits 0 in 0.2-0.4 s (before:
+  120.7 s); `tests/test_gateway_sigterm_bounded_shutdown.py`.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
