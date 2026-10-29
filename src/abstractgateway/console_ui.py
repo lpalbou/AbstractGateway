@@ -1247,13 +1247,13 @@ CONSOLE_UI_JS = r"""
       const p = engineStore.plans.get(e.id);
       if (!p || p.loading) return `<p class="ui-card__note ui-working">Checking where ${esc(e.name || e.id)} can go on this computer...</p>`;
       if (p.error) return `<div class="ui-alert tone-warn"><strong>Could not check the install locations.</strong><span>${esc(p.error)}</span>`
-        + `<span>Install still works: the gateway picks /Applications when your account can write it, else your own Applications folder.</span></div>`;
+        + `<span>Install still works: the gateway picks /Applications when the account it runs as can write it, else that account's own Applications folder.</span></div>`;
       const sys = p.system || {};
       const user = p.user || {};
       return `<ul class="ui-choice-list">`
-        + `<li><b>Install</b> puts it in your own Applications folder: only your account sees it, no password needed.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
+        + `<li><b>Install</b> puts it in the Applications folder of the account the gateway runs as: no password needed, and the gateway serves it to every user.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
         + `<li><b>${esc(sys.needs_admin ? "Install for all users (administrator)" : "Install for all users")}</b> puts it in /Applications for every account on this computer.`
-        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "Your account cannot write there, so an administrator password is asked first.")}` : "")
+        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "The account the gateway runs as cannot write there, so an administrator password is asked first.")}` : "")
         + `<code class="ui-advanced ui-ellip is-block" title="${esc(sys.target || "")}">${esc(sys.target || "")}</code></li></ul>`;
     }
     function engineLocationButtons(e) {
@@ -1361,6 +1361,12 @@ CONSOLE_UI_JS = r"""
         if (failed) {
           const msg = (job.error && job.error.message) || job.message || "The install did not finish.";
           body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(msg)}</strong></div>`;
+        }
+        // A failed UPDATE leaves the installed engine as it was (OVH 8080, 2026-10-29): the card
+        // stays Ready and says why the update did not happen, in the job's one sentence.
+        if (job && job.state === "failed" && e.installed === true) {
+          const msg = (job.error && job.error.message) || job.message || "The update did not finish; the installed version is unchanged.";
+          body += `<div class="ui-alert tone-warn" role="status" data-engine-update-failed><strong>${esc(msg)}</strong></div>`;
         }
         // Install / Start / Stop are an admin's actions: a non-admin's card does
         // not render them (UX rule: unavailable actions are not shown); Browse

@@ -216,7 +216,9 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
   if (path === "/api/gateway/apps/jobs/app-1") return res(200, { ok: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "succeeded", percent: 100, message: "Flow is running" } });
-  if (path === "/api/gateway/models/catalog") {
+  // The Models catalog asks every quant (operator ruling 2026-10-29: no "Every quant" switch); the
+  // defaults dialog reads the plain catalog for its recommendation.
+  if (path === "/api/gateway/models/catalog?hub=true&extended=true" || path === "/api/gateway/models/catalog") {
     if (scenario.catalogFail) return res(501, { detail: { message: scenario.catalogFail } });
     return res(200, CATALOG);
   }

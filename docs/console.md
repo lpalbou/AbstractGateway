@@ -742,10 +742,10 @@ guide's model step shows the same bar.
   once typing pauses. Its results come under **From Hugging Face**, below the
   catalog's cards, with the same filters, count and **Show more results**.
   Switching to **Hugging Face** mode then reuses that answer.
-- **Every quant**: the switch at the end of the **Quantization** row (Catalog mode only; a Hugging Face
-  search always lists every quant). It lists, for each model, every quantization
-  its own repositories ship (from 1-bit to BF16), each with its size and its fit on this computer. The
-  first time, it asks Hugging Face, and the answer is cached for 24 hours.
+- **Every quant, always**: each model lists every quantization its own repositories ship (from 1-bit to
+  BF16), each with its size and its fit on this computer. The quantization filter's **All** shows them all,
+  and **4-bit**, **8-bit** and **Other** filter them. The first load asks Hugging Face, and the answer is
+  cached for 24 hours. There is no separate switch.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).

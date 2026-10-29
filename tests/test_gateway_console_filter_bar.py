@@ -82,7 +82,7 @@ def test_models_tab_catalog_mode_is_the_kit_filter_bar() -> None:
 
 def test_models_tab_hugging_face_mode_is_the_kit_filter_bar_without_every_quant() -> None:
     hub = _hub_page(0, 3, page=1, more=False)
-    out = _run(_catalog(10), "hfevery", "#catalog?hf=smol%20lm", hub=hub)
+    out = _run(_catalog(10), "hf", "#catalog?hf=smol%20lm", hub=hub)
     assert 'data-af-scope="hf" aria-pressed="true"' in out["html"]
     _check_kit_bar(out["html"], "Models tab, Hugging Face")
 
