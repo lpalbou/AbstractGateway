@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
+  nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
 ### Changed
 
 - **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
