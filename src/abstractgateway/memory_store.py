@@ -351,8 +351,43 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
                 return self._client.embed_texts(texts).embeddings
 
         return _normalize_embedder(_Embedder(emb_client, model=str(embedding_route.model or "")))
-    except Exception:
+    except Exception as exc:
+        _say_embedder_unavailable_once(exc)
         return None
+
+
+# One sentence per cause per process (Linux test server, 2026-10-29: an embedding default
+# that was never downloaded logged a stack-free ERROR per account on every boot, and the
+# operator could not tell what to do).
+_EMBEDDER_NOTICES: set = set()
+_EMBEDDER_NOTICES_LOCK = threading.Lock()
+_NOT_CACHED_RE = re.compile(r"Embedding model '([^']+)' is not in the local Hugging Face cache")
+
+
+def embedder_unavailable_sentence(exc: BaseException) -> str:
+    """The one readable sentence for a gateway whose embeddings cannot load."""
+    text = str(exc or "")
+    m = _NOT_CACHED_RE.search(text)
+    if m:
+        repo = m.group(1)
+        return (
+            f"Semantic memory search is off: the text embedding model {repo} is not downloaded. "
+            "Download it from the console (Models, Defaults, Text Embeddings, Download) or run "
+            f"`abstractcore models download huggingface {repo}`; structured memory keeps working."
+        )
+    first = text.strip().splitlines()[0] if text.strip() else type(exc).__name__
+    return f"Semantic memory search is off: the text embedding model could not be loaded ({first[:300]})."
+
+
+def _say_embedder_unavailable_once(exc: BaseException) -> None:
+    sentence = embedder_unavailable_sentence(exc)
+    with _EMBEDDER_NOTICES_LOCK:
+        if sentence in _EMBEDDER_NOTICES:
+            return
+        _EMBEDDER_NOTICES.add(sentence)
+    import logging
+
+    logging.getLogger("abstractgateway.memory").warning(sentence)
 
 
 def open_gateway_memory_store(
