@@ -1114,15 +1114,19 @@ class EngineInstaller:
             argv += ["--reinstall-package", "llama-cpp-python"]
         return argv
 
+    def _raise_if_no_wheel(self, out: str, *, links: Optional[str] = None) -> None:
+        if links is None:
+            wheel = self._llama_wheel() if self.host.os_id != "windows" else None
+            links = wheel[2] if wheel else None
+        sentence = _no_wheel_failure(out, host=self.host, links=links)
+        if sentence:
+            raise InstallFailed(sentence, code="no_prebuilt_wheel")
+
     def _prebuilt_only_args(self) -> List[str]:
         out: List[str] = []
         for name in PREBUILT_ONLY:
             out += ["--only-binary", name]
         return out
-
-    def _llama_installed(self) -> bool:
-        rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('llama-cpp-python'))"], timeout=60)
-        return rc == 0 and bool((out or "").strip())
 
     def _setting_argv(self, setting: str, version: Optional[str], *, extra: Sequence[str] = ()) -> List[str]:
         """Every install of an AbstractCore setting (llama.cpp, MLX, Hugging Face, vLLM): the setting
@@ -1134,7 +1138,7 @@ class EngineInstaller:
         wheel = self._llama_wheel() if self.host.os_id != "windows" else None
         if wheel and self.host.os_id == "linux" and self.host.accelerator == "cuda" and not wheel[1].startswith("cu"):
             wheel = None  # never the CPU llama.cpp on an NVIDIA host; wheels-only then refuses loudly
-        if wheel and not self._llama_installed():
+        if wheel and not self._installed_llama_version():
             pin, _backend, links = wheel
             argv += [f"llama-cpp-python=={pin}", "--find-links", links]
         return argv + self._prebuilt_only_args()
@@ -1353,8 +1357,16 @@ class EngineInstaller:
             if rc != 0:
                 raise InstallFailed(f"{exc} Restoring the previous versions also failed ({_last_error_line(out) or 'see the log'}); "
                                     "the log lists them.", code=exc.code) from exc
+            loads = ""
+            probe = _ALREADY_PROBES.get(getattr(ctx.job, "engine", "") or "")
+            if probe:
+                rc2, out2 = ctx.run([self.python, "-c", probe], timeout=180)
+                info = next((json.loads(l[len("__AG_VERIFY__"):]) for l in (out2 or "").splitlines()
+                             if l.startswith("__AG_VERIFY__")), None) if rc2 == 0 else None
+                loads = (f" The previous version loads again ({info.get('version')})." if info
+                         else " The previous version was reinstalled but does not load; the log shows why.")
             raise InstallFailed(f"{exc} The packages it changed were put back to the versions they had: the engine "
-                                "installed before is unchanged.", code=exc.code) from exc
+                                "installed before is unchanged." + loads, code=exc.code) from exc
 
     # wheels -------------------------------------------------------------------------------
     def _abstract_pins(self, ctx: _JobContext) -> List[str]:
@@ -1466,6 +1478,7 @@ class EngineInstaller:
                 importlib.invalidate_caches()
                 return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python,
                         "method": f"{backend} wheel", "message": _llama_takes_effect()}
+            self._raise_if_no_wheel(out, links=links)
             wheel_error = _last_error_line(out)
             ctx.log(f"the prebuilt wheel did not install: {wheel_error}")
             raise InstallFailed(
@@ -1479,6 +1492,7 @@ class EngineInstaller:
         ctx.state("downloading", "Installing AbstractCore's apple setting (MLX as prebuilt wheels)", percent=5)
         rc, out = self._pip(ctx, [*self._mlx_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("MLX could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, mlx.core as mx, importlib.metadata as m; print(json.dumps({'version': m.version('mlx'), 'mlx_lm': m.version('mlx-lm'), 'device': str(mx.default_device())}))", "MLX")
         importlib.invalidate_caches()
@@ -1492,6 +1506,7 @@ class EngineInstaller:
         rc, out = self._pip(ctx, [*self._setting_argv(setting, self._core_version(), extra=self._torch_backend_args()),
                                   *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("The Hugging Face stack could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import transformers; print(json.dumps({'version': m.version('transformers')}))", "transformers")
         importlib.invalidate_caches()
@@ -1501,6 +1516,7 @@ class EngineInstaller:
         ctx.state("downloading", "Installing AbstractCore's gpu setting: vLLM (PyTorch + CUDA wheels, several GB)", percent=5)
         rc, out = self._pip(ctx, [*self._vllm_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("vLLM could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import vllm; print(json.dumps({'version': m.version('vllm')}))", "vLLM")
         importlib.invalidate_caches()
@@ -1931,6 +1947,25 @@ _ALREADY_PROBES: Dict[str, str] = {
     "vllm": "import json, importlib.metadata as m; import vllm; print('__AG_VERIFY__' + json.dumps({'version': m.version('vllm')}))",
     "huggingface": "import json, importlib.metadata as m; import transformers, torch; print('__AG_VERIFY__' + json.dumps({'version': m.version('transformers')}))",
 }
+
+
+_NO_WHEEL_MARKERS = ("has no wheels with a matching platform tag", "no matching distribution found",
+                     "could not find a version that satisfies the requirement", "building source distributions is disabled",
+                     "only-binary", "has no usable wheels", "no wheels are available")
+
+
+def _no_wheel_failure(out: str, *, host: "HostFacts", links: Optional[str]) -> Optional[str]:
+    """ADR 0003: the sentence for an install that needed a source build (wheels-only refused it), naming
+    the package, the host and the index; None when the failure is something else."""
+    text = out or ""
+    if not any(m in text.lower() for m in _NO_WHEEL_MARKERS):
+        return None
+    found = re.search(r"(?:Because|because|requirement|for)\s+([A-Za-z0-9_.\-]+)(?:==|\[|\s|$)", text)
+    package = found.group(1) if found else "a native package"
+    where = f"{host.os_id} {host.arch}" + (f", {host.accelerator}" if getattr(host, "accelerator", None) else "")
+    index = links or "PyPI"
+    return (f"A prebuilt wheel is not available for this platform ({package} for {where}, from {index}). The gateway "
+            "never builds engines from source; nothing was installed or changed.")
 
 
 def _swap_in(new: Path, target: Path) -> None:

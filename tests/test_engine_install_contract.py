@@ -6,6 +6,7 @@ non-root path, prebuilt binaries only (never a compiler), atomic updates.
 """
 from __future__ import annotations
 
+import json
 import shlex
 from pathlib import Path
 
@@ -103,3 +104,65 @@ def test_swap_in_restores_the_old_version_when_the_new_one_cannot_be_moved(tmp_p
     with pytest.raises(OSError):
         ei._swap_in(new, target)
     assert target.read_text() == "old"
+
+
+UV_NO_WHEEL = (
+    "  x No solution found when resolving dependencies:\n"
+    "  `-> Because llama-cpp-python==0.3.36 has no wheels with a matching platform tag (e.g., `manylinux_2_35_x86_64`)\n"
+    "      and building source distributions is disabled for llama-cpp-python, we can conclude that\n"
+    "      abstractcore[gpu]==2.31.1 cannot be used."
+)
+
+
+def test_huggingface_without_a_matching_wheel_fails_readably_instead_of_compiling(tmp_path) -> None:
+    """The 8080 incident (2026-10-29): a Hugging Face install pulled AbstractCore's gpu setting, whose
+    llama-cpp-python was not installed, and uv took the PyPI sdist and compiled it. Now the install is
+    wheels-only and its failure says which wheel is missing, for which host, from which index."""
+    host = HOSTS["linux-cpu"]
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "m.version('llama-cpp-python')" in a[-1], lambda a: (1, "PackageNotFoundError"))
+    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"], lambda a: (1, UV_NO_WHEEL))
+    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
+    snap, _ = reg.start("huggingface", force=True, run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "failed" and job["error"]["code"] == "no_prebuilt_wheel", job["message"]
+    msg = job["message"]
+    assert msg.startswith("A prebuilt wheel is not available for this platform (llama-cpp-python for linux x86_64")
+    assert "https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/" in msg and "never builds" in msg
+    installs = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert len(installs) == 1, installs  # no second (source) attempt
+    argv = installs[0]
+    assert "llama-cpp-python==0.3.36" in argv and ["--only-binary", "llama-cpp-python"] == argv[argv.index("--only-binary"):argv.index("--only-binary") + 2]
+
+
+def test_an_update_that_fails_midway_puts_the_previous_package_back_and_it_loads(tmp_path) -> None:
+    """Atomic update: the new wheel's install fails after replacing a package; the previous version is
+    reinstalled, and the load check runs on the restored copy (and passes)."""
+    sysd = FakeSystem(tmp_path)
+    env = {"llama-cpp-python": "0.3.20", "abstractcore": "2.31.1", "numpy": "2.1.0"}
+
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "__AG_PKGS__" in a[-1], lambda a: (0, "__AG_PKGS__" + json.dumps(env)))
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "m.version('llama-cpp-python')" in a[-1] and "__AG" not in a[-1],
+            lambda a: (0, env["llama-cpp-python"]))
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "__AG_VERIFY__" in a[-1] and "gpu_offload" not in a[-1],
+            lambda a: (0, "__AG_VERIFY__" + json.dumps({"version": env["llama-cpp-python"]})))
+
+    def uv(argv):
+        if "--no-deps" in argv and "llama-cpp-python==0.3.20" in argv:  # the restore
+            env["llama-cpp-python"] = "0.3.20"
+            return 0, "Installed 1 package"
+        env["llama-cpp-python"] = "0.3.28"  # midway: the new one is in place...
+        return 1, "error: Failed to install: libggml.so: No space left on device"  # ...then the install fails
+
+    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"], uv)
+    reg = _registry(_installer(tmp_path, sysd), tmp_path)
+    snap, _ = reg.start("llamacpp", force=True, run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "failed", job["message"]
+    assert env["llama-cpp-python"] == "0.3.20", "the previous llama.cpp is not back"
+    assert "put back to the versions they had" in job["message"]
+    assert "The previous version loads again (0.3.20)." in job["message"]
+    restore = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"] and "--no-deps" in c and "llama-cpp-python==0.3.20" in c]
+    assert restore and ["--only-binary", "llama-cpp-python"] == restore[0][restore[0].index("--only-binary"):restore[0].index("--only-binary") + 2]
+    i_restore = sysd.calls.index(restore[0])
+    assert any("__AG_VERIFY__" in c[-1] for c in sysd.calls[i_restore + 1:] if c[:1] == ["/gw/bin/python"]), "no load check after the restore"
