@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
 
+### Changed
+
+- **LM Studio on Linux without root never asks for an administrator**: when the machine lacks the libatomic1
+  system library, the card says so plainly and names the engines that install here for this account (llama.cpp,
+  Ollama, vLLM where they apply), with no administrator step; a gateway running as root still installs it. An
+  engine job waiting on a prerequisite says "Needs Apple tools" only for Apple's installer, never on Linux.
+
 ### Added
 
 - **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
