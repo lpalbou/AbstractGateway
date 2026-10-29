@@ -1683,7 +1683,7 @@ def main(argv: list[str] | None = None) -> None:
         # <data dir>/split/model_host.json), so the text model is loaded in this process only, or,
         # with --model-host process (ADR 0002), in this process's child. Started before the runner
         # builds its runtimes, so they send their model work there.
-        from .split_mode import ModelHost
+        from .model_host_http import OptionalHTTP
         from .users import gateway_data_dir_from_env
 
         model_host = None
@@ -1699,12 +1699,9 @@ def main(argv: list[str] | None = None) -> None:
             _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is the child "
                     f"process {_sup.pid if _sup else '?'}")
         else:
-            try:
-                model_host = ModelHost(gateway_data_dir_from_env()).start()
-                _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is on {model_host.url}")
-            except Exception as exc:  # noqa: BLE001 - runs still tick; /v1 on the API answers 503 runner_unavailable
-                _stderr(f"[ERROR] split mode: the model host did not start ({type(exc).__name__}: {exc}); "
-                        "the OpenAI API (/v1) answers 503 until the runner is restarted")
+            model_host = OptionalHTTP(gateway_data_dir_from_env())
+            model_host.start()
+            _stderr(f"[INFO] split mode: runner process {os.getpid()}; optional Core HTTP listeners follow endpoint settings")
         try:
             while not stop.is_set():
                 stop.wait(0.5)

@@ -50,6 +50,7 @@ CORE_DOCS_URL = "https://github.com/lpalbou/AbstractCore/blob/main/docs/server.m
 class EndpointChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: Optional[StrictBool] = None
+    direct_enabled: Optional[StrictBool] = None
     access: Optional[Literal["token", "open"]] = None
     reach: Optional[Literal["machine", "network", "tailnet", "anywhere"]] = None
     open_account: Optional[str] = Field(default=None, min_length=1, max_length=200)
@@ -127,6 +128,7 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
         "role": "admin" if admin else "user",
         "writable": admin,
         "enabled": settings.enabled,
+        "direct_enabled": settings.direct_enabled,
         "running": settings.enabled,
         "base_url": base + ce.BASE_PATH,
         "key": _key(principal),
@@ -144,6 +146,9 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
     }
     if not admin:
         return out
+    from ..model_host_http import read_http_status
+
+    out["http_services"] = read_http_status(data_dir)
     network = _network(data_dir)
     tailscale = network.get("tailscale")
     out.update({
@@ -231,13 +236,14 @@ async def change(request: Request, body: EndpointChange):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
     try:
-        settings = await off_loop("light", ce.change_settings, data_dir, enabled=body.enabled, access=body.access,
+        settings = await off_loop("light", ce.change_settings, data_dir, enabled=body.enabled, direct_enabled=body.direct_enabled, access=body.access,
                                            reach=body.reach, open_account=body.open_account,
                                            owner_reveal=body.owner_reveal)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     ended = ce.end_inflight_requests() if body.enabled is False else 0
     request.state.audit_detail = {"setting_change": {"setting": "core_endpoint", "enabled": settings.enabled,
+                                                     "direct_enabled": settings.direct_enabled,
                                                      "access": settings.access, "reach": settings.reach,
                                                      "open_account": settings.open_account,
                                                      "owner_reveal": settings.owner_reveal}}

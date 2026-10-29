@@ -103,23 +103,30 @@ def test_a_stop_reaches_the_generation_in_the_child(tmp_path, fake):
 
 
 def test_kill_dash_nine_fails_the_request_records_an_incident_and_restarts(tmp_path, fake):
+    fake.models.append("routed-model")
     sup = _sup(tmp_path)
     try:
-        client = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+        client = mh.ModelHostClient(sup, kind="multi", ctor=_ctor(fake))
         assert "warm" in client.generate(prompt="warm")["content"]
         fake.delay_s = 1.0
         pid = sup.pid
         threading.Timer(0.5, lambda: os.kill(pid, signal.SIGKILL)).start()
         t0 = time.monotonic()
         with pytest.raises(mh.ModelHostCrashed) as info:
-            client.generate(prompt="victim")
+            client.generate(prompt="victim", params={"_provider": "openai-compatible", "_model": "routed-model", "trace_metadata": {
+                "run_id": "run-victim", "step_id": "step-victim", "request_id": "request-victim",
+                "effect_idempotency_key": "effect-victim", "attempt": 2, "workflow_id": "workflow-victim"}})
         assert time.monotonic() - t0 < 5.0
         assert "signal 9" in str(info.value) and info.value.status_code == 424
         incidents = mh.read_incidents(tmp_path / "data")
         assert incidents and incidents[0]["schema"] == mh.INCIDENT_SCHEMA
         first = incidents[0]
         assert first["kind"] == "exit" and first["signal"] == "SIGKILL" and first["pid"] == pid
-        assert any(row.get("method") == "generate" for row in first["inflight"]), first["inflight"]
+        assert any(row.get("method") == "generate" and row.get("run_id") == "run-victim"
+                   and row.get("step_id") == "step-victim" and row.get("request_id") == "request-victim"
+                   and row.get("model") == "routed-model" and row.get("provider") == "openai-compatible"
+                   and row.get("effect_idempotency_key") == "effect-victim" and row.get("attempt") == 2
+                   for row in first["inflight"]), first["inflight"]
         assert first["restart"]["will_restart"] is True
         assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
         fake.delay_s = 0.0
@@ -219,8 +226,13 @@ def test_an_unreadable_request_fails_alone_and_the_connection_stays_usable(tmp_p
         client.generate(prompt="warm")
         pid = sup.pid
         with pytest.raises(mh.ModelHostRemoteError) as info:
-            client.generate(prompt="x", params={"odd": _OnlyHere()})
+            client.generate(prompt="x", params={"odd": _OnlyHere(), "trace_metadata": {
+                "run_id": "run-decode", "step_id": "step-decode", "request_id": "request-decode"}})
         assert "could not read this request" in str(info.value)
+        assert info.value.status_code == 400 and info.value.retryable is False
+        assert info.value.context["run_id"] == "run-decode"
+        assert info.value.context["step_id"] == "step-decode"
+        assert info.value.context["request_id"] == "request-decode"
         assert "after" in client.generate(prompt="after")["content"]
         assert sup.pid == pid and not mh.read_incidents(tmp_path / "data")
     finally:
@@ -358,5 +370,25 @@ def test_a_pool_client_rebuilds_with_its_current_default_and_does_not_replay_the
                                         llm_kwargs={"base_url": fake.base_url, "api_key": "fake-key"})
         assert pool._mh_ctor["provider"] == "openai-compatible" and pool._mh_ctor["model"] == "fake-model"
         assert "set_default_provider_model" not in pool._mh_setters
+    finally:
+        sup.stop()
+
+
+def test_encoding_failure_is_nonretryable_correlated_and_does_not_send(tmp_path, fake):
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+        client.generate(prompt="warm")
+        pid, before = sup.pid, len(fake.requests)
+        validator = type("RequestLocalValidator", (), {})
+        with pytest.raises(mh.ModelHostRequestError) as info:
+            client.generate(prompt="never sent", params={"response_model": validator, "trace_metadata": {
+                "run_id": "run-encode", "step_id": "step-encode", "request_id": "request-encode"}})
+        assert info.value.status_code == 400 and info.value.retryable is False
+        assert info.value.context == {"method": "generate", "provider": "openai-compatible", "model": "fake-model",
+                                      "run_id": "run-encode", "step_id": "step-encode", "request_id": "request-encode"}
+        assert len(fake.requests) == before and sup.pid == pid
+        assert not mh.read_incidents(tmp_path / "data")
+        assert "after" in client.generate(prompt="after")["content"]
     finally:
         sup.stop()

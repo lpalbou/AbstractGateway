@@ -19,6 +19,7 @@ class FakeOpenAIServer:
         self.delay_s = float(delay_s)
         self.chunks = int(chunks)
         self.requests: List[Dict[str, Any]] = []
+        self.models = ["fake-model"]
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -39,7 +40,7 @@ class FakeOpenAIServer:
 
             def do_GET(self) -> None:  # noqa: N802
                 if self.path.rstrip("/").endswith("/models"):
-                    return self._json(200, {"object": "list", "data": [{"id": "fake-model", "object": "model"}]})
+                    return self._json(200, {"object": "list", "data": [{"id": model, "object": "model"} for model in outer.models]})
                 return self._json(404, {"error": {"message": "not here"}})
 
             def do_POST(self) -> None:  # noqa: N802
