@@ -735,7 +735,8 @@ def test_linux_lmstudio_without_libatomic_stops_before_the_installer_and_resumes
     # Operator QA (OVH test server, 2026-10-28): LM Studio's Linux installer died half-way on a
     # missing libatomic1. The plan says so up front; the job pauses in needs_tools with the
     # exact apt line BEFORE the vendor script runs, and a re-check resumes it.
-    host = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False)
+    # A gateway running as root can install the library itself (the server installer's case).
+    host = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False, is_root=True)
     sysd = FakeSystem(tmp_path)
     lib = {"present": False}
     sysd.on(lambda a: a[:2] == ["ldconfig", "-p"],
@@ -757,3 +758,29 @@ def test_linux_lmstudio_without_libatomic_stops_before_the_installer_and_resumes
     after = reg.get(job["job_id"]).snapshot()
     assert after["state"] != "needs_tools", after["message"]
     assert inst.plan("lmstudio").public(None)["needs_tools"] is False
+
+
+
+def test_linux_lmstudio_without_libatomic_and_without_root_says_what_installs_here(tmp_path) -> None:
+    """Operator 2026-10-29: a gateway without root never shows an administrator step; it says plainly
+    that LM Studio cannot install on this machine (no libatomic1) and which engines install for this
+    account, and never mentions Apple tools on Linux."""
+    host = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False)
+    sysd = FakeSystem(tmp_path)
+    sysd.whiches["zstd"] = "/usr/bin/zstd"  # Ollama's archive can be unpacked here
+    sysd.on(lambda a: a[:2] == ["ldconfig", "-p"], lambda a: (0, "\tlibc.so.6 (libc6,x86-64) => /lib/x86_64-linux-gnu/libc.so.6\n"))
+    inst = _installer(tmp_path, sysd, host=host)
+    plan = inst.plan("lmstudio")
+    assert not plan.available and not plan.needs_admin and not plan.needs_tools
+    assert "libatomic1" in plan.notes and "Apple" not in plan.notes and "sudo" not in plan.notes
+    assert "Installs here for this account:" in plan.notes and "llama.cpp" in plan.notes
+    row = ei.engine_row(inst, {"id": "lmstudio", "installed": False}, active_job=None, install_allowed=True)
+    assert not any(a.get("id") == "install" for a in row.get("actions") or [])
+
+
+def test_the_console_names_apple_tools_only_for_apples_installer() -> None:
+    from abstractgateway import console_ui
+
+    html = console_ui.gateway_console_html() if hasattr(console_ui, "gateway_console_html") else ""
+    src = html or open(console_ui.__file__, encoding="utf-8").read()
+    assert 'job.tools_prompt.action.kind === "xcode_select_install") ? "Needs Apple tools" : "Needs a prerequisite"' in src

@@ -1155,6 +1155,17 @@ class EngineInstaller:
                     steps=["download (about 570 MB)", "verify signature", f"copy to {apps}", "start the local server"],
                 )
             atomic = self._libatomic_present()
+            if not atomic and not h.is_root:
+                # A system library needs the machine's administrator, which this gateway never asks
+                # for (operator 2026-10-29): say so plainly, and what installs here instead.
+                here = self._user_space_engines(exclude="lmstudio")
+                return InstallPlan(
+                    eid, False, "unsupported",
+                    notes=("LM Studio's Linux daemon needs the libatomic1 system library, which this machine does not have; "
+                           "a system library is installed by the machine's administrator (the AbstractFramework server "
+                           "installer adds it). "
+                           + (f"Installs here for this account: {here}." if here else "No other engine installs here for this account either.")),
+                )
             prompt = self._libatomic_prompt()
             return InstallPlan(eid, True, "script", needs_tools=not atomic,
                                tools_action=prompt.public()["action"] if not atomic else None,
@@ -1163,6 +1174,22 @@ class EngineInstaller:
                                command_preview=["bash", "-c", LMSTUDIO_LINUX_SCRIPT],
                                steps=(["check libatomic1"] if not atomic else []) + ["run the vendor installer", "start the local server"])
         return InstallPlan(eid, False, "unsupported", notes=f"unknown engine {eid}")
+
+    def _user_space_engines(self, *, exclude: str = "") -> str:
+        """The engines that install here for this account, no administrator ("llama.cpp, Ollama and vLLM")."""
+        names = []
+        for other in ("llamacpp", "ollama", "vllm", "huggingface", "mlx"):
+            if other == exclude:
+                continue
+            try:
+                plan = self.plan(other)
+            except Exception:  # noqa: BLE001
+                continue
+            if plan.available and not plan.needs_admin:
+                names.append(str(ENGINE_TEXT.get(other, {}).get("name") or other))
+        if len(names) <= 1:
+            return "".join(names)
+        return ", ".join(names[:-1]) + " and " + names[-1]
 
     def _mlx_argv(self, version: Optional[str] = None) -> List[str]:
         return [*self.pip_prefix(), self._core_spec("apple", version), "--only-binary", "mlx"]
