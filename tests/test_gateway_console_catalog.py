@@ -537,7 +537,7 @@ def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
     assert out["calls1"] == ["/api/gateway/models/catalog"]
     assert out["calls2"][-1] == "/api/gateway/models/catalog?hub=true&extended=true"
     assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
-    assert 'data-mc-every="1" checked' in out["html"]
+    assert "data-mc-every" not in out["html"]  # no switch on any tab (operator ruling, #79); the link still asks
     assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
 
 
@@ -551,8 +551,8 @@ def test_a_hugging_face_search_lists_every_quant_and_has_no_switch() -> None:
     assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"]
     assert "data-mc-every-switch" not in out["html"] and "Every quant" not in out["html"], out["html"][:600]
     assert out["hubCalls2"] == out["hubCalls1"]
-    catalog = _run(cat, "every", "", hub=hub)  # the Catalog tab keeps its switch, shown
-    assert 'data-mc-every-switch="1" title=' in catalog["html"]
+    catalog = _run(cat, "every", "", hub=hub)  # no "Every quant" switch on the Catalog tab either (#79)
+    assert "data-mc-every-switch" not in catalog["html"]
 
 
 def _gpu_limit_catalog() -> dict:

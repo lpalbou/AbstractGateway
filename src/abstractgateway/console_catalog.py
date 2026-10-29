@@ -790,10 +790,8 @@ CATALOG_JS = r"""
         { id: "cap", label: "Capability", value: f.cap, options: options("cap", [["all", "All"]].concat(caps)) },
         { id: "status", label: "Status", value: f.status, options: options("status", MC_STATUS_CHIPS) },
       ];
-      // "Every quant" changes which quantizations the Catalog lists, so it ends the
-      // Quantization row; the Hugging Face tab always lists every quant and has no switch.
-      const every = mcSwitchMarkup("data-mc-every", f.every, "Every quant", ' data-mc-every-switch="1" title="Also list every quantization the models\' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"');
-      return afFilterFacetsHtml(facets, mcHfMode(f) ? null : { quant: every });
+      // No "Every quant" switch on any tab (operator ruling, AbstractGateway #79).
+      return afFilterFacetsHtml(facets, null);
     }
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;

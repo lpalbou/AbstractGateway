@@ -7,8 +7,8 @@ implemented in the kit and used by every place the console renders catalog filte
 - one chip size (the kit chip ``af-chip--button af-filterbar__chip``), counts in muted small text;
 - one row per facet, the label in a fixed left column, the chips wrapping in the second column;
 - the search field and "Fits this computer" on the SAME first line;
-- no stray toggle: "Every quant" ends the Quantization row on the Catalog tab (it changes which
-  quantizations are listed); the Hugging Face tab has no such switch (AbstractGateway #64).
+- no stray toggle: no "Every quant" switch on any tab (operator ruling, AbstractGateway #79);
+  "Fits this computer" is the bar's one toggle.
 
 Places: the Models tab (Catalog and Hugging Face modes) and the setup guide's model catalog
 (``mountModelCatalog("first-run", ...)`` in console.py's loadFirstRunModel). The guide's Advanced
@@ -45,7 +45,7 @@ KIT_CHIP_CLASS = "af-chip af-chip--neutral af-chip--button af-filterbar__chip"
 LEGACY = ("mc-chip", "mc-group", "mc-bar", "mc-filters", "mc-mode", "ui-switch")
 
 
-def _check_kit_bar(html: str, where: str, *, every_quant: bool) -> None:
+def _check_kit_bar(html: str, where: str) -> None:
     """The kit filter bar, as the operator ruled it, in one rendered catalog view."""
     assert html.count('<div class="af-filterbar af-filterbar--sticky mc-filterbar">') == 1, where
     lead = html[html.index('<div class="af-filterbar__lead"') : html.index('<div class="af-filterbar__facets"')]
@@ -68,28 +68,23 @@ def _check_kit_bar(html: str, where: str, *, every_quant: bool) -> None:
     chips = re.findall(r'<button type="button" class="([^"]*)" data-af-facet=', facets)
     assert chips and {c.replace(" af-filterbar__chip--zero", "") for c in chips} == {KIT_CHIP_CLASS}, (where, set(chips))
     assert re.search(r'<span class="af-chip__label">[^<]+</span><span class="af-filterbar__count" aria-hidden="true">\d+</span>', facets), where
-    # "Every quant" ends the Quantization row on the Catalog tab; nowhere on the Hugging Face tab.
-    quant_row = re.search(r'data-af-facet-row="quant">(.*?)</div></div>', facets, flags=re.S).group(1)
-    if every_quant:
-        assert '<span class="af-filterbar__trailing"><label class="af-switch af-switch--native af-switch--sm" data-mc-every-switch="1"' in quant_row, where
-        assert html.count('role="switch"') == 2, where
-    else:
-        assert "data-mc-every" not in html and "af-filterbar__trailing" not in html, where
-        assert html.count('role="switch"') == 1, where
+    # No "Every quant" switch on any tab (operator ruling, AbstractGateway #79): one toggle in all.
+    assert "data-mc-every" not in html and "af-filterbar__trailing" not in html, where
+    assert html.count('role="switch"') == 1, where
     classes = {c for attr in re.findall(r'class="([^"]*)"', html) for c in attr.split()}
     assert not classes & set(LEGACY), (where, classes & set(LEGACY))
 
 
 def test_models_tab_catalog_mode_is_the_kit_filter_bar() -> None:
     out = _run(_catalog(10), "unloadable")
-    _check_kit_bar(out["html"], "Models tab, Catalog", every_quant=True)
+    _check_kit_bar(out["html"], "Models tab, Catalog")
 
 
 def test_models_tab_hugging_face_mode_is_the_kit_filter_bar_without_every_quant() -> None:
     hub = _hub_page(0, 3, page=1, more=False)
     out = _run(_catalog(10), "hfevery", "#catalog?hf=smol%20lm", hub=hub)
     assert 'data-af-scope="hf" aria-pressed="true"' in out["html"]
-    _check_kit_bar(out["html"], "Models tab, Hugging Face", every_quant=False)
+    _check_kit_bar(out["html"], "Models tab, Hugging Face")
 
 
 def test_setup_guide_catalog_and_models_tab_render_the_kit_filter_bar() -> None:
@@ -102,9 +97,9 @@ def test_setup_guide_catalog_and_models_tab_render_the_kit_filter_bar() -> None:
     dumps = dict(re.findall(r"^CATALOG (guide|tab) (.*)$", result.stdout, flags=re.M))
     assert set(dumps) == {"guide", "tab"}, result.stdout[-2000:]
     guide, tab = json.loads(dumps["guide"]), json.loads(dumps["tab"])
-    _check_kit_bar(guide, "setup guide", every_quant=True)
+    _check_kit_bar(guide, "setup guide")
     assert 'data-mc-fits="1" checked' in guide  # the guide presets "Fits this computer"
-    _check_kit_bar(tab, "Models tab (served page)", every_quant=True)
+    _check_kit_bar(tab, "Models tab (served page)")
 
 
 def test_touch_floor_leaves_the_kit_pills_their_geometry() -> None:
