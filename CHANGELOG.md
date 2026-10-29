@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A gateway that fails to start now exits non-zero**: the exit belt kept exiting 0 when a non-daemon thread was
+  alive, so a port-in-use start under systemd (`Restart=on-failure`) was never retried (OVH 2026-10-28). The off-loop
+  pools are stopped before the belt, and the belt exits with the pending code (3 for uvicorn's startup failure).
+- **The bootstrap admin token is no longer printed into a service log** (systemd's journal, a launchd agent's log):
+  a loopback gateway under a service manager names the token file only.
+
 ## [0.17.2] - 2026-10-28
 
 Fixes from the fresh-Linux release test (backlog 0961). No route removed, no dependency change.
