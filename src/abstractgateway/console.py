@@ -3209,6 +3209,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 5</div>
 	              <h3 id="first-run-step-title">Welcome</h3>
 	              <p id="first-run-step-lede"></p>
+	              <!-- A step's view switch sits on the header line (Default models: Simple / Advanced). -->
+	              <div id="first-run-head-actions" class="first-run-head__actions"></div>
 	            </header>
 	            <!-- DOM CONTRACT (first-run; the ids below are what
 	                 later work embeds into). Local engines render as cards
@@ -3221,7 +3223,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="first-run-engines-body"></div>
 	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
-	              <div id="first-run-model-body" class="first-run-panel">
+	              <div id="first-run-model-body" class="first-run-panel dm-simple">
 	                <!-- 1069: one row per capability (the framework's modality vocabulary), AbstractCore's
 	                     pick for this computer, Use recommended / Choose per row, and a subscription
 	                     path for text. The download cards below stay the place downloads run. -->
@@ -15358,6 +15360,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("first-run-kicker").textContent = `Step ${idx + 1} of ${FIRST_RUN_STEPS.length}`;
       $("first-run-step-title").textContent = copy.title || FIRST_RUN_STEP_TITLES[step];
       $("first-run-step-lede").textContent = copy.lede || "";
+      const headActions = $("first-run-head-actions");
+      if (headActions && step !== "model") { headActions.innerHTML = ""; headActions.onclick = null; }
       const scroller = $("first-run-scroll");
       if (scroller) scroller.scrollTop = 0;
       // Keyboard: each step starts at its title (Tab then walks the step's
@@ -15442,11 +15446,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function loadFirstRunModel() {
       const box = $("first-run-model-recommended");
       box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
+      // Simple mode paints first, as a skeleton, while the recommendations load.
+      dmUi.loading = true;
+      renderFirstRunDefaultModels();
       // The Models tab's catalog cards below the starter kit, with "Fits this
       // computer" preset, so the list opens on what can run here; "Open in the
       // Models tab" carries the same filters over (console_catalog.py).
       mountModelCatalog("first-run", $("first-run-model-catalog"), { guide: true, filters: { fits: true } });
-      await refreshAvailability({ rerender: false });
+      try {
+        await refreshAvailability({ rerender: false });
+      } finally {
+        dmUi.loading = false;
+      }
       renderFirstRunModel();
       uiRestoreDownloads();
     }
@@ -15549,7 +15560,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
       { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
     ];
-    const dmUi = { mode: "simple", busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
+    const dmUi = { mode: "simple", loading: false, busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
     function dmCatalogRows() { return (dmUi.catalog && Array.isArray(dmUi.catalog.rows)) ? dmUi.catalog.rows : []; }
     async function dmLoadCatalog() {
       if (dmUi.catalog || dmUi.catalogLoading) return;
@@ -15617,6 +15628,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       return { kind: "none", name: "", recName };
     }
     const DM_STATE_WORD = { none: "Not set", recommended: "Recommended", custom: "Your choice", covered: "Covered" };
+    function dmBadgeSkeleton(cap) {
+      return `<div class="dm-badge dm-badge--loading" style="--dm-hue:${cap.hue}" aria-hidden="true">`
+        + `<span class="dm-badge__mark">${dmIcon(cap.icon)}</span>`
+        + `<span class="dm-badge__text"><span class="dm-badge__label">${esc(cap.label)}</span><span class="dm-badge__state">Checking…</span></span></div>`;
+    }
     function dmBadgeMarkup(cap) {
       const st = dmState(cap);
       const word = DM_STATE_WORD[st.kind] || "";
@@ -15637,6 +15653,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const group = dlFeed.group;
       const names = [];
       for (const r of rows) { const n = dmReadableName(dmRecRoute(r).provider, dmRecRoute(r).model); if (n && !names.includes(n)) names.push(n); }
+      if (dmUi.loading && !rows.length) {
+        // The first paint of the step (operator 2026-10-29): Simple mode at once, a skeleton while
+        // this computer's recommendations load; never the older layout first.
+        return `<section class="dm-hero is-loading" aria-labelledby="dm-hero-title" aria-busy="true"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
+          + `<p>Reading what this computer can run…</p></div>`
+          + `<button type="button" class="ui-btn is-primary dm-hero__btn" data-dm-recommended="1" disabled>Use recommended</button></section>`
+          + `<div class="dm-groups">`
+          + `<section class="dm-group" aria-labelledby="dm-in-title"><h4 id="dm-in-title">Input <span>what it understands</span></h4><div class="dm-badges">${DM_INPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `<section class="dm-group" aria-labelledby="dm-out-title"><h4 id="dm-out-title">Output <span>what it makes</span></h4><div class="dm-badges">${DM_OUTPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `</div>`;
+      }
       return `<section class="dm-hero" aria-labelledby="dm-hero-title"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
         + `<p>${names.length ? `${esc(names.slice(0, 5).join(", "))}${names.length > 5 ? "…" : ""}: chosen for this computer's memory and engines.` : "AbstractCore's picks for this computer."}`
         + `${absent.length ? ` ${absent.length} to download${bytes ? `, about ${esc(uiBytes(bytes))}` : ""}.` : rows.length ? " Everything is downloaded." : ""} Your own choices are kept.</p></div>`
@@ -15713,18 +15740,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const simple = dmUi.mode === "simple";
       const body = $("first-run-model-body");
       if (body && body.classList) body.classList.toggle("dm-simple", simple);
-      box.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`
-        + (simple ? dmSimpleMarkup() : dmAdvancedMarkup());
+      // The Simple / Advanced switch is on the step's header line (operator 2026-10-29: the content
+      // starts higher); the step body holds the view only.
+      const head = $("first-run-head-actions");
+      if (head) {
+        head.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`;
+        head.onclick = (event) => {
+          const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode]") : null;
+          if (!b) return;
+          dmUi.mode = b.dataset.dmMode === "advanced" ? "advanced" : "simple";
+          renderFirstRunModel();
+        };
+      }
+      box.innerHTML = simple ? dmSimpleMarkup() : dmAdvancedMarkup();
       if (!simple) $("dm-apply-all").onclick = async () => {
         await applyRecommendedDefaults($("dm-apply-all"), false);
         dmSay($("defaults-message").textContent, $("defaults-message").className.replace(/^message\\s*/, ""));
         renderFirstRunModel();
       };
       box.onclick = (event) => {
-        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode], [data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
         if (!b || b.disabled) return;
         const d = b.dataset || {};
-        if (d.dmMode) { dmUi.mode = d.dmMode === "advanced" ? "advanced" : "simple"; return renderFirstRunModel(); }
         if (d.dmRecommended) return dmUseAllRecommended();
         if (d.dmBadge) return dmOpenChoice(d.dmBadge);
         if (d.dmUse) return dmUseRecommendedFor(d.dmUse);
