@@ -43,3 +43,13 @@ def test_two_accounts_booting_log_one_sentence(monkeypatch, tmp_path, caplog, ca
 def test_other_failures_still_say_why():
     msg = ms.embedder_unavailable_sentence(RuntimeError("sentence-transformers is required\\nmore"))
     assert msg.startswith("Semantic memory search is off") and "sentence-transformers is required" in msg
+
+
+def test_the_service_boot_path_says_it_too():
+    """The per-account service build (service.py) is where the boot error came from."""
+    import inspect
+    import abstractgateway.service as service
+
+    src = inspect.getsource(service)
+    i = src.index("embeddings_client = build_embedding_client(")
+    assert "say_embedder_unavailable_once(e)" in src[i:i + 1200], "MUTANT: the service path stays silent -> RED"

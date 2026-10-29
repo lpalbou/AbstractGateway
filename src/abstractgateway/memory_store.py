@@ -352,7 +352,7 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
 
         return _normalize_embedder(_Embedder(emb_client, model=str(embedding_route.model or "")))
     except Exception as exc:
-        _say_embedder_unavailable_once(exc)
+        say_embedder_unavailable_once(exc)
         return None
 
 
@@ -379,7 +379,7 @@ def embedder_unavailable_sentence(exc: BaseException) -> str:
     return f"Semantic memory search is off: the text embedding model could not be loaded ({first[:300]})."
 
 
-def _say_embedder_unavailable_once(exc: BaseException) -> None:
+def say_embedder_unavailable_once(exc: BaseException) -> None:
     sentence = embedder_unavailable_sentence(exc)
     with _EMBEDDER_NOTICES_LOCK:
         if sentence in _EMBEDDER_NOTICES:
