@@ -196,6 +196,12 @@ def test_reads_serve_the_core_payloads_with_their_arguments(facade, tmp_path, mo
 
         client.get("/api/gateway/models/catalog", headers=h)
         assert facade.calls["model_catalog"][-1] == ((None,), {"engine": None, "fits_only": False, "hub": False, "tags": None})
+        # A page of Hugging Face results is passed through only when asked (backlog 0864).
+        client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=2&hub_page_size=10", headers=h)
+        assert facade.calls["model_catalog"][-1][1] == {
+            "engine": None, "fits_only": False, "hub": True, "tags": None, "hub_page": 2, "hub_page_size": 10,
+        }
+        assert client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=0", headers=h).status_code == 422
 
         got = client.get("/api/gateway/models/installed?provider=ollama", headers=h)
         assert got.status_code == 200 and got.json()["rows"][0]["artifact"] == "qwen3:8b"

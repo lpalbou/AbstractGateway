@@ -911,10 +911,12 @@ def core_model_catalog(
     fits_only: bool = False,
     hub: bool = False,
     tags: Optional[list] = None,
+    **paging: int,
 ) -> Dict[str, Any]:
-    """Contract C (`model_catalog_v1`)."""
+    """Contract C (`model_catalog_v1`). `paging`: `hub_page` / `hub_page_size`, passed only when
+    asked (the facade refuses them in words on an AbstractCore without Hugging Face pages)."""
 
-    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags)
+    return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags, **paging)
 
 
 def core_installed_models(provider: Optional[str] = None) -> Dict[str, Any]:
