@@ -196,7 +196,9 @@ CATALOG_JS = r"""
       installed: null, installedError: "", extraNotice: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
-    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, every: false, hf: null }; }
+    // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
+    const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
+    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
@@ -214,7 +216,6 @@ CATALOG_JS = r"""
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
         else if (key === "status" && ["downloaded", "not_downloaded"].includes(value)) f.status = value;
         else if (key === "fits") f.fits = value === "1" || value === "true";
-        else if (key === "every") f.every = value === "1" || value === "true";
         else if (key === "hf") f.hf = value;
       }
       return f;
@@ -227,7 +228,6 @@ CATALOG_JS = r"""
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
       if (f.fits) parts.push("fits=1");
-      if (f.every) parts.push("every=1");
       if (mcHfMode(f)) parts.push(`hf=${encodeURIComponent(f.hf)}`);
       return parts.length ? `#catalog?${parts.join("&")}` : "#catalog";
     }
@@ -795,7 +795,6 @@ CATALOG_JS = r"""
         + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
         + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
         + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
-        + `<label class="ui-switch" data-mc-every-switch="1"${mcHfMode(f) ? " hidden" : ""} title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
         + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
         + `<div class="mc-filters" data-mc-part="controls"></div>`
@@ -845,13 +844,8 @@ CATALOG_JS = r"""
       }
       const box = el.querySelector("[data-mc-fits]");
       if (box) box.checked = !!view.filters.fits;
-      const everyBox = el.querySelector("[data-mc-every]");
-      if (everyBox) everyBox.checked = !!view.filters.every;
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
-      // The Hugging Face tab always lists every quant: no switch there.
-      const everySwitch = el.querySelector("[data-mc-every-switch]");
-      if (everySwitch) everySwitch.hidden = hf;
       const want = hf ? view.filters.hf : view.filters.q;
       if (search && search.value !== want && document.activeElement !== search) search.value = want;
       if (search) { search.placeholder = mcSearchPlaceholder(view.filters); search.setAttribute("aria-label", hf ? "Search Hugging Face" : "Search the model catalog"); }
@@ -931,8 +925,9 @@ CATALOG_JS = r"""
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
         : null;
       try {
-        // "Every quant" (batch item b): the catalog with each row's whole quant set (AbstractCore 0865).
-        const data = await api(mcStore.every ? "/api/gateway/models/catalog?hub=true&extended=true" : "/api/gateway/models/catalog", { slow: true });
+        // Every quant of every repo, always (operator ruling 2026-10-29): the quantization filter's "All"
+        // is the whole set (AbstractCore 0865 `extended`), 4-bit / 8-bit / Other filter it; no switch.
+        const data = await api(MC_CATALOG_PATH, { slow: true });
         if (seq !== mcStore.seq) return;
         if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
           throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -967,7 +962,7 @@ CATALOG_JS = r"""
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
       // A Hugging Face search shows what is available, period (operator, 2026-10-29): every quant of
-      // every matching repo, always (`extended=true`); the "Every quant" switch is the Catalog's only.
+      // every matching repo, always (`extended=true`), as the Catalog tab.
       const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -1162,7 +1157,6 @@ CATALOG_JS = r"""
         view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf });
         mcWriteHash(view);
         mcRenderView(view);
-        if (mcStore.every) { mcStore.every = false; mcLoad(); }
         return;
       }
       if (action === "mode") { mcSetMode(view, b.dataset.mcMode); return; }
@@ -1214,13 +1208,6 @@ CATALOG_JS = r"""
       el.onchange = (event) => {
         const t = event && event.target;
         if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
-        if (t && t.dataset && t.dataset.mcEvery) {
-          mcSetFilter(view, { every: !!t.checked });
-          if (mcStore.every !== !!t.checked) {
-            mcStore.every = !!t.checked;
-            mcLoad();
-          }
-        }
       };
       el.onkeydown = (event) => {
         const t = event && event.target;
@@ -1236,7 +1223,6 @@ CATALOG_JS = r"""
       mcRenderView(view);
       mcWatchStuck(view);
       mcWriteHash(view);
-      if (view.filters.every) mcStore.every = true;  // a `#catalog?every=1` link asks for the whole set
       mcLoad();
       if (mcHfMode(view.filters) && view.filters.hf && !(mcStore.hub.q === view.filters.hf && (mcStore.hub.data || mcStore.hub.loading))) mcHubSearch(view, view.filters.hf);
       else mcHubBeside(view);
