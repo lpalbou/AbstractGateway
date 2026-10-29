@@ -1113,6 +1113,35 @@ The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode 
 Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
 found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
 
+### 2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store
+
+- **What happened**: during the model-residency audit, two scratch gateways (started directly with their own data
+  dir, no `ABSTRACTCORE_CONFIG_DIR` / `ABSTRACTCORE_CONFIG_FILE` in their environment) answered the console's
+  `PUT /api/gateway/config/capability-defaults/{kind}/{modality}` and wrote the routes into THE Core store,
+  `~/.abstractcore/config/abstractcore.json` — the file the operator's own gateway on 8080 reads — not into their
+  scratch dir. The operator's `input.text` (endpoint:airelay / gpt-5.6-terra, reasoning minimal) and
+  `embedding.text` (lmstudio / text-embedding-qwen3-embedding-0.6b) rows were overwritten with the probe's models.
+- **Effect**: the operator's gateway kept its in-memory routes (it was never restarted or chatted with), so no
+  request was answered by the wrong model; a restart in that window would have booted on the probe's defaults.
+  Scope: the operator's own machine; nothing left it.
+- **Why**: by design the gateway ROOT is not a scope — an admin editing a default edits the source
+  (`core_config._scoped_core_config_path`), and the source is resolved by AbstractCore's own resolver
+  (`ABSTRACTCORE_CONFIG_FILE` / `ABSTRACTCORE_CONFIG_DIR`, else `~/.abstractcore/config/abstractcore.json`).
+  The instances runner derives `<data dir>/core-config` for the children it starts (`instances.py`), but a gateway
+  started by hand with a data dir and no `ABSTRACTCORE_*` variable shares the machine store with every other
+  gateway on the machine. The audit harness set neither variable for its first runs.
+- **Found**: 2026-10-29 ~14:00 by the auditor, reading the shared file after its own PUTs; reported to the lead.
+- **Recovered**: the two rows were put back through the gateway's own writer
+  (`core_config.save_gateway_capability_default`) at ~14:12 — `embedding.text` read back from the live 8080
+  gateway's in-memory route, `input.text` from the profile that holds the relay URL; verified against
+  `GET /api/gateway/config/capability-defaults` on 8080. Later probe runs set `ABSTRACTCORE_CONFIG_FILE` to a file
+  under their scratch dir and the shared store stayed untouched (checked after each run).
+- **Decision**: backlog 0979 — a gateway given a data dir never writes outside it: the Core config dir is derived
+  from the data dir by default (as the instances runner already does), the machine store is used only by a
+  gateway with no explicit data dir, and a test starts a gateway with a data dir, PUTs a capability default and
+  asserts the shared store is byte-identical. Rule for every seat until then: a scratch gateway is started with
+  `ABSTRACTCORE_CONFIG_FILE` (or `_DIR`) pointing inside its scratch dir.
+
 ### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
 
 - **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
@@ -1262,13 +1291,14 @@ the account's token keeps working. See
 
 ## 2. The first-run guide
 
-The guide has five steps. Every step is optional:
+The guide has six steps. Every step is optional:
 
 | Step | What it shows |
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default models | Two views, **Simple** first. **Simple**: one **Use recommended** button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, **Input** (what it understands: Text, Image, Voice, Video, Files) and **Output** (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: *Not set* (with the recommended model's name when there is one), *Recommended* (the pick is in use), *Your choice*, or *Covered* (read by the text model). A badge opens a guided choice: the model recommended for this computer first (**Use it**, **Use it and download**), then **Other models that fit** (the catalog filtered to that capability, fits-this-computer on) and **All engines and models…** (the Multimodal route editor), and for text **Or use an API key** (OpenAI or Anthropic: the key is checked first, then kept as a NEW provider connection, never replacing one you have). **Advanced**: one table row per capability with the engine and model ids, **Use recommended**, **Download** and **Choose…** per row, and **Use recommended for all**; below it the recommended downloads (**Download all**), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide |
+| Cloud providers | One card per cloud provider AbstractCore supports (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: `GET /api/gateway/discovery/providers`, `local_provider: false`), each with the provider's mark, its connection state (key fingerprint only), an **API key** field and **Check the key**: "Key works · 48 models", or one sentence saying why not (the key was refused, the provider is limiting requests, it could not be reached). The key is checked first (`POST …/provider-endpoint-profiles/discover-models`, which stores nothing); only a key that works can be saved, and **Save the key** creates a NEW provider connection (`openai-key`, `openai-key-2`, … with `create_only`), never replacing one you have. The key is never shown again. The same cards are the Providers tab's **Cloud providers** section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step |
+| Default models | Two views, **Simple** first. **Simple**: one **Use recommended** button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, **Input** (what it understands: Text, Image, Voice, Video, Files) and **Output** (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: *Not set* (with the recommended model's name when there is one), *Recommended* (the pick is in use), *Your choice*, or *Covered* (read by the text model). A badge opens a guided choice: the model recommended for this computer first (**Use it**, **Use it and download**), then **Other models that fit** (the catalog filtered to that capability, fits-this-computer on) and **All engines and models…** (the Multimodal route editor), and for text **Or use an API key** (any cloud provider of the Cloud providers step, with the same check: the key is checked first, then kept as a NEW provider connection, never replacing one you have). **Advanced**: one table row per capability with the engine and model ids, **Use recommended**, **Download** and **Choose…** per row, and **Use recommended for all**; below it the recommended downloads (**Download all**), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide |
 | Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
@@ -2036,6 +2066,31 @@ for what each mode changes for someone on your network.
 The OpenAI-compatible API is served at `http://<gateway>/v1` and managed on the
 console's **OpenAI API** page. See [openai-api.md](docs/openai-api.md) for what it
 supports, the access settings, the request log and its admin API.
+
+There are two independent optional HTTP surfaces:
+
+| Surface | Switch in `config/core_endpoint.json` | Address and credentials |
+|---|---|---|
+| Gateway `/v1` compatibility API | `enabled` (default `false`) | Gateway listener and account API keys; Gateway admission and request log |
+| Direct AbstractCore HTTP service | `direct_enabled` (default `false`) | Core's `server.host` / `server.port` (default `127.0.0.1:8000`) and Core's own server authentication |
+
+An admin changes either switch through `POST /api/gateway/admin/core-endpoint`;
+send JSON booleans, for example `{"direct_enabled": true}`. Changing one
+switch leaves the other unchanged. Core owns the direct service's configuration
+and tokens; see [Core server configuration](https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md).
+Gateway account API keys and its *Who can connect* setting govern Gateway
+`/v1`, not the direct Core listener.
+
+The execution owner starts and stops these listeners without restarting its
+model pool. Native runs use the Gateway run APIs, Runtime and native RPC;
+they do not require either HTTP surface. With both switches off, execution
+readiness does not start an HTTP listener or prepare a server token. An HTTP
+startup failure leaves native execution available. Admin status includes
+`http_services` with each service's `state`, `url` and `error`; inspect this
+before assuming an enabled service is listening. Failed cleanup stays
+`stopping` until its listener actually stops. Service recovery uses bounded
+backoff; after its restart limit, correct the cause and toggle that service
+off and on to retry.
 
 ## Two entry points, one store
 
@@ -3070,9 +3125,9 @@ Core catalog proxy settings:
 ## Model host: the models run in a supervised child process
 
 ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
-`--model-host process` (the default on every OS) the gateway process loads no model and calls no
-provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
-shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
+`--model-host process` (the default on every OS), Runtime-backed provider calls use one child
+process the gateway starts, watches and restarts. That owner holds the managed model pool.
+A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
 memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
 `/api/health` keep answering.
 
@@ -3085,8 +3140,9 @@ abstractgateway serve --model-host in-process # everything in one process (devel
 |---|---|---|
 | Accounts, sign-in, routes, console, live streams, `/api/health` | yes | no |
 | Run stores, ledger, run ticking, tools, mail, push, bridges | yes | no |
-| Every AbstractCore provider call and model load (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
-| The OpenAI-compatible `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it (Core's app, the same model pool) |
+| Managed provider calls and model loads (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
+| Optional Gateway `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it through a private Core listener, sharing model resources |
+| Optional direct Core HTTP | admin lifecycle control only | Core serves requests directly with its own token and bind |
 
 - **The default**: `process` on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
   the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
@@ -3100,6 +3156,10 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
   restarts. The child exits when the gateway does (its stdin closes), so it never outlives it.
+- **Readiness and progress**: readiness means the authenticated native RPC connection is available,
+  independently of optional HTTP. A ping confirms process responsiveness, not progress of a
+  particular inference. An ordinary provider error fails its request without restarting a healthy
+  child; deterministic request-encoding or schema-preparation errors fail without retries.
 - **A request when the child dies** fails within a second: "The model host (the process that runs the
   models) stopped while answering (killed by signal 9 (SIGKILL)). The gateway is fine and is restarting
   it; send the message again in a few seconds." (status 424, not retried automatically: the request may
@@ -3108,11 +3168,17 @@ abstractgateway serve --model-host in-process # everything in one process (devel
 - **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
   (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
   `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,
-  `memory_ceiling_bytes`, `inflight` (`[{method, provider, model, since}]`), `restart` (`will_restart`,
+  `memory_ceiling_bytes`, `inflight` (method, effective provider/model and available run, step,
+  request, node, workflow, effect-idempotency and attempt identifiers), `restart` (`will_restart`,
   `backoff_s`, `restarts_in_window`) and `log_tail`. The child's log is `<data dir>/logs/model-host.log`.
 - **Health**: `GET /api/health` carries `model_host`: `mode`, `state` (`starting`, `up`, `restarting`,
   `failed`, `stopped`; `in-process` in that mode), `pid`, `generation`, `restarts_in_window`,
   `rss_bytes`, `memory_ceiling_bytes`, `nice`, `inflight`, `last_exit`, `last_incident`.
+- **One resource owner**: supported managed Core loaders reuse compatible resident weights for
+  the same canonical local artifact. Incompatible placements, engines or native profiles refuse
+  before allocating another copy; separate context/KV allocations do not imply duplicate weights.
+  This is process-local. Independently launched Core servers, external inference services, raw
+  engine constructors and arbitrary capability-plugin loaders are outside that admission contract.
 - **What a restart loses**: what the child held in memory (resident models, warmed again at once;
   prompt caches; residency locks). Runs, sessions and the ledger are the gateway's and are untouched.
 - **Cost**: the hop adds about 0.1 ms p50 to a chat step on localhost (`scripts/bench_model_host_hop.py`;
@@ -3126,8 +3192,8 @@ Evidence: `src/abstractgateway/model_host.py`, `src/abstractgateway/model_host_c
 
 ## Split mode: API and runner in two processes (opt-in)
 
-By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
-model in their own process, so a long generation never shares a Python interpreter with the API
+By default `abstractgateway serve` combines API and runner, with model execution in a supervised
+child. Split mode also separates the runner from the API, so a long runtime operation never shares a Python interpreter with the API
 (`/me`, the console, live streams). It is opt-in and not the default yet. Run these two commands
 with the same data dir (the runner first, or in either order):
 
@@ -3143,19 +3209,25 @@ Both take their usual flags (`runner` takes `--data-dir`, `--unsandboxed-command
 |---|---|---|---|
 | HTTP API, console, apps, live streams, `/api/health` | yes | yes | no |
 | Run ticking: starts, waits, commands, schedules (every account's plane) | yes | no: it creates runs and queues commands | yes |
-| Text model: runs and the OpenAI-compatible `/v1` | yes | no model loaded: `/v1` is forwarded to the runner | yes, one copy |
+| Model execution and optional Core HTTP | supervised child by default | no model loaded: Gateway `/v1` is forwarded to the runner's execution owner | supervised child by default; in-process only when explicitly chosen |
 | Mail watchers, feed polling, notification outbox | yes | no | yes |
 | Push dispatcher (watch and iPhone alerts) | yes | no | yes |
 | Telegram and agora bridges | yes | no | yes |
 
 - **`/v1` in split mode.** The API process checks the caller (key, Who can connect, Guest) as
-  usual, then forwards the request, streaming both ways, to a model host the runner process
-  serves on `127.0.0.1` (a port the system picks). The runner records its address in
+  usual, then forwards the request, streaming both ways, to the execution owner's optional
+  private Core listener on `127.0.0.1` (a port the system picks). Its owner records the address in
   `<data dir>/split/model_host.json` (mode 0600) with a secret made at each start; the model host
   refuses any request without it, so another program on the machine cannot use the port to skip
   the API's checks. No runner answering: `/v1` answers `503` with code `runner_unavailable`. The
   API process never loads the default text model (its runtime builds the model client at the
   first call instead of at boot).
+- **Optional HTTP status.** `GET /api/gateway/admin/core-endpoint` reads
+  `http_services` from `<data dir>/split/model_host_http.json` (atomic, mode `0600`,
+  no credentials). It checks the owner's PID and ignores stale status. With both
+  services disabled the file is removed after cleanup; an alive listener whose
+  stop failed stays visible as `stopping`. This status channel also works when
+  API and runner are separate processes.
 - **Events.** An event delivered by the API process reaches runs the runner process parked: the
   run store's event-wait and mailbox indexes re-read what another process changed before every
   lookup (at the latest 2 s after the change).
@@ -3282,10 +3354,32 @@ The API key is one of your account's **API keys**: named keys you make on the
 OpenAI API page, valid at `/v1` only (see [API keys](#api-keys)). One key can
 serve every app; separate keys are optional, for revoking one app without the
 others.
-There is no separate process or port: the API follows the gateway's [Network](docs/configuration.md#network-exposure-localhost--local-network--internet)
-setting, and AbstractCore answers each request behind it.
+The public URL follows the gateway's [Network](docs/configuration.md#network-exposure-localhost--local-network--internet)
+setting. Gateway admits each request, then Core answers it in the execution
+owner, sharing local model resources with native run calls.
 
-## Turn it on
+## Direct Core serving and native clients
+
+Native framework clients call Gateway run APIs and consume replay views or
+streams. They do not need an OpenAI-compatible HTTP endpoint.
+
+You can also enable a **direct AbstractCore listener** for inference-only
+clients. An admin sends `{"direct_enabled": true}` to
+`POST /api/gateway/admin/core-endpoint` (false disables it). This is independent
+of the Gateway `/v1` switch, `enabled`. The direct listener uses Core's own
+`server.host` and `server.port` (default `127.0.0.1:8000`) and Core server token;
+Gateway account API keys, *Who can connect*, and Gateway's request log apply
+only to Gateway `/v1`. See [Core's server guide](https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md)
+for its authentication and bind configuration.
+
+Direct requests reach Core's app without creating a Gateway run or passing
+through Runtime orchestration. Both optional listeners share the execution
+owner's resources, and stopping either listener leaves resident models in
+place. A failed listener does not block native RPC. Admin status exposes
+`http_services.legacy` and `http_services.direct`, each with `state`, `url`
+and `error`; configuration booleans alone do not confirm a listening port.
+
+## Turn on Gateway `/v1`
 
 Open the web console, **Models → OpenAI API**. An admin sees five cards; any
 other account sees Status (running or not, the base URL), Connect your app
@@ -3579,7 +3673,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped), `owner_reveal` (may owners reveal their keys); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `direct_enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped), `owner_reveal` (may owners reveal their keys); an admin also `http_services{legacy, direct}` (`state`, `url`, `error` per service), `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
 | GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, key_label, key_fingerprint, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
 | GET | `/api/gateway/openai-api/logs/{request_id}` | any account | `{row{..., request, response, user_agent}}`, the recorded request and response (redacted); someone else's id answers 404 for a non-admin |
 | GET | `/api/gateway/me/openai-keys` | any account | `{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client, revealable}]}`, never a key; `409 no_account` for the operator's own token |
@@ -3589,7 +3683,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 | GET | `/api/gateway/admin/accounts/{id}/openai-keys` | admin | that account's keys (same items) |
 | DELETE | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}` | admin | revokes one of that account's keys at once |
 | POST | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}/reveal` | admin | always `403 not_owner`: only a key's owner reveals it |
-| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>, owner_reveal?: bool}` (`owner_reveal: false` erases every stored key copy: show-once); `409` with the reason when refused |
+| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?: bool, direct_enabled?: bool, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>, owner_reveal?: bool}` (`owner_reveal: false` erases every stored key copy: show-once); `409` with the reason when refused |
 | PUT | `/api/gateway/admin/accounts/{id}/openai-api` | admin | `{enabled}`: the account's OpenAI API switch; answers the account row (`openai_api`) |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
 | POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |
@@ -5267,6 +5361,14 @@ sent to any `/api/gateway/` route answers `401`
 Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
 `/api/gateway/admin/core-endpoint`. See [openai-api.md](docs/openai-api.md) for the
 supported surface, access settings and errors.
+
+The same admin settings route accepts `direct_enabled` (JSON boolean, default
+`false`) for a direct Core HTTP listener. It does not change Gateway `/v1`'s
+`enabled` setting. Admin status includes `http_services`: `legacy` and `direct`
+rows with `{state, url, error}`. The direct listener uses Core's server bind
+and token; it receives inference requests directly without Gateway run APIs
+or Runtime orchestration. Native run clients use neither HTTP inference
+surface. See [endpoint configuration](docs/configuration.md#openai-compatible-endpoint).
 
 ## Auth
 
@@ -8400,7 +8502,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
-| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
+| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Cloud providers**: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, **More settings** for the base URL and allowed models), then custom OpenAI-compatible servers; then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your named API keys (New key, Reveal, Copy, Revoke); Authentication, who may reveal keys and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
@@ -9070,7 +9172,12 @@ list.
   them (MLX `-8bit` repositories, Ollama `-q8_0` tags, GGUF `Q8_0` files).
   Every build the catalog knows is listed; nothing is cut off.
 
-The filter bar above the cards:
+The filter bar above the cards is the kit's filter bar (abstractuic `AfFilterBar`): a first line with
+the Catalog / Hugging Face switch, the search box and **Fits this computer**, then one row per filter with
+its name in a fixed left column and its chips on the right (they wrap under the chips, never under the
+name). Every chip has the same size; its number is the small grey figure after the label. The setup
+guide's model step shows the same bar.
+
 
 - **Search** matches model names, organisations and artifact ids (every word
   must match). **Escape** clears it.
@@ -9098,9 +9205,10 @@ The filter bar above the cards:
   once typing pauses. Its results come under **From Hugging Face**, below the
   catalog's cards, with the same filters, count and **Show more results**.
   Switching to **Hugging Face** mode then reuses that answer.
-- **Every quant**: the switch beside **Fits this computer**. It lists, for each model, every quantization
-  its own repositories ship (from 1-bit to BF16), each with its size and its fit on this computer. The
-  first time, it asks Hugging Face, and the answer is cached for 24 hours.
+- **Every quant, always**: each model lists every quantization its own repositories ship (from 1-bit to
+  BF16), each with its size and its fit on this computer. The quantization filter's **All** shows them all,
+  and **4-bit**, **8-bit** and **Other** filter them. The first load asks Hugging Face, and the answer is
+  cached for 24 hours. There is no separate switch.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).
@@ -10629,40 +10737,56 @@ flowchart TB
   end
   subgraph Server["Server or container"]
     API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
+    Worker["abstractgateway runner<br/>runs, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --> API
-    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
-    Worker --- ModelHost
+    API -->|"optional Gateway /v1<br/>(private loopback + per-start secret)"| ModelHost["Supervised model-host child<br/>Core resources and optional HTTP"]
+    Worker -->|"native execution RPC"| ModelHost
   end
 ```
 
 ```mermaid
 flowchart LR
-  Client["Browser, apps, /v1 clients"] --> GW["abstractgateway serve<br/>accounts, routes, auth, reach,<br/>ledger, runs, supervision"]
-  GW -->|"runtime LLM client proxy<br/>(Unix socket, per-boot key)"| MH["Model host child<br/>every Core provider,<br/>the model pool, Core's /v1 app"]
-  GW -->|"/v1 admitted, then forwarded<br/>(127.0.0.1, per-start secret)"| MH
-  GW -.->|"ping, restart, memory ceiling,<br/>incident file per crash"| MH
+  Native["Native framework clients"] -->|"run APIs / commands"| GW["Gateway + Runtime<br/>runs, ledger, auth, supervision"]
+  GW -->|"native RPC: original schema data<br/>Unix socket or Windows named pipe"| Exec["Execution owner<br/>Core clients and validators"]
+  GW -->|"replay views / SSE"| Native
+  Compat["Gateway /v1 clients<br/>Gateway API keys"] --> Legacy["Optional Gateway /v1 admission"]
+  Legacy -->|"private loopback + per-start secret"| PrivateHTTP["Optional private Core listener"]
+  Direct["Direct inference clients<br/>Core server token"] --> DirectHTTP["Optional direct Core listener<br/>Core bind and auth"]
+  subgraph MH["One supervised model-host child"]
+    Exec --> Resources["Core local model resources<br/>compatible sharing / conflict refusal"]
+    PrivateHTTP --> Resources
+    DirectHTTP --> Resources
+  end
+  GW -.->|"ping / bounded restart / incidents"| MH
 ```
 
-- **Single process**: `abstractgateway serve` starts the HTTP API and the
-  runner. On a desktop session it also starts the tray helper, and it starts
-  the browser apps you enabled.
+- **Combined API and runner**: `abstractgateway serve` starts the HTTP API and the
+  runner, with model execution in a supervised child by default. On a desktop
+  session it also starts the tray helper and the browser apps you enabled.
 - **Model host** (ADR 0002,
-  `--model-host process`, the default on every OS): the models and every
-  AbstractCore provider call run in one child process the gateway supervises;
+  `--model-host process`, the default on every OS): managed model loads and
+  Runtime-backed provider calls run in one child process the gateway supervises;
   the runtime's LLM clients in the gateway are proxies with the same API, and
-  `/v1` is admitted by the gateway and served by the child. A crash there costs
+  optional Gateway `/v1` is admitted by the gateway and served by the child.
+  Optional direct Core HTTP reaches Core's app with Core authentication, without
+  a Gateway run or Runtime orchestration. Both listeners share the execution
+  owner's resources; their startup and shutdown do not define native readiness.
+  A listener can fail or restart while native RPC remains available. A fatal
+  execution-owner crash costs
   the requests in flight, is recorded in `<data dir>/incidents/`, and the child
   is restarted; the gateway keeps answering, on Linux, macOS and Windows alike. Details: [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 - **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
   (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
   one data dir, so you can restart the API without pausing durable execution.
-  The runner process ticks every run, holds the one text model, and runs the
+  The runner process ticks every run, supervises the model-host child, and runs the
   mail watchers, feed polling, push dispatcher and bridges; the API process
   only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
-  `/v1` admits each request, then forwards it to a model host the runner
-  serves on `127.0.0.1` (address and per-start secret in
-  `<data dir>/split/model_host.json`), so the model is never loaded twice.
+  `/v1` admits each request, then forwards it to the optional private Core
+  listener in that owner on `127.0.0.1` (address and per-start secret in
+  `<data dir>/split/model_host.json`). An explicit `--model-host in-process`
+  keeps execution in the runner instead. Admin listener status comes from
+  `<data dir>/split/model_host_http.json`, an atomic, owner-only file containing
+  service states and URLs without credentials; readers check owner liveness.
   Live replies pass through `<data dir>/live/`; events the API delivers reach
   runs the runner parked (the run store's indexes refresh across processes).
   The full table of who does what: [configuration.md](docs/configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).
@@ -12862,6 +12986,11 @@ Clients (AbstractFlow, AbstractCode, AbstractObserver, AbstractContinuum,
 AbstractEntity, AbstractAssistant, scripts) talk to the gateway over HTTP, so
 none of them depends on the others.
 
+Native clients use the run APIs and replay views. OpenAI-compatible HTTP access
+is optional: Gateway `/v1` uses Gateway credentials; a direct AbstractCore
+listener uses Core's own bind and authentication. Both can share the supervised
+execution owner's local resources. See [configuration](docs/configuration.md#openai-compatible-endpoint).
+
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
@@ -13271,6 +13400,13 @@ Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`)
 (`--run-index`) and the garbage-collector tuning (`--gc-tuning`) are in
 [docs/configuration.md](docs/configuration.md#cli-flags).
 
+## For AI agents
+
+Register and use the [AbstractGateway agent skill](https://github.com/lpalbou/AbstractGateway/tree/main/skills/abstractgateway)
+for the authenticated run workflow, replay and approval contracts, model-host
+diagnostics, and optional inference endpoints. Copy `skills/abstractgateway/`
+from the matching source checkout into your agent's skills directory.
+
 ## Docs
 
 Published docs site: https://www.lpalbou.info/AbstractGateway/
@@ -13317,6 +13453,10 @@ tray icon.
 New here? Start with [first-run.md](docs/first-run.md) on your own machine, or
 [getting-started.md](docs/getting-started.md) for an explicit setup.
 
+AI agents can register and use the
+[AbstractGateway agent skill](skills/abstractgateway/SKILL.md) for the
+authenticated run, replay and approval workflow and inference service limits.
+
 ## AbstractFramework ecosystem
 
 - **AbstractRuntime** (required): durable runs, workflow registry, stores.
@@ -13352,7 +13492,7 @@ Related repos:
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [events-examples.md](docs/events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
 | [push.md](docs/push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the Push forwarder setting and the `--push-relay` flag, alerts that choose their channels, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
-| [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
+| [openai-api.md](docs/openai-api.md) | optional Gateway `/v1` and direct Core HTTP: distinct credentials, lifecycle and native run boundaries; SDK connections, supported calls, access, errors and request logs |
 | [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, My email (mailboxes, notifications, watch and iPhone devices, the push forwarder), Workflows and Triggers (well-known feeds, Handled by); responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity, Note), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
@@ -13416,7 +13556,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.8.2 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.15.3 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -13499,7 +13639,7 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
-If `bundles.items` is empty (see also
+If the bundle response's `items` list is empty (see also
 [troubleshooting.md](docs/troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
 - point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
   directory containing `*.flow` files (or a single `.flow` file), or
@@ -13857,17 +13997,40 @@ conversation continues.
 
 ### A reply failed with "The model host ... stopped while answering"
 
-On Linux the models run in a child process (`--model-host process`, see
+On Linux, macOS and Windows, models run in a child process by default (`--model-host process`, see
 [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process)). That
 child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
 kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. The gateway kept running
-and restarted it; send the message again. The cause is in the incident file the sentence names
+and restarted it. Inspect the failed run before resubmitting any request with side effects;
+an in-flight request is not automatically replayed. The cause is in the incident file the sentence names
 (`<data dir>/incidents/model-host-*.json`: `kind`, `signal`, `rss_bytes_last`, `inflight`, `log_tail`)
 and in `<data dir>/logs/model-host.log`. The same request crashing it again points at the model or its
 settings (a context larger than the KV cache, a broken GGUF): choose another model or a smaller context.
 After 5 crashes in 10 minutes the gateway stops restarting it (`GET /api/health`: `model_host.state:
 failed`, `status: degraded`); restart the gateway once the cause is fixed. "is restarting" (status 503)
 means a request arrived during the restart: try again in a few seconds.
+
+### An optional inference endpoint failed, but native chat works
+
+Read `GET /api/gateway/admin/core-endpoint` as an admin. `enabled` controls
+Gateway `/v1`; `direct_enabled` controls the separate direct Core listener.
+The `http_services` rows report the actual listener state, URL and error.
+A failed bind or missing HTTP dependency does not make native RPC unavailable.
+For direct serving, check Core's server bind and Core token; Gateway keys do
+not authenticate that listener. After correcting the cause, toggle the affected
+switch off and on if its bounded restart limit was reached. A `stopping` row
+means cleanup has not finished; do not assume that port is closed yet.
+
+### A request fails before inference starts
+
+Schema-preparation and native request-encoding failures are deterministic
+request errors and are not retried. Correct the schema or unsupported Python
+object in the request; restarting the model host does not fix that data.
+Run calls carry original schema data across the process boundary and create
+provider validators in the execution process. Use the request error's available
+run, step, request and attempt identifiers to locate the corresponding ledger
+attempt; a preparation failure does not itself mean the process crashed.
+A healthy process ping alone does not establish inference progress.
 
 ## Network access
 
@@ -14461,11 +14624,11 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
   · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
   figure, as before.
-- **"Every quant" in the console's Models catalog** (batch item b). A switch beside **Fits this computer** asks for each
-  row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore 0865. The extra quants
-  (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and **Download**. The setting is
-  part of the link (`#catalog?every=1`). On an AbstractRuntime without the passthrough, the answer is a 501 that says
-  so.
+- **Every quant in the console's Models catalog** (batch item b; operator ruling 2026-10-29: no switch). The catalog
+  always asks for each row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore
+  0865. The extra quants (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and
+  **Download**. The quantization filter's **All** shows them all, and 4-bit, 8-bit and Other filter them. On an
+  AbstractRuntime without the passthrough, the answer is a 501 that says so.
 - **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
   **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
   generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.

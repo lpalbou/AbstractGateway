@@ -19,6 +19,11 @@ Clients (AbstractFlow, AbstractCode, AbstractObserver, AbstractContinuum,
 AbstractEntity, AbstractAssistant, scripts) talk to the gateway over HTTP, so
 none of them depends on the others.
 
+Native clients use the run APIs and replay views. OpenAI-compatible HTTP access
+is optional: Gateway `/v1` uses Gateway credentials; a direct AbstractCore
+listener uses Core's own bind and authentication. Both can share the supervised
+execution owner's local resources. See [configuration](docs/configuration.md#openai-compatible-endpoint).
+
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
@@ -427,6 +432,13 @@ See [docs/getting-started.md](docs/getting-started.md) for running, split API/ru
 Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
 (`--run-index`) and the garbage-collector tuning (`--gc-tuning`) are in
 [docs/configuration.md](docs/configuration.md#cli-flags).
+
+## For AI agents
+
+Register and use the [AbstractGateway agent skill](https://github.com/lpalbou/AbstractGateway/tree/main/skills/abstractgateway)
+for the authenticated run workflow, replay and approval contracts, model-host
+diagnostics, and optional inference endpoints. Copy `skills/abstractgateway/`
+from the matching source checkout into your agent's skills directory.
 
 ## Docs
 

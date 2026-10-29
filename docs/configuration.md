@@ -487,6 +487,31 @@ The OpenAI-compatible API is served at `http://<gateway>/v1` and managed on the
 console's **OpenAI API** page. See [openai-api.md](./openai-api.md) for what it
 supports, the access settings, the request log and its admin API.
 
+There are two independent optional HTTP surfaces:
+
+| Surface | Switch in `config/core_endpoint.json` | Address and credentials |
+|---|---|---|
+| Gateway `/v1` compatibility API | `enabled` (default `false`) | Gateway listener and account API keys; Gateway admission and request log |
+| Direct AbstractCore HTTP service | `direct_enabled` (default `false`) | Core's `server.host` / `server.port` (default `127.0.0.1:8000`) and Core's own server authentication |
+
+An admin changes either switch through `POST /api/gateway/admin/core-endpoint`;
+send JSON booleans, for example `{"direct_enabled": true}`. Changing one
+switch leaves the other unchanged. Core owns the direct service's configuration
+and tokens; see [Core server configuration](https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md).
+Gateway account API keys and its *Who can connect* setting govern Gateway
+`/v1`, not the direct Core listener.
+
+The execution owner starts and stops these listeners without restarting its
+model pool. Native runs use the Gateway run APIs, Runtime and native RPC;
+they do not require either HTTP surface. With both switches off, execution
+readiness does not start an HTTP listener or prepare a server token. An HTTP
+startup failure leaves native execution available. Admin status includes
+`http_services` with each service's `state`, `url` and `error`; inspect this
+before assuming an enabled service is listening. Failed cleanup stays
+`stopping` until its listener actually stops. Service recovery uses bounded
+backoff; after its restart limit, correct the cause and toggle that service
+off and on to retry.
+
 ## Two entry points, one store
 
 AbstractCore (low level) and AbstractGateway (high level) are the two entry
@@ -1520,9 +1545,9 @@ Core catalog proxy settings:
 ## Model host: the models run in a supervised child process
 
 ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
-`--model-host process` (the default on every OS) the gateway process loads no model and calls no
-provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
-shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
+`--model-host process` (the default on every OS), Runtime-backed provider calls use one child
+process the gateway starts, watches and restarts. That owner holds the managed model pool.
+A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
 memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
 `/api/health` keep answering.
 
@@ -1535,8 +1560,9 @@ abstractgateway serve --model-host in-process # everything in one process (devel
 |---|---|---|
 | Accounts, sign-in, routes, console, live streams, `/api/health` | yes | no |
 | Run stores, ledger, run ticking, tools, mail, push, bridges | yes | no |
-| Every AbstractCore provider call and model load (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
-| The OpenAI-compatible `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it (Core's app, the same model pool) |
+| Managed provider calls and model loads (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
+| Optional Gateway `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it through a private Core listener, sharing model resources |
+| Optional direct Core HTTP | admin lifecycle control only | Core serves requests directly with its own token and bind |
 
 - **The default**: `process` on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
   the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
@@ -1550,6 +1576,10 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
   restarts. The child exits when the gateway does (its stdin closes), so it never outlives it.
+- **Readiness and progress**: readiness means the authenticated native RPC connection is available,
+  independently of optional HTTP. A ping confirms process responsiveness, not progress of a
+  particular inference. An ordinary provider error fails its request without restarting a healthy
+  child; deterministic request-encoding or schema-preparation errors fail without retries.
 - **A request when the child dies** fails within a second: "The model host (the process that runs the
   models) stopped while answering (killed by signal 9 (SIGKILL)). The gateway is fine and is restarting
   it; send the message again in a few seconds." (status 424, not retried automatically: the request may
@@ -1558,11 +1588,17 @@ abstractgateway serve --model-host in-process # everything in one process (devel
 - **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
   (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
   `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,
-  `memory_ceiling_bytes`, `inflight` (`[{method, provider, model, since}]`), `restart` (`will_restart`,
+  `memory_ceiling_bytes`, `inflight` (method, effective provider/model and available run, step,
+  request, node, workflow, effect-idempotency and attempt identifiers), `restart` (`will_restart`,
   `backoff_s`, `restarts_in_window`) and `log_tail`. The child's log is `<data dir>/logs/model-host.log`.
 - **Health**: `GET /api/health` carries `model_host`: `mode`, `state` (`starting`, `up`, `restarting`,
   `failed`, `stopped`; `in-process` in that mode), `pid`, `generation`, `restarts_in_window`,
   `rss_bytes`, `memory_ceiling_bytes`, `nice`, `inflight`, `last_exit`, `last_incident`.
+- **One resource owner**: supported managed Core loaders reuse compatible resident weights for
+  the same canonical local artifact. Incompatible placements, engines or native profiles refuse
+  before allocating another copy; separate context/KV allocations do not imply duplicate weights.
+  This is process-local. Independently launched Core servers, external inference services, raw
+  engine constructors and arbitrary capability-plugin loaders are outside that admission contract.
 - **What a restart loses**: what the child held in memory (resident models, warmed again at once;
   prompt caches; residency locks). Runs, sessions and the ledger are the gateway's and are untouched.
 - **Cost**: the hop adds about 0.1 ms p50 to a chat step on localhost (`scripts/bench_model_host_hop.py`;
@@ -1576,8 +1612,8 @@ Evidence: `src/abstractgateway/model_host.py`, `src/abstractgateway/model_host_c
 
 ## Split mode: API and runner in two processes (opt-in)
 
-By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
-model in their own process, so a long generation never shares a Python interpreter with the API
+By default `abstractgateway serve` combines API and runner, with model execution in a supervised
+child. Split mode also separates the runner from the API, so a long runtime operation never shares a Python interpreter with the API
 (`/me`, the console, live streams). It is opt-in and not the default yet. Run these two commands
 with the same data dir (the runner first, or in either order):
 
@@ -1593,19 +1629,25 @@ Both take their usual flags (`runner` takes `--data-dir`, `--unsandboxed-command
 |---|---|---|---|
 | HTTP API, console, apps, live streams, `/api/health` | yes | yes | no |
 | Run ticking: starts, waits, commands, schedules (every account's plane) | yes | no: it creates runs and queues commands | yes |
-| Text model: runs and the OpenAI-compatible `/v1` | yes | no model loaded: `/v1` is forwarded to the runner | yes, one copy |
+| Model execution and optional Core HTTP | supervised child by default | no model loaded: Gateway `/v1` is forwarded to the runner's execution owner | supervised child by default; in-process only when explicitly chosen |
 | Mail watchers, feed polling, notification outbox | yes | no | yes |
 | Push dispatcher (watch and iPhone alerts) | yes | no | yes |
 | Telegram and agora bridges | yes | no | yes |
 
 - **`/v1` in split mode.** The API process checks the caller (key, Who can connect, Guest) as
-  usual, then forwards the request, streaming both ways, to a model host the runner process
-  serves on `127.0.0.1` (a port the system picks). The runner records its address in
+  usual, then forwards the request, streaming both ways, to the execution owner's optional
+  private Core listener on `127.0.0.1` (a port the system picks). Its owner records the address in
   `<data dir>/split/model_host.json` (mode 0600) with a secret made at each start; the model host
   refuses any request without it, so another program on the machine cannot use the port to skip
   the API's checks. No runner answering: `/v1` answers `503` with code `runner_unavailable`. The
   API process never loads the default text model (its runtime builds the model client at the
   first call instead of at boot).
+- **Optional HTTP status.** `GET /api/gateway/admin/core-endpoint` reads
+  `http_services` from `<data dir>/split/model_host_http.json` (atomic, mode `0600`,
+  no credentials). It checks the owner's PID and ignores stale status. With both
+  services disabled the file is removed after cleanup; an alive listener whose
+  stop failed stays visible as `stopping`. This status channel also works when
+  API and runner are separate processes.
 - **Events.** An event delivered by the API process reaches runs the runner process parked: the
   run store's event-wait and mailbox indexes re-read what another process changed before every
   lookup (at the latest 2 s after the change).

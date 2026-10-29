@@ -61,6 +61,14 @@ Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
 `/api/gateway/admin/core-endpoint`. See [openai-api.md](./openai-api.md) for the
 supported surface, access settings and errors.
 
+The same admin settings route accepts `direct_enabled` (JSON boolean, default
+`false`) for a direct Core HTTP listener. It does not change Gateway `/v1`'s
+`enabled` setting. Admin status includes `http_services`: `legacy` and `direct`
+rows with `{state, url, error}`. The direct listener uses Core's server bind
+and token; it receives inference requests directly without Gateway run APIs
+or Runtime orchestration. Native run clients use neither HTTP inference
+surface. See [endpoint configuration](./configuration.md#openai-compatible-endpoint).
+
 ## Auth
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  

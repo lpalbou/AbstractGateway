@@ -129,7 +129,7 @@ Regeneration:
 - [docs/security.md](./docs/security.md): user accounts + sessions + origin allowlist + network exposure + limits + audit log
 - [docs/configuration.md](./docs/configuration.md): runtime settings (network, reverse proxy, apps, backlog, engine installs), capability defaults, env vars, install extras, split mode (`serve --no-runner` + `abstractgateway runner`), CLI flags (`--pool-light/--pool-heavy/--pool-watchers`, `--run-index`, `--gc-tuning`, `--push-relay`), the CI load test (`scripts/perf/ci.sh`)
 - [docs/console.md](./docs/console.md): the web console at `/console` (responsive: sidebar drawer below 1024 px, sheet dialogs on phones, 44 px touch targets), the `abstractgateway-console` terminal app (`cargo install abstractgateway-console`; mouse-first and keyboard-complete: clickable rail or tab strip, row actions as buttons with the web's tooltips, switches, segmented choices, dialogs with the web's apply model and "Discard changes?", confirmations with [Action] [Cancel] buttons, `?` keys panel, light/dark themes; pages in the web sidebar's order with fixed keys: 1 Connection, 2 Accounts, 3 Workflows, V Triggers, 4 Skills & MCP, 5 Runtimes, 6 Apps, 7 Providers, 8 OpenAI API, 9 Models, 0 Multimodal, H Resources, T Sandbox, N Network, S Setup, I About; workspaces on Accounts like the web (E Eligible workspaces, w on every row, the kit's wording table byte for byte; W opens Accounts), p Preferences (default workflow per app, the account time zone as a searchable list over the gateway's served names), the command sandbox line under the Accounts header, the memory/compute line in the title bar, the setup guide, F2 docs assistant, F3 host panel with the last restart row), and `abstractgateway models loaded|load|unload`
-- [docs/openai-api.md](./docs/openai-api.md): the OpenAI-compatible API at `/v1`: connecting SDKs with a named API key, API keys (make, list, reveal again by the owner with the show-once trade-off, revoke, endpoint-only), supported surface, Protected/Open and Who can connect, standard errors, request log, moving from `/core/v1`
+- [docs/openai-api.md](./docs/openai-api.md): optional Gateway `/v1` and direct Core serving with separate credentials and native execution boundaries; connecting SDKs with a named API key, API keys (make, list, reveal again by the owner with the show-once trade-off, revoke, endpoint-only), supported surface, Protected/Open and Who can connect, standard errors, request log, moving from `/core/v1`
 - [docs/apps.md](./docs/apps.md): browser and terminal apps (Flow, Code, Observer, Continuum, Entity, Note) and the desktop Assistant, installed with one Install, started and opened signed in from the gateway; Node.js installed for you
 - [docs/engines.md](./docs/engines.md): installing local engines (Ollama, LM Studio, MLX, llama.cpp) without a terminal; when the Apple tools or an administrator password are needed
 - [docs/model-downloads.md](./docs/model-downloads.md): model downloads with progress, stalls, cancel, parent jobs and the event stream
@@ -138,6 +138,10 @@ Regeneration:
 - [docs/architecture.md](./docs/architecture.md): components + durability model + triggers, events and attention + deployment shapes (diagrams)
 - [docs/shipped-workflows.md](./docs/shipped-workflows.md): the workflow bundles a fresh install serves out of the box (coder, deep research, co-scientist, basic-agent, native loops) + how to run one
 - [docs/faq.md](./docs/faq.md): common questions and limits
+
+## Agent Skill
+
+- [AbstractGateway agent skill](https://github.com/lpalbou/AbstractGateway/blob/main/skills/abstractgateway/SKILL.md): authenticated durable runs, replay and approval handling, model-host diagnosis, and optional inference endpoint boundaries
 
 ## Key code entrypoints
 
