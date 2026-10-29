@@ -316,7 +316,7 @@ def test_linux_ollama_installs_for_the_user_without_an_administrator(tmp_path) -
         assert sysd.elevated() == [] and not any(c[:1] == ["pkexec"] for c in sysd.calls)
         assert ["DOWNLOAD", "https://github.com/ollama/ollama/releases/download/v0.34.3/ollama-linux-amd64.tar.zst"] in sysd.calls
         unit = home / ".config" / "systemd" / "user" / "ollama.service"
-        assert f"ExecStart={home / '.local' / 'bin' / 'ollama'} serve" in unit.read_text()
+        assert f'ExecStart="{home / '.local' / 'bin' / 'ollama'}" serve' in unit.read_text()
         assert ["systemctl", "--user", "enable", "--now", "ollama.service"] in sysd.calls
         assert job["result"]["service"] == "systemd-user"
         # The row sees it although ~/.local/bin is not on the gateway's PATH.
@@ -777,3 +777,9 @@ def test_linux_lmstudio_without_libatomic_stops_before_the_installer_and_resumes
     after = reg.get(job["job_id"]).snapshot()
     assert after["state"] != "needs_tools", after["message"]
     assert inst.plan("lmstudio").public(None)["needs_tools"] is False
+
+
+def test_ollama_user_unit_quotes_its_program_path():
+    # A home directory with a space (or a quote, a backslash, a literal %) stays ONE argument.
+    assert ei._systemd_exec_path("/home/a b/.local/bin/ollama") == '"/home/a b/.local/bin/ollama"'
+    assert ei._systemd_exec_path('/home/x"y\\z/50%/ollama') == '"/home/x\\"y\\\\z/50%%/ollama"'

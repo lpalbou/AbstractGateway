@@ -861,6 +861,13 @@ class InstallPlan:
         }
 
 
+def _systemd_exec_path(path: Any) -> str:
+    """A unit's ExecStart program, always double-quoted: a home directory with a space keeps one
+    argument; `"` and `\\` are escaped, and a literal `%` is not read as a systemd specifier."""
+    text = str(path).replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
 class EngineInstaller:
     """Plans and runs one engine install. Every path and URL is a parameter so a
     scratch prefix can be tested for real without touching the host's own."""
@@ -1557,7 +1564,7 @@ class EngineInstaller:
             (unit_dir / OLLAMA_USER_UNIT).write_text(
                 "# Written by AbstractGateway (Ollama installed for this account in ~/.local).\n"
                 "[Unit]\nDescription=Ollama (user)\nAfter=network-online.target\n\n"
-                f"[Service]\nExecStart={binary} serve\nEnvironment=OLLAMA_HOST={host}\nRestart=on-failure\nRestartSec=3\n\n"
+                f"[Service]\nExecStart={_systemd_exec_path(binary)} serve\nEnvironment=OLLAMA_HOST={host}\nRestart=on-failure\nRestartSec=3\n\n"
                 "[Install]\nWantedBy=default.target\n",
                 encoding="utf-8",
             )
