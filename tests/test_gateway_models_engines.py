@@ -203,6 +203,21 @@ def test_reads_serve_the_core_payloads_with_their_arguments(facade, tmp_path, mo
         }
         assert client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=0", headers=h).status_code == 422
 
+        # An AbstractRuntime whose facade has no `hub_page` (0.15.3): a page beyond the first is
+        # refused in words (501), never a 500 and never page 1 again; no page asked still works.
+        from abstractgateway import core_config
+
+        def old_catalog(q=None, *, engine=None, fits_only=False, hub=False, tags=None):
+            return {"schema": "model_catalog_v1", "rows": []}
+
+        monkeypatch.setattr(core_config.config_facade, "model_catalog", old_catalog)
+        got = client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=2", headers=h)
+        assert got.status_code == 501, got.text
+        body = got.json()
+        assert "reason" in json.dumps(body) and "abstractruntime_too_old" in json.dumps(body)
+        assert "Upgrade it with: pip install -U abstractruntime" in json.dumps(body)
+        assert client.get("/api/gateway/models/catalog?q=qwen&hub=1", headers=h).status_code == 200
+
         got = client.get("/api/gateway/models/installed?provider=ollama", headers=h)
         assert got.status_code == 200 and got.json()["rows"][0]["artifact"] == "qwen3:8b"
         assert facade.calls["list_installed_models"][-1][0] == ("ollama",)

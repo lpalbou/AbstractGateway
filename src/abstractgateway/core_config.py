@@ -831,6 +831,31 @@ def core_model_download(
 CoreTooOld = config_facade.AbstractCoreTooOld
 HostActionRefused = config_facade.HostActionRefused
 
+
+class RuntimeTooOld(NotImplementedError):
+    """The installed AbstractRuntime's facade predates a seam argument the gateway was asked to
+    pass (-> 501 `abstractruntime_too_old`, in words). Never a silent fallback to the old answer."""
+
+    def __init__(self, feature: str, *, missing: str):
+        self.feature = str(feature)
+        self.missing = str(missing)
+        super().__init__(
+            f"{self.feature} needs a newer AbstractRuntime on this gateway (its facade has no {self.missing}). "
+            "Upgrade it with: pip install -U abstractruntime"
+        )
+
+
+def _accepts_kwargs(fn: Any, names: Any) -> bool:
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return True  # not introspectable: let the call itself answer
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return all(n in params for n in names)
+
 #: The CLI that job cards and `cli_equivalent` name on this entry point.
 GATEWAY_CLI = "abstractgateway"
 _CORE_CLI_PREFIX = "abstractcore "
@@ -916,6 +941,8 @@ def core_model_catalog(
     """Contract C (`model_catalog_v1`). `paging`: `hub_page` / `hub_page_size`, passed only when
     asked (the facade refuses them in words on an AbstractCore without Hugging Face pages)."""
 
+    if paging and not _accepts_kwargs(config_facade.model_catalog, paging):
+        raise RuntimeTooOld("Hugging Face search pages", missing="model_catalog(hub_page=, hub_page_size=)")
     return config_facade.model_catalog(q, engine=engine, fits_only=fits_only, hub=hub, tags=tags, **paging)
 
 

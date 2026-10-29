@@ -25,6 +25,10 @@ item (a): an exact HF handle always finds the model, and HF results always appea
     Hugging Face mode with the same words reuses the answer.
 - `routes/gateway.py` / `core_config.py`: `hub_page` (>= 1) and `hub_page_size` (1-100) query parameters, passed
   to the facade only when given.
+- An AbstractRuntime whose facade has no `hub_page` (0.15.3) is refused in words: `RuntimeTooOld` returns 501
+  `abstractruntime_too_old` with "Upgrade it with: pip install -U abstractruntime". The console shows it under
+  **Show more results** ("The next page did not load: ..."). It is never a 500 and never page 1 again. Review by
+  the merge desk: the OVH server runs exactly that combination until the runtime ships its passthrough.
 - `docs/console.md`: the Catalog / Hugging Face paragraph.
 
 ## Evidence
@@ -37,7 +41,8 @@ item (a): an exact HF handle always finds the model, and HF results always appea
   - `test_catalog_search_shows_hugging_face_results_beside_the_catalog`: one Hub request, the section with 3
     cards, and no second request on the mode switch.
 - `tests/test_gateway_models_engines.py`: the route passes `hub_page=2&hub_page_size=10` through, and `hub_page=0`
-  is a 422.
+  is a 422. With an old facade (no `hub_page`), page 2 is a 501 in words and page 1 still works. Red with the check
+  removed.
 
 ## Follow-ups
 - The terminal console's Models tab (9) has the same Catalog / Hugging Face choice without pages. It is the same

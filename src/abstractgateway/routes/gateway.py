@@ -27657,10 +27657,12 @@ def _host_action_error(status_code: int, status: str, message: str, **extra: Any
 
 async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Run one seam call off the event loop; map the facade's typed errors to HTTP."""
-    from ..core_config import CoreTooOld, HostActionRefused
+    from ..core_config import CoreTooOld, HostActionRefused, RuntimeTooOld
 
     try:
         return await off_loop("watchers", fn, *args, **kwargs)
+    except RuntimeTooOld as exc:
+        return _host_action_error(501, "unsupported", str(exc), reason="abstractruntime_too_old", missing=exc.missing)
     except HostActionRefused as exc:
         body = exc.payload()
         message = str(body.pop("message", "") or exc)
