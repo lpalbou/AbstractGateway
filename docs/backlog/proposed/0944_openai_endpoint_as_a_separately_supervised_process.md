@@ -5,6 +5,7 @@
 > Status: proposed
 > Created: 2026-10-27
 > Priority: P1
+> Decided by ADR 0002 (2026-10-29): `/v1` is served by the supervised model host child (0967, stage 1), behind the gateway's admission; the load drill and console controls remain (0968).
 > Labels: resilience, isolation, openai-endpoint, security, load
 
 ## Summary

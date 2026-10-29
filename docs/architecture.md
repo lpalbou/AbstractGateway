@@ -832,9 +832,25 @@ flowchart TB
   end
 ```
 
+```mermaid
+flowchart LR
+  Client["Browser, apps, /v1 clients"] --> GW["abstractgateway serve<br/>accounts, routes, auth, reach,<br/>ledger, runs, supervision"]
+  GW -->|"runtime LLM client proxy<br/>(Unix socket, per-boot key)"| MH["Model host child<br/>every Core provider,<br/>the model pool, Core's /v1 app"]
+  GW -->|"/v1 admitted, then forwarded<br/>(127.0.0.1, per-start secret)"| MH
+  GW -.->|"ping, restart, memory ceiling,<br/>incident file per crash"| MH
+```
+
 - **Single process**: `abstractgateway serve` starts the HTTP API and the
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
+- **Model host** (ADR [0002](./adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md),
+  `--model-host process`, the default on Linux): the models and every
+  AbstractCore provider call run in one child process the gateway supervises;
+  the runtime's LLM clients in the gateway are proxies with the same API, and
+  `/v1` is admitted by the gateway and served by the child. A crash there costs
+  the requests in flight, is recorded in `<data dir>/incidents/`, and the child
+  is restarted; the gateway keeps answering. macOS and Windows default to
+  `in-process`. Details: [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 - **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
   (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
   one data dir, so you can restart the API without pausing durable execution.
@@ -851,7 +867,8 @@ flowchart TB
   [deployment.md](./deployment.md).
 
 Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
-(lock file), `src/abstractgateway/split_mode.py` (model host, placement).
+(lock file), `src/abstractgateway/split_mode.py` (model host, placement),
+`src/abstractgateway/model_host.py` (supervisor, proxy), `src/abstractgateway/model_host_child.py`.
 
 ## Security model (summary)
 

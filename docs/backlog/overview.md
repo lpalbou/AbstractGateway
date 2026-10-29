@@ -21,13 +21,13 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 15
+- Planned: 16
 - Proposed: 46
-- Completed: 33
+- Completed: 34
 - Deprecated: 2
 - Recurrent: 0
 
-<!-- Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-10-29: 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -118,6 +118,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
+| [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
 | [0941_endpoint_image_models_through_the_vision_registry.md](planned/0941_endpoint_image_models_through_the_vision_registry.md) | Recognise an endpoint's image models by name and aliases through AbstractVision's registry (its 0025) instead of prefixes; the endpoint's own word still first. |
@@ -178,6 +179,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Model host: providers, the model pool and /v1 in a supervised child (ADR 0002 stage 1; completed 2026-10-29, Unreleased) | (filed completed) | [completed/0967_model_host_child_process_isolation_stage_1.md](completed/0967_model_host_child_process_isolation_stage_1.md) | `--model-host process` (Linux default): a crash in the child costs the requests in flight, never the gateway; restarts with backoff and a limit; memory ceiling; incident file per crash | kill -9 e2e (fails in 0.06 s, health 200, back in 0.6 s, next run completes); hop +0.1 ms p50; unit tests |
 | Fresh-Linux fixes: apps follow the release matrix, network status auth, llama.cpp card (completed 2026-10-28, 0.17.2) | (filed completed) | [completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md](completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md) | Install installs the release's app pins (newer offered, never auto-installed); `network status` reports loopback user auth; the llama.cpp card names the Linux CUDA build | 4 tests red without the fixes, green with them |
 | Console islands resynced from ui-kit 0.9.4 (completed 2026-10-28, 0.17.1) | (filed completed) | [completed/0956_console_islands_resync_ui_kit_0_9_4.md](completed/0956_console_islands_resync_ui_kit_0_9_4.md) | The console vendors the released kit (AbstractUIC 0.8.2): the voice picker lists each Qwen3-TTS voice once (the kit's Create-a-voice, approval-card and duration polish ride in the bundle, not yet rendered by the console) | islands/theme drift pins 8 passed against tag `v0.8.2`; old module mutation-checked red |
 | Memory graph routes over the runtime facade (completed 2026-10-28, 0.17.0) | `planned/0948_memory_graph_routes_over_the_runtime_facade.md` | [completed/0948_memory_graph_routes_over_the_runtime_facade.md](completed/0948_memory_graph_routes_over_the_runtime_facade.md) | `/api/gateway/memory/*` (query, history, sources, reconstruct, derived) over AbstractRuntime's memory facade; strict owner rule shared with `/kg/query`; direct AbstractMemory imports 34 -> 0. | `tests/test_gateway_memory_routes.py`, the import-boundary test; PR #7 CI green. |
