@@ -49,6 +49,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
     before the click.
   - Synthesis never checks, and the voice lists already offer only downloaded voices.
+
+- **Saving an automation that now runs a waiting run's tools continues that run, from any client** (operator QA
+  2026-10-29). The operator set a waiting automation to "Run without asking" in the web console and saved; the run
+  stayed "waiting for you".
+  - When an `automation.revise` is applied, the gateway answers "approved" every tool-approval wait of that
+    automation's runs whose every tool the revised definition now grants (`automation_wait_resolver.py`). It does
+    this through the same durable `resume` command a person's answer uses, with the saver's id as the command's
+    client.
+  - The runtime's own grant functions decide what is granted, so message-sending tools are never auto-approved this
+    way.
+  - A wait still partly blocked stays; `still_asks` names its tools.
+  - Only the automation's owner answers its waits this way; a revision by someone else (an admin acting in another
+    owner's plane) leaves them.
+
+### Fixed
+
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
