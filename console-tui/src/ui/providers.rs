@@ -108,6 +108,7 @@ pub fn hints(store: &crate::store::Store) -> Vec<(&'static str, &'static str)> {
         ("i/s/x/b/c", "engine"),
         ("n/o", "connection"),
         ("k", "Check again"),
+        ("E/D", "Allow engine installs / its default"),
         ("p", "Configure"),
         ("a", "Add connection"),
         ("e/d", "Edit/Delete"),
@@ -591,9 +592,8 @@ fn handle_key(
                     .set(Some("no provider selected — choose a row first".into())),
             }
         }
-        'i' | 'u' | 's' | 'x' | 'b' | 'c' | 'k' | 'A' | 'T' | 'n' | 'o' | 'l' | 'w' | 'g' => {
-            engines::key(ctx, eui, ch)
-        }
+        'i' | 'u' | 's' | 'x' | 'b' | 'c' | 'k' | 'A' | 'T' | 'n' | 'o' | 'l' | 'w' | 'g' | 'E'
+        | 'D' => engines::key(ctx, eui, ch),
         _ => return false,
     }
     true
