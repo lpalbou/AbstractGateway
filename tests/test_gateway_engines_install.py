@@ -107,7 +107,7 @@ class FakeSystem(ei.System):
 
     def fetch_text(self, url, timeout=30.0):
         self.calls.append(["FETCH", url])
-        return f"{self.sha_published}  ./Ollama-darwin.zip\nffff  ./ollama-darwin.tgz\n"
+        return f"{self.sha_published}  ./Ollama-darwin.zip\nffff  ./ollama-darwin.tgz\n{self.sha_published}  ./ollama-linux-amd64.tar.zst\n"
 
     def download(self, url, dest, *, on_progress, cancel):
         self.calls.append(["DOWNLOAD", url])
@@ -285,30 +285,50 @@ def test_wrong_signing_team_installs_nothing(tmp_path) -> None:
     assert not (tmp_path / "Applications" / "Ollama.app").exists()
 
 
-def test_linux_ollama_asks_pkexec_on_a_desktop_and_a_terminal_when_headless(tmp_path) -> None:
-    linux = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=True)
-    sysd = FakeSystem(tmp_path)
-    sysd.whiches["pkexec"] = "/usr/bin/pkexec"
-    reg = _registry(_installer(tmp_path, sysd, host=linux), tmp_path)
-    snap, _ = reg.start("ollama", run_inline=True)
-    job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "needs_admin" and job["admin_prompt"]["method"] == "pkexec"
-    assert sysd.elevated() == []
-    sysd.http["http://127.0.0.1:11434/api/version"] = {"version": "0.34.3"}
-    reg.continue_job(job["job_id"], run_inline=True)
-    assert reg.get(job["job_id"]).snapshot()["state"] == "done"
-    assert sysd.elevated() == [["pkexec", "/bin/sh", "-c", ei.OLLAMA_LINUX_SCRIPT]]
+def test_linux_ollama_installs_for_the_user_without_an_administrator(tmp_path) -> None:
+    """Operator 2026-10-29: "the gateway never requires admin rights for an engine". On Linux (not
+    root) Ollama's official archive is unpacked into ~/.local and served as a systemd user service:
+    no pkexec, no sudo, no needs_admin step, desktop or headless."""
+    for gui in (True, False):
+        root = tmp_path / ("gui" if gui else "headless")
+        root.mkdir()
+        linux = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=gui)
+        sysd = FakeSystem(root)
+        sysd.whiches.update({"zstd": "/usr/bin/zstd", "systemctl": "/usr/bin/systemctl", "pkexec": "/usr/bin/pkexec"})
+        home = root / "home"
 
-    headless = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False)
-    sysd2 = FakeSystem(tmp_path)
-    reg2 = _registry(_installer(tmp_path, sysd2, host=headless), tmp_path)
-    snap, _ = reg2.start("ollama", run_inline=True)
-    job = reg2.get(snap["job_id"]).snapshot()
-    assert job["admin_prompt"]["method"] == "manual" and job["admin_prompt"]["command"].startswith("sudo sh -c ")
-    assert job["continue_actions"] == ["recheck"]
-    reg2.continue_job(job["job_id"], run_inline=True)  # nothing installed yet -> still waiting, nothing elevated
-    assert reg2.get(job["job_id"]).snapshot()["state"] == "needs_admin"
-    assert sysd2.elevated() == []
+        def unpack(argv):
+            (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
+            (home / ".local" / "bin" / "ollama").write_text("#!/bin/sh\n")
+            return 0, ""
+
+        sysd.on(lambda a: a[:2] == ["sh", "-c"] and "zstd -d -c" in a[2], unpack)
+        sysd.on(lambda a: a[:4] == ["systemctl", "--user", "enable", "--now"],
+                lambda a: (sysd.http.__setitem__("http://127.0.0.1:11434/api/version", {"version": "0.34.3"}) or (0, "")))
+        inst = _installer(root, sysd, host=linux)
+        plan = inst.plan("ollama")
+        assert plan.available and not plan.needs_admin and plan.method == "user_archive"
+        assert "no administrator" in plan.notes and "Apple" not in plan.notes
+        reg = _registry(inst, root)
+        snap, _ = reg.start("ollama", run_inline=True)
+        job = reg.get(snap["job_id"]).snapshot()
+        assert job["state"] == "done", job["message"]
+        assert sysd.elevated() == [] and not any(c[:1] == ["pkexec"] for c in sysd.calls)
+        assert ["DOWNLOAD", "https://github.com/ollama/ollama/releases/download/v0.34.3/ollama-linux-amd64.tar.zst"] in sysd.calls
+        unit = home / ".config" / "systemd" / "user" / "ollama.service"
+        assert f'ExecStart="{home / '.local' / 'bin' / 'ollama'}" serve' in unit.read_text()
+        assert ["systemctl", "--user", "enable", "--now", "ollama.service"] in sysd.calls
+        assert job["result"]["service"] == "systemd-user"
+        # The row sees it although ~/.local/bin is not on the gateway's PATH.
+        row = ei.engine_row(inst, {"id": "ollama", "installed": False}, active_job=None, install_allowed=True)
+        assert row["installed"] is True
+
+
+def test_linux_ollama_without_zstd_says_why_without_an_administrator_step(tmp_path) -> None:
+    linux = ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc", gui_session=False)
+    plan = _installer(tmp_path, FakeSystem(tmp_path), host=linux).plan("ollama")
+    assert not plan.available and not plan.needs_admin
+    assert "zstd" in plan.notes and "administrator" not in plan.notes.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -757,3 +777,9 @@ def test_linux_lmstudio_without_libatomic_stops_before_the_installer_and_resumes
     after = reg.get(job["job_id"]).snapshot()
     assert after["state"] != "needs_tools", after["message"]
     assert inst.plan("lmstudio").public(None)["needs_tools"] is False
+
+
+def test_ollama_user_unit_quotes_its_program_path():
+    # A home directory with a space (or a quote, a backslash, a literal %) stays ONE argument.
+    assert ei._systemd_exec_path("/home/a b/.local/bin/ollama") == '"/home/a b/.local/bin/ollama"'
+    assert ei._systemd_exec_path('/home/x"y\\z/50%/ollama') == '"/home/x\\"y\\\\z/50%%/ollama"'
