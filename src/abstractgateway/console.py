@@ -3066,6 +3066,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
 	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
 	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
+	          <label id="modal-default-device-label" class="hidden" title="Where the embedding model runs. The GPU is fast; the CPU leaves the GPU memory to the text model. Default: the GPU when there is room.">Device<select id="modal-default-device">
+	            <option value="">GPU when there is room (default)</option><option value="gpu">GPU</option><option value="cpu">CPU</option>
+	          </select><span id="modal-default-device-status" class="subtle"></span></label>
 	          <label id="modal-default-speculation-label" class="hidden" title="Core-owned default policy. Explicit request overrides win; unsupported backends do not enable MTP merely because a default is saved.">MTP<select id="modal-default-speculation">
 	            <option value="">inherit (no override)</option><option value="off">off</option>
 	            <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
@@ -9580,6 +9583,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
 	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
 	    }
+	    // DEVICE of a local embedding model (AbstractCore: route `options.device`, the person's
+	    // choice; operator ruling 2026-10-29) with what the loaded one takes now, in words.
+	    function isEmbeddingDefault(row) { return String(row?.key || "").startsWith("embedding."); }
+	    function embeddingDeviceStatus() {
+	      const models = Array.isArray(state.hostState?.models) ? state.hostState.models : [];
+	      const m = models.find((r) => r && r.task === "embedding" && r.resident === true);
+	      if (!m) return "Not loaded now.";
+	      const d = m.details || {};
+	      const where = String(d.device || "").toLowerCase().startsWith("cpu") ? "the CPU" : (d.device ? "the GPU" : "");
+	      const bytes = typeof d.device_bytes === "number" ? ` (${_fmtBytes(d.device_bytes)} of GPU memory, measured)` : "";
+	      return where ? `Now on ${where}${bytes}.${d.device_note ? " " + d.device_note + "." : ""}` : "Loaded.";
+	    }
+	    function loadDefaultDevice(row) {
+	      const on = isEmbeddingDefault(row);
+	      $("modal-default-device-label").classList.toggle("hidden", !on);
+	      if (!on) return;
+	      const dev = String(row?.options?.device || "").toLowerCase();
+	      $("modal-default-device").value = dev === "gpu" || dev === "cpu" ? dev : "";
+	      $("modal-default-device-status").textContent = embeddingDeviceStatus();
+	    }
 	    function loadDefaultSpeculation(row) {
 	      const label = $("modal-default-speculation-label");
 	      const select = $("modal-default-speculation");
@@ -14784,6 +14807,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
 	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
+      if (shownOptions && String(row?.key || "").startsWith("embedding.")) delete shownOptions.device;
 	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
 	        ? JSON.stringify(shownOptions, null, 2)
 	        : "";
@@ -14801,7 +14825,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        options: $("modal-default-options").value,
 	        voice: defaultVoiceValue(row),
 	        speculation: speculationChoice(row?.options?.speculation),
+	        device: String(row?.options?.device || ""),
 	      };
+	      if (typeof loadDefaultDevice === "function") loadDefaultDevice(row);
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      if (isVoiceOutputDefault(row)) {
@@ -16949,6 +16975,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          delete options.speculation;
 	          if (value !== undefined && value !== null) options.speculation = value;
 	          if (changed) optionsEdited = true;
+	        }
+	        if (String(row?.key || "").startsWith("embedding.")) {
+	          if (Object.prototype.hasOwnProperty.call(options, "device")) throw new Error("Use the Device selector; the options box edits the remaining provider settings.");
+	          const dev = $("modal-default-device").value;
+	          if (dev) options.device = dev; else delete options.device;
+	          if (dev !== String(prefill.device || "")) optionsEdited = true;
 	        }
 	        if (optionsEdited) body.options = options;
 	        // Slow lane: see apply-recommended. A 60s abort on a PUT is
