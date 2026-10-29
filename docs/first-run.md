@@ -294,6 +294,32 @@ When `ABSTRACTGATEWAY_DATA_DIR` is not set, the gateway uses, in order:
 chosen. `serve --data-dir <dir>` or `ABSTRACTGATEWAY_DATA_DIR` choose it
 explicitly.
 
+## Several gateways on one machine (instances)
+
+A second gateway for the same user on the same machine is a named INSTANCE. One name drives
+everything, and nothing is picked by hand:
+
+```bash
+abstractgateway --instance fresh service install --port 8443   # or: install.sh --server --instance fresh --port 8443
+abstractgateway --instance fresh claim --code                  # its setup code
+abstractgateway --instance fresh service status
+```
+
+| | Default instance | Instance `fresh` |
+|---|---|---|
+| Data folder | `~/.local/share/abstractgateway` (macOS: `~/Library/Application Support/AbstractGateway`) | the same with `-fresh` |
+| AbstractCore config (model routes, provider connections) | AbstractCore's default | `<data folder>/core-config` |
+| Gateway port (unless `--port` or the Network setting) | 8080 | 8090 + its slot |
+| App ports (Code, Observer, ...) | 3001-3006, then 3100-3199 | 3001+200×slot..., then 3100+200×slot..3199+200×slot |
+| Login service | `abstractgateway.service`, `ai.abstractframework.gateway` | `abstractgateway-fresh.service`, `ai.abstractframework.gateway.fresh` |
+| Console | "AbstractGateway Console" | "AbstractGateway Console · fresh", and the name in the sidebar |
+
+The SLOT is assigned once per instance (the smallest free one, never two instances on one slot) and
+recorded in `~/.config/abstractgateway/instances.json`, so the app port blocks of two instances never
+collide. `ABSTRACTGATEWAY_INSTANCE=fresh` is the same as `--instance fresh` (the login service runs
+`abstractgateway --instance fresh serve`). A gateway lists and opens only its own apps: a running app
+another instance serves is never shown as this one's. `GET /api/gateway/about` carries `instance`.
+
 ## Exposing the gateway beyond this machine
 
 Choose who can reach the gateway with the network setting:

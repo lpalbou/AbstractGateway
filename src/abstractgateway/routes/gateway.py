@@ -15818,7 +15818,11 @@ def about_payload() -> Dict[str, Any]:
         except metadata.PackageNotFoundError:
             return None
 
+    from ..instances import current_instance
+
     return {
+        # The gateway instance (instances.py): "default", or the name of a second gateway on this machine.
+        "instance": current_instance(),
         "abstractframework": installed_framework_version(_v("abstractframework")),
         "abstractgateway": _v("abstractgateway"),
         "packages": dict(sorted(packages.items())),
@@ -27634,7 +27638,7 @@ async def model_downloads_stream(
 #   GET  /engines?probe=                             contract B (+ install_allowed)
 #   GET  /engines/{id}?probe=                        one contract-B row
 #   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
-#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=  contract C
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=  contract C
 #   GET  /models/installed?provider=                 contract D
 #   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
 #   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
@@ -27657,10 +27661,12 @@ def _host_action_error(status_code: int, status: str, message: str, **extra: Any
 
 async def _core_host_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Run one seam call off the event loop; map the facade's typed errors to HTTP."""
-    from ..core_config import CoreTooOld, HostActionRefused
+    from ..core_config import CoreTooOld, HostActionRefused, RuntimeTooOld
 
     try:
         return await off_loop("watchers", fn, *args, **kwargs)
+    except RuntimeTooOld as exc:
+        return _host_action_error(501, "unsupported", str(exc), reason="abstractruntime_too_old", missing=exc.missing)
     except HostActionRefused as exc:
         body = exc.payload()
         message = str(body.pop("message", "") or exc)
@@ -27728,13 +27734,17 @@ async def models_catalog_get(
     fits: bool = Query(False, description="Keep only artifacts that fit this host (fits or tight)."),
     hub: bool = Query(False, description="Enrich from the Hugging Face API (cached 24 h) and add hub search rows."),
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
+    hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
+    hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
+    paging = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
     return await _core_host_call(
-        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None
+        core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
+        **paging,
     )
 
 
@@ -28376,6 +28386,25 @@ def _with_capability_default_warnings(
     return out
 
 
+async def _refuse_voice_not_downloaded(kind: str, modality: str, req: Any) -> Optional[JSONResponse]:
+    """A voice can be selected if and only if its model is downloaded (operator ruling 2026-10-29):
+    setting the default voice to a local model whose weights are not on disk is refused HERE, at
+    selection time, with the sentence (`detail`, a string every client prints) and the download
+    action (`error.download`). Synthesis never checks. An unknown state does not refuse."""
+    if str(kind).strip().lower() != "output" or str(modality).strip().lower() != "voice":
+        return None
+    provider = str(getattr(req, "provider", "") or "").strip()
+    model = str(getattr(req, "model", "") or "").strip()
+    if not provider or not model:
+        return None
+    from ..core_config import model_not_downloaded
+
+    missing = await off_loop("light", model_not_downloaded, provider, model)
+    if not missing:
+        return None
+    return JSONResponse(status_code=409, content={"detail": str(missing.get("message") or ""), "error": missing})
+
+
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
     """Persist one execution-host Core/Runtime capability route default.
@@ -28386,6 +28415,9 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
     config store warns here instead of refusing.
     """
     svc = get_gateway_service()
+    refused = await _refuse_voice_not_downloaded(kind, modality, req)
+    if refused is not None:
+        return refused
     try:
         save_gateway_capability_default(
             kind,
