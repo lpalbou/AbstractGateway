@@ -324,3 +324,39 @@ def test_an_attribute_the_host_assigns_reaches_the_child_and_survives_a_restart(
         assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/carol"
     finally:
         sup.stop()
+
+
+def test_after_a_restart_only_the_pool_clients_are_rebuilt_at_once(tmp_path, fake):
+    """Pass three (2026-10-29): a gateway-side client rebuilt eagerly loaded the model as an
+    instance of its own before the runtime's pool could; the pool's copy was then a second one.
+    Pool clients (`multi`) rebuild at once (their default warms); `local` ones at their next call."""
+    sup = _sup(tmp_path)
+    try:
+        pool = mh.ModelHostClient(sup, kind="multi", ctor=_ctor(fake))
+        side = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+        pool.generate(prompt="warm")
+        side.generate(prompt="warm")
+        pid = sup.pid
+        os.kill(pid, signal.SIGKILL)
+        assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
+        assert _until(lambda: pool._mh_built_generation == sup.generation), "the pool client was not rebuilt"
+        time.sleep(1.0)
+        assert side._mh_built_generation != sup.generation, "a gateway-side client was rebuilt before its call"
+        assert "again" in side.generate(prompt="again")["content"]
+        assert side._mh_built_generation == sup.generation
+    finally:
+        sup.stop()
+
+
+def test_a_pool_client_rebuilds_with_its_current_default_and_does_not_replay_the_switch(tmp_path, fake):
+    sup = _sup(tmp_path)
+    try:
+        pool = mh.ModelHostClient(sup, kind="multi", ctor=dict(provider="lmstudio", model="boot-default",
+                                                               llm_kwargs={"base_url": "http://127.0.0.1:9/v1"}))
+        assert _until(lambda: pool._mh_built_generation == sup.generation)
+        pool.set_default_provider_model(provider="openai-compatible", model="fake-model",
+                                        llm_kwargs={"base_url": fake.base_url, "api_key": "fake-key"})
+        assert pool._mh_ctor["provider"] == "openai-compatible" and pool._mh_ctor["model"] == "fake-model"
+        assert "set_default_provider_model" not in pool._mh_setters
+    finally:
+        sup.stop()
