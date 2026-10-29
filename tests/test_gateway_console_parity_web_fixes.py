@@ -613,6 +613,7 @@ const dlFeed = { group: null };
 const dlActive = () => false;
 const dlGroupMarkup = () => "";
 const downloadJobKey = (p, a) => `${p}:${a}`;
+const renderFirstRunDefaultModels = () => {};  // the Default models view (1069) has its own tests
 """
     return _run(
         _ROUTE_HELPERS + ["weightView", "weightReason", "firstRunUnavailableCards", "firstRunRouteUnavailableAlert", "firstRunCap", "renderFirstRunModel"],

@@ -5,10 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per pull request;
+`python scripts/changelog.py assemble X.Y.Z` writes them here at release.
+
 ## [Unreleased]
+
+
+### Changed
+
+- **Only the machine's gateway service shows the tray icon** (operator ruling 2026-10-29: two icons on one Mac, a
+  scratch e2e gateway's next to the service's). The service is the gateway that launchd (job
+  `ai.abstractframework.gateway`), systemd (`abstractgateway.service`), the XDG autostart entry or the Windows Run entry
+  started (`tray_supervisor.service_launch`, read from the launch itself: `XPC_SERVICE_NAME`, the systemd cgroup, the
+  service launcher); a `serve` from a terminal, a test or a harness shows none unless started with the new `--tray`
+  (reason `not_service` on the console's Gateway card). Named instances follow with gateway #37's instance names.
+- **LM Studio on Linux without root never asks for an administrator**: when the machine lacks the libatomic1
+  system library, the card says so plainly and names the engines that install here for this account (llama.cpp,
+  Ollama, vLLM where they apply), with no administrator step; a gateway running as root still installs it. An
+  engine job waiting on a prerequisite says "Needs Apple tools" only for Apple's installer, never on Linux.
+- **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
+  2026-10-29): its official `ollama-linux-<arch>.tar.zst` (SHA-256 checked) is unpacked into `~/.local` and served by
+  a systemd user service on port 11434 (its program path quoted, so a home directory with a space works; a detached `ollama serve` without a user bus). The card no longer says
+  "Install (administrator)"; without `zstd` it says why, with no administrator step.
 
 ### Fixed
 
+- **A stop signal stops the gateway in under a second, even with live streams open** (`shutdown_drain.py`). One
+  open stream (the console's `/me/events/stream`, a run's ledger stream, the tray's polling) held a SIGTERM for the
+  whole graceful-shutdown timeout (120 s), so supervisors and people killed the gateway first. Now the moment the
+  signal arrives every GET request sees its client leave (streams end; clients reconnect with their cursor),
+  requests in flight get 10 s (`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`, was 120), and
+  a SIGTERM exits 0 instead of 143. Measured: a real `serve` with a live stream exits 0 in 0.2-0.4 s (before:
+  120.7 s); `tests/test_gateway_sigterm_bounded_shutdown.py`.
 - **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
   AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
   guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
@@ -18,14 +46,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is not installed here"). Wherever the pick's engine is installed, nothing changes.
 - **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
   nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
-### Changed
-
-- **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
-  2026-10-29): its official `ollama-linux-<arch>.tar.zst` (SHA-256 checked) is unpacked into `~/.local` and served by
-  a systemd user service on port 11434 (its program path quoted, so a home directory with a space works; a detached `ollama serve` without a user bus). The card no longer says
-  "Install (administrator)"; without `zstd` it says why, with no administrator step.
-### Fixed
-
 - **A gateway that fails to start now exits non-zero**: the exit belt kept exiting 0 when a non-daemon thread was
   alive, so a port-in-use start under systemd (`Restart=on-failure`) was never retried (OVH 2026-10-28). The off-loop
   pools are stopped before the belt, and the belt exits with the pending code (3 for uvicorn's startup failure).
@@ -41,40 +61,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
     before the click.
   - Synthesis never checks, and the voice lists already offer only downloaded voices.
+
+- **Saving an automation that now runs a waiting run's tools continues that run, from any client** (operator QA
+  2026-10-29). The operator set a waiting automation to "Run without asking" in the web console and saved; the run
+  stayed "waiting for you".
+  - When an `automation.revise` is applied, the gateway answers "approved" every tool-approval wait of that
+    automation's runs whose every tool the revised definition now grants (`automation_wait_resolver.py`). It does
+    this through the same durable `resume` command a person's answer uses, with the saver's id as the command's
+    client.
+  - The runtime's own grant functions decide what is granted, so message-sending tools are never auto-approved this
+    way.
+  - A wait still partly blocked stays; `still_asks` names its tools.
+  - Only the automation's owner answers its waits this way; a revision by someone else (an admin acting in another
+    owner's plane) leaves them.
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
   usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
-
-### Added
-
-- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
-  server).
-  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
-    **Show more results** appends the next page.
-  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
-  - A catalog search of three characters or more also asks Hugging Face. Its results come under
-    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
-  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
-  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
-- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
-  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
-  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
-  bad before (OVH 2026-10-29).
-
-- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
-  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
-  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
-  (8090 + slot), its own app port block (derived from a slot registered once in
-  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
-  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
-  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
-  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
-
-### Fixed
-
 - **A voice can be the default only once its model is downloaded** (operator ruling 2026-10-29; backlog 0955
   closed as rejected and replaced by this rule).
   - Setting the default voice to a local model whose weights are not on disk is refused when it is chosen: 409
@@ -106,9 +111,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime client is labelled so ("kept in memory: ... still in use by runtime client
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
-
-### Fixed
-
 - **`abstractgateway service uninstall` waits for the whole gateway process tree** (backlog 0934). It captures the
   gateway's processes before launchd or systemd stops the serve process: the recorded serve and app pids, this
   data folder's app watcher, and every descendant, including the children started in their own session (entity
@@ -116,12 +118,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIGTERM, then SIGKILL, and says what it stopped. It fails, naming the process, when one survives. On Linux
   XDG autostart, where no service manager stops the gateway, it stops the gateway itself. `--dry-run` shows the
   step, and `service disable` still stops nothing.
+- **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
+  server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
+  · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
+  figure, as before.
+- **"Every quant" in the console's Models catalog** (batch item b). A switch beside **Fits this computer** asks for each
+  row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore 0865. The extra quants
+  (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and **Download**. The setting is
+  part of the link (`#catalog?every=1`). On an AbstractRuntime without the passthrough, the answer is a 501 that says
+  so.
+- **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
+  **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
+  generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.
 - **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
   editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
   server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac. On Linux the processes are read from procfs (whole command lines); elsewhere `ps -ww`, never cut to the terminal width.
+  may be a Mac.
+- **A route on an engine that is not installed says so** (0958, OVH 8443 2026-10-29). A Text route on an LM Studio or
+  Ollama that this computer has not installed showed a green "configured", and every chat failed ("Circuit breaker
+  open for LMStudioProvider"). `GET /config/capability-defaults` now stamps such a route with `engine_missing`
+  {engine, name, reason, engine_row}, the shape AbstractCore uses for in-process engines. The grid shows "engine
+  missing" with the Providers tab's Install.
+- **AbstractRuntime floor 0.15.3; 0.15.2 is excluded** (backlog 0965). `pyproject.toml` (base, `[apple]`, `[gpu]`) and
+  `live_deltas.ABSTRACTRUNTIME_FLOOR` move to 0.15.3. 0.15.2 has the same API but its index-build replay moved the run
+  store's change token on every boot, so the mail collector's change-driven pass reloaded every finished run (the
+  test `test_400_finished_runs_a_change_to_one_loads_exactly_one` was red on main). The API probes cannot tell the
+  two apart, so the floor check now also refuses by version, naming the installed and required versions; a source
+  checkout without metadata is not refused. Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released
+  2026-10-29).
+
+- **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
+  install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
+  `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
+  with no authorization decision. All 14 are now recorded user-level (every handler resolves the caller's principal
+  and plane and acts on that plane's own notebook); the two plane-wide routes (`PUT /settings`,
+  `POST /processor/ensure`) get their shared-plane gate in abstractnote's handler (AbstractNote backlog 0040), not
+  an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
+  green there and red on every real install; security incident note in docs/security.md; planned 0972.
+- **Two timing-dependent tests no longer flake** (tests only; gateway main's integration run on 5efc2bf6).
+  - `test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind` reads each answer's reset time from that
+    answer's own `limit.resets_at`. The second and third clicks can fall either side of a minute (07:24 vs 07:25).
+  - `test_idle_poll_is_stat_only` counts only opens of this store's own files (its tmp folder). `Path.open` is patched
+    for the whole process, and a runner left by an earlier test reads its `runner.takeover` on a timer. Neither that
+    file nor that read belongs to the tail.
+  - Both stay live: opening the ledger is counted (checked in the test), and a tail that opens the file on an idle
+    poll fails it (mutation-checked).
+
+### Added
+
+- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
+  server).
+  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
+    **Show more results** appends the next page.
+  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
+  - A catalog search of three characters or more also asks Hugging Face. Its results come under
+    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
+  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
+  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
+- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
+  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
+  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
+  bad before (OVH 2026-10-29).
+
+- **An installed browser app older than a release's pin is named**: the console's Apps card shows one readable
+  sentence ("Code 0.13.0 is older than the 0.13.2 that AbstractFramework 0.11.18 installs: update Code to get its
+  fixes.") and the gateway's boot log warns. Boot reads the last update check and never runs one. On the OVH test server an old Code showed a reopened conversation's
+  last turn only, with nothing saying the app was behind. The boot warning makes no network request: it reads this install's pins only from an answer an earlier request cached.
+
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+- **Allow engine installs: a switch on the console's Engines tab** (root backlog 0858). The tab says whether the
+  console may install engines on the gateway's computer and why ("On: your setting", "Off: the default for a
+  gateway other computers reach", "On: the default: you are on the gateway's own computer"), with the CLI twin
+  (`abstractgateway-config set allow_engine_install on|off`). An admin turns it on or off in place ("Saved" or
+  "Not saved: …") or returns to the default (`POST /api/gateway/admin/runtime-config
+  {"allow_engine_install": true|false|null}`, recorded in the audit log); other accounts see it read-only ("Only an
+  admin can change this"). The refused-install message and the network-exposure note now point at this switch.
+- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
+  server).
+  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
+    **Show more results** appends the next page.
+  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
+  - A catalog search of three characters or more also asks Hugging Face. Its results come under
+    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
+  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
+  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
+- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
+  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
+  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
+  bad before (OVH 2026-10-29).
+
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
 
 ## [0.18.0] - 2026-10-28
 
@@ -159,6 +262,15 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
 - Account rows (`GET /admin/accounts`, `/me/accounts`) carry `password_set`, `display_name` and
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".
+
+- **First-run guide: "Default models", Simple and Advanced** (root backlog 1069). Simple (the default): one
+  **Use recommended** (AbstractCore's picks where you have not chosen your own, the downloads with a progress row
+  each), then the capabilities as coloured badges grouped Input (Text, Image, Voice, Video, Files) and Output (Text,
+  Image, Video, Voice, Music, 3D, Embeddings, Rankers), each with its state in readable names; a badge opens a guided
+  choice (the recommendation first, other models that fit, all engines, and an API key for text). Advanced: one row
+  per capability with engine and model ids. A model set here clears the route's old server address and reasoning
+  effort; an API key is checked before it is stored and never replaces an existing connection. The picks stay
+  AbstractCore's; first-run.md has the rule per memory band, today's and the operator's target (root backlog 1072).
 
 ### Changed
 

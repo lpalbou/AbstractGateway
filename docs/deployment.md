@@ -218,6 +218,10 @@ restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
 
+**A stop is quick.** On SIGTERM (`systemctl stop`, `launchctl`, `docker stop`) the gateway ends its live
+streams at once (clients reconnect with their cursor), gives requests in flight 10 s
+(`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`), runs its shutdown steps and exits 0, typically in under a second.
+
 **Incident files.** Before it exits, the watchdog writes
 `<data dir>/incidents/watchdog-<UTC stamp>.json` and
 `watchdog-<stamp>.threads.txt` (every thread's stack). The JSON
