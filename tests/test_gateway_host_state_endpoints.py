@@ -505,6 +505,9 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         "held_by",
         "expires_at",
         "context_length",
+        # explicit context (AbstractCore ADR 0010 point 8)
+        "advertised_context_length",
+        "context_source",
         "loaded_at",
         "last_used_at",
         # additive-optional lock/modality/calibration wave fields

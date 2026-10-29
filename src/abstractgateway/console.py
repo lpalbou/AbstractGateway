@@ -11701,6 +11701,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        await loadHostState({ quiet: true });
 	      }
 	    }
+	    function openModelContextEditor(row, cell) {
+	      cell.textContent = "";
+	      const input = document.createElement("input");
+	      input.type = "number"; input.min = "512"; input.step = "1024";
+	      input.placeholder = "fit to memory";
+	      input.value = row.context_source === "configured" ? String(row.context_length) : "";
+	      input.setAttribute("aria-label", `Context for ${row.model}`);
+	      const save = document.createElement("button");
+	      save.type = "button"; save.className = "secondary"; save.textContent = "Save";
+	      save.onclick = async () => {
+	        const msg = $("models-loaded-message");
+	        const raw = String(input.value || "").trim();
+	        try {
+	          const out = await api("/api/gateway/models/context", { method: "PUT", body: JSON.stringify({ provider: row.provider, model: row.model, context_length: raw ? Number(raw) : null }) });
+	          msg.textContent = String(out.message || "Saved."); msg.className = "message ok";
+	        } catch (e) {
+	          msg.textContent = String(e.message || e); msg.className = "message error";
+	        }
+	        await loadHostState({ quiet: true });
+	      };
+	      cell.append(input, document.createTextNode(" "), save);
+	    }
 	    async function toggleModelLock(row, btn) {
 	      const name = `${row.provider || "?"}/${row.model || "?"}`;
 	      const locking = row.locked !== true;
@@ -11845,6 +11867,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");
 	        ctxTd.textContent = _fmtCtx(row.context_length);
+	        // EXPLICIT CONTEXT (AbstractCore ADR 0010 point 8): what the model advertises and why
+	        // the loaded context differs, in words, with a per-model setting a person controls.
+	        if (typeof row.context_length === "number" && typeof row.advertised_context_length === "number" && row.advertised_context_length > row.context_length) {
+	          ctxTd.textContent = `${row.context_length.toLocaleString()} (model advertises ${row.advertised_context_length.toLocaleString()}; limited by memory)`;
+	        } else if (row.context_source === "configured" && typeof row.context_length === "number") {
+	          ctxTd.textContent = `${row.context_length.toLocaleString()} (set for this model)`;
+	        }
+	        if (row.resident === true && row.provider === "huggingface" && typeof row.context_length === "number" && state.principal && state.principal.admin) {
+	          const setBtn = document.createElement("button");
+	          setBtn.type = "button";
+	          setBtn.className = "secondary";
+	          setBtn.textContent = "Set context";
+	          setBtn.title = "Set how many tokens this model reserves when it loads. A larger one that does not fit is refused with the reason; it is never shrunk. Empty: fit to memory.";
+	          setBtn.onclick = () => openModelContextEditor(row, ctxTd);
+	          ctxTd.append(document.createTextNode(" "), setBtn);
+	        }
 	        if (row.context_calibrated === true) {
 	          const mark = document.createElement("span");
 	          mark.className = "state-pill ok";

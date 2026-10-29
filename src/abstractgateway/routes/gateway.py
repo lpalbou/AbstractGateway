@@ -27062,6 +27062,10 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
+        # The context is explicit (AbstractCore ADR 0010 point 8): what the model advertises and
+        # why the loaded one differs ("memory", "configured", "explicit", "advertised").
+        "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
+        "context_source": _row_v1_str(record, "context_source"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =
@@ -28655,6 +28659,33 @@ async def model_residency_unlock(request: Request, req: _GatewayModelResidencyLo
         unavailable_code="model_residency_unavailable",
         error_code="model_residency_error",
     )
+
+
+class _GatewayModelContextRequest(BaseModel):
+    provider: str = Field(description="Provider of the local model.")
+    model: str = Field(description="Model id.")
+    context_length: Optional[int] = Field(default=None, ge=512, description="Tokens to reserve at load; null clears the setting (the fit rule chooses again).")
+
+
+@router.put("/models/context")
+async def model_context_set(request: Request, req: _GatewayModelContextRequest) -> Dict[str, Any]:
+    """Set (or clear) the context a local model is LOADED with (admin; AbstractCore ADR 0010
+    point 8). A set context is a pin: loaded as is, refused with the readable sentence when it
+    does not fit, never shrunk. It applies at the model's next load."""
+    _require_admin_principal(request)
+    from abstractcore.config.model_contexts import set_model_context
+
+    from ..core_config import runtime_core_config_file
+
+    svc = get_gateway_service()
+    cfg = runtime_core_config_file(Path(svc.config.data_dir))
+    try:
+        await off_loop("watchers", set_model_context, req.provider, req.model, req.context_length, config_file=cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    what = f"{req.context_length:,} tokens" if req.context_length else "the fit to this computer's memory"
+    return {"ok": True, "provider": req.provider, "model": req.model, "context_length": req.context_length,
+            "message": f"{req.model} will load with {what} at its next load; unload it to reload it now."}
 
 
 @router.get("/models/context_estimate")
