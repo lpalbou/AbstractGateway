@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The runtime's own grant functions decide what is granted, so message-sending tools are never auto-approved this
     way.
   - A wait still partly blocked stays; `still_asks` names its tools.
+  - Only the automation's owner answers its waits this way; a revision by someone else (an admin acting in another
+    owner's plane) leaves them.
 
 ### Fixed
 

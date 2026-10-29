@@ -138,3 +138,20 @@ def test_a_revision_that_still_asks_for_a_tool_leaves_the_wait(client: TestClien
     assert again["status"] == "waiting" and again["waits"], again
     definition = client.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]
     assert still_asks(definition, again["waits"][0]) == ["execute_command"]
+
+
+def test_a_revision_by_someone_else_than_the_owner_leaves_the_waits(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Merge desk review: an admin revising another owner's automation (acting in that plane)
+    never answers the owner's tool approvals, even when the revision grants them."""
+    import time
+
+    from abstractgateway import runner as runner_module
+
+    aid = _create(client, "ask-other-owner", policy={"tool_approval": "ask"})
+    _run_now(client, aid)
+    wait_until(lambda: (lambda o: o if o and o["waits"] else None)(_occurrence(client, aid)), timeout_s=30)
+    monkeypatch.setattr(runner_module.GatewayRunner, "_automation_owner", lambda self, a: "default:someone-else")
+    _revise(client, aid, {"policy": {"tool_approval": "auto"}}, "other-to-auto")
+    time.sleep(1.5)
+    still = _occurrence(client, aid)
+    assert still["status"] == "waiting" and still["waits"], still

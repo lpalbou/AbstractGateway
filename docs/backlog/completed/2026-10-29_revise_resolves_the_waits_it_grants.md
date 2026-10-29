@@ -19,8 +19,11 @@ desktop app answered the wait, and only at its own save. One rule, in one place:
     automation's runs (`pending_waits`) whose every tool is granted. It appends a durable `resume` command
     `{wait_key, payload: {approved: true}}` with `client_id` set to the person who saved the revision. The command
     id is derived from the automation, the revision and the wait key, so a replayed revise answers nothing twice.
-- `runner.py`: after an `automation.revise` is applied (not a duplicate), the runner calls the resolver. A failure is
-  logged and never fails the revise; the wait stays answerable by hand.
+- `runner.py`: after an `automation.revise` is applied (not a duplicate), the runner calls the resolver, but only
+  when the saver is the automation's owner. The owner is `_meta.automation_owner`, else the plane's owner, which the
+  service sets with `set_plane_owner`. A revision by someone else, such as an admin acting in another owner's
+  plane, leaves the waits and logs one line (merge desk review). A failure is logged and never fails the revise; the
+  wait stays answerable by hand.
 
 ## Evidence
 - `tests/test_automations_tool_approval.py` (real gateway, runner on):
@@ -29,6 +32,8 @@ desktop app answered the wait, and only at its own save. One rule, in one place:
     "auto", the occurrence completes and the tool ran. It is red without the runner hook (mutation-checked).
   - `test_a_revision_that_still_asks_for_a_tool_leaves_the_wait`: per-tool approvals keep execute_command on Ask, so
     the run keeps waiting and `still_asks` names execute_command.
+- `test_a_revision_by_someone_else_than_the_owner_leaves_the_waits`: a revision granting the tools, saved by a
+  non-owner, leaves the run waiting. It is red without the guard (mutation-checked).
 - The neighbouring suites (named tool policy, revise onto a connection, command types) pass.
 
 ## Follow-ups
