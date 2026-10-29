@@ -330,6 +330,9 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
         from .embeddings_config import build_embedding_client, resolve_embedding_config
 
         embedding_route = resolve_embedding_config(base_dir=Path(base_dir))
+    except Exception:
+        return None  # no route configured: nothing to say
+    try:
         emb_client = build_embedding_client(
             embedding_route,
             cache_dir=Path(base_dir) / "abstractcore" / "embeddings",

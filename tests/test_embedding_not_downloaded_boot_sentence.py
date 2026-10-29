@@ -53,3 +53,16 @@ def test_the_service_boot_path_says_it_too():
     src = inspect.getsource(service)
     i = src.index("embeddings_client = build_embedding_client(")
     assert "say_embedder_unavailable_once(e)" in src[i:i + 1200], "MUTANT: the service path stays silent -> RED"
+
+
+def test_no_route_configured_says_nothing(monkeypatch, tmp_path, capsys):
+    import abstractgateway.embeddings_config as ec
+
+    monkeypatch.setattr(ms, "_EMBEDDER_NOTICES", set())
+
+    def unconfigured(base_dir):
+        raise ValueError("no embedding route configured")
+
+    monkeypatch.setattr(ec, "resolve_embedding_config", unconfigured)
+    assert ms.build_gateway_memory_embedder(base_dir=tmp_path) is None
+    assert "[WARN] memory" not in capsys.readouterr().err
