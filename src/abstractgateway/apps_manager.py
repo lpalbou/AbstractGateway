@@ -1377,10 +1377,20 @@ class ExternalApp:
     argv: Tuple[str, ...] = ()
 
 
+def instance_app_offset() -> int:
+    """How far this gateway instance's app ports sit from the stack map (instances.py): 0 for the
+    default instance, 200 x slot for a named one, so two instances never take each other's ports."""
+    from .instances import app_port_offset, is_default
+
+    return 0 if is_default() else app_port_offset()
+
+
 def external_probe_ports() -> List[int]:
-    """Every port the probe asks, in priority order (stack map first)."""
+    """Every port the probe asks, in priority order (stack map first). A named instance asks its own
+    block only (the older launchers' ports belong to the default instance)."""
+    off = instance_app_offset()
     out: List[int] = []
-    for port in [p for _, p in STACK_PORTS] + list(LEGACY_PROBE_PORTS):
+    for port in [p + off for _, p in STACK_PORTS] + (list(LEGACY_PROBE_PORTS) if off == 0 else []):
         if port not in out:
             out.append(port)
     return out
@@ -2083,7 +2093,10 @@ class AppsManager:
 
     def port_range(self) -> Tuple[Tuple[int, int], bool]:
         explicit = parse_port_range(self._setting("ports"))
-        return (explicit or DEFAULT_PORT_RANGE), explicit is not None
+        if explicit:
+            return explicit, True
+        off = instance_app_offset()
+        return (DEFAULT_PORT_RANGE[0] + off, DEFAULT_PORT_RANGE[1] + off), False
 
     def install_allowed(self, *, same_machine: bool = False) -> bool:
         """The `allow_engine_install` rule for one caller: `same_machine` is
@@ -2907,7 +2920,9 @@ class AppsManager:
                 return str(rec["url"]).rstrip("/")
         except Exception:
             pass
-        return (os.environ.get("ABSTRACTGATEWAY_URL") or "http://127.0.0.1:8080").rstrip("/")
+        from .instances import gateway_port
+
+        return (os.environ.get("ABSTRACTGATEWAY_URL") or f"http://127.0.0.1:{gateway_port()}").rstrip("/")
 
     def external_apps(self, *, refresh: bool = False) -> Dict[str, ExternalApp]:
         """Apps running without the gateway having started them (probed on
@@ -2969,7 +2984,7 @@ class AppsManager:
         state = self.app_state(spec.id)
         taken = [p.port for s, p in self._procs.items() if s != spec.id and p.alive() and p.port]
         port = allocate_port(
-            preferred=[state.get("port"), None if explicit else spec.default_port],
+            preferred=[state.get("port"), None if explicit else spec.default_port + instance_app_offset()],
             port_range=(lo, hi),
             taken=taken,
             host=self.bind_host,
