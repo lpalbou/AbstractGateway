@@ -15130,7 +15130,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
-      model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, pick your own, or use a subscription for text." },
+      model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };

@@ -485,18 +485,19 @@ CONSOLE_UI_CSS = r"""
     .dm-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; }
     .dm-group h4 { margin: 0 0 10px; font-size: var(--font-size-md); text-transform: uppercase; letter-spacing: .06em; }
     .dm-group h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-secondary); margin-left: 6px; }
-    .dm-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; }
-    .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; gap: 10px; text-align: left; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
+    .dm-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; min-width: 0; }
+    .dm-group { min-width: 0; }
+    .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-width: 0; width: 100%; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
       background: color-mix(in srgb, var(--dm-hue) 13%, var(--bg-card, transparent)); border: 1px solid color-mix(in srgb, var(--dm-hue) 38%, transparent); color: var(--text-primary); }
     .dm-badge:hover, .dm-badge:focus-visible { border-color: var(--dm-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-hue) 35%, transparent); outline: none; }
     .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--dm-hue); color: #fff; }
     .dm-badge__icon { width: 20px; height: 20px; }
-    .dm-badge__text { display: grid; gap: 2px; min-width: 0; }
+    .dm-badge__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
     .dm-badge__label { font-weight: 650; }
     .dm-badge__state { font-size: var(--font-size-sm); font-weight: 600; color: color-mix(in srgb, var(--dm-hue) 75%, var(--text-primary)); }
     .dm-badge--none .dm-badge__state { color: var(--text-secondary); }
     .dm-badge--none .dm-badge__mark { background: color-mix(in srgb, var(--dm-hue) 45%, var(--text-secondary)); }
-    .dm-badge__model { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; }
+    .dm-badge__model { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; white-space: normal; }
     .dm-progress { min-width: 0; }
     .dm-choice { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
     .dm-choice__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
