@@ -5,6 +5,7 @@
 > Status: proposed
 > Created: 2026-10-27
 > Priority: P1
+> 2026-10-29: first writer beyond the watchdog: the model host supervisor (ADR 0002, 0967) writes `incidents/model-host-*.json`, schema `abstractgateway.incident.v1` (kinds `exit`, `memory_ceiling`, `unresponsive`, `gave_up`).
 > Labels: resilience, incidents, watchdog, observability, performance
 
 ## Summary

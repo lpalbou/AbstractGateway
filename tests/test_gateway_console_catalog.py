@@ -228,6 +228,18 @@ if (__SCRIPT__ === "every") {
   snap("plain");
   out.calls3 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog")).map((c) => c.path);
 }
+if (__SCRIPT__ === "hfevery") {
+  const hubCalls = () => calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?q=")).map((c) => c.path);
+  out.hubCalls1 = hubCalls();
+  // "Every quant" on: the Hugging Face results shown are asked again with every quant.
+  root.onchange({ target: { dataset: { mcEvery: "1" }, checked: true } });
+  await settle();
+  out.hubCalls2 = hubCalls();
+  // A new Hugging Face search (Enter) with the switch on asks for every quant too.
+  root.onkeydown({ key: "Enter", preventDefault() {}, target: { value: "qwen3.8", dataset: { mcSearch: "1" } } });
+  await settle();
+  out.hubCalls3 = hubCalls();
+}
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
   root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
@@ -526,6 +538,17 @@ def test_every_quant_asks_for_the_whole_quant_set_and_shows_it() -> None:
     assert out["every"]["arts"] == out["initial"]["arts"] + 10 and out["every"]["hash"] == "#catalog?every=1"
     assert 'data-mc-every="1" checked' in out["html"]
     assert out["calls3"][-1] == "/api/gateway/models/catalog" and out["plain"]["arts"] == out["initial"]["arts"]
+
+
+def test_every_quant_applies_to_hugging_face_results() -> None:
+    """OVH 8443 (2026-10-29): with "Every quant" on, the Hugging Face search for the exact repo
+    unsloth/Qwen3.8-27B-GGUF showed 2 of its 24 quants: the hub request never asked `extended=true`."""
+    cat = _catalog(10)
+    hub = _hub_page(0, 3, page=1, more=False)
+    out = _run(cat, "hfevery", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
+    assert out["hubCalls1"] == ["/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true"]
+    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"
+    assert out["hubCalls3"][-1] == "/api/gateway/models/catalog?q=qwen3.8&hub=true&extended=true"
 
 
 def _gpu_limit_catalog() -> dict:

@@ -10,7 +10,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
-
 ### Changed
 
 - **Only the machine's gateway service shows the tray icon** (operator ruling 2026-10-29: two icons on one Mac, a
@@ -111,13 +110,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   runtime client is labelled so ("kept in memory: ... still in use by runtime client
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
-- **`abstractgateway service uninstall` waits for the whole gateway process tree** (backlog 0934). It captures the
-  gateway's processes before launchd or systemd stops the serve process: the recorded serve and app pids, this
-  data folder's app watcher, and every descendant, including the children started in their own session (entity
-  loops, model downloads, managed processes, apps, the tray). It waits up to 20 s for them to exit, then sends
-  SIGTERM, then SIGKILL, and says what it stopped. It fails, naming the process, when one survives. On Linux
-  XDG autostart, where no service manager stops the gateway, it stops the gateway itself. `--dry-run` shows the
-  step, and `service disable` still stops nothing.
+
 - **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
   server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
   · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
@@ -135,7 +128,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
-  may be a Mac. On Linux the processes are read from procfs (whole command lines); elsewhere `ps -ww`, never cut to the terminal width.
   may be a Mac.
 - **A route on an engine that is not installed says so** (0958, OVH 8443 2026-10-29). A Text route on an LM Studio or
   Ollama that this computer has not installed showed a green "configured", and every chat failed ("Circuit breaker

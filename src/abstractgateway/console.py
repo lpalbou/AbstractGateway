@@ -11325,6 +11325,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       const label = (e) => [e && e.provider, e && e.model].filter((v) => v !== undefined && v !== null && String(v) !== "").join("/") || "a model";
       const out = [];
+      // LOADS THE FIT CHECK REFUSED (AbstractCore ADR 0010): the sentence says
+      // what the model needs, what is free, what was kept and smaller choices.
+      const refusals = Array.isArray(diag.refusals) ? diag.refusals.filter((e) => e && typeof e === "object") : [];
+      for (const r of refusals.slice(-1)) {
+        if (r.message) out.push({ tone: "err", text: `Not loaded: ${String(r.message)}` });
+      }
       const pending = Array.isArray(diag.pending_ejects) ? diag.pending_ejects.filter((e) => e && typeof e === "object") : [];
       const pendingKeys = new Set(pending.map(label));
       for (const e of pending) out.push({ tone: "warn", text: `Will eject ${label(e)} when the in-flight call ends.` });
@@ -11703,7 +11709,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const path = locking ? "/api/gateway/models/lock" : "/api/gateway/models/unlock";
 	        _modelsMutationResult(await api(path, { method: "POST", body: JSON.stringify(modelUnloadTarget(row)) }));
-	        msg.textContent = `${locking ? "Locked" : "Unlocked"} ${name}.`;
+	        msg.textContent = locking ? `${name} is kept loaded: it will not be evicted for another model.` : `${name} is no longer kept loaded.`;
 	        msg.className = "message ok";
 	      } catch (e) {
 	        msg.textContent = String(e.message || e);
@@ -11911,14 +11917,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            const lockBtn = document.createElement("button");
 	            lockBtn.className = "secondary";
 	            lockBtn.type = "button";
-	            lockBtn.textContent = row.locked === true ? "Unlock" : "Lock";
+	            // "Keep loaded" (AbstractCore ADR 0010): a kept model is never evicted
+	            // to make room for another load. Icon + words; the tooltip says why.
+	            lockBtn.textContent = row.locked === true ? "Kept loaded" : "Keep loaded";
+	            const lockIcon = document.createElement("span");
+	            lockIcon.className = "button-icon";
+	            lockIcon.innerHTML = ICONS.lock;  // the registry SVG, never an emoji
+	            lockBtn.prepend(lockIcon);
 	            lockBtn.title = row.locked === true
 	              ? (row.resident === true
-	                ? "Release the memory lock so this model can be unloaded or evicted"
+	                ? "Kept loaded: never evicted to make room for another model. Click to release it (it can then be unloaded or evicted when memory is needed)"
 	                : "Release a lock whose model is no longer in memory (the lock still blocks unloads)")
 	              : (row.source === "provider_server"
 	                ? "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
-	                : "Lock this model in memory so nothing can evict it");
+	                : "Keep this model loaded: it is never evicted to make room for another model");
 	            lockBtn.onclick = () => toggleModelLock(row, lockBtn);
 	            act.append(lockBtn);
 	          }
