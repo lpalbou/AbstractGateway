@@ -237,6 +237,9 @@ if (__SCRIPT__ === "merged") {
   out.deletes = calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => JSON.parse(c.body));
   }
 }
+if (__SCRIPT__ === "unloadable") {
+  out.html = root.innerHTML;
+}
 if (__SCRIPT__ === "unreported") {
   chip("quant", "8bit", true); snap("clicked");
 }
@@ -521,3 +524,32 @@ def test_fits_filter_matches_abstractcore_fits_filter_verdicts() -> None:
     m = re.search(r"const MC_FITS_FILTER_VERDICTS = (\[[^\]]*\]);", CATALOG_JS)
     assert m, "the console names its fits-filter verdicts"
     assert tuple(json.loads(m.group(1))) == tuple(FITS_FILTER_VERDICTS)
+
+
+def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() -> None:
+    """AbstractCore 0867/0868 (OVH: XHToken/Spark-X2.6-4B-GGUF, architecture spark2_5): a build the gateway's
+    llama.cpp cannot load is never offered for download or as the default; the button is greyed with the
+    sentence as its tooltip. Downloaded: the installed row's `loadable: false` (0867); not yet: the catalog
+    artifact's, from the Hub's architecture (0868)."""
+    reason = "This computer's llama.cpp (llama-cpp-python 0.3.16) cannot load the spark2_5 architecture. Update llama-cpp-python, or choose another model."
+    cat = _catalog(2)
+    row = cat["rows"][1]
+    assert row["capabilities"]["text"] is True and not row["capabilities"]["embedding"]
+    a0, a1, a2 = row["artifacts"]
+    # Not downloaded, the Hub says spark2_5: core marks it not downloadable with the reason.
+    a1.update(loadable=False, unloadable_reason=reason, downloadable=False, gguf_architecture="spark2_5")
+    # Downloaded: the installed row (GET /models/installed) carries the reason.
+    a0["presence"] = {"status": "installed", "location": None, "evidence": None}
+    installed = {"schema": "models_installed_v1", "errors": {}, "rows": [
+        {"provider": a0["provider"], "artifact": a0["artifact"], "loadable": False, "unloadable_reason": reason},
+    ]}
+    html = _run(cat, "unloadable", installed=installed)["html"]
+    card = html[html.index('data-mc-model="model-1"'):]
+    greyed = f'<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="{reason.replace(chr(39), "&#39;")}">'
+    assert greyed + "Download</button>" in card
+    assert greyed + "Use as default</button>" in card
+    # The other build of the same model is offered as usual.
+    assert f'data-mc-action="download" data-provider="{a2["provider"]}" data-artifact="{a2["artifact"]}"' in card
+    # Model 0's downloaded build (no flag) keeps its working buttons.
+    assert 'data-mc-unloadable' not in html[:html.index('data-mc-model="model-1"')]
+

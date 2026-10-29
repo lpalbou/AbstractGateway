@@ -114,6 +114,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac.
 
+### Fixed
+
+- **A GGUF this computer's llama.cpp cannot load is never offered for download or as the default** (backlog 0973,
+  AbstractCore 0867/0868). The catalog card shows a greyed **Download** or **Use as default**, with the reason as
+  its tooltip ("This computer's llama.cpp (llama-cpp-python 0.3.16) cannot load the spark2_5 architecture. Update
+  llama-cpp-python, or choose another model."). The flag comes from the catalog artifact (the Hub's architecture)
+  or from the downloaded row.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin

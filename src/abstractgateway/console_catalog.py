@@ -503,6 +503,16 @@ CATALOG_JS = r"""
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
     function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    // A GGUF this computer's llama.cpp cannot load (AbstractCore 0867/0868): the catalog
+    // artifact says so from the Hub's architecture (`loadable: false`), a downloaded one from its
+    // file (the installed row of GET /models/installed). The sentence, or "".
+    function mcUnloadable(a) {
+      if (a && a.loadable === false) return String(a.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      for (const r of mcInstalledRows()) {
+        if (r.loadable === false && mcSameFiles(a, r)) return String(r.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      }
+      return "";
+    }
     function mcActionMarkup(row, a, job) {
       const key = mcKey(a);
       const admin = !!(state.principal && state.principal.admin);
@@ -513,13 +523,17 @@ CATALOG_JS = r"""
         return dlCancelMarkup(jid, "Cancel", { attrs: ` data-mc-action="cancel" data-job="${esc(jid)}"` });
       }
       if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
+      const unloadable = mcUnloadable(a);
       if (mcInstalled(a)) {
         const del = mcDeleteButton(a, attrs, admin);
         if (!mcCanBeDefault(row)) return del;
+        // Greyed with the reason: a default it cannot load would fail at the first call.
+        if (unloadable) return `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Use as default</button>` + del;
         const cur = mcCurrentDefault();
         if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
         return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
       }
+      if (unloadable) return `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Download</button>`;
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
         return `<span class="mc-muted" title="${esc(why)}">Not available here</span>`;
