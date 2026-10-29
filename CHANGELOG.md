@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
 ### Fixed
 
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
