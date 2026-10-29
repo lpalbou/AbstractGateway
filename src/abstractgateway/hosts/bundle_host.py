@@ -2074,9 +2074,12 @@ class WorkflowBundleGatewayHost:
                 # 70a5b844f350"). Every account's service has its own runtime.
                 _llm_client = getattr(runtime, "_abstractcore_llm_client", None)
                 if _llm_client is not None:
-                    _llm_client.residency_owner_label = (
-                        f"the runtime of account {catalog_tenant or 'default'}/{catalog_user or 'admin'}"
-                    )
+                    try:
+                        _llm_client.residency_owner_label = (
+                            f"the runtime of account {catalog_tenant or 'default'}/{catalog_user or 'admin'}"
+                        )
+                    except AttributeError:  # a client without instance attributes (a remote stub)
+                        pass
                 if provider_override:
                     try:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)
