@@ -78,7 +78,8 @@ def test_systemd_user_unit(tmp_path: Path) -> None:
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", "abstractgateway.service"],
     ]
-    assert any("loginctl enable-linger" in n for n in plan.notes)
+    # 0957: the lingering sentence is printed only when lingering is OFF (autostart.linger_note).
+    assert not any("loginctl enable-linger" in n for n in plan.notes)
 
 
 def test_systemd_quotes_paths_with_spaces(tmp_path: Path) -> None:

@@ -316,7 +316,8 @@ def test_linux_ollama_installs_for_the_user_without_an_administrator(tmp_path) -
         assert sysd.elevated() == [] and not any(c[:1] == ["pkexec"] for c in sysd.calls)
         assert ["DOWNLOAD", "https://github.com/ollama/ollama/releases/download/v0.34.3/ollama-linux-amd64.tar.zst"] in sysd.calls
         unit = home / ".config" / "systemd" / "user" / "ollama.service"
-        assert f'ExecStart="{home / '.local' / 'bin' / 'ollama'}" serve' in unit.read_text()
+        ollama = home / ".local" / "bin" / "ollama"  # nested quotes in an f-string need Python 3.12 (PEP 701)
+        assert f'ExecStart="{ollama}" serve' in unit.read_text()
         assert ["systemctl", "--user", "enable", "--now", "ollama.service"] in sysd.calls
         assert job["result"]["service"] == "systemd-user"
         # The row sees it although ~/.local/bin is not on the gateway's PATH.
