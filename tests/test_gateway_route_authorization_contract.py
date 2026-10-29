@@ -94,6 +94,35 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PATCH", "/api/gateway/voice/clones/{voice_id}"),
     ("DELETE", "/api/gateway/voice/clones/{voice_id}"),
     ("POST", "/api/gateway/voice/design"),
+    # AbstractNote's writes (abstractnote_seam.py mounts `abstractnote.gateway.router` under
+    # /api/gateway/note when the package is installed: the 14 write routes of abstractnote 0.2.0 as
+    # mounted, read from the live route table). In-handler gate: every handler runs through the
+    # router's `_run`, which resolves the caller's principal (`_principal_from_request`: 401 without a
+    # credential) and `get_gateway_service()`: in multi-user mode the CALLER's plane (an admin acting
+    # for an entity owner gets the owner's), and the notebook is that plane's own
+    # (`<plane data dir>/abstractnote/`). Twelve routes are account-stamped, reversible knowledge
+    # edits that a shared notebook exists for. Two act on the whole plane: `PUT /settings` (filing and
+    # answering models, schedules) and `POST /processor/ensure` (archives automations another account
+    # may have created, recreates them under the caller) — in a plane an admin bound several accounts
+    # to, or an entity's plane, those should ask for admin or the plane owner; that gate belongs in
+    # abstractnote's handler (abstractnote backlog, 2026-10-29), not in an admin row here, which would
+    # break the Note app for every member. Gateway CI does not install abstractnote, so these rows are
+    # exercised only where it is (every install profile; the operator's instances); verified with 0.2.0
+    # mounted. Incident note: docs/security.md, 2026-10-29.
+    ("POST", "/api/gateway/note/claims/{claim_id}/retract"),
+    ("POST", "/api/gateway/note/communities/recompute"),
+    ("POST", "/api/gateway/note/entities/normalize"),
+    ("POST", "/api/gateway/note/entities/{entity_id}/unmerge"),
+    ("POST", "/api/gateway/note/insights/{note_id}/ack"),
+    ("POST", "/api/gateway/note/notes/{note_id}/archive"),
+    ("POST", "/api/gateway/note/notes/{note_id}/redate"),
+    ("POST", "/api/gateway/note/processor/ensure"),
+    ("POST", "/api/gateway/note/queue/{note_id}/priority"),
+    ("POST", "/api/gateway/note/queue/{note_id}/retry"),
+    ("POST", "/api/gateway/note/refile"),
+    ("POST", "/api/gateway/note/review/{review_id}/confirm"),
+    ("POST", "/api/gateway/note/tasks/{task_id}/close"),
+    ("PUT", "/api/gateway/note/settings"),
     # --- session lifecycle -------------------------------------------------
     # login is the ONE public write (`_public_auth_path`); logout needs the
     # session it destroys.

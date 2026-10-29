@@ -209,6 +209,12 @@ from .loop_watchdog import InflightRequests  # noqa: E402
 
 app.add_middleware(InflightRequests)
 
+# Outermost of all (2026-10-29, shutdown_drain.py): when a stop signal arrives, every GET request
+# sees its client leave, so live streams end at once instead of holding the shutdown.
+from .shutdown_drain import EndStreamsOnShutdown  # noqa: E402
+
+app.add_middleware(EndStreamsOnShutdown)
+
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
 from .routes.session_tools import router as session_tools_router  # noqa: E402

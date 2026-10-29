@@ -3219,6 +3219,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
 	              <div id="first-run-model-body" class="first-run-panel">
+	                <!-- 1069: one row per capability (the framework's modality vocabulary), AbstractCore's
+	                     pick for this computer, Use recommended / Choose per row, and a subscription
+	                     path for text. The download cards below stay the place downloads run. -->
+	                <div id="first-run-default-models" class="first-run-panel"></div>
 	                <div id="first-run-model-recommended" class="first-run-panel"></div>
 	                <div class="ui-section-title"><h3>Or choose any model that fits this computer</h3><span class="ui-sub">The same catalog as the Models tab, filtered to what fits. Download a model, then use it as your default text model.</span></div>
 	                <div id="first-run-model-catalog"></div>
@@ -3469,6 +3473,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         <button id="account-openai-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
       </div>
       <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
+  <!-- Guided choice for one capability (first-run guide, Simple mode; backlog 1069): the
+       recommendation for this computer, other models that fit, an API key (text). Above the
+       full-page guide (.modal-backdrop z-index 1000 > the guide's 800). -->
+  <div id="dm-choice-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal dm-choice" role="dialog" aria-modal="true" aria-labelledby="dm-choice-title">
+      <div class="dm-choice__head"><h2 id="dm-choice-title">Choose a model</h2>
+        <button id="dm-choice-close" type="button" class="secondary" aria-label="Close">Close</button></div>
+      <div id="dm-choice-body" class="dm-choice__body"></div>
     </div>
   </div>
   <!-- Password (0.18.0): set or change an account's password. Your own row: PUT /me/password
@@ -15158,14 +15172,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
       engines: "Local engines",
-      model: "Default model",
+      model: "Default models",
       apps: "Apps",
       done: "Done",
     };
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
-      model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
+      model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
@@ -15460,9 +15474,507 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const pair = [row.route_unavailable.provider, row.route_unavailable.model].filter(Boolean).join(" / ");
       return `<div class="ui-alert tone-warn capability-route-unavailable" role="note"><span>Configured now${pair ? ` (${esc(pair)})` : ""} but cannot run on this computer: ${esc(reason)}</span></div>`;
     }
+    // ---- Default models (backlog 1069). Two modes in the guide's model step:
+    //   SIMPLE (default; operator: "think Apple's setup experience: one simple path to the first
+    //     good experience"): ONE "Use recommended" (keeps your own choices, downloads AbstractCore's
+    //     recommended set for this computer, progress per download), then the capabilities as
+    //     badges grouped Input / Output, each with its state in readable names (ADR 0043: never a
+    //     model id); a badge opens a guided choice: the recommendation first, other models that fit,
+    //     then an API key (text).
+    //   ADVANCED: one table row per capability (engine, model, Use recommended / Download / Choose…).
+    // AbstractCore owns the picks (GET /models/availability `recommended`); the gateway holds no list.
+    const DM_ICONS = {
+      text: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>',
+      image: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path>',
+      video: '<rect x="2" y="6" width="14" height="12" rx="2"></rect><path d="M16 10.5l5.2-3.1a.5.5 0 0 1 .8.4v8.4a.5.5 0 0 1-.8.4L16 13.5"></path>',
+      mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v4"></path><path d="M8 22h8"></path>',
+      speaker: '<path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18 6a9 9 0 0 1 0 12"></path>',
+      music: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+      file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
+      database: '<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path>',
+      // Not in the kit's icon set (root backlog 1073: one icon set across apps): drawn on the kit's
+      // 24-grid with its stroke 2, so they read as the same family.
+      cube: '<path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9z"></path><path d="M3 7.5 12 12.5l9-5"></path><path d="M12 12.5v9"></path>',
+      rank: '<path d="M4 6h16"></path><path d="M4 12h11"></path><path d="M4 18h6"></path><path d="M19 15v6"></path><path d="m16.5 18.5 2.5 2.5 2.5-2.5"></path>',
+    };
+    function dmIcon(name) {
+      return `<svg class="dm-badge__icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${DM_ICONS[name] || ""}</svg>`;
+    }
+    // The capabilities, in the framework's vocabulary. `route`: the capability default the badge
+    // shows; `catalog`: the catalog capability flag whose models "Other models" can set (engines
+    // whose route model is the artifact id, or LM Studio's served id); `key`: an API key can serve it.
+    const DM_INPUTS = [
+      { id: "in-text", label: "Text", icon: "text", hue: "#6366f1", route: "input.text", catalog: "text", key: true, what: "Questions, instructions, documents" },
+      { id: "in-image", label: "Image", icon: "image", hue: "#ec4899", route: "input.image", what: "Understands pictures" },
+      { id: "in-voice", label: "Voice", icon: "mic", hue: "#f59e0b", route: "input.voice", what: "Turns speech into text" },
+      { id: "in-video", label: "Video", icon: "video", hue: "#ef4444", route: "input.video", what: "Understands videos" },
+      { id: "in-files", label: "Files", icon: "file", hue: "#64748b", route: null, what: "PDFs, documents and data, read by the text model" },
+    ];
+    const DM_OUTPUTS = [
+      { id: "out-text", label: "Text", icon: "text", hue: "#6366f1", route: "input.text", catalog: "text", key: true, what: "Answers, agents and workflows" },
+      { id: "out-image", label: "Image", icon: "image", hue: "#ec4899", route: "output.image", catalog: "image_generation", what: "Pictures from a description" },
+      { id: "out-video", label: "Video", icon: "video", hue: "#ef4444", route: "output.video", catalog: "video_generation", what: "Clips from a description or a picture" },
+      { id: "out-voice", label: "Voice", icon: "speaker", hue: "#f59e0b", route: "output.voice", what: "Reads answers aloud" },
+      { id: "out-music", label: "Music", icon: "music", hue: "#8b5cf6", route: "output.music", what: "Songs and soundtracks" },
+      { id: "out-3d", label: "3D", icon: "cube", hue: "#14b8a6", route: "output.scene3d", what: "3D scenes" },
+      { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
+      { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
+    ];
+    const dmUi = { mode: "simple", busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
+    function dmCatalogRows() { return (dmUi.catalog && Array.isArray(dmUi.catalog.rows)) ? dmUi.catalog.rows : []; }
+    async function dmLoadCatalog() {
+      if (dmUi.catalog || dmUi.catalogLoading) return;
+      dmUi.catalogLoading = true;
+      try { dmUi.catalog = await api("/api/gateway/models/catalog"); } catch (err) { dmUi.catalogError = String(err.message || err); }
+      dmUi.catalogLoading = false;
+      if (firstRun.open && firstRun.step === "model") renderFirstRunDefaultModels();
+      // Only a dialog that lists catalog models needs the re-render (review 1069: it wiped a
+      // half-typed API key and re-enabled a Use button mid-write).
+      if (dmUi.choice && dmUi.choice.cap.catalog) renderDmChoice();
+    }
+    function dmSameModel(provider, a, b) {
+      if (!a || !b) return false;
+      return a === b || servedModelId(provider, a) === servedModelId(provider, b);
+    }
+    // A readable name for (provider, model): the catalog's display name when an artifact matches,
+    // else the model id made readable (last path segment, quantization and packaging suffixes off).
+    function dmReadableName(provider, model) {
+      const m = String(model || "");
+      if (!m) return "";
+      for (const row of dmCatalogRows()) {
+        for (const a of (row.artifacts || [])) {
+          if (a && (dmSameModel(provider, a.artifact, m) || dmSameModel(a.provider, a.artifact, m))) return row.display_name || row.id;
+        }
+      }
+      // An Ollama tag IS the model (qwen3:8b vs qwen3:14b): it stays in the name.
+      let t = (String(provider || "") === "ollama" ? m.replace(/:/g, " ") : m.split(/[@:]/)[0]).split("/").pop();
+      for (let i = 0; i < 3; i++) t = t.replace(/[-_.](gguf|mlx|diffusers|\\d+bit|q\\d\\w*|fp16|bf16)$/i, "");
+      t = t.replace(/[-_]+/g, " ").trim();
+      if (/whisper/i.test(String(provider || "")) && !/whisper/i.test(t)) t = `Whisper ${t}`;
+      t = t.replace(/\\bgpt\\b/gi, "GPT");
+      return t ? t.charAt(0).toUpperCase() + t.slice(1) : m;
+    }
+    function dmRecommended(route, alt) {
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      return rows.find((r) => r && r.route === route) || (alt ? rows.find((r) => r && r.route === alt) : null) || null;
+    }
+    function dmRecFor(route) { return dmRecommended(route, route === "input.text" ? "output.text" : null); }
+    function dmRecRoute(rec) {
+      return { provider: typeof rec.route_provider === "string" ? rec.route_provider : rec.provider,
+               model: typeof rec.route_model === "string" ? rec.route_model : rec.artifact };
+    }
+    // {kind: none | recommended | custom | covered, name, recName, note}
+    function dmState(cap) {
+      const textRow = findDefaultRow(state.defaults, "input.text");
+      const textSet = textRow && rowHasProviderModel(textRow);
+      if (!cap.route) {
+        return textSet ? { kind: "covered", name: dmReadableName(textRow.provider, textRow.model), note: "read by the text model" }
+          : { kind: "none", name: "", note: "Needs a text model" };
+      }
+      const row = findDefaultRow(state.defaults, cap.route);
+      const rec = dmRecFor(cap.route);
+      const recRoute = rec ? dmRecRoute(rec) : null;
+      const recName = recRoute ? dmReadableName(recRoute.provider, recRoute.model) : "";
+      // A covered input (input.image/video read by the text model) carries the TEXT route's
+      // provider/model (renderDefaults copies them): it is Covered, never "Your choice".
+      if (row && row.covered_by === "input.text" && textSet) {
+        return { kind: "covered", name: dmReadableName(textRow.provider, textRow.model), note: "read by the text model", recName };
+      }
+      if (row && rowHasProviderModel(row)) {
+        const same = Boolean(recRoute && row.provider === recRoute.provider && dmSameModel(row.provider, row.model, recRoute.model));
+        return { kind: same ? "recommended" : "custom", name: dmReadableName(row.provider, row.model), recName };
+      }
+      return { kind: "none", name: "", recName };
+    }
+    const DM_STATE_WORD = { none: "Not set", recommended: "Recommended", custom: "Your choice", covered: "Covered" };
+    function dmBadgeMarkup(cap) {
+      const st = dmState(cap);
+      const word = DM_STATE_WORD[st.kind] || "";
+      const line = st.kind === "none"
+        ? (st.recName ? `Recommended here: ${esc(st.recName)}` : esc(st.note || "Choose a model"))
+        : `${esc(st.name)}${st.note ? ` <span class="dm-badge__note">· ${esc(st.note)}</span>` : ""}`;
+      return `<button type="button" class="dm-badge dm-badge--${st.kind}" style="--dm-hue:${cap.hue}" data-dm-badge="${esc(cap.id)}" aria-label="${esc(`${cap.label}: ${word}${st.name ? `, ${st.name}` : ""}. Choose the model`)}">`
+        + `<span class="dm-badge__mark">${dmIcon(cap.icon)}</span>`
+        + `<span class="dm-badge__text"><span class="dm-badge__label">${esc(cap.label)}</span><span class="dm-badge__state">${esc(word)}</span>`
+        + `<span class="dm-badge__model">${line}</span></span></button>`;
+    }
+    function dmSimpleMarkup() {
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      const absent = rows.filter((r) => r && r.status === "absent");
+      const bytes = absent.reduce((n, r) => n + (Number(r.download_bytes || 0) || 0), 0);
+      const busy = dmUi.busy.has("recommended");
+      const group = dlFeed.group;
+      const names = [];
+      for (const r of rows) { const n = dmReadableName(dmRecRoute(r).provider, dmRecRoute(r).model); if (n && !names.includes(n)) names.push(n); }
+      return `<section class="dm-hero" aria-labelledby="dm-hero-title"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
+        + `<p>${names.length ? `${esc(names.slice(0, 5).join(", "))}${names.length > 5 ? "…" : ""}: chosen for this computer's memory and engines.` : "AbstractCore's picks for this computer."}`
+        + `${absent.length ? ` ${absent.length} to download${bytes ? `, about ${esc(uiBytes(bytes))}` : ""}.` : rows.length ? " Everything is downloaded." : ""} Your own choices are kept.</p></div>`
+        + `<button type="button" class="ui-btn is-primary dm-hero__btn" data-dm-recommended="1"${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Setting up…" : "Use recommended"}</button>`
+        + `</section>`
+        + (group ? `<div class="dm-progress">${dlGroupMarkup(group)}</div>` : "")
+        + dmSingleProgressMarkup()
+        + `<div class="dm-groups">`
+        + `<section class="dm-group" aria-labelledby="dm-in-title"><h4 id="dm-in-title">Input <span>what it understands</span></h4><div class="dm-badges">${DM_INPUTS.map(dmBadgeMarkup).join("")}</div></section>`
+        + `<section class="dm-group" aria-labelledby="dm-out-title"><h4 id="dm-out-title">Output <span>what it makes</span></h4><div class="dm-badges">${DM_OUTPUTS.map(dmBadgeMarkup).join("")}</div></section>`
+        + `</div>`;
+    }
+    // One model's download (a badge's "Use it", an "Other models" pick) shows its progress here too:
+    // Simple has no table to carry it (review 1069). Children of the parent job show in its card.
+    function dmSingleProgressMarkup() {
+      const rows = [];
+      for (const job of state.downloadJobs.values()) {
+        if (!job || job.parent_job || !dlActive(job)) continue;
+        rows.push(uiProgressMarkup(job, `Downloading ${dmReadableName(job.provider, job.artifact)}`));
+      }
+      return rows.length ? `<div class="dm-progress">${rows.join("")}</div>` : "";
+    }
+    // ---- Advanced: one table row per capability, engine and model ids shown.
+    const DEFAULT_MODEL_ROWS = [
+      { id: "text", label: "Text", route: "input.text", alt: "output.text", inputs: ["text", "image"], outputs: ["text"], what: "Chat, agents and workflows" },
+      { id: "image", label: "Image", route: "output.image", inputs: ["text", "image"], outputs: ["image"], what: "Pictures from a description, and edits" },
+      { id: "video", label: "Video", route: "output.video", inputs: ["text", "image"], outputs: ["video"], what: "Short clips from a description or a picture" },
+      { id: "voice_out", label: "Voice out", route: "output.voice", inputs: ["text"], outputs: ["speech"], what: "Reads answers aloud" },
+      { id: "voice_in", label: "Voice in", route: "input.voice", inputs: ["speech"], outputs: ["text"], what: "Turns speech into text" },
+      { id: "music", label: "Music", route: "output.music", inputs: ["text"], outputs: ["music"], what: "Songs and soundtracks" },
+      { id: "3d", label: "3D", route: "output.scene3d", inputs: ["text", "image"], outputs: ["3D scene"], what: "3D scenes from a description or a picture" },
+      { id: "embeddings", label: "Embeddings", route: "embedding.text", inputs: ["text"], outputs: ["vectors"], what: "Search and memory" },
+      { id: "rankers", label: "Rankers", route: "rerank.text", inputs: ["query", "texts"], outputs: ["scores"], what: "Orders search results by relevance" },
+    ];
+    function dmCaps(list) { return list.map((c) => `<span class="chip">${esc(c)}</span>`).join(" "); }
+    function dmRowMarkup(m) {
+      const row = findDefaultRow(state.defaults, m.route) || (m.alt ? findDefaultRow(state.defaults, m.alt) : null);
+      const now = row && rowHasProviderModel(row)
+        ? `<b>${esc(state.providerLabels.get(row.provider) || row.provider)}</b> · <span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>`
+        : `<span class="muted">Not set</span>`;
+      const rec = dmRecommended(m.route, m.alt);
+      let recCell;
+      let inUse = false;
+      if (rec) {
+        const { provider: engine, model } = dmRecRoute(rec);
+        const pill = rec.status === "installed" ? uiPill("Downloaded", "ok") : rec.status === "absent" ? uiPill("Not downloaded", "muted") : uiPill(firstRunCap(rec.status || "unknown"), "muted");
+        inUse = Boolean(row && row.provider === engine && dmSameModel(engine, row.model, model));
+        recCell = `<b>${esc(state.providerLabels.get(engine) || engine)}</b> · <span class="ui-ellip" title="${esc(model)}">${esc(model)}</span> ${pill}`
+          + (rec.tier ? `<div class="muted">Chosen by memory: ${esc(rec.tier)}</div>` : "")
+          + (inUse ? `<div class="muted">In use.</div>` : "");
+      } else {
+        const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
+        recCell = `<span class="muted">${esc(why || "AbstractCore recommends no model for this on this computer; choose one.")}</span>`;
+      }
+      const busy = dmUi.busy.has(m.route);
+      const actions = [];
+      if (rec && !inUse) actions.push(`<button type="button" class="ui-btn is-primary" data-dm-use="${esc(m.route)}"${busy ? " disabled" : ""}>${busy ? "Setting…" : "Use recommended"}</button>`);
+      if (rec && rec.status === "absent") actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-download="1" data-provider="${esc(rec.provider)}" data-artifact="${esc(rec.artifact)}">Download</button>`);
+      if (row && !defaultRowReadOnly(row)) actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-choose="${esc(defaultRowKey(row))}">Choose…</button>`);
+      return `<tr data-dm-row="${esc(m.id)}"><td><b>${esc(m.label)}</b><div class="muted">${esc(m.what)}</div></td>`
+        + `<td>${dmCaps(m.inputs)} → ${dmCaps(m.outputs)}</td><td>${now}</td><td>${recCell}</td>`
+        + `<td class="actions"><div class="dm-actions">${actions.join("")}</div></td></tr>`;
+    }
+    function dmAdvancedMarkup() {
+      return `<div class="ui-section-title"><h3>Default models</h3><span class="ui-sub">One model per capability. Recommendations follow this computer's GPU memory (or unified memory on a Mac) and the engines that run here.</span></div>`
+        + `<div class="table-wrap"><table class="first-run-default-models"><thead><tr><th>Capability</th><th>In → out</th><th>Now</th><th>Recommended here</th><th><span class="sr-only">Actions</span></th></tr></thead>`
+        + `<tbody>${DEFAULT_MODEL_ROWS.map(dmRowMarkup).join("")}</tbody></table></div>`
+        + `<div class="ui-toolbar"><button id="dm-apply-all" type="button" class="ui-btn is-primary">Use recommended for all</button>`
+        + `<span>Sets every recommended model this computer can run and keeps the choices you already made.</span></div>`;
+    }
+    function renderFirstRunDefaultModels() {
+      const box = $("first-run-default-models");
+      if (!box) return;
+      const simple = dmUi.mode === "simple";
+      const body = $("first-run-model-body");
+      if (body && body.classList) body.classList.toggle("dm-simple", simple);
+      box.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`
+        + (simple ? dmSimpleMarkup() : dmAdvancedMarkup());
+      if (!simple) $("dm-apply-all").onclick = async () => {
+        await applyRecommendedDefaults($("dm-apply-all"), false);
+        dmSay($("defaults-message").textContent, $("defaults-message").className.replace(/^message\\s*/, ""));
+        renderFirstRunModel();
+      };
+      box.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode], [data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
+        if (!b || b.disabled) return;
+        const d = b.dataset || {};
+        if (d.dmMode) { dmUi.mode = d.dmMode === "advanced" ? "advanced" : "simple"; return renderFirstRunModel(); }
+        if (d.dmRecommended) return dmUseAllRecommended();
+        if (d.dmBadge) return dmOpenChoice(d.dmBadge);
+        if (d.dmUse) return dmUseRecommendedFor(d.dmUse);
+        if (d.dmDownload) return dmDownload(d.provider, d.artifact);
+        if (d.dlCancel) return dlCancel(d.dlCancel, b, d.dlStep);
+        if (d.dmChoose) return dmChooseAny(d.dmChoose);
+      };
+      if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+    }
+    function dmChooseAny(route) {
+      const row = findDefaultRow(state.defaults, route);
+      if (!row) throw new Error(`GET /config/capability-defaults has no ${route} row (capability-defaults seam).`);
+      return openDefaultModal(row);
+    }
+    function dmSay(text, tone) { $("first-run-message").textContent = text; $("first-run-message").className = `message ${tone || ""}`.trim(); }
+    async function dmRefreshDefaults() {
+      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
+      await refreshAvailability({ rerender: false });
+    }
+    // Set one capability route to (provider, model). The route's own base URL and reasoning effort
+    // belonged to the previous model, so they are cleared (review 1069: a stale LM Studio URL or a
+    // `high` reasoning effort carried over to the new model). ONE write for text: output.text is
+    // derived from input.text.
+    // `options`: a catalog model's own options (an MTP build's speculation) are sent with it, and a
+    // model without any sends `{}` so the previous model's options go. Omitted (the recommendation:
+    // its plan row carries none), AbstractCore's update rule applies, the same as apply-recommended:
+    // the stored options stay, except the speculation request, dropped when the engine changes.
+    async function dmSetRoute(route, provider, model, options) {
+      const [kind, modality, task] = String(route).split(".");
+      const path = `/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${task ? `/${encodeURIComponent(task)}` : ""}`;
+      const body = { provider, model, base_url: "", reasoning: "" };
+      if (options !== undefined) body.options = options && typeof options === "object" ? options : {};
+      await api(path, { slow: true, method: "PUT", body: JSON.stringify(body) });
+    }
+    async function dmUseRecommendedFor(route) {
+      const rec = dmRecFor(route);
+      if (!rec || dmUi.busy.has(route)) return;
+      dmUi.busy.add(route);
+      renderFirstRunModel();
+      try {
+        const { provider, model } = dmRecRoute(rec);
+        await dmSetRoute(route, provider, model);
+        if (rec.status === "absent") await dmDownload(rec.provider, rec.artifact, { quiet: true });
+        dmSay(`${dmReadableName(provider, model)} is set${rec.status === "absent" ? "; it is downloading" : ""}.`, "ok");
+        await dmRefreshDefaults();
+      } catch (err) {
+        dmSay(String(err.message || err), "error");
+      } finally {
+        dmUi.busy.delete(route);
+        renderFirstRunModel();
+      }
+    }
+    // Simple mode's one button: AbstractCore's recommended routes where you have not chosen your own
+    // (apply-recommended without force), then the recommended downloads as ONE parent job whose card
+    // shows a progress row per model.
+    async function dmUseAllRecommended() {
+      if (dmUi.busy.has("recommended")) return;
+      dmUi.busy.add("recommended");
+      renderFirstRunModel();
+      try {
+        const res = await api("/api/gateway/config/capability-defaults/apply-recommended", { slow: true, method: "POST", body: JSON.stringify({ force: false }) });
+        const report = res && res.applied_recommended;
+        if (!report || !Array.isArray(report.routes)) throw new Error("POST /config/capability-defaults/apply-recommended returned no applied_recommended.routes (AbstractCore apply report seam).");
+        // Download only the models of the routes that now USE the recommendation (applied, or
+        // already it): a route you configured differently is kept, and so is its model (review 1069).
+        const usesRec = new Set(report.routes.filter((r) => ["apply", "overwrite", "already"].includes(r.action)).map((r) => r.key));
+        const plan = state.availabilityPlan || {};
+        const recRows = Array.isArray(plan.recommended) ? plan.recommended : [];
+        const absent = recRows.filter((r) => r && r.status === "absent");
+        const wanted = absent.filter((r) => usesRec.has(r.route) || (r.route === "output.text" && usesRec.has("input.text")));
+        if (wanted.length && wanted.length === absent.length && !dlActive(dlFeed.group)) {
+          const dl = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ recommended: true }) });
+          if (!dl || !dl.group) throw new Error("The gateway started the downloads but returned no parent job (`group`); it needs the download-group contract (docs/model-downloads.md).");
+          for (const job of (Array.isArray(dl.jobs) ? dl.jobs : [])) trackDownloadJob(job);
+          trackDownloadJob(dl.group);
+        } else {
+          for (const r of wanted) await dmDownload(r.provider, r.artifact, { quiet: true });
+        }
+        const set = report.routes.filter((r) => r.action === "apply" || r.action === "overwrite").length;
+        const kept = report.routes.filter((r) => r.action === "kept").length;
+        const words = [set ? `${set} recommended ${set === 1 ? "model" : "models"} set` : "The recommended models were already set",
+          kept ? `your ${kept === 1 ? "choice is" : `${kept} choices are`} kept` : ""].filter(Boolean).join("; ");
+        dmSay(`${words}.${wanted.length ? " The downloads run in the background; you can go on." : ""}`, "ok");
+        await dmRefreshDefaults();
+      } catch (err) {
+        dmSay(String(err.message || err), "error");
+      } finally {
+        dmUi.busy.delete("recommended");
+        renderFirstRunModel();
+      }
+    }
+    async function dmDownload(provider, artifact, opts = {}) {
+      try {
+        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider, artifact }) });
+        trackDownloadJob(res.job);
+        if (!opts.quiet) dmSay("Download started: its progress shows here and on the Models page.", "ok");
+      } catch (err) {
+        if (opts.quiet) throw err;
+        dmSay(String(err.message || err), "error");
+      }
+      renderFirstRunModel();
+    }
+    // ---- Guided choice (a badge's dialog): recommended first, other models that fit, an API key.
+    function dmCapById(id) { return DM_INPUTS.concat(DM_OUTPUTS).find((c) => c.id === id) || null; }
+    const DM_OTHER_ENGINES = ["mlx-gen", "diffusers", "lmstudio", "ollama", "huggingface"];
+    function dmOtherModels(cap) {
+      if (!cap.catalog) return [];
+      const out = [];
+      for (const row of dmCatalogRows()) {
+        const caps = row.capabilities || {};
+        if (!caps[cap.catalog]) continue;
+        // output.video is the text-to-video route: an image-to-video-only model cannot serve it.
+        if (cap.route === "output.video" && caps.text_to_video !== true) continue;
+        for (const a of (row.artifacts || [])) {
+          const fit = a && a.fit ? a.fit.verdict : "";
+          if (!a || a.supported_on_host === false || (fit && fit !== "fits" && fit !== "tight")) continue;
+          if (cap.catalog !== "text" && !DM_OTHER_ENGINES.includes(a.provider)) continue;
+          // GGUF files are llama.cpp's text format: no embeddings engine here loads them (review 1069).
+          if (cap.catalog === "embedding" && /gguf/i.test(String(a.artifact || ""))) continue;
+          out.push({ name: row.display_name || row.id, provider: a.provider, artifact: a.artifact, model: servedModelId(a.provider, a.artifact),
+                     bytes: a.download_bytes, quant: a.quant_class, installed: Boolean(a.presence && a.presence.status === "installed"),
+                     options: a.options && typeof a.options === "object" ? a.options : {} });
+        }
+      }
+      return out.slice(0, 24);
+    }
+    function dmOpenChoice(id) {
+      const cap = dmCapById(id);
+      if (!cap) return;
+      const reopen = Boolean(dmUi.choice);
+      dmUi.choice = { cap, key: dmUi.choice && dmUi.choice.cap === cap ? dmUi.choice.key : null };
+      renderDmChoice();
+      $("dm-choice-backdrop").classList.remove("hidden");
+      // The kit's modal discipline (bindModal): focus trap, Escape closes THIS layer only (the guide
+      // below keeps its own Escape), backdrop click, focus back to the badge (review 1069).
+      if (!reopen) dmUi.release = bindAccountModal($("dm-choice-backdrop"), closeDmChoice);
+      if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+    }
+    function closeDmChoice() {
+      if (!dmUi.choice) return;
+      dmUi.choice = null;
+      $("dm-choice-backdrop").classList.add("hidden");
+      $("dm-choice-body").innerHTML = "";
+      const release = dmUi.release;
+      dmUi.release = null;
+      if (release) release();
+    }
+    function renderDmChoice() {
+      const c = dmUi.choice;
+      if (!c) return;
+      const cap = c.cap;
+      $("dm-choice-title").textContent = `${cap.label}: ${cap.what}`;
+      const parts = [];
+      if (!cap.route) {
+        parts.push(`<section class="dm-choice__part"><p>Files (PDFs, documents, data) are read by your text model: choose the text model.</p>`
+          + `<div class="modal-actions"><button type="button" data-dmc="open-text">Choose the text model</button></div></section>`);
+      } else {
+        const rec = dmRecFor(cap.route);
+        const st = dmState(cap);
+        if (rec) {
+          const r = dmRecRoute(rec);
+          const busy = dmUi.busy.has(cap.route);
+          const size = rec.status === "installed" ? "Downloaded" : rec.status === "absent" ? `To download${rec.download_bytes ? `, ${uiBytes(rec.download_bytes)}` : ""}` : firstRunCap(rec.status || "");
+          parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><div class="dm-choice__pick"><b>${esc(dmReadableName(r.provider, r.model))}</b>`
+            + `<span class="muted">${esc(size)}${rec.tier ? ` · chosen by memory (${esc(rec.tier)})` : ""}</span></div>`
+            + `<div class="modal-actions">${st.kind === "recommended" ? `<span class="muted">In use</span>` : `<button type="button" data-dmc="use-rec"${busy ? " disabled" : ""}>${busy ? "Setting…" : rec.status === "absent" ? "Use it and download" : "Use it"}</button>`}</div></section>`);
+        } else {
+          const row = findDefaultRow(state.defaults, cap.route);
+          const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
+          parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><p class="muted">${esc(why || "AbstractCore has no recommendation for this on this computer yet.")}</p></section>`);
+        }
+        const others = dmOtherModels(cap);
+        const capRow = findDefaultRow(state.defaults, cap.route);
+        const rowReadOnly = Boolean(capRow && defaultRowReadOnly(capRow));
+        parts.push(`<section class="dm-choice__part"><h3>Other models that fit</h3>`
+          + (cap.catalog && !dmUi.catalog ? `<p class="muted">${esc(dmUi.catalogError || "Reading the catalog…")}</p>` : "")
+          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([state.providerLabels.get(o.provider) || o.provider, o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
+          // A read-only row (input.image covered by the text model) has no editor to open (review 1069).
+          + (rowReadOnly ? "" : `<div class="modal-actions"><button type="button" class="secondary" data-dmc="any">All engines and models…</button></div>`) + `</section>`);
+        if (cap.key) parts.push(dmKeyMarkup());
+      }
+      const draft = $("dm-key-value") ? String($("dm-key-value").value || "") : "";
+      $("dm-choice-body").innerHTML = parts.join("");
+      if (draft && $("dm-key-value")) $("dm-key-value").value = draft;
+    }
+    // ---- An API key for text (OpenAI or Anthropic). The key is checked FIRST (discover-models on a
+    // draft, nothing stored); only then is it kept as a NEW gateway-wide provider connection (a fresh
+    // id: an existing connection is never overwritten, review 1069), and the chosen model becomes the
+    // text model.
+    const KEY_FAMILIES = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }];
+    function dmKeyMarkup() {
+      const k = (dmUi.choice && dmUi.choice.key) || {};
+      return `<section class="dm-choice__part"><h3>Or use an API key</h3><p class="muted">Billed by the provider per use. The gateway keeps the key as a provider connection (Providers page) and never shows it again.</p>`
+        + `<div class="af-form"><div class="af-form__field"><label class="af-form__label" for="dm-key-family">Provider</label><select id="dm-key-family">${KEY_FAMILIES.map((f) => `<option value="${f.id}"${k.family === f.id ? " selected" : ""}>${f.label}</option>`).join("")}</select></div>`
+        + (k.models && k.models.length
+          ? `<div class="af-form__field"><label class="af-form__label" for="dm-key-model">Text model</label><select id="dm-key-model">${k.models.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select></div><div class="modal-actions"><button type="button" data-dmc="key-use">Use for text</button></div>`
+          : `<div class="af-form__field"><label class="af-form__label" for="dm-key-value">API key</label><input id="dm-key-value" type="password" autocomplete="off" spellcheck="false"></div><div class="modal-actions"><button type="button" class="secondary" data-dmc="key-check">Check the key</button></div>`)
+        + `<p id="dm-key-message" class="inline-state ${esc(k.tone || "")}" role="status" aria-live="polite">${esc(k.message || "")}</p></div></section>`;
+    }
+    function dmKeySay(message, tone) {
+      if (dmUi.choice) dmUi.choice.key = Object.assign({}, dmUi.choice.key || {}, { message, tone });
+      const el = $("dm-key-message");
+      if (el) { el.textContent = message; el.className = `inline-state ${tone || ""}`; }
+    }
+    async function dmKeyCheck() {
+      const family = $("dm-key-family").value;
+      const apiKey = String($("dm-key-value").value || "").trim();
+      if (!apiKey) return dmKeySay("Paste the API key first.", "error");
+      dmKeySay("Checking the key…");
+      try {
+        const found = await api("/api/gateway/config/provider-endpoint-profiles/discover-models", { method: "POST", body: JSON.stringify({ provider_family: family, api_key: apiKey }) });
+        const models = parseModelItems(found);
+        if (!models.length) return dmKeySay(found.error || "The provider listed no models for this key: check it.", "error");
+        dmUi.choice.key = { family, apiKey, models, message: `The key works: ${models.length} models. Choose the text model.`, tone: "ok" };
+        renderDmChoice();
+      } catch (err) {
+        dmKeySay(`The key was not accepted: ${String(err.message || err)}`, "error");
+      }
+    }
+    function parseProfileIds(payload) {
+      const rows = Array.isArray(payload && payload.profiles) ? payload.profiles : (Array.isArray(payload) ? payload : []);
+      return rows.map((p) => String((p && (p.id || p.profile_id)) || "")).filter(Boolean);
+    }
+    async function dmKeyUse() {
+      const k = dmUi.choice && dmUi.choice.key;
+      if (!k || !k.apiKey) return;
+      const model = $("dm-key-model").value;
+      const label = (KEY_FAMILIES.find((f) => f.id === k.family) || { label: k.family }).label;
+      dmKeySay("Saving…");
+      try {
+        const taken = new Set(parseProfileIds(await api("/api/gateway/config/provider-endpoint-profiles")));
+        let id = `${k.family}-key`;
+        for (let n = 2; taken.has(id) || taken.has(`endpoint:${id}`); n++) id = `${k.family}-key-${n}`;
+        await api("/api/gateway/config/provider-endpoint-profiles", { method: "POST", body: JSON.stringify({
+          id, display_name: `${label} (API key)`, provider_family: k.family, api_key: k.apiKey, base_url: "", scope: "gateway", capabilities: ["text"] }) });
+        await dmSetRoute("input.text", `endpoint:${id}`, model);
+        dmUi.choice.key = { message: `Text now uses ${model} with your ${label} key.`, tone: "ok" };
+        await dmRefreshDefaults();
+        renderFirstRunModel();
+        renderDmChoice();
+      } catch (err) {
+        dmKeySay(`Not saved: ${String(err.message || err)}`, "error");
+      }
+    }
+    async function dmChoiceClick(event) {
+      const b = event && event.target && event.target.closest ? event.target.closest("[data-dmc]") : null;
+      if (!b || b.disabled || !dmUi.choice) return;
+      const cap = dmUi.choice.cap;
+      const act = b.dataset.dmc;
+      if (act === "open-text") return dmOpenChoice("in-text");
+      if (act === "any") { const route = cap.route; closeDmChoice(); return dmChooseAny(route); }
+      if (act === "use-rec") { await dmUseRecommendedFor(cap.route); return renderDmChoice(); }
+      if (act === "use-other") {
+        const o = dmOtherModels(cap)[Number(b.dataset.i)];
+        if (!o || dmUi.busy.has(cap.route)) return;
+        dmUi.busy.add(cap.route);
+        b.disabled = true;
+        try {
+          await dmSetRoute(cap.route, o.provider, o.model, o.options);
+          if (!o.installed) await dmDownload(o.provider, o.artifact, { quiet: true });
+          dmSay(`${o.name} is set${o.installed ? "" : "; it is downloading"}.`, "ok");
+          await dmRefreshDefaults();
+          renderFirstRunModel();
+          closeDmChoice();
+        } catch (err) {
+          dmSay(String(err.message || err), "error");
+          b.disabled = false;
+        } finally {
+          dmUi.busy.delete(cap.route);
+        }
+        return;
+      }
+      if (act === "key-check") return dmKeyCheck();
+      if (act === "key-use") return dmKeyUse();
+    }
     function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
+      renderFirstRunDefaultModels();
       const box = $("first-run-model-recommended");
       const plan = state.availabilityPlan || {};
       const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
@@ -16603,6 +17115,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-openai-close").onclick = closeAccountOpenAI;
 	    $("account-password-close").onclick = closeAccountPassword;
+	    $("dm-choice-close").onclick = closeDmChoice;
+	    $("dm-choice-body").onclick = dmChoiceClick;
 	    $("account-preferences-close").onclick = closeAccountPreferences;
 	    $("account-workspace-close").onclick = closeAccountWorkspace;
 	    $("gateway-workspace-close").onclick = closeGatewayWorkspace;
@@ -16759,7 +17273,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // next load); Skip/Finish record the outcome.
 	    if (typeof document.addEventListener === "function") {
 	      document.addEventListener("keydown", (event) => {
-	        if (event.key === "Escape" && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
+	        // A dialog above the guide (the model choice) takes its Escape first (bindModal, capture
+        // phase, preventDefault): one Escape closes one layer.
+        if (event.key === "Escape" && !event.defaultPrevented && !dmUi.choice && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
 	      });
 	    }
 	    // NAV DRAWER (below 1024 px the sidebar is an overlay drawer, DESIGN

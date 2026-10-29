@@ -1245,6 +1245,16 @@ def launch_main(argv: Optional[List[str]] = None) -> None:
     rest = list(args.rest or [])
     if rest and rest[0] == "--":
         rest = rest[1:]
+    # The Windows Run entry and the XDG autostart entry start the machine's gateway service through
+    # this launcher: that service shows the tray (tray_supervisor.service_launch). `--tray` on the
+    # command line keeps it across a relaunch from the tray, which re-runs `abstractgateway serve`.
+    from .tray_supervisor import mark_service_launch
+
+    mark_service_launch("Windows Run entry" if sys.platform == "win32" else "XDG autostart entry")
+    # `serve ...` or `--instance NAME serve ...` (instances.py).
+    if "serve" in rest and "--tray" not in rest and "--no-tray" not in rest:
+        i = rest.index("serve")
+        rest = [*rest[: i + 1], "--tray", *rest[i + 1:]]
     from .cli import main as gateway_main
 
     gateway_main(rest)

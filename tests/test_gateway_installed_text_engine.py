@@ -103,3 +103,34 @@ def test_without_host_facts_the_rule_is_off(host, monkeypatch) -> None:
     # The engine inventory unreadable (None): AbstractCore's pick stays.
     monkeypatch.setattr(cc, "_engine_installed", lambda engine_id: None)
     assert cc.installed_text_engine_pick(dict(LMSTUDIO_PICK)) is None
+
+
+def test_a_configured_route_on_an_lm_studio_that_is_not_installed_says_engine_missing(host) -> None:
+    """OVH 8443 (2026-10-29): Text pointed at LM Studio, not installed; the grid said a green
+    "configured" and every chat failed ("Circuit breaker open for LMStudioProvider")."""
+    payload = {"routes": [
+        {"key": "input.text", "provider": "lmstudio", "model": "qwen/qwen3.5-9b"},
+        {"key": "output.image", "provider": "diffusers", "model": "black-forest-labs/FLUX.2-klein-4B"},
+        {"key": "output.voice", "provider": "lmstudio", "model": "", "engine_missing": None},
+    ]}
+    out = cc.stamp_server_engine_missing(payload)
+    text = out["routes"][0]["engine_missing"]
+    assert text["engine"] == "lmstudio" and text["engine_row"] == "lmstudio" and "LM Studio is not installed" in text["reason"]
+    assert "engine_missing" not in out["routes"][1]
+    assert not out["routes"][2].get("engine_missing")  # no model: nothing configured to fail
+    assert "engine_missing" not in payload["routes"][0]  # the input is not mutated
+    host["engines"]["lmstudio"] = True
+    assert "engine_missing" not in cc.stamp_server_engine_missing(payload)["routes"][0]
+    host["engines"]["lmstudio"] = None  # inventory unreadable: never claimed missing
+    assert "engine_missing" not in cc.stamp_server_engine_missing(payload)["routes"][0]
+
+
+def test_the_capability_defaults_route_carries_the_stamp(host, monkeypatch, tmp_path) -> None:
+    """The console's GET /config/capability-defaults (the payload the grid reads) carries the stamp."""
+    from types import SimpleNamespace
+    from abstractgateway.routes import gateway as gw
+
+    monkeypatch.setattr(gw, "gateway_capability_defaults_payload", lambda base_dir=None: {"routes": [{"key": "input.text", "provider": "lmstudio", "model": "qwen/qwen3.5-9b"}]})
+    monkeypatch.setattr(gw, "capability_defaults_route_problems", lambda base_dir: [])
+    out = gw._capability_defaults_payload_for(SimpleNamespace(config=SimpleNamespace(data_dir=str(tmp_path))))
+    assert out["routes"][0]["engine_missing"]["engine"] == "lmstudio"
