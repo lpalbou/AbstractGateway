@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (firstrun_cli, os_service, autostart, consoles' Start at login switch)
 > Type: bug
-> Status: planned (not implemented)
+> Status: implemented 2026-10-29 (autostart.linger_state / linger_note; the summary carries the sentence, so both consoles show it; the unconditional plan hint is gone)
 > Created: 2026-10-28
 > Priority: P1
 > Labels: service, linux, headless, first-run
