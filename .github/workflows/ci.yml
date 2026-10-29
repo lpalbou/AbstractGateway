@@ -14,6 +14,27 @@ permissions:
   contents: read
 
 jobs:
+  # Which heavy, unrelated jobs a pull request needs: the Rust console only when console-tui/
+  # changes, the container build only when the image's inputs change. Pushes to main and tags run
+  # everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      tui: ${{ steps.diff.outputs.tui }}
+      docker: ${{ steps.diff.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "tui=true" >> "$GITHUB_OUTPUT"; echo "docker=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
+          echo "$files" | grep -qE '^(console-tui/|\.github/workflows/ci\.yml$)' && echo "tui=true" >> "$GITHUB_OUTPUT" || echo "tui=false" >> "$GITHUB_OUTPUT"
+          echo "$files" | grep -qE '^(docker/|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "docker=true" >> "$GITHUB_OUTPUT" || echo "docker=false" >> "$GITHUB_OUTPUT"
+
   test:
     # Pull requests: ONE Python (3.12), the suite split in 4 parallel shards (whole test files,
     # balanced by ci/test_durations.json: scripts/ci_shard.py). Pushes to main and release tags:
@@ -101,6 +122,8 @@ jobs:
         run: mkdocs build -q
 
   console-tui:
+    needs: changes
+    if: needs.changes.outputs.tui == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +153,8 @@ jobs:
         run: cargo package --locked
 
   docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
