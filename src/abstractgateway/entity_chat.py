@@ -349,10 +349,11 @@ class _RuntimeLLMAdapter:
     def __init__(
         self, provider: str, *, model: str, thinking: Optional[str] = None, speculation: Any = None, **llm_kwargs: Any
     ) -> None:
-        from . import model_host
+        from .generation_pool import generation_client
 
-        # ADR 0002: in the model host child when this process has one, else here.
-        self._client = model_host.local_client(provider=provider, model=model, llm_kwargs=dict(llm_kwargs))
+        # R2 (2026-10-29): the principal's runtime pool (one resident model shared with the runs);
+        # a client of its own only when there is no pool (ADR 0002: in the model host child then).
+        self._client = generation_client(provider=provider, model=model, llm_kwargs=dict(llm_kwargs) or None)
         # The mind's reasoning effort (substrate triple). Injected into each
         # call's params on the one wire name; None sends nothing.
         self._thinking = str(thinking or "").strip() or None

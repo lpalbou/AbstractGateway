@@ -617,7 +617,10 @@ CONFIG_ATTRS = ("_llm_kwargs", "_default_provider", "_default_model", "_provider
 def _class_callables(kind: str) -> frozenset:
     from abstractruntime.integrations.abstractcore import llm_client as lc
 
-    cls = lc.MultiLocalAbstractCoreLLMClient if kind == "multi" else lc.LocalAbstractCoreLLMClient
+    if kind == "embeddings":
+        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient as cls
+    else:
+        cls = lc.MultiLocalAbstractCoreLLMClient if kind == "multi" else lc.LocalAbstractCoreLLMClient
     names = set()
     for name in dir(cls):
         if name.startswith("__"):
@@ -643,7 +646,7 @@ class ModelHostClient:
     """
 
     def __init__(self, host: "ModelHostSupervisor", *, kind: str, ctor: Dict[str, Any]) -> None:
-        if kind not in ("multi", "local"):
+        if kind not in ("multi", "local", "embeddings"):
             raise ValueError(f"unknown model host client kind {kind!r}")
         self._mh_host = host
         self._mh_kind = kind
@@ -663,6 +666,9 @@ class ModelHostClient:
         if kind == "multi":
             self._mh_config["_default_provider"] = str(ctor.get("provider") or "").strip().lower()
             self._mh_config["_default_model"] = str(ctor.get("model") or "").strip()
+        if kind == "embeddings":  # read on the routes; never worth a round trip
+            self._mh_config["provider"] = str(ctor.get("provider") or "")
+            self._mh_config["model"] = str(ctor.get("model") or "")
         # Read in the gateway by the tool executor's late-bound resolver getter
         # (`build_effect_handlers`), so it is kept here as well as forwarded.
         self._provider_endpoint_profile_resolver: Any = None
@@ -795,7 +801,7 @@ class ModelHostClient:
         assigned = self.__dict__.get("_mh_assigned") or {}
         if name in assigned:
             return assigned[name]
-        if name in CONFIG_ATTRS:
+        if name in CONFIG_ATTRS or name in self._mh_config:
             config = self._mh_config
             if name in config:
                 value = config[name]
@@ -885,6 +891,10 @@ def read_incidents(data_dir: Path, *, limit: int = 20) -> List[Dict[str, Any]]:
             out.append(doc)
     return out
 
+
+# Built at once (and after every restart): the runtimes' pools and the embeddings client, whose
+# models warm in the loading phase. A gateway-side `local` client is built by its first call.
+_EAGER_KINDS = frozenset({"multi", "embeddings"})
 
 _UNIX_PATH_MAX = 100  # sun_path is 104 bytes on macOS, 108 on Linux; leave room for the file name
 
@@ -1251,7 +1261,7 @@ class ModelHostSupervisor:
 
     def _register(self, client: ModelHostClient) -> None:
         self._clients.add(client)
-        if client._mh_kind == "multi":
+        if client._mh_kind in _EAGER_KINDS:
             self._warm_queue.append(weakref.ref(client))
             self._wake.set()
 
@@ -1263,7 +1273,7 @@ class ModelHostSupervisor:
         (pass three, 2026-10-29: refused by the residency failsafe; chat broke after every
         restart)."""
         for client in list(self._clients):
-            if client._mh_kind == "multi":
+            if client._mh_kind in _EAGER_KINDS:
                 self._warm_queue.append(weakref.ref(client))
 
     # -- connections
@@ -1385,6 +1395,18 @@ def multi_client(**ctor: Any) -> ModelHostClient:
     if sup is None:
         raise RuntimeError("model_host.multi_client: no model host in this process")
     return ModelHostClient(sup, kind="multi", ctor=ctor)
+
+
+def embeddings_client(**ctor: Any) -> Any:
+    """AbstractRuntime's `AbstractCoreEmbeddingsClient`: in the model host when this process has one
+    (the embedding model's weights live with the other models, never in the gateway process), else
+    in this process."""
+    sup = _supervisor
+    if sup is not None:
+        return ModelHostClient(sup, kind="embeddings", ctor=ctor)
+    from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+
+    return AbstractCoreEmbeddingsClient(**ctor)
 
 
 def local_client(**ctor: Any) -> Any:

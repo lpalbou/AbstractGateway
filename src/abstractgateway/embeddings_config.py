@@ -73,7 +73,7 @@ def build_embedding_client(route: EmbeddingRouteConfig, *, cache_dir: Path, stri
     if route.remote_core_url:
         return RemoteCoreEmbeddingsClient(route)
 
-    from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+    from . import model_host
 
     manager_kwargs: Dict[str, Any] = {
         "cache_dir": cache_dir,
@@ -84,7 +84,8 @@ def build_embedding_client(route: EmbeddingRouteConfig, *, cache_dir: Path, stri
     if route.base_url:
         manager_kwargs["provider_kwargs"] = {"base_url": route.base_url}
 
-    return AbstractCoreEmbeddingsClient(
+    # ADR 0002: in the model host child when this process has one (R2, 2026-10-29).
+    return model_host.embeddings_client(
         provider=route.provider,
         model=route.model,
         manager_kwargs=manager_kwargs,
