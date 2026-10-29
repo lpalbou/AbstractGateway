@@ -1103,6 +1103,35 @@ The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode 
 Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
 found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
 
+### 2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store
+
+- **What happened**: during the model-residency audit, two scratch gateways (started directly with their own data
+  dir, no `ABSTRACTCORE_CONFIG_DIR` / `ABSTRACTCORE_CONFIG_FILE` in their environment) answered the console's
+  `PUT /api/gateway/config/capability-defaults/{kind}/{modality}` and wrote the routes into THE Core store,
+  `~/.abstractcore/config/abstractcore.json` — the file the operator's own gateway on 8080 reads — not into their
+  scratch dir. The operator's `input.text` (endpoint:airelay / gpt-5.6-terra, reasoning minimal) and
+  `embedding.text` (lmstudio / text-embedding-qwen3-embedding-0.6b) rows were overwritten with the probe's models.
+- **Effect**: the operator's gateway kept its in-memory routes (it was never restarted or chatted with), so no
+  request was answered by the wrong model; a restart in that window would have booted on the probe's defaults.
+  Scope: the operator's own machine; nothing left it.
+- **Why**: by design the gateway ROOT is not a scope — an admin editing a default edits the source
+  (`core_config._scoped_core_config_path`), and the source is resolved by AbstractCore's own resolver
+  (`ABSTRACTCORE_CONFIG_FILE` / `ABSTRACTCORE_CONFIG_DIR`, else `~/.abstractcore/config/abstractcore.json`).
+  The instances runner derives `<data dir>/core-config` for the children it starts (`instances.py`), but a gateway
+  started by hand with a data dir and no `ABSTRACTCORE_*` variable shares the machine store with every other
+  gateway on the machine. The audit harness set neither variable for its first runs.
+- **Found**: 2026-10-29 ~14:00 by the auditor, reading the shared file after its own PUTs; reported to the lead.
+- **Recovered**: the two rows were put back through the gateway's own writer
+  (`core_config.save_gateway_capability_default`) at ~14:12 — `embedding.text` read back from the live 8080
+  gateway's in-memory route, `input.text` from the profile that holds the relay URL; verified against
+  `GET /api/gateway/config/capability-defaults` on 8080. Later probe runs set `ABSTRACTCORE_CONFIG_FILE` to a file
+  under their scratch dir and the shared store stayed untouched (checked after each run).
+- **Decision**: backlog 0978 — a gateway given a data dir never writes outside it: the Core config dir is derived
+  from the data dir by default (as the instances runner already does), the machine store is used only by a
+  gateway with no explicit data dir, and a test starts a gateway with a data dir, PUTs a capability default and
+  asserts the shared store is byte-identical. Rule for every seat until then: a scratch gateway is started with
+  `ABSTRACTCORE_CONFIG_FILE` (or `_DIR`) pointing inside its scratch dir.
+
 ### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
 
 - **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
