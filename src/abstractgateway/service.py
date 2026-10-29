@@ -891,6 +891,12 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         # Embeddings are optional: the gateway may run without AbstractCore embedding deps.
         embedding_error = str(e)
         embeddings_client = None
+        # One readable sentence per process, naming the model and the download route
+        # (every account's service builds this: it used to be an ERROR per account).
+        if embedding_model:  # a route that is not configured is not a failure to say
+            from .memory_store import say_embedder_unavailable_once
+
+            say_embedder_unavailable_once(e)
 
     # Bridges are NON-FATAL boot dependencies (resilience wave 2026-07-21,
     # adversary B P1-2): an enabled-but-misconfigured chat bridge used to

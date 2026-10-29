@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A text embedding default that is not downloaded is one readable sentence per process**, not an error per account
+  on every boot: "Semantic memory search is off: the text embedding model Qwen/Qwen3-Embedding-0.6B is not
+  downloaded. Download it from the console (Models, Defaults, Text Embeddings, Download) or run `abstractcore models
+  download huggingface Qwen/Qwen3-Embedding-0.6B`; structured memory keeps working." With AbstractCore's alias fix the
+  Defaults grid shows that route as "not downloaded" with Download.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
