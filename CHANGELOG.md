@@ -249,6 +249,15 @@ dependency change. See [first-run.md](docs/first-run.md#1b-set-up-your-gateway-t
   `actions.password`; `GET /me` carries `account {display_name, password_set}`; user records' `public_dict`
   carries `password_set` and `display_name`. Activity: "Signed in · With a password.", "Password changed".
 
+- **First-run guide: "Default models", Simple and Advanced** (root backlog 1069). Simple (the default): one
+  **Use recommended** (AbstractCore's picks where you have not chosen your own, the downloads with a progress row
+  each), then the capabilities as coloured badges grouped Input (Text, Image, Voice, Video, Files) and Output (Text,
+  Image, Video, Voice, Music, 3D, Embeddings, Rankers), each with its state in readable names; a badge opens a guided
+  choice (the recommendation first, other models that fit, all engines, and an API key for text). Advanced: one row
+  per capability with engine and model ids. A model set here clears the route's old server address and reasoning
+  effort; an API key is checked before it is stored and never replaces an existing connection. The picks stay
+  AbstractCore's; first-run.md has the rule per memory band, today's and the operator's target (root backlog 1072).
+
 ### Changed
 
 - **First-run guide: Apps after a model.** The Apps step proposes apps only once a default text model exists;

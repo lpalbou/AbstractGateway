@@ -133,6 +133,29 @@ async function fetch(path, options = {}) {
     loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard";
     return res(200, Object.assign({ ok: true, claimed: true, principal: { admin: true } }, scenario.createdBy ? { claim: { created_by: scenario.createdBy } } : {}));
   }
+  if (path === "/api/gateway/config/provider-endpoint-profiles" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    return res(200, { ok: true, profile: { id: body.id, provider_family: body.provider_family, display_name: body.display_name } });
+  }
+  if (path === "/api/gateway/config/provider-endpoint-profiles/discover-models") return res(200, { ok: true, models: ["claude-small", "claude-large"] });
+  if (path.startsWith("/api/gateway/models/download/") && method === "GET") {
+    const child = { job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 40 };
+    return res(200, path.endsWith("/grp_1") ? { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 40, children: [child] } : child);
+  }
+  if (path === "/api/gateway/models/download" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    if (body.recommended) return res(200, { group: { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 10,
+      children: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] },
+      jobs: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] });
+    return res(200, { job: { job_id: `dl_${body.artifact}`, provider: body.provider, artifact: body.artifact, status: "running", state: "downloading" } });
+  }
+  if (path === "/api/gateway/config/capability-defaults/apply-recommended") {
+    // AbstractCore's report rows (plan_recommended_capability_defaults): `key`, `action`
+    // (apply | overwrite | already | kept | unavailable | cleared), `changed`, before/after.
+    const action = scenario.applyAction || "apply";
+    return res(200, { applied_recommended: { routes: [{ key: "input.text", action, changed: action === "apply",
+      before: action === "kept" ? { provider: "ollama", model: "llama3.2:3b" } : {}, after: { provider: "lmstudio", model: "qwen/qwen3.5-9b@4bit" } }] } });
+  }
   if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
   if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
   if (path === "/api/gateway/session/onboarding" && method === "POST") {
@@ -204,11 +227,11 @@ async function fetch(path, options = {}) {
     recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
-  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: [] });
+  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: (scenario.existingProfiles || []).map((id) => ({ id })) });
   if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
   return res(200, {});
 }
@@ -505,6 +528,118 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+const dmClick = async (boxId, dataset) => { el(boxId).onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
+if (scenario.name === "default-models") {
+  // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
+  context.firstRunGoto("model"); await settle();
+  if (!el("first-run-default-models").innerHTML.includes('data-dm-badge="in-text"')) fail("the step must open in Simple mode");
+  await dmClick("first-run-default-models", { dmMode: "advanced" });
+  const html = el("first-run-default-models").innerHTML;
+  const rows = (html.match(/data-dm-row="/g) || []).length;
+  if (rows !== 9) fail("expected 9 capability rows, got " + rows);
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
+    if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
+  }
+  await dmClick("first-run-default-models", { dmUse: "input.text" });
+  const put = calls.find((c) => c.method === "PUT" && c.path === "/api/gateway/config/capability-defaults/input/text");
+  if (!put) fail("Use recommended did not set the text route");
+  const pb = JSON.parse(put.body);
+  // Review 1069: the previous model's base URL and reasoning effort are cleared, never carried over.
+  if (pb.provider !== "lmstudio" || pb.model !== "qwen/qwen3.5-9b@4bit" || pb.base_url !== "" || pb.reasoning !== "") fail("Use recommended body: " + put.body);
+  if (calls.some((c) => c.method === "PUT" && c.path.endsWith("/output/text"))) fail("output.text is derived from input.text: one write only");
+}
+if (scenario.name === "simple-mode") {
+  // 1069 Simple mode (default): one Use recommended, then capability badges in readable names.
+  context.firstRunGoto("model"); await settle();
+  let html = el("first-run-default-models").innerHTML;
+  const ins = (html.match(/data-dm-badge="in-/g) || []).length;
+  const outs = (html.match(/data-dm-badge="out-/g) || []).length;
+  if (ins !== 5 || outs !== 8) fail(`expected 5 input and 8 output badges, got ${ins} and ${outs}`);
+  for (const want of ["Use recommended", "Recommended for this computer", ">Input <", ">Output <", "Embeddings", "Rankers", "Files", "Qwen3.5 9B", "dm-badge--recommended", "dm-badge--covered", "dm-badge--none", "<svg"]) {
+    if (!html.includes(want)) fail("simple mode missing " + want + ": " + html.slice(0, 1200));
+  }
+  const badges = html.slice(html.indexOf('class="dm-groups"'));
+  if (/qwen\//.test(badges) || /@4bit/.test(badges)) fail("a badge shows a model id (ADR 0043: readable names only)");
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("Simple mode must hide the tables and catalog below");
+  // A download repaints the Multimodal table too, which queries its own rows: this scenario's fake
+  // elements answer selector queries with nothing (each scenario runs in its own process).
+  Element.prototype.querySelectorAll = function () { return []; };
+  Element.prototype.querySelector = function (sel) { return new Element(`q:${sel}`); };
+  // The one button: recommended routes without force, then the recommended downloads as one job.
+  await dmClick("first-run-default-models", { dmRecommended: "1" });
+  const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
+  if (!apply || JSON.parse(apply.body).force !== false) fail("Use recommended must keep the person's own choices (force false): " + (apply && apply.body));
+  const said = el("first-run-message").textContent;
+  if (/input\.text|lmstudio|qwen\//.test(said)) fail("Simple mode's message shows route keys or model ids (ADR 0043): " + said);
+  if (scenario.applyAction === "kept") {
+    // Review 1069: the route you configured differently is kept, and its recommended model is NOT downloaded.
+    if (calls.some((c) => c.path === "/api/gateway/models/download" && c.method === "POST")) fail("a kept route's recommended model was downloaded");
+    if (!/kept/.test(said)) fail("the message does not say your choice is kept: " + said);
+    console.log("OK");
+    process.exit(0);
+  }
+  const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
+  if (!dl || JSON.parse(dl.body).recommended !== true) fail("Use recommended did not start the recommended downloads");
+  html = el("first-run-default-models").innerHTML;
+  if (!html.includes("data-dl-group=") || !html.includes("ui-dl-child")) fail("no per-download progress after Use recommended. message: " + el("first-run-message").textContent + " / dl calls: " + JSON.stringify(calls.filter((c) => c.path.includes("/models/download")).map((c) => [c.method, c.path])));
+  // Guided choice: recommended first, other models that fit, an API key (text).
+  await dmClick("first-run-default-models", { dmBadge: "in-text" });
+  if (String(el("dm-choice-backdrop").className).includes("hidden")) fail("the badge did not open its choice");
+  let choice = el("dm-choice-body").innerHTML;
+  for (const want of ["Recommended for this computer", "Other models that fit", "Qwen3.5 9B", 'data-dmc="use-other"', "All engines and models…", "Or use an API key"]) {
+    if (!choice.includes(want)) fail("guided choice missing " + want + ": " + choice.slice(0, 900));
+  }
+  if (choice.includes("Big Model")) fail("a model that does not fit this computer is offered");
+  // A half-typed key survives the catalog's re-render (review 1069).
+  // A real browser rebuilds the input when the body's HTML is replaced: the fake does too.
+  const bodyEl = el("dm-choice-body");
+  let bodyHtml = bodyEl.innerHTML;
+  Object.defineProperty(bodyEl, "innerHTML", { configurable: true, get() { return bodyHtml; }, set(v) { bodyHtml = v; el("dm-key-value").value = ""; } });
+  el("dm-key-value").value = "sk-half";
+  vm.runInContext("renderDmChoice()", context);
+  if (el("dm-key-value").value !== "sk-half") fail("a re-render wiped the half-typed API key");
+  // One Escape closes one layer: the dialog, never the guide below it.
+  if (!vm.runInContext("typeof dmUi.release === 'function'", context)) fail("the choice dialog is not bound as a modal (bindModal: focus trap, Escape, focus back)");
+  // Review 1069: a covered input (the grid copies the text model onto it) reads Covered; Ollama tags
+  // stay distinct; GGUF is no embeddings model; output.video needs text-to-video.
+  const checks = vm.runInContext(`(() => {
+    const savedDefaults = state.defaults, savedCatalog = dmUi.catalog;
+    state.defaults = savedDefaults.concat([{ key: "input.image", kind: "input", modality: "image", provider: "lmstudio", model: "qwen/qwen3.5-9b", covered_by: "input.text" }]);
+    const covered = dmState(dmCapById("in-image")).kind;
+    dmUi.catalog = { rows: [
+      { id: "e", display_name: "E", capabilities: { embedding: true }, artifacts: [{ provider: "huggingface", artifact: "x/E-GGUF:Q4_K_M" }, { provider: "huggingface", artifact: "x/E" }] },
+      { id: "v", display_name: "V", capabilities: { video_generation: true, text_to_video: false, image_to_video: true }, artifacts: [{ provider: "diffusers", artifact: "v/i2v" }] },
+    ] };
+    const emb = dmOtherModels(dmCapById("out-embeddings")).map((o) => o.artifact);
+    const vid = dmOtherModels(dmCapById("out-video")).length;
+    state.defaults = savedDefaults; dmUi.catalog = savedCatalog;
+    return { covered, emb, vid, ollamaSame: dmReadableName("ollama", "qwen3:8b") === dmReadableName("ollama", "qwen3:14b") };
+  })()`, context);
+  if (checks.covered !== "covered") fail("a covered input reads " + checks.covered + ", not Covered");
+  if (checks.emb.length !== 1 || checks.emb[0] !== "x/E") fail("embeddings offered a GGUF artifact: " + JSON.stringify(checks.emb));
+  if (checks.vid !== 0) fail("output.video offered an image-to-video-only model");
+  if (checks.ollamaSame) fail("two Ollama tags read the same name");
+  // The key is checked before anything is stored, and an existing connection is never overwritten.
+  el("dm-key-family").value = "anthropic";
+  el("dm-key-value").value = "sk-ant-test-key";
+  await dmClick("dm-choice-body", { dmc: "key-check" });
+  const disc = calls.find((c) => c.path.endsWith("/discover-models"));
+  const db = JSON.parse(disc.body);
+  if (db.provider_family !== "anthropic" || db.api_key !== "sk-ant-test-key" || db.profile_id) fail("the key must be checked as a draft: " + disc.body);
+  if (calls.some((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST")) fail("a connection was stored before the key was checked");
+  choice = el("dm-choice-body").innerHTML;
+  if (!choice.includes("claude-large")) fail("the key's models are not offered");
+  el("dm-key-model").value = "claude-large";
+  const before = calls.length;
+  await dmClick("dm-choice-body", { dmc: "key-use" });
+  const prof = calls.slice(before).find((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST");
+  const pp = JSON.parse(prof.body);
+  if (pp.id !== "anthropic-key-2" || pp.base_url !== "" || pp.api_key !== "sk-ant-test-key") fail("existing connection must not be overwritten (expected anthropic-key-2): " + prof.body);
+  const puts = calls.slice(before).filter((c) => c.method === "PUT" && /capability-defaults\/(input|output)\/text$/.test(c.path));
+  if (puts.length !== 1 || !puts[0].path.endsWith("/input/text")) fail("one write to input/text expected: " + JSON.stringify(puts.map((c) => c.path)));
+  const tb = JSON.parse(puts[0].body);
+  if (tb.provider !== "endpoint:anthropic-key-2" || tb.model !== "claude-large" || tb.base_url !== "" || tb.reasoning !== "") fail("text route body: " + puts[0].body);
+}
 if (scenario.name === "apps-gate") {
   // No default text model yet: the Apps step proposes no app and points back to the model step.
   await context.openFirstRunWizard("apps"); await settle();
@@ -570,6 +705,27 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
                   "password_rule": "At least 10 characters.", "password_min_length": 10}
     result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
                    "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_simple_mode_badges_recommended_flow_and_guided_choice() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"]})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_use_recommended_keeps_your_route_and_does_not_download_its_recommendation() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"], "applyAction": "kept"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_step_lists_every_capability_and_sets_them() -> None:
+    result = _run({"name": "default-models", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "textModel": "qwen/qwen3.5-4b"})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 

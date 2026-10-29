@@ -460,6 +460,53 @@ CONSOLE_UI_CSS = r"""
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
     .first-run-panel { display: grid; gap: 22px; min-width: 0; border: 0; background: transparent; padding: 0; box-shadow: none; border-radius: var(--radius-sm); }
     .first-run-panel.hidden { display: none !important; }
+    /* 1069: the Default models table. The table scrolls inside its wrap on a narrow screen; the
+       actions wrap inside their cell instead of pushing the table past the panel. */
+    .first-run-default-models { width: 100%; border-collapse: collapse; }
+    .first-run-default-models th, .first-run-default-models td { vertical-align: top; padding: 10px 8px; text-align: left; }
+    .first-run-default-models td.actions { width: 1%; }
+    .first-run-default-models .dm-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 9.5em; }
+    .first-run-default-models .chip { white-space: nowrap; }
+    #first-run-default-models .ui-section-title .ui-sub { white-space: normal; }
+    /* 1069 Simple mode: the guide's model step shows only the hero and the badges (Advanced shows
+       the table, the download cards and the catalog). */
+    #first-run-model-body.dm-simple > :not(#first-run-default-models) { display: none; }
+    .dm-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--ui-overlay-bg, rgba(127,127,127,.12)); justify-self: end; }
+    .dm-mode button { border: 0; background: transparent; color: var(--text-secondary); padding: 6px 14px; border-radius: 999px; font-weight: 600; cursor: pointer; }
+    .dm-mode button[aria-pressed="true"] { background: var(--bg-card, var(--bg-secondary)); color: var(--text-primary); box-shadow: var(--ui-shadow-1); }
+    #first-run-default-models { display: grid; gap: 20px; }
+    .dm-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px 28px; flex-wrap: wrap; padding: 22px 24px; border-radius: var(--radius-md);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, #6366f1 16%, transparent));
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+    .dm-hero__text { flex: 1 1 340px; min-width: 0; }
+    .dm-hero h3 { margin: 0 0 6px; font-size: var(--font-size-xl); }
+    .dm-hero p { margin: 0; color: var(--text-secondary); }
+    .dm-hero__btn { font-size: var(--font-size-lg); padding: 12px 26px; }
+    .dm-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; }
+    .dm-group h4 { margin: 0 0 10px; font-size: var(--font-size-md); text-transform: uppercase; letter-spacing: .06em; }
+    .dm-group h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-secondary); margin-left: 6px; }
+    .dm-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; min-width: 0; }
+    .dm-group { min-width: 0; }
+    .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-width: 0; width: 100%; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
+      background: color-mix(in srgb, var(--dm-hue) 13%, var(--bg-card, transparent)); border: 1px solid color-mix(in srgb, var(--dm-hue) 38%, transparent); color: var(--text-primary); }
+    .dm-badge:hover, .dm-badge:focus-visible { border-color: var(--dm-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-hue) 35%, transparent); outline: none; }
+    .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--radius-sm); background: var(--dm-hue); color: #fff; }
+    .dm-badge__icon { width: 20px; height: 20px; }
+    .dm-badge__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
+    .dm-badge__label { font-weight: 650; }
+    .dm-badge__state { font-size: var(--font-size-sm); font-weight: 600; color: color-mix(in srgb, var(--dm-hue) 75%, var(--text-primary)); }
+    .dm-badge--none .dm-badge__state { color: var(--text-secondary); }
+    .dm-badge--none .dm-badge__mark { background: color-mix(in srgb, var(--dm-hue) 45%, var(--text-secondary)); }
+    .dm-badge__model { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; white-space: normal; }
+    .dm-progress { min-width: 0; }
+    .dm-choice { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
+    .dm-choice__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .dm-choice__head h2 { margin: 0; font-size: var(--font-size-lg); }
+    .dm-choice__body { display: grid; gap: 18px; margin-top: 12px; }
+    .dm-choice__part h3 { margin: 0 0 8px; font-size: var(--font-size-md); }
+    .dm-choice__pick { display: grid; gap: 2px; }
+    .dm-choice__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+    .dm-choice__list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--ui-overlay-bg, rgba(127,127,127,.08)); }
     .first-run-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 14px clamp(20px, 3.4vw, 60px); border-top: 1px solid var(--ui-border-1); background: var(--bg-secondary); }
     .first-run-footer .message { flex: 1 1 auto; margin: 0; min-width: 0; font-size: var(--font-size-md); }
     .first-run-footer button { min-width: 96px; }
