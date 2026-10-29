@@ -3885,7 +3885,7 @@ CONSOLE_UI_JS = r"""
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
-    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null, warming: false };
+    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, about: null, warming: false };
     function islandsLib() {
       try {
         const w = typeof window !== "undefined" ? window : null;
@@ -3938,11 +3938,17 @@ CONSOLE_UI_JS = r"""
           // cluster carries the memory/compute widget (#topbar-resources);
           // the addresses, with Copy, live on the Network page.
           // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
-          { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
+        // The kit's ONE account widget (ui-kit 0.9.6): person icon, name and
+        // status light; its menu says who and which gateway, Copy user id and
+        // Disconnect (which calls onDisconnect below). It reads the console's
+        // own GET /api/gateway/me body (connection.me, held by renderAccount);
+        // no "Signed in as" text extra beside the pill any more.
+        identity: "menu",
         connection: {
           phase: islands.phase,
           signingOut: islands.signingOut,
+          me: state.me || null,
           onConnect: () => { const t = $("login-token"); if (t && t.focus) t.focus(); },
           onDisconnect: () => { islands.signingOut = true; renderIslands(); signOut(); },
         },
@@ -4084,9 +4090,8 @@ CONSOLE_UI_JS = r"""
       // The Docs assistant island follows the session (connected) and its open state.
       if (typeof renderDocsAssistant === "function") renderDocsAssistant();
     }
-    function islandsSetConnection(ok, text) {
+    function islandsSetConnection(ok) {
       islands.phase = ok ? "connected" : "disconnected";
-      islands.identity = ok ? String(text || "") : "";
       renderIslands();
     }
     function mountConsoleIslands() {

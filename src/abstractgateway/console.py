@@ -3915,7 +3915,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, me: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -9159,7 +9159,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
-	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok, text);
+	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok);
 	      // Signed out = the assistant has no session to run with; close the
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
@@ -12565,6 +12565,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
+	      // The whole /me body, for the kit account widget (topBarIslandProps
+	      // connection.me); null when signed out, so no stale identity remains.
+	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
 		        document.body.classList.remove("signed-in");
