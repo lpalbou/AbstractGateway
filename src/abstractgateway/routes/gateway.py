@@ -82,6 +82,7 @@ from ..provider_defaults import (
 )
 from ..provider_endpoint_profiles import (
     ProviderEndpointProfileError,
+    ProviderEndpointProfileExistsError,
     ProviderEndpointProfileStore,
     effective_endpoint_profiles,
     endpoint_profile_store_authority,
@@ -26443,6 +26444,9 @@ class _GatewayProviderEndpointProfileCreateRequest(BaseModel):
     capabilities: List[str] = Field(default_factory=lambda: ["text"])
     allowed_models: List[str] = Field(default_factory=list)
     enabled: bool = True
+    # The setup guide's cloud provider cards: create a NEW connection or fail with 409,
+    # never overwrite one with the same id (the console picks a fresh id; this makes it safe).
+    create_only: bool = False
 
 
 class _GatewayProviderEndpointProfileUpdateRequest(BaseModel):
@@ -27983,7 +27987,10 @@ async def provider_endpoint_profiles_create(request: Request, req: _GatewayProvi
             capabilities=req.capabilities,
             allowed_models=req.allowed_models,
             enabled=req.enabled,
+            create_only=bool(req.create_only),
         )
+    except ProviderEndpointProfileExistsError as exc:
+        raise HTTPException(status_code=409, detail={"reason_code": "connection_exists", "message": str(exc)}) from exc
     except ProviderEndpointProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -28057,7 +28064,7 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        raise HTTPException(status_code=502, detail=redact_provider_key(str(e), provider_api_key)) from e
     raw_models = payload.get("models") if isinstance(payload, dict) else None
     models = _dedupe_strings([str(m).strip() for m in raw_models if isinstance(m, str) and str(m).strip()]) if isinstance(raw_models, list) else []
     models.sort()
@@ -28076,8 +28083,48 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
     if isinstance(payload, dict) and isinstance(payload.get("source"), str) and payload.get("source"):
         body["upstream_source"] = str(payload.get("source"))
     if isinstance(payload, dict) and payload.get("error"):
-        body["error"] = str(payload.get("error"))
+        # The provider's own words can quote the key (OpenAI: "Incorrect API key provided:
+        # sk-abcd****1234"): never echoed back.
+        body["error"] = redact_provider_key(str(payload.get("error")), provider_api_key)
+    if not models:
+        body["error_kind"] = provider_key_error_kind(body.get("error"))
     return body
+
+
+_MASKED_KEY_RE = re.compile(r"[A-Za-z0-9_\-]*\*{3,}[A-Za-z0-9_\-]*")
+
+
+def redact_provider_key(text: str, api_key: Optional[str]) -> str:
+    """`text` with the key, and any provider-masked echo of it (`sk-abcd****1234`), replaced
+    by "[key]". A key check's answer never carries the key back to the page."""
+    out = str(text or "")
+    key = str(api_key or "").strip()
+    if key:
+        out = out.replace(key, "[key]")
+        if len(key) >= 12:
+            # Fragments a provider may quote: its first or last 8 characters.
+            for frag in {key[:8], key[-8:]}:
+                out = out.replace(frag, "[key]")
+    return re.sub(r"(?:\[key\])+", "[key]", _MASKED_KEY_RE.sub("[key]", out))
+
+
+_KEY_ERROR_KINDS = (
+    ("auth", re.compile(r"\b40[13]\b|authenticat|unauthori[sz]ed|invalid[ _-]?(x-)?api[ _-]?key|incorrect api key|user not found|forbidden", re.I)),
+    ("rate_limited", re.compile(r"\b429\b|rate[ _-]?limit|quota|insufficient[ _-]?(credits|balance)", re.I)),
+    ("unreachable", re.compile(r"timed? ?out|timeout|connect|resolve|name or service|network|unreachable|ssl|certificate|dns", re.I)),
+)
+
+
+def provider_key_error_kind(error: Optional[str]) -> str:
+    """Why a key check listed no model, for the card's sentence: auth | rate_limited |
+    unreachable | other (a reason we cannot classify) | no_models (no reason given)."""
+    text = str(error or "").strip()
+    if not text:
+        return "no_models"
+    for kind, rx in _KEY_ERROR_KINDS:
+        if rx.search(text):
+            return kind
+    return "other"
 
 
 def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
