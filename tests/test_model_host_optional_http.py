@@ -239,10 +239,13 @@ def test_disable_retries_failed_stop_and_does_not_claim_disabled(tmp_path, monke
     _settings(data)
     owner.reconcile()
     assert owner.snapshot()["legacy"]["state"] == "stopping" and handle.is_running
+    assert lifecycle.read_http_status(data)["legacy"]["state"] == "stopping"
     clock[0] += 1
     owner.reconcile()
     assert owner.snapshot()["legacy"]["state"] == "disabled" and not handle.is_running
     assert "legacy" not in owner._handles
+    assert lifecycle.read_http_status(data) == {}
+    assert not (data / lifecycle.STATUS_FILE).exists()
 
 
 def test_direct_switch_is_additive_and_does_not_prepare_legacy_credentials(tmp_path):
@@ -310,3 +313,42 @@ def test_http_status_is_nonsecret_atomic_private_and_ignores_stale_owner_or_off(
     owner._stop.set()
     owner._run()
     assert not path.exists(), "clean shutdown removes the service status"
+
+
+def test_unchanged_http_reconciliation_does_not_rewrite_status(tmp_path, monkeypatch):
+    from abstractgateway import model_host_http as lifecycle, split_mode
+    class Listener:
+        is_running = True
+        url = "http://127.0.0.1:12345"
+        def __init__(self, data): pass
+        def start(self): return self
+    monkeypatch.setattr(split_mode, "ModelHost", Listener)
+    data = tmp_path / "data"
+    _settings(data, legacy=True)
+    owner = lifecycle.OptionalHTTP(data)
+    owner.reconcile()
+    writes = []
+    original = lifecycle.os.replace
+    def replace(*args):
+        writes.append(args)
+        return original(*args)
+    monkeypatch.setattr(lifecycle.os, "replace", replace)
+    for _ in range(10):
+        owner.reconcile()
+    assert not writes
+
+
+def test_configuration_recovery_clears_persisted_error_with_both_listeners_up(tmp_path):
+    from types import SimpleNamespace
+    from abstractgateway import model_host_http as lifecycle
+    data = tmp_path / "data"
+    _settings(data, legacy=True, direct=True)
+    owner = lifecycle.OptionalHTTP(data)
+    owner._requested = {"legacy": True, "direct": True}
+    owner._handles = {name: SimpleNamespace(is_running=True) for name in owner._requested}
+    for name in owner._requested:
+        owner._record(name, "up", url="http://127.0.0.1:12345")
+    owner._record("configuration", "failed", error="invalid configuration")
+    assert "configuration" in lifecycle.read_http_status(data)
+    owner.reconcile()
+    assert "configuration" not in lifecycle.read_http_status(data)

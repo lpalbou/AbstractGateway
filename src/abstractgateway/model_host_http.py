@@ -30,13 +30,16 @@ def read_http_status(data_dir: Path) -> dict:
 
     try:
         settings = read_settings(data_dir)
-        if not (settings.enabled or settings.direct_enabled):
-            return {}
         doc = json.loads((Path(data_dir) / STATUS_FILE).read_text(encoding="utf-8"))
         if not isinstance(doc, dict) or pid_alive(doc.get("pid")) is not True:
             return {}
         services = doc.get("services")
-        return services if isinstance(services, dict) else {}
+        if not isinstance(services, dict):
+            return {}
+        if not (settings.enabled or settings.direct_enabled):
+            return {name: state for name, state in services.items()
+                    if isinstance(state, dict) and state.get("state") == "stopping"}
+        return services
     except (OSError, ValueError):
         return {}
 
@@ -53,6 +56,7 @@ class OptionalHTTP:
         self._attempts = {"legacy": [], "direct": []}
         self._next_attempt = {"legacy": 0.0, "direct": 0.0}
         self._gave_up = {"legacy": False, "direct": False}
+        self._published = None
         self._thread = threading.Thread(target=self._run, name="model-host-optional-http", daemon=True)
 
     def start(self) -> None:
@@ -72,15 +76,20 @@ class OptionalHTTP:
 
     def _publish(self) -> None:
         path = self.data_dir / STATUS_FILE
-        if not any(self._requested.values()):
+        if not any(self._requested.values()) and not self._handles:
             path.unlink(missing_ok=True)
+            self._published = None
+            return
+        payload = json.dumps({"pid": os.getpid(), "services": self.snapshot()})
+        if payload == self._published:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=".model-host-http-", dir=path.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump({"pid": os.getpid(), "services": self.snapshot()}, stream)
+                stream.write(payload)
             os.replace(tmp, path)
+            self._published = payload
         finally:
             Path(tmp).unlink(missing_ok=True)
 
@@ -142,6 +151,7 @@ class OptionalHTTP:
                 self._record(name, "failed", error=f"{type(exc).__name__}: {exc}")
                 self._next_attempt[name] = now + BACKOFF_S[min(len(attempts) - 1, len(BACKOFF_S) - 1)]
                 logger.exception("Optional %s Core HTTP listener failed; native RPC remains available", name)
+        self._publish()
 
     def _run(self) -> None:
         try:
@@ -156,11 +166,15 @@ class OptionalHTTP:
             for name, handle in list(self._handles.items()):
                 try:
                     handle.stop()
-                except Exception:
+                except Exception as exc:
+                    self._record(name, "stopping", url=getattr(handle, "url", None),
+                                 error=f"{type(exc).__name__}: {exc}")
                     logger.exception("Optional %s HTTP listener cleanup failed", name)
                 else:
                     del self._handles[name]
-            (self.data_dir / STATUS_FILE).unlink(missing_ok=True)
+                    self._record(name, "disabled")
+            if not self._handles:
+                (self.data_dir / STATUS_FILE).unlink(missing_ok=True)
 
     def stop(self) -> None:
         self._stop.set()
