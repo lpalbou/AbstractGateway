@@ -274,7 +274,25 @@ MAILBOXES_JS = r"""
     // ---- the mailbox form (a dialog): Email address → Sign in / Password → Server settings ----
     // st: {target: "primary"|"other", id, address, found, finding, usePassword, password, login, imap, smtp,
     //      serversOpen, write, errors, problem, saving}
-    function mailboxSheetMarkup(st) {
+    // The form's server row when discovery said nothing (or left a field out): the implicit-TLS
+// ports, IMAP 993 and SMTP 465, both with SSL. A found value is kept as it is.
+// The port that goes with a security choice, when the port shown is the other choice's
+// standard port (SMTP 465 SSL / 587 STARTTLS, IMAP 993 / 143); a port typed by hand is kept.
+function mailboxPortForSecurity(kind, security, port) {
+  const std = kind === "smtp" ? { ssl: "465", starttls: "587" } : { ssl: "993", starttls: "143" };
+  const now = String(port || "").trim();
+  return (now === "" || Object.values(std).includes(now)) ? (std[security] || now) : now;
+}
+
+function mailboxServerDefaults(found, port) {
+  const out = Object.assign({}, found || {});
+  if (!String(out.port || "").trim()) out.port = port;
+  if (out.security !== "starttls" && out.security !== "ssl") out.security = "ssl";
+  if (out.host === undefined || out.host === null) out.host = "";
+  return out;
+}
+
+function mailboxSheetMarkup(st) {
       const e = st.errors || {};
       const err = (k) => e[k] ? `<p class="mbs-error" role="alert">${esc(e[k])}</p>` : "";
       const inv = (k) => e[k] ? ' aria-invalid="true"' : "";
@@ -432,8 +450,8 @@ MAILBOXES_JS = r"""
       st.finding = false;
       if (st.found && st.found.address !== d.address) { st.password = ""; st.usePassword = false; st.write = false; }  // another address: start step 2 afresh
       st.found = d;
-      st.imap = Object.assign({}, d.imap || {});
-      st.smtp = Object.assign({}, d.smtp || {});
+      st.imap = mailboxServerDefaults(d.imap, 993);
+      st.smtp = mailboxServerDefaults(d.smtp, 465);
       st.login = d.login || a;
       st.serversOpen = d.source === "none" || !(d.imap && d.imap.host);
       st.errors = {};
@@ -597,6 +615,11 @@ MAILBOXES_JS = r"""
           const box = t.closest(".af-form__field");
           const msg = box && box.querySelector(".mbs-error");
           if (msg) msg.remove();
+        }
+        if (k === "smtp.security" || k === "imap.security") {
+          const kind = k.split(".")[0];
+          const portEl = body.querySelector(`[data-mbs="${kind}.port"]`);
+          if (portEl) portEl.value = mailboxPortForSecurity(kind, t.value, portEl.value);
         }
         if (k === "address") {
           if (mbx.timer) clearTimeout(mbx.timer);
