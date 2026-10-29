@@ -490,7 +490,7 @@ CONSOLE_UI_CSS = r"""
     .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-width: 0; width: 100%; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
       background: color-mix(in srgb, var(--dm-hue) 13%, var(--bg-card, transparent)); border: 1px solid color-mix(in srgb, var(--dm-hue) 38%, transparent); color: var(--text-primary); }
     .dm-badge:hover, .dm-badge:focus-visible { border-color: var(--dm-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-hue) 35%, transparent); outline: none; }
-    .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--dm-hue); color: #fff; }
+    .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--radius-sm); background: var(--dm-hue); color: #fff; }
     .dm-badge__icon { width: 20px; height: 20px; }
     .dm-badge__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
     .dm-badge__label { font-weight: 650; }

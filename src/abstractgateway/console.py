@@ -6915,7 +6915,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // the same string on all five surfaces. Do not "simplify" one of them
 	    // back to 1e9: that is exactly the divergence this replaced (89.99 GB
 	    // on the web vs 83.8 GB in the TUIs for one 89,986,353,824 B GGUF).
-	    function _uiBytes(n) {
+	    function _fmtBytes(n) {
 	      if (n === null || n === undefined) return "?";
 	      const KiB = 1024, MiB = 1024 * KiB, GiB = 1024 * MiB, TiB = 1024 * GiB;
 	      if (n >= TiB) return (n / TiB).toFixed(1) + " TiB";
@@ -7021,7 +7021,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          }
 	          tr.append(stTd);
 	          const size = document.createElement("td");
-	          size.textContent = (typeof r.size_bytes === "number") ? _uiBytes(r.size_bytes) : "";
+	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
 	          if (r.size_note) size.title = r.size_note;
 	          tr.append(size);
 	          // Workspace cell (round 11): opens the Workspaces modals — the eligible workspaces for the default
@@ -7129,7 +7129,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            : "The gateway default runtime (admin plane)",
 	      ];
 	      if (r.kind === "entity") bits.push(r.liveness === "stopped" ? "STOPPED" : (r.state === "awake" || !r.state ? "resting" : r.state));
-	      if (typeof r.size_bytes === "number") bits.push(_uiBytes(r.size_bytes));
+	      if (typeof r.size_bytes === "number") bits.push(_fmtBytes(r.size_bytes));
 	      if (r.materialized === false) bits.push("not materialized yet");
 	      $("runtime-detail-sub").textContent = bits.join(" · ") + ".";
 	      // TWO blocks, two tbodies: the default
@@ -8204,8 +8204,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      nameTd.append(nameLine, descLine);
 	      tr.append(nameTd);
 	      const sizeCell = (typeof h.size_bytes === "number")
-	        ? _uiBytes(h.size_bytes)
-	        : (h.exists === false ? "missing" : (sizing ? null : _uiBytes(h.size_bytes)));
+	        ? _fmtBytes(h.size_bytes)
+	        : (h.exists === false ? "missing" : (sizing ? null : _fmtBytes(h.size_bytes)));
 	      for (const cell of [h.kind || "", sizeCell]) {
 	        const td = document.createElement("td");
 	        if (cell === null) {
@@ -8368,7 +8368,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (filteredOut > 0) notes.push(`${filteredOut} cache${filteredOut === 1 ? "" : "s"} hidden by the filter.`);
 	        if (!sizing && mine.length) {
 	          const total = mine.reduce((a, h) => a + (typeof h.size_bytes === "number" ? h.size_bytes : 0), 0);
-	          notes.push(`${mine.length} cache${mine.length === 1 ? "" : "s"} · ${_uiBytes(total)} on disk.`);
+	          notes.push(`${mine.length} cache${mine.length === 1 ? "" : "s"} · ${_fmtBytes(total)} on disk.`);
 	        }
 	        if (durable > 0) {
 	          notes.push(`${durable} durable store${durable === 1 ? "" : "s"} (deliverables, session history, entity minds) are not caches — deliverables live in the Artifacts tab.`);
@@ -8522,7 +8522,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          tr.onkeydown = (ev) => {
 	            if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); viewLogFile(f.home, f.name); }
 	          };
-	          for (const cell of [f.name, f.home, _uiBytes(f.size_bytes), (f.modified_at || "").replace("T", " ").slice(0, 19)]) {
+	          for (const cell of [f.name, f.home, _fmtBytes(f.size_bytes), (f.modified_at || "").replace("T", " ").slice(0, 19)]) {
 	            const td = document.createElement("td");
 	            td.textContent = String(cell);
 	            tr.append(td);
@@ -8600,8 +8600,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const data = await api(`/api/gateway/admin/logs/read?home=${encodeURIComponent(home)}&file=${encodeURIComponent(file)}&max_bytes=${encodeURIComponent(maxBytes)}`);
 	        pre.textContent = data.content || "(empty file)";
 	        $("log-modal-status").textContent = data.truncated
-	          ? `showing the last ${_uiBytes(data.bytes)} — earlier content not loaded (pick a bigger window to see more)`
-	          : `whole file (${_uiBytes(data.bytes)})`;
+	          ? `showing the last ${_fmtBytes(data.bytes)} — earlier content not loaded (pick a bigger window to see more)`
+	          : `whole file (${_fmtBytes(data.bytes)})`;
 	        pre.scrollTop = pre.scrollHeight;
 	      } catch (e) {
 	        pre.textContent = String((e && e.message) || e);
@@ -8663,7 +8663,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const cells = [
 	            name,
 	            kind + (a.content_type ? ` (${a.content_type})` : ""),
-	            _uiBytes(a.size_bytes),
+	            _fmtBytes(a.size_bytes),
 	            a.workflow_id || "—",
 	            a.run_id ? String(a.run_id).slice(0, 8) : "—",
 	            (a.created_at || "").replace("T", " ").slice(0, 19),
@@ -8753,7 +8753,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("artifact-modal-sub").textContent = [
 	        kind,
 	        a.content_type || "",
-	        typeof a.size_bytes === "number" ? _uiBytes(a.size_bytes) : "",
+	        typeof a.size_bytes === "number" ? _fmtBytes(a.size_bytes) : "",
 	        (a.created_at || "").replace("T", " ").slice(0, 19),
 	      ].filter(Boolean).join(" · ");
 	      const meta = $("artifact-modal-meta");
@@ -8817,7 +8817,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          content.append(el);
 	        } else if (kind === "markdown" || kind === "json" || kind === "text" || kind === "code" || kind === "html") {
 	          if (tooBig) {
-	            content.textContent = `Too large to preview inline (${_uiBytes(a.size_bytes)}) — use Open raw.`;
+	            content.textContent = `Too large to preview inline (${_fmtBytes(a.size_bytes)}) — use Open raw.`;
 	            return;
 	          }
 	          content.textContent = "Loading preview…";
@@ -8878,14 +8878,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        });
 	        const go = await confirmAction({
 	          title: `Purge ${name}?`,
-	          message: `This deletes the CONTENTS of ${name}: ${dry.files_deleted} files, ${_uiBytes(dry.bytes_freed)} freed. The directory itself and its registration survive. This cannot be undone.`,
+	          message: `This deletes the CONTENTS of ${name}: ${dry.files_deleted} files, ${_fmtBytes(dry.bytes_freed)} freed. The directory itself and its registration survive. This cannot be undone.`,
 	          confirmLabel: "Purge",
 	        });
 	        if (!go) { msg.textContent = "Cancelled."; return; }
 	        const done = await api("/api/gateway/admin/data-homes/purge", {
 	          method: "POST", body: JSON.stringify({ name, confirm_name: name }),
 	        });
-	        msg.textContent = `Purged ${name}: ${done.files_deleted} files, ${_uiBytes(done.bytes_freed)} freed` + ((done.errors || []).length ? ` — errors: ${done.errors.join("; ")}` : "");
+	        msg.textContent = `Purged ${name}: ${done.files_deleted} files, ${_fmtBytes(done.bytes_freed)} freed` + ((done.errors || []).length ? ` — errors: ${done.errors.join("; ")}` : "");
 	        // The Cache tab is the ONE cache surface — re-render it off the
 	        // invalidated shared cache.
 	        state.dataHomes = null;
@@ -11078,14 +11078,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const parts = [];
       const active = num(dev.mlx_active_bytes !== undefined ? dev.mlx_active_bytes : dev.allocated_bytes);
       const cache = num(dev.mlx_cache_bytes);
-      if (active !== null) parts.push(`MLX live buffers ${_uiBytes(active)}`);
-      if (cache !== null) parts.push(`MLX allocator cache ${_uiBytes(cache)}`);
+      if (active !== null) parts.push(`MLX live buffers ${_fmtBytes(active)}`);
+      if (cache !== null) parts.push(`MLX allocator cache ${_fmtBytes(cache)}`);
       const metal = num(dev.metal_process_allocated_bytes);
-      if (metal !== null && metal > 0) parts.push(`Metal allocated by this process ${_uiBytes(metal)} (device counter; MLX, torch and llama.cpp buffers are inside it)`);
+      if (metal !== null && metal > 0) parts.push(`Metal allocated by this process ${_fmtBytes(metal)} (device counter; MLX, torch and llama.cpp buffers are inside it)`);
       const mpsLive = num(dev.torch_mps_allocated_bytes);
-      if (mpsLive !== null && mpsLive > 0) parts.push(`torch live tensors (transformers / embeddings / voice) ${_uiBytes(mpsLive)}`);
+      if (mpsLive !== null && mpsLive > 0) parts.push(`torch live tensors (transformers / embeddings / voice) ${_fmtBytes(mpsLive)}`);
       const llama = num(dev.llama_cpp_bytes);
-      if (llama !== null && llama > 0) parts.push(`llama.cpp GGUF engines ${_uiBytes(llama)} (weights + KV allocation, estimated)`);
+      if (llama !== null && llama > 0) parts.push(`llama.cpp GGUF engines ${_fmtBytes(llama)} (weights + KV allocation, estimated)`);
       return parts.length ? parts.join(", ") : "process-local accelerator allocations";
     }
     // WHAT the process holds, by model: `memory.resident.models` (newer
@@ -11160,16 +11160,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const label = `Accelerator heap · ${backend || "device"} (${scope})`;
       const note = "memory-mapped GGUF weights are not counted here";
       const fraction = (used !== null && ceiling !== null && ceiling > 0) ? used / ceiling : null;
-      const value = used === null ? "unknown" : `${_uiBytes(used)}${ceiling === null ? "" : ` / ${_uiBytes(ceiling)}`}`;
+      const value = used === null ? "unknown" : `${_fmtBytes(used)}${ceiling === null ? "" : ` / ${_fmtBytes(ceiling)}`}`;
       const bits = [note];
       bits.push(procWins
         ? (hostUsed === null
             ? `${procField} — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here`
-            : `${procField} — THIS PROCESS ONLY; the cross-process ioreg counter (${_uiBytes(hostUsed)}) does not see MLX buffers on this host`)
+            : `${procField} — THIS PROCESS ONLY; the cross-process ioreg counter (${_fmtBytes(hostUsed)}) does not see MLX buffers on this host`)
         : "device.host_in_use_bytes — driver-allocated accelerator memory across every process on this machine, not just this gateway");
-      if (ceiling !== null) bits.push(wired !== null ? `ceiling: wired limit ${_uiBytes(wired)}` : `ceiling: device total ${_uiBytes(total)}`);
-      if (hostUsed !== null && procUsed !== null) bits.push(`this process: ${_uiBytes(procUsed)}`);
-      if (wired !== null && total !== null) bits.push(`device total ${_uiBytes(total)}`);
+      if (ceiling !== null) bits.push(wired !== null ? `ceiling: wired limit ${_fmtBytes(wired)}` : `ceiling: device total ${_fmtBytes(total)}`);
+      if (hostUsed !== null && procUsed !== null) bits.push(`this process: ${_fmtBytes(procUsed)}`);
+      if (wired !== null && total !== null) bits.push(`device total ${_fmtBytes(total)}`);
       return { scope, used, ceiling, fraction, label, note, value, title: bits.join(" · "), hostUsed, procUsed, wired, total };
     }
     // WHAT IS ACTUALLY EATING THE MEMORY, itemized (operator: "not only to see
@@ -11266,7 +11266,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // these and the items so no reader adds the two groups together.
       const references = [];
       if (sumWeights !== null) {
-        references.push({ kind: "reference", key: "sum_model_weights", name: "Σ model weights", bytes: sumWeights, value: _uiBytes(sumWeights), detail: "sum of the resident model weights above" });
+        references.push({ kind: "reference", key: "sum_model_weights", name: "Σ model weights", bytes: sumWeights, value: _fmtBytes(sumWeights), detail: "sum of the resident model weights above" });
       }
       const ramUsed = num(ram.used_bytes);
       const ramTotal = num(ram.total_bytes);
@@ -11276,7 +11276,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           key: "ram",
           name: "RAM used",
           bytes: ramUsed,
-          value: ramTotal === null ? _uiBytes(ramUsed) : `${_uiBytes(ramUsed)} / ${_uiBytes(ramTotal)}`,
+          value: ramTotal === null ? _fmtBytes(ramUsed) : `${_fmtBytes(ramUsed)} / ${_fmtBytes(ramTotal)}`,
           detail: "system memory in use / installed",
         });
       }
@@ -11462,7 +11462,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        ? ram.used_bytes / ram.total_bytes
 	        : (typeof ram.percent === "number" ? ram.percent / 100 : null);
 	      box.append(meterRow("RAM", ramFrac,
-	        ramFrac === null ? "unknown" : `${_uiBytes(ram.used_bytes)} / ${_uiBytes(ram.total_bytes)} · ${_fmtPct(typeof ram.percent === "number" ? ram.percent : ramFrac * 100)}`,
+	        ramFrac === null ? "unknown" : `${_fmtBytes(ram.used_bytes)} / ${_fmtBytes(ram.total_bytes)} · ${_fmtPct(typeof ram.percent === "number" ? ram.percent : ramFrac * 100)}`,
 	        "Host RAM used / total"));
 	      // RAM stays the PRIMARY system meter — it is the one above, and it is
 	      // the meter a reader takes as "how full is this machine". The
@@ -11525,7 +11525,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	      // The SAME `~` estimate marker the table and the TUIs carry, so an
 	      // estimated weight can never render as a measured one.
-	      for (const item of view.items) line(item, "", `${item.estimated ? "~" : ""}${_uiBytes(item.bytes)}`);
+	      for (const item of view.items) line(item, "", `${item.estimated ? "~" : ""}${_fmtBytes(item.bytes)}`);
 	      if (view.items.length && view.references.length) {
 	        const rule = document.createElement("div");
 	        rule.className = "mem-breakdown-rule";
@@ -11569,8 +11569,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // a duplicate figure.
 	      const rows = [
 	        ["Host", host.host_name || host.host_id || ""],
-	        ["Models", nResident === null ? "" : `${nResident} resident${residentBytes === null ? "" : ` · ${_uiBytes(residentBytes)}`}${typeof nKnown === "number" && nKnown > nResident ? ` · ${nKnown - nResident} configured / cached` : ""}`],
-	        ["Session caches", nCaches === null ? "" : (nCaches === 0 ? "0 caches" : `${nCaches} cache${nCaches === 1 ? "" : "s"} · ${totals.session_cache_bytes == null ? "size unknown" : _uiBytes(totals.session_cache_bytes)}`)],
+	        ["Models", nResident === null ? "" : `${nResident} resident${residentBytes === null ? "" : ` · ${_fmtBytes(residentBytes)}`}${typeof nKnown === "number" && nKnown > nResident ? ` · ${nKnown - nResident} configured / cached` : ""}`],
+	        ["Session caches", nCaches === null ? "" : (nCaches === 0 ? "0 caches" : `${nCaches} cache${nCaches === 1 ? "" : "s"} · ${totals.session_cache_bytes == null ? "size unknown" : _fmtBytes(totals.session_cache_bytes)}`)],
 	      ];
 	      for (const [k, v] of rows) {
 	        if (!v) continue;
@@ -11749,7 +11749,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const behind = rows.length ? ` ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.` : "";
 	          const holders = heldResidentNames(data);
           const what = holders.length ? `held by ${holders.join("; ")}` : "not attributed to any model — no in-process model holder reports it";
-          modelsEmptyRow(body, 8, `Gateway still holds ${_uiBytes(held)} of accelerator memory (no model listed) · measured by ${heldBasis(data)} · ${what} · ${heldDetail(data)}. Eject the held model, or restart the gateway to free it.${behind}`);
+          modelsEmptyRow(body, 8, `Gateway still holds ${_fmtBytes(held)} of accelerator memory (no model listed) · measured by ${heldBasis(data)} · ${what} · ${heldDetail(data)}. Eject the held model, or restart the gateway to free it.${behind}`);
 	        } else if (!rows.length) modelsEmptyRow(body, 8, "No models loaded right now.");
 	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.`);
 	        return;
@@ -11791,13 +11791,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const cacheBytes = modelCacheBytes(row);
 	        const sizeMark = sizeView.source === "est_weights_bytes" ? "~" : "";
 	        sizeTd.textContent = sizeView.bytes === null
-	          ? (cacheBytes === null ? "" : `${_uiBytes(cacheBytes)} cache`)
-	          : (cacheBytes === null ? `${sizeMark}${_uiBytes(sizeView.bytes)}` : `${sizeMark}${_uiBytes(sizeView.bytes)} + ${_uiBytes(cacheBytes)} cache`);
+	          ? (cacheBytes === null ? "" : `${_fmtBytes(cacheBytes)} cache`)
+	          : (cacheBytes === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${_fmtBytes(cacheBytes)} cache`);
 	        const sizeTitle = [sizeView.bytes === null
 	          ? "size unknown — this host reported no size for the model"
 	          : `${sizeView.label} (${sizeView.source})`];
-	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_uiBytes(row.size_vram_bytes)}`);
-	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_uiBytes(cacheBytes)}`);
+	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
+	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
 	        sizeTd.title = sizeTitle.join(" · ");
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");
@@ -11960,7 +11960,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (c.runtime_id) modelTd.title = String(c.runtime_id);
 	        tr.append(modelTd);
 	        const sizeTd = document.createElement("td");
-	        sizeTd.textContent = typeof c.bytes === "number" ? _uiBytes(c.bytes) : "";
+	        sizeTd.textContent = typeof c.bytes === "number" ? _fmtBytes(c.bytes) : "";
 	        tr.append(sizeTd);
 	        const tokTd = document.createElement("td");
 	        tokTd.textContent = typeof c.token_count === "number" ? c.token_count.toLocaleString() : "";
@@ -15335,7 +15335,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const dataDir = String(gw.data_dir || "?");
       box.innerHTML = firstRunTiles([
         ["Computer", esc(host.host_name || CORE_CONSOLE.hostName || "This computer"), esc(firstRunOsLabel(svc.platform))],
-        ["Memory", esc(typeof ram.total_bytes === "number" ? _uiBytes(ram.total_bytes) : "Unknown"), "Available to models and apps"],
+        ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "Unknown"), "Available to models and apps"],
         ["Graphics", esc(gpus.length ? gpus.join(", ") : "None detected"), gpus.length ? "Used to run local models" : "Models run on the processor"],
         ["Data folder", `<code class="ui-ellip is-block" title="${esc(dataDir)}">${esc(dataDir)}</code>`, `Runs, workflows and settings live here <span class="ui-advanced">(${esc(gw.data_dir_source || "?")})</span>`],
         ["Sign-in", esc(gw.auth_mode === "users" ? "User accounts" : String(gw.auth_mode || "Unknown")), gw.auth_mode === "users" ? "You are the admin" : ""],
