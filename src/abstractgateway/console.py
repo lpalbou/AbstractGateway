@@ -15801,8 +15801,30 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // ---- Guided choice (a badge's dialog): recommended first, other models that fit, an API key.
     function dmCapById(id) { return DM_INPUTS.concat(DM_OUTPUTS).find((c) => c.id === id) || null; }
     const DM_OTHER_ENGINES = ["mlx-gen", "diffusers", "lmstudio", "ollama", "huggingface"];
+    // The engine that runs an artifact here, from this computer's engine inventory (GET /engines,
+    // `engineStore`): a GGUF on Hugging Face runs on llama.cpp, any other Hugging Face model on
+    // Transformers; LM Studio, Ollama, MLX and vLLM are their own engines. Null when no engine row
+    // names the provider (in-process engines AbstractCore judges itself: `supported_on_host`).
+    function dmEngineFor(provider, artifact) {
+      const rows = (engineStore.data && Array.isArray(engineStore.data.engines)) ? engineStore.data.engines : [];
+      const p = String(provider || "");
+      const id = p === "huggingface" ? (/gguf/i.test(String(artifact || "")) ? "llamacpp" : "huggingface") : p;
+      return rows.find((e) => e && e.id === id) || null;
+    }
+    // The readable engine name for a guided-choice row: the engine's own name ("llama.cpp",
+    // "Ollama"), else the provider's label without its id; never "HuggingFace (huggingface)".
+    function dmEngineName(provider, artifact) {
+      const e = dmEngineFor(provider, artifact);
+      if (e && e.name) return String(e.name);
+      const label = String(state.providerLabels.get(provider) || provider || "");
+      const suffix = ` (${provider})`;
+      return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+    }
+    // Models whose engine this computer has installed (the 0958 rule): a model on an engine that is
+    // not installed would set a route that cannot answer. Null while the inventory is unknown.
     function dmOtherModels(cap) {
       if (!cap.catalog) return [];
+      if (!engineStore.data) return null;
       const out = [];
       for (const row of dmCatalogRows()) {
         const caps = row.capabilities || {};
@@ -15815,6 +15837,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (cap.catalog !== "text" && !DM_OTHER_ENGINES.includes(a.provider)) continue;
           // GGUF files are llama.cpp's text format: no embeddings engine here loads them (review 1069).
           if (cap.catalog === "embedding" && /gguf/i.test(String(a.artifact || ""))) continue;
+          const engine = dmEngineFor(a.provider, a.artifact);
+          if (engine && engine.installed !== true) continue;
           out.push({ name: row.display_name || row.id, provider: a.provider, artifact: a.artifact, model: servedModelId(a.provider, a.artifact),
                      bytes: a.download_bytes, quant: a.quant_class, installed: Boolean(a.presence && a.presence.status === "installed"),
                      options: a.options && typeof a.options === "object" ? a.options : {} });
@@ -15833,6 +15857,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // below keeps its own Escape), backdrop click, focus back to the badge (review 1069).
       if (!reopen) dmUi.release = bindAccountModal($("dm-choice-backdrop"), closeDmChoice);
       if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+      if (cap.catalog && !engineStore.data && !engineStore.loading) dmLoadEngines();
+    }
+    // "Other models that fit" needs this computer's engine inventory (the Local engines step loads it;
+    // a guide opened straight on this step loads it here).
+    async function dmLoadEngines() {
+      await engineRefresh();
+      if (dmUi.choice) renderDmChoice();
     }
     function closeDmChoice() {
       if (!dmUi.choice) return;
@@ -15867,12 +15898,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
           parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><p class="muted">${esc(why || "AbstractCore has no recommendation for this on this computer yet.")}</p></section>`);
         }
-        const others = dmOtherModels(cap);
+        const othersOrNull = dmOtherModels(cap);
+        const others = othersOrNull || [];
         const capRow = findDefaultRow(state.defaults, cap.route);
         const rowReadOnly = Boolean(capRow && defaultRowReadOnly(capRow));
         parts.push(`<section class="dm-choice__part"><h3>Other models that fit</h3>`
           + (cap.catalog && !dmUi.catalog ? `<p class="muted">${esc(dmUi.catalogError || "Reading the catalog…")}</p>` : "")
-          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([state.providerLabels.get(o.provider) || o.provider, o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
+          + (cap.catalog && othersOrNull === null ? `<p class="muted">${esc(engineStore.error ? `Could not check the engines on this computer: ${engineStore.error}` : "Checking the engines on this computer…")}</p>` : "")
+          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([dmEngineName(o.provider, o.artifact), o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
           // A read-only row (input.image covered by the text model) has no editor to open (review 1069).
           + (rowReadOnly ? "" : `<div class="modal-actions"><button type="button" class="secondary" data-dmc="any">All engines and models…</button></div>`) + `</section>`);
         if (cap.key) parts.push(dmKeyMarkup());
@@ -15949,7 +15982,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (act === "any") { const route = cap.route; closeDmChoice(); return dmChooseAny(route); }
       if (act === "use-rec") { await dmUseRecommendedFor(cap.route); return renderDmChoice(); }
       if (act === "use-other") {
-        const o = dmOtherModels(cap)[Number(b.dataset.i)];
+        const o = (dmOtherModels(cap) || [])[Number(b.dataset.i)];
         if (!o || dmUi.busy.has(cap.route)) return;
         dmUi.busy.add(cap.route);
         b.disabled = true;
