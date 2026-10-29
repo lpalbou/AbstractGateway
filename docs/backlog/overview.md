@@ -21,13 +21,13 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 16
+- Planned: 19
 - Proposed: 48
 - Completed: 34
 - Deprecated: 3
 - Recurrent: 0
 
-<!-- 2026-10-29: 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -132,6 +132,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | [0958_setup_recommends_an_installed_text_engine.md](planned/0958_setup_recommends_an_installed_text_engine.md) | P1. The setup guide recommends LM Studio (not installed, no desktop) on a Linux/NVIDIA server where llama.cpp and vLLM are Ready; recommend the installed engine (core seam). |
 | [0969_instances_registry_file_lock.md](planned/0969_instances_registry_file_lock.md) | P3. `instances.json` slot assignment is guarded by a threading lock only: two installers started in the same second can draw the same slot; add an inter-process file lock (merge desk review of #37). |
 | [0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md](planned/0974_console_resyncs_its_vendored_kit_to_ui_kit_0_9_6.md) | P1. The console's vendored kit (`console_islands.py`, kit 0.9.4) is behind ui-kit 0.9.6: its approval card still shows the pre-0068 rendering. Re-sync it and add a CI-visible pin. Done when the console's approval card reads in words on 8443/8080 at a stated sha. |
+| [0976_console_about_adopts_the_kit_about_dialog.md](planned/0976_console_about_adopts_the_kit_about_dialog.md) | P2. The console About (local dialog with the update controls) becomes the kit `AfAboutDialog` with the controls as `about.extra`, once AbstractUIC #37 is released and the islands are resynced. Done when the operator's instance shows the kit About and its update controls work. |
 | [0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md](planned/0972_ci_installs_seam_packages_so_the_route_contract_covers_them.md) | P1 (security). Gateway CI installs only `.[dev]`, so the routers it mounts from other packages (abstractnote) never exist in CI: the route authorization contract stayed green while 14 note write routes had no decision on every real install (security incident 2026-10-29, PR #55). Install every seam package in CI and assert the seam is mounted. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
