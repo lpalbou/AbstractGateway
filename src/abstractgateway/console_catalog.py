@@ -764,7 +764,7 @@ CATALOG_JS = r"""
         + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
         + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
         + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
-        + `<label class="ui-switch" title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
+        + `<label class="ui-switch" data-mc-every-switch="1"${mcHfMode(f) ? " hidden" : ""} title="Also list every quantization the models' own repositories ship, each with its size and fit (asks Hugging Face; cached 24 h)"><input type="checkbox" data-mc-every="1"${f.every ? " checked" : ""}><span>Every quant</span></label>`
         + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
         + `<div class="mc-filters" data-mc-part="controls"></div>`
@@ -818,6 +818,9 @@ CATALOG_JS = r"""
       if (everyBox) everyBox.checked = !!view.filters.every;
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
+      // The Hugging Face tab always lists every quant: no switch there.
+      const everySwitch = el.querySelector("[data-mc-every-switch]");
+      if (everySwitch) everySwitch.hidden = hf;
       const want = hf ? view.filters.hf : view.filters.q;
       if (search && search.value !== want && document.activeElement !== search) search.value = want;
       if (search) { search.placeholder = mcSearchPlaceholder(view.filters); search.setAttribute("aria-label", hf ? "Search Hugging Face" : "Search the model catalog"); }
@@ -932,9 +935,9 @@ CATALOG_JS = r"""
     // Hugging Face mode: the catalog route with `hub=true` and the query.
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
-      // "Every quant" applies to Hugging Face results too (OVH 8443, 2026-10-29: the exact repo
-      // unsloth/Qwen3.8-27B-GGUF showed 2 of its 24 quants with the switch on).
-      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true${mcStore.every ? "&extended=true" : ""}${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
+      // A Hugging Face search shows what is available, period (operator, 2026-10-29): every quant of
+      // every matching repo, always (`extended=true`); the "Every quant" switch is the Catalog's only.
+      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
       }
@@ -942,15 +945,15 @@ CATALOG_JS = r"""
     }
     async function mcHubLoad(q) {
       const seq = ++mcStore.hub.seq;
-      mcStore.hub = { q, every: mcStore.every, data: null, error: "", loading: true, seq, page: 1, loadingMore: false, moreError: "" };
+      mcStore.hub = { q, data: null, error: "", loading: true, seq, page: 1, loadingMore: false, moreError: "" };
       mcRender();
       try {
         const data = await mcHubFetch(q, 1);
         if (seq !== mcStore.hub.seq) return;
-        mcStore.hub = { q, every: mcStore.every, data, error: "", loading: false, seq, page: 1, loadingMore: false, moreError: "" };
+        mcStore.hub = { q, data, error: "", loading: false, seq, page: 1, loadingMore: false, moreError: "" };
       } catch (err) {
         if (seq !== mcStore.hub.seq) return;
-        mcStore.hub = { q, every: mcStore.every, data: null, error: String((err && err.message) || err), loading: false, seq, page: 1, loadingMore: false, moreError: "" };
+        mcStore.hub = { q, data: null, error: String((err && err.message) || err), loading: false, seq, page: 1, loadingMore: false, moreError: "" };
       }
       mcRender();
     }
@@ -988,7 +991,7 @@ CATALOG_JS = r"""
       if (mcHfMode(view.filters)) return;
       const q = String(view.filters.q || "").trim();
       const hub = mcStore.hub;
-      if (q.length < MC_HUB_BESIDE_MIN || (hub.q === q && hub.every === mcStore.every && (hub.data || hub.loading))) return;
+      if (q.length < MC_HUB_BESIDE_MIN || (hub.q === q && (hub.data || hub.loading))) return;
       mcHubLoad(q);
     }
     function mcSetMode(view, mode) {
@@ -998,7 +1001,7 @@ CATALOG_JS = r"""
         const q = String(view.filters.q || "").trim();
         view.filters = Object.assign({}, view.filters, { q: "" });
         const hub = mcStore.hub;
-        if (q && hub.q === q && hub.every === mcStore.every && (hub.data || hub.loading)) { mcSetFilter(view, { hf: q }); return; }  // already asked beside the catalog
+        if (q && hub.q === q && (hub.data || hub.loading)) { mcSetFilter(view, { hf: q }); return; }  // already asked beside the catalog
         mcHubSearch(view, q);
         return;
       }
@@ -1163,8 +1166,6 @@ CATALOG_JS = r"""
           if (mcStore.every !== !!t.checked) {
             mcStore.every = !!t.checked;
             mcLoad();
-            // Hugging Face results already shown are asked again with (or without) every quant.
-            if (mcStore.hub && mcStore.hub.q) mcHubLoad(mcStore.hub.q);
           }
         }
       };
