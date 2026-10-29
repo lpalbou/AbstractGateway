@@ -26976,6 +26976,22 @@ def _row_v1_str_list(rec: Dict[str, Any], *names: str) -> Optional[list[str]]:
     return None
 
 
+def _row_v1_held_by_for_caller(value: Any) -> Optional[list[str]]:
+    """`held_by` as the caller may read it: the operator sees every account's
+    runtime by name; a signed-in non-admin sees only its own account by name,
+    any other account's runtime as "another account's runtime"."""
+    if not isinstance(value, list):
+        return None
+    holders = [str(h) for h in value]
+    principal = current_gateway_principal()
+    if principal is None or principal.is_admin():
+        return holders
+    mine = f"the runtime of account {safe_principal_component(principal.tenant_id, default='default')}/"
+    mine += safe_principal_component(principal.user_id, default="user")
+    return [h if (h.startswith(mine + " ") or h == mine or not h.startswith("the runtime of account "))
+            else "another account's runtime" + (h[h.index(" ("):] if " (" in h else "") for h in holders]
+
+
 def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
     """Coerce one runtime residency record into the frozen `model_residency_row_v1` shape.
 
@@ -27025,7 +27041,7 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "kv_cache_bytes": _row_v1_int(record, "kv_cache_bytes", "kvCacheBytes"),
         "kv_cache_estimated": True if record.get("kv_cache_estimated") is True else None,
         # Who keeps it in memory, in words (ADR 0043).
-        "held_by": [str(h) for h in record.get("held_by")] if isinstance(record.get("held_by"), list) else None,
+        "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),

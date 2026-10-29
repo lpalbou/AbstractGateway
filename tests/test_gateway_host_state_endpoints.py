@@ -1054,3 +1054,17 @@ def test_row_v1_carries_the_kv_cache_the_context_and_readable_holders() -> None:
     assert row["held_by"] == ["the runtime of account default/admin (loaded)"]
     bare = gateway_routes._normalize_model_residency_row_v1({"provider": "ollama", "model": "q"})
     assert bare["kv_cache_bytes"] is None and bare["kv_cache_estimated"] is None and bare["held_by"] is None
+
+
+def test_row_v1_held_by_hides_other_accounts_from_a_non_admin(monkeypatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+    from types import SimpleNamespace
+
+    held = ["the runtime of account default/alice (loaded)", "the runtime of account default/bob (loaded)"]
+    bob = SimpleNamespace(tenant_id="default", user_id="bob", is_admin=lambda: False)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: bob)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == [
+        "another account's runtime (loaded)", "the runtime of account default/bob (loaded)"]
+    admin = SimpleNamespace(tenant_id="default", user_id="admin", is_admin=lambda: True)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: admin)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == held

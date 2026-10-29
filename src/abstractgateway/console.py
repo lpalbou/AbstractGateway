@@ -11801,7 +11801,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          : `${sizeView.label} (${sizeView.source})`];
 	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
 	        if (kvBytes !== null) {
-	          sizeTitle.push(`KV cache ~${_fmtBytes(kvBytes)}: allocated when the model loaded, for ${typeof row.context_length === "number" ? `its ${_fmtCtx(row.context_length)}-token context` : "its context"} (estimated from the model file; it does not grow with use)`);
+	          const copies = Number(row.details && row.details.process_holders);
+	          sizeTitle.push(`KV cache ~${_fmtBytes(kvBytes)}: allocated when the model loaded, for ${typeof row.context_length === "number" ? `its ${_fmtCtx(row.context_length)}-token context` : "its context"}${Number.isFinite(copies) && copies > 1 ? `, summed over ${copies} copies` : ""} (estimated from the model file; it does not grow with use)`);
 	          if (sessionBytes) sizeTitle.push(`session prompt caches ${_fmtBytes(sessionBytes)}`);
 	        } else if (cacheBytes !== null) {
 	          sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
