@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
+  2026-10-29): its official `ollama-linux-<arch>.tar.zst` (SHA-256 checked) is unpacked into `~/.local` and served by
+  a systemd user service on port 11434 (its program path quoted, so a home directory with a space works; a detached `ollama serve` without a user bus). The card no longer says
+  "Install (administrator)"; without `zstd` it says why, with no administrator step.
 ### Fixed
 
 - **A gateway that fails to start now exits non-zero**: the exit belt kept exiting 0 when a non-daemon thread was
