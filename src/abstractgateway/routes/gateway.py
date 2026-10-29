@@ -28380,6 +28380,25 @@ def _with_capability_default_warnings(
     return out
 
 
+async def _refuse_voice_not_downloaded(kind: str, modality: str, req: Any) -> Optional[JSONResponse]:
+    """A voice can be selected if and only if its model is downloaded (operator ruling 2026-10-29):
+    setting the default voice to a local model whose weights are not on disk is refused HERE, at
+    selection time, with the sentence (`detail`, a string every client prints) and the download
+    action (`error.download`). Synthesis never checks. An unknown state does not refuse."""
+    if str(kind).strip().lower() != "output" or str(modality).strip().lower() != "voice":
+        return None
+    provider = str(getattr(req, "provider", "") or "").strip()
+    model = str(getattr(req, "model", "") or "").strip()
+    if not provider or not model:
+        return None
+    from ..core_config import model_not_downloaded
+
+    missing = await off_loop("light", model_not_downloaded, provider, model)
+    if not missing:
+        return None
+    return JSONResponse(status_code=409, content={"detail": str(missing.get("message") or ""), "error": missing})
+
+
 @router.put("/config/capability-defaults/{kind}/{modality}")
 async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabilityDefaultRequest) -> Dict[str, Any]:
     """Persist one execution-host Core/Runtime capability route default.
@@ -28390,6 +28409,9 @@ async def capability_defaults_put(kind: str, modality: str, req: _GatewayCapabil
     config store warns here instead of refusing.
     """
     svc = get_gateway_service()
+    refused = await _refuse_voice_not_downloaded(kind, modality, req)
+    if refused is not None:
+        return refused
     try:
         save_gateway_capability_default(
             kind,

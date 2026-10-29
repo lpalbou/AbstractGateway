@@ -16276,6 +16276,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        button.disabled = false;
 	      }
 	    }
+	    function offerDefaultModelDownload(missing) {
+	      const box = $("default-modal-message");
+	      const size = missing.size_mb ? ` (${missing.size_mb} MB)` : "";
+	      box.className = "message error";
+	      box.innerHTML = `${esc(missing.message || "This model is not downloaded yet.")} `
+	        + `<button type="button" class="btn btn-secondary" data-default-download="1">Download${esc(size)}</button>`;
+	      const btn = typeof box.querySelector === "function" ? box.querySelector("[data-default-download]") : null;
+	      if (!btn) return;
+	      btn.onclick = async () => {
+	        btn.disabled = true;
+	        try {
+	          const dl = missing.download || {};
+	          const res = await api(dl.path || "/api/gateway/models/download", { slow: true, method: dl.method || "POST", body: JSON.stringify(dl.body || {}) });
+	          trackDownloadJob(res.job);
+	          box.className = "message";
+	          box.textContent = "Downloading the voice model. Its progress is on the Models page; save this voice again when it is done.";
+	        } catch (e) {
+	          box.textContent = `The download did not start: ${String((e && e.message) || e)}`;
+	        }
+	      };
+	    }
 	    async function saveDefault() {
 	      $("default-modal-message").textContent = "";
 	      try {
@@ -16360,6 +16381,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        closeDefaultModal();
 	        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	      } catch (err) {
+	        // A voice is selectable only once its model is downloaded (operator ruling 2026-10-29): the
+	        // gateway refuses the save with the sentence and the download, offered here as a button.
+	        const typed = err && err.data && typeof err.data.error === "object" ? err.data.error : null;
+	        if (typed && typed.reason_code === "model_not_downloaded" && typed.download) {
+	          offerDefaultModelDownload(typed);
+	          return;
+	        }
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }
