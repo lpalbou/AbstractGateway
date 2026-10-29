@@ -156,6 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac.
+- **A route on an engine that is not installed says so** (0958, OVH 8443 2026-10-29). A Text route on an LM Studio or
+  Ollama that this computer has not installed showed a green "configured", and every chat failed ("Circuit breaker
+  open for LMStudioProvider"). `GET /config/capability-defaults` now stamps such a route with `engine_missing`
+  {engine, name, reason, engine_row}, the shape AbstractCore uses for in-process engines. The grid shows "engine
+  missing" with the Providers tab's Install.
 - **AbstractRuntime floor 0.15.3; 0.15.2 is excluded** (backlog 0965). `pyproject.toml` (base, `[apple]`, `[gpu]`) and
   `live_deltas.ABSTRACTRUNTIME_FLOOR` move to 0.15.3. 0.15.2 has the same API but its index-build replay moved the run
   store's change token on every boot, so the mail collector's change-driven pass reloaded every finished run (the

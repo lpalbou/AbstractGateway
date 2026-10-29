@@ -792,6 +792,37 @@ def _engine_installed(engine_id: str) -> Optional[bool]:
     return None
 
 
+SERVER_ENGINES = ("lmstudio", "ollama")
+
+
+def stamp_server_engine_missing(payload: Any) -> Any:
+    """A CONFIGURED route on a server engine (LM Studio, Ollama) that this computer has not installed
+    is not "configured": every call to it fails ("Circuit breaker open for LMStudioProvider", OVH
+    8443, 2026-10-29). AbstractCore's `engine_missing` covers in-process engines only, so the gateway
+    stamps the same shape {engine, name, reason, install, engine_row} from the engine inventory; the
+    console then shows "engine missing" with the Providers tab's Install, never a green "configured".
+    One inventory read; a route already flagged by AbstractCore is left as it is."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("routes"), list):
+        return payload
+    rows = payload["routes"]
+    wanted = {str((r or {}).get("provider") or "") for r in rows if isinstance(r, dict) and (r.get("provider") and r.get("model"))}
+    engines = [e for e in SERVER_ENGINES if e in {PROVIDER_ENGINE.get(p) for p in wanted}]
+    if not engines:
+        return payload
+    missing = {e for e in engines if _engine_installed(e) is False}
+    if not missing:
+        return payload
+    out = []
+    for r in rows:
+        engine = PROVIDER_ENGINE.get(str((r or {}).get("provider") or "")) if isinstance(r, dict) else None
+        if engine in missing and r.get("model") and not r.get("engine_missing") and not r.get("route_unavailable"):
+            label = ENGINE_LABEL.get(engine, engine)
+            r = dict(r, engine_missing={"engine": engine, "name": label, "engine_row": engine, "install": "",
+                                         "reason": f"{label} is not installed on this computer, so this route cannot answer"})
+        out.append(r)
+    return dict(payload, routes=out)
+
+
 def _family(model_id: Any) -> str:
     """`qwen3.5-9b` -> `qwen`, `qwen/qwen3.5-9b@q4_k_m` -> `qwen`, `llama-3.2-1b` -> `llama`."""
     import re as _re

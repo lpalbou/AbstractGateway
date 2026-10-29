@@ -64,6 +64,7 @@ from ..memory_store import (
 )
 from ..embeddings_config import resolve_embedding_config
 from ..core_config import (
+    stamp_server_engine_missing,
     apply_recommended_gateway_capability_defaults,
     clear_gateway_capability_default,
     gateway_capability_defaults_payload,
@@ -27918,7 +27919,8 @@ async def capability_defaults_get() -> Dict[str, Any]:
 
 
 def _capability_defaults_payload_for(svc: Any) -> Dict[str, Any]:
-    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    # 0958: a route on an LM Studio / Ollama this computer has not installed says "engine missing".
+    payload = stamp_server_engine_missing(gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir)))
     problems = capability_defaults_route_problems(Path(svc.config.data_dir))
     if problems:
         payload = dict(payload)
