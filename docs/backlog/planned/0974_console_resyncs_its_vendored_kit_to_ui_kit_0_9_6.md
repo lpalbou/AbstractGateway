@@ -25,6 +25,11 @@ The operator sees the old rendering on the gateway console (8443, 8080) while th
 - Re-check the console surfaces that mount kit islands (top bar, appearance dialog, sandbox chat) and any approval
   card the console renders.
 
+## Progress
+- 2026-10-29: the PR on branch `feat/console-account-widget` regenerates the islands bundle and CSS (and the theme
+  provenance) from the released kit (AbstractUIC tag v0.8.5 = ui-kit 0.9.6), so `kit_version` reads "0.9.6" and the
+  sync test passes against that tag. The CI-visible pin and the operator-instance check below are still open.
+
 ## Done when
 The console's vendored copy says `kit_version: "0.9.6"`, the sync test is green, and on the operator's instance (8443 or
 8080, at a stated sha) a tool approval in the console reads in words ("Fetch the page …"), with no JSON on the card.
