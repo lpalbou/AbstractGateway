@@ -28669,21 +28669,21 @@ class _GatewayModelContextRequest(BaseModel):
 
 
 @router.put("/models/context")
-async def model_context_set(request: Request, req: _GatewayModelContextRequest) -> Dict[str, Any]:
+async def model_context_set(request: Request, req: _GatewayModelContextRequest) -> Any:
     """Set (or clear) the context a local model is LOADED with (admin; AbstractCore ADR 0010
     point 8). A set context is a pin: loaded as is, refused with the readable sentence when it
     does not fit, never shrunk. It applies at the model's next load."""
     _require_admin_principal(request)
-    from abstractcore.config.model_contexts import set_model_context
-
-    from ..core_config import runtime_core_config_file
+    from .. import core_config
 
     svc = get_gateway_service()
-    cfg = runtime_core_config_file(Path(svc.config.data_dir))
+    cfg = core_config.runtime_core_config_file(Path(svc.config.data_dir))
     try:
-        await off_loop("watchers", set_model_context, req.provider, req.model, req.context_length, config_file=cfg)
+        out = await _core_host_call(core_config.set_model_context, req.provider, req.model, req.context_length, config_file=cfg)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(out, JSONResponse):
+        return out  # an older Runtime or Core: 501 in words
     what = f"{req.context_length:,} tokens" if req.context_length else "the fit to this computer's memory"
     return {"ok": True, "provider": req.provider, "model": req.model, "context_length": req.context_length,
             "message": f"{req.model} will load with {what} at its next load; unload it to reload it now."}
