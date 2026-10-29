@@ -287,3 +287,29 @@ def test_the_child_stdout_goes_to_its_log_after_ready(tmp_path):
         assert os.readlink(f"/proc/{pid}/fd/1") == os.readlink(f"/proc/{pid}/fd/2")
     finally:
         sup.stop()
+
+
+def _child_attr(sup, client, name):
+    return mh._Exchange(sup, client, ("getattr", ("c", client._mh_id), name)).run()
+
+
+def test_an_attribute_the_host_assigns_reaches_the_child_and_survives_a_restart(tmp_path, fake):
+    """bundle_host sets `client.residency_owner_label = "the runtime of account default/bob"` (the
+    Models page's held-by names): on the proxy it must land on the child's client, again after a
+    restart, and before the first build too."""
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="multi", ctor=_ctor(fake))
+        client.residency_owner_label = "the runtime of account default/bob"  # maybe before the build
+        client.generate(prompt="warm")
+        assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/bob"
+        assert client.residency_owner_label == "the runtime of account default/bob"
+        client.residency_owner_label = "the runtime of account default/alice"
+        assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/alice"
+        pid = sup.pid
+        os.kill(pid, signal.SIGKILL)
+        assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))
+        client.generate(prompt="after")
+        assert _child_attr(sup, client, "residency_owner_label") == "the runtime of account default/alice"
+    finally:
+        sup.stop()

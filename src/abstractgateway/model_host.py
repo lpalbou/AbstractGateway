@@ -654,6 +654,7 @@ class ModelHostClient:
         self._mh_setters_lock = threading.Lock()
         self._mh_setters_version = 0
         self._mh_setters: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
+        self._mh_assigned: Dict[str, Any] = {}
         self._mh_persistent: Dict[str, Any] = {}
         self._mh_callable_names = _class_callables(kind)
         self._mh_config: Dict[str, Any] = {}
@@ -708,6 +709,10 @@ class ModelHostClient:
                             if self._mh_setters.get(name) == (args, kwargs):
                                 self._mh_setters.pop(name, None)
                 replayed = version
+            # Plain attribute assignments made on the proxy (`client.residency_owner_label = ...`).
+            for name, value in list(self._mh_assigned.items()):
+                _Exchange(host, self, ("setattr", ("c", self._mh_id), name, value),
+                          what={"method": f"set {name}"}).run()
             attrs = _Exchange(host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                               what={"method": "getattrs"}).run()
             self._mh_refresh_config(attrs)
@@ -738,6 +743,17 @@ class ModelHostClient:
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                          persistent=self._mh_persistent, what=_describe_target(self, name)).run()
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        """An attribute the host assigns on its client (bundle_host's `residency_owner_label`) is
+        the child's client's: forwarded now when it is built, and replayed at every rebuild."""
+        if name.startswith("_mh_") or name == "_provider_endpoint_profile_resolver":
+            object.__setattr__(self, name, value)
+            return
+        self._mh_assigned[name] = value
+        if self._mh_built():
+            _Exchange(self._mh_host, self, ("setattr", ("c", self._mh_id), name, value),
+                      what={"method": f"set {name}"}).run()
+
     def set_provider_endpoint_profile_resolver(self, resolver: Any) -> Any:
         self._provider_endpoint_profile_resolver = resolver
         return self._mh_call("set_provider_endpoint_profile_resolver", (resolver,), {})
@@ -747,6 +763,9 @@ class ModelHostClient:
             raise AttributeError(name)
         if name in self._mh_callable_names:
             return _RemoteMethod(self, name)
+        assigned = self.__dict__.get("_mh_assigned") or {}
+        if name in assigned:
+            return assigned[name]
         if name in CONFIG_ATTRS:
             config = self._mh_config
             if name in config:

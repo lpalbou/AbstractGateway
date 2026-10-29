@@ -329,6 +329,10 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
             with host.lock:
                 host.clients[cid] = client
             channel.send(("ok", {"attrs": _config_attrs(client)}))
+        elif op == "setattr":
+            _, target, name, value = req
+            setattr(host.resolve(target), name, value)
+            channel.send(("ok", None))
         elif op == "getattrs":
             _, target, names = req
             channel.send(("ok", _config_attrs(host.resolve(target), names)))
