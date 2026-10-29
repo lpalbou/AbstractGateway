@@ -16,7 +16,7 @@ NOT_CACHED = ("Embedding model 'Qwen/Qwen3-Embedding-0.6B' is not in the local H
               "`abstractcore models download huggingface Qwen/Qwen3-Embedding-0.6B`.")
 
 
-def test_two_accounts_booting_log_one_sentence(monkeypatch, tmp_path, caplog):
+def test_two_accounts_booting_log_one_sentence(monkeypatch, tmp_path, caplog, capsys):
     import abstractgateway.embeddings_config as ec
 
     monkeypatch.setattr(ms, "_EMBEDDER_NOTICES", set())
@@ -36,6 +36,8 @@ def test_two_accounts_booting_log_one_sentence(monkeypatch, tmp_path, caplog):
     assert "Qwen/Qwen3-Embedding-0.6B is not downloaded" in msg
     assert "Models, Defaults, Text Embeddings, Download" in msg and "abstractcore models download huggingface" in msg
     assert "looked in" not in msg and "Traceback" not in msg
+    err = capsys.readouterr().err
+    assert err.count("[WARN] memory: Semantic memory search is off") == 1, err
 
 
 def test_other_failures_still_say_why():

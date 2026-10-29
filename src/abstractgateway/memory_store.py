@@ -386,8 +386,12 @@ def _say_embedder_unavailable_once(exc: BaseException) -> None:
             return
         _EMBEDDER_NOTICES.add(sentence)
     import logging
+    import sys
 
     logging.getLogger("abstractgateway.memory").warning(sentence)
+    # The console log level defaults to ERROR: like the other boot lines ("[INFO]
+    # commands: ..."), say it on stderr so the service log shows it.
+    print(f"[WARN] memory: {sentence}", file=sys.stderr, flush=True)
 
 
 def open_gateway_memory_store(
