@@ -1870,6 +1870,8 @@ CONSOLE_UI_JS = r"""
       if (desk && desk.source_checkout && desk.version_reason) body += `<p class="ui-card__note" data-app-version-reason="${esc(app.id)}">${esc(desk.version_reason)}</p>`;
       if (updateElsewhere && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
       if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
+      // An app older than a release's pin (the gateway's one sentence): an action to take.
+      if (app.installed && app.pin_warning) body += `<p class="ui-field-msg tone-warn" data-app-pin-warning="${esc(app.id)}">${esc(app.pin_warning)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;

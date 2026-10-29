@@ -853,3 +853,39 @@ def test_an_unreadable_release_matrix_refuses_instead_of_installing_the_newest(m
     # An explicit version is the person's choice: installed as asked.
     job, _ = manager.start_install("flow", version="0.12.0", run_inline=True)
     assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.12.0"
+
+
+def test_an_app_older_than_a_release_pin_is_named_in_its_row_and_at_boot(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    """OVH 2026-10-29: Code 0.13.0 (pinned by AbstractFramework 0.11.17) kept showing a reopened
+    conversation's last turn only, while the newest release pins a Code with the fix. The row says
+    so in one readable sentence (no id), the boot log names it; an app at the pin says nothing."""
+    from abstractgateway import self_update
+
+    spec = am.APP_BY_ID["flow"]
+    _publish_versions(manager, spec, ["0.11.0", "0.12.0"], latest="0.12.0")
+    _release_install(manager, "0.11.17", {"flow": "0.11.0"})
+    job, _ = manager.start_install("flow", run_inline=True)
+    assert job.to_dict()["state"] == "succeeded" and manager.installed_version("flow") == "0.11.0"
+    monkeypatch.setattr(self_update, "check_for_update", lambda *a, **k: {})
+    # At this install's pin and no newer release read yet: nothing to say.
+    monkeypatch.setattr(self_update, "newest_release_app_pins", lambda: (None, {}))
+    row = next(a for a in manager.overview()["apps"] if a["id"] == "flow")
+    assert row["pin_warning"] is None and manager.outdated_app_warnings() == []
+    # The newest release pins a newer Flow Editor.
+    monkeypatch.setattr(self_update, "newest_release_app_pins", lambda: ("0.11.18", {"flow": "0.12.0"}))
+    row = next(a for a in manager.overview()["apps"] if a["id"] == "flow")
+    sentence = "Flow Editor 0.11.0 is older than the 0.12.0 that AbstractFramework 0.11.18 installs: update Flow Editor to get its fixes."
+    assert row["pin_warning"] == sentence
+    assert manager.outdated_app_warnings() == [sentence]
+    # Below this install's own pin (an older app put back by hand): said against it first.
+    row = am.app_older_than_pin("flow", "Flow Editor", "0.11.0", release_version="0.12.0")
+    assert row == "Flow Editor 0.11.0 is older than this AbstractFramework release's 0.12.0: update Flow Editor."
+
+
+def test_the_update_check_keeps_the_newest_release_app_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import self_update
+
+    monkeypatch.setattr(self_update, "_last_check", {"release": {"version": "0.11.18", "npm_apps": {"code": "0.13.2"}}})
+    assert self_update.newest_release_app_pins() == ("0.11.18", {"code": "0.13.2"})
+    monkeypatch.setattr(self_update, "_last_check", None)
+    assert self_update.newest_release_app_pins() == (None, {})
