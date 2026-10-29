@@ -1390,7 +1390,8 @@ class EngineInstaller:
             )
         if wheel:
             pin, backend, links = wheel
-            if self._installed_llama_version():
+            updating = bool(self._installed_llama_version())
+            if updating:
                 # AN UPDATE: llama.cpp alone (its dependencies are there). Re-resolving AbstractCore's
                 # setting pulled the gpu extras' sdists (stable-diffusion-cpp-python) the root
                 # installer overrides away, and needed a C compiler on the OVH server.
@@ -1407,8 +1408,19 @@ class EngineInstaller:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
                     ctx.log("warning: llama.cpp loaded but reports no GPU offload (Metal)")
-                if backend.startswith("cu") and not info.get("gpu_offload"):
-                    ctx.log(f"warning: llama.cpp's {backend} build loaded but reports no GPU offload")
+                if backend.startswith("cu"):
+                    # A CUDA wheel that does not offload is a FAILURE, never a warning in the log
+                    # (OVH 8080, 2026-10-29: the CPU wheel stayed in place silently).
+                    has_cuda_lib = self._installed_llama_cuda_build() is not None
+                    if not has_cuda_lib or not info.get("gpu_offload"):
+                        what = "carries no libggml-cuda library" if not has_cuda_lib else "reports no GPU offload"
+                        raise InstallFailed(
+                            f"llama.cpp {info.get('version') or pin} installed from the {backend} index but {what}: "
+                            "the CUDA build did not load. "
+                            + ("Nothing else was changed. " if updating else "")
+                            + "See the job log.",
+                            code="cuda_build_not_loaded",
+                        )
                 importlib.invalidate_caches()
                 return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python,
                         "method": f"{backend} wheel", "message": _llama_takes_effect()}
