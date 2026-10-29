@@ -57,7 +57,25 @@ def _resolve_default_console_level() -> int:
     return logging.ERROR
 
 
-def _exit_now_if_nondaemon_stragglers() -> None:
+def _pending_exit_code() -> int:
+    """The exit code of the exception propagating through a `finally` (0 when
+    none): a SystemExit keeps its code (uvicorn's STARTUP_FAILURE = 3 for a port
+    in use), any other exception is 1. The straggler belt exits with it, so a
+    supervisor (systemd `Restart=on-failure`) sees a failure as a failure."""
+    exc = sys.exc_info()[1]
+    if exc is None:
+        return 0
+    if isinstance(exc, SystemExit):
+        code = exc.code
+        if code is None:
+            return 0
+        return code if isinstance(code, int) else 1
+    if isinstance(exc, KeyboardInterrupt):
+        return 0
+    return 1
+
+
+def _exit_now_if_nondaemon_stragglers(exit_code: int = 0) -> None:
     """Exit the process hard when non-daemon threads survive shutdown.
 
     Lifespan shutdown has already run by the time this is called, so every
@@ -65,8 +83,11 @@ def _exit_now_if_nondaemon_stragglers() -> None:
     proves some subsystem forgot to stop it (or marked it non-daemon by
     accident). Without this belt the interpreter joins those threads at
     exit FOREVER and the operator's TERM becomes a SIGKILL. We log names +
-    full stacks (the forensics the root fix needs), then _exit(0) — the
-    shutdown itself completed.
+    full stacks (the forensics the root fix needs), then _exit(exit_code):
+    the shutdown itself completed, but a gateway that failed (a port in use)
+    must not exit 0 — systemd's Restart=on-failure would then never retry
+    (OVH 2026-10-28: the unit gave up at 17:52 and an unsupervised gateway
+    held the port until the host went down).
     """
     try:
         stragglers = [
@@ -91,7 +112,7 @@ def _exit_now_if_nondaemon_stragglers() -> None:
             pass
     except Exception:
         pass
-    os._exit(0)
+    os._exit(int(exit_code))
 
 
 def _uvicorn_log_level(console_level: int) -> str:
@@ -170,6 +191,27 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
     return log_config
 
 
+def _stderr_is_a_service_log() -> bool:
+    """stderr is captured by a service manager's log.
+
+    systemd: JOURNAL_STREAM names the journal stream's `device:inode`, and it counts only when
+    fd 2 IS that stream. A child of a unit inherits the variable with its stderr piped elsewhere
+    (a CI runner's job, a shell started from a unit), and its stderr is a terminal or a pipe.
+    INVOCATION_ID is set for every process of a unit, so it is not read. launchd: XPC_SERVICE_NAME
+    names an agent (not "0", the value a Terminal session has, nor an `application.` app)."""
+    stream = str(os.environ.get("JOURNAL_STREAM") or "").strip()
+    if stream:
+        try:
+            dev, ino = (int(x) for x in stream.split(":", 1))
+            st = os.fstat(2)
+            if (st.st_dev, st.st_ino) == (dev, ino):
+                return True
+        except (ValueError, OSError):
+            pass
+    xpc = str(os.environ.get("XPC_SERVICE_NAME") or "").strip()
+    return bool(xpc) and xpc != "0" and not xpc.startswith("application.")
+
+
 def _is_loopback_host(host: str) -> bool:
     h = str(host or "").strip().lower()
     return h in {"127.0.0.1", "::1", "localhost"}
@@ -220,7 +262,12 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None, prin
     token = str(payload.get("token") or "").strip()
     if print_token is None:
         # Legacy alias kept for existing service configs; the flag is the documented switch.
-        print_token = _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or _is_loopback_host(host)
+        # On a loopback bind the token is printed for the person at the
+        # terminal — never into a service log (systemd's journal keeps it:
+        # OVH 2026-10-29 found the admin token in `journalctl`).
+        print_token = _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or (
+            _is_loopback_host(host) and not _stderr_is_a_service_log()
+        )
     can_print_raw_token = bool(token) and bool(print_token)
 
     _stderr("Gateway user auth: enabled.")
@@ -523,6 +570,9 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     wd_flag = getattr(args, "watchdog_seconds", None)
     wd_limit = loop_watchdog.DEFAULT_WATCHDOG_SECONDS if wd_flag is None else float(wd_flag)
     loop_watchdog.configure(wd_limit, incident_dir=Path(data_dir) / "incidents")
+    from . import health_incidents
+
+    health_incidents.configure(Path(data_dir) / "incidents")
     if loop_watchdog.configured_limit_s() is None:
         _stderr("Event-loop watchdog: off (--watchdog-seconds 0); a hung gateway is not restarted")
     else:
@@ -1461,8 +1511,17 @@ def main(argv: list[str] | None = None) -> None:
             # SIGKILLs" class (stage logging in _stop_gateway_service_instance
             # covers the bounded-but-silent class). Lifespan shutdown already
             # ran, so nothing durable is at risk: name the stragglers, dump
-            # every stack for the root fix, then exit hard.
-            _exit_now_if_nondaemon_stragglers()
+            # every stack for the root fix, then exit hard — with the code of
+            # whatever is propagating (a failed start is not a clean stop).
+            exit_code = _pending_exit_code()
+            try:
+                from . import work_pools as _work_pools
+
+                # The off-loop pools' idle workers are not stragglers: stop them first.
+                _work_pools.shutdown_all(timeout_s=2.0)
+            except Exception:  # noqa: BLE001 - the belt below still runs
+                pass
+            _exit_now_if_nondaemon_stragglers(exit_code)
         return
 
     if args.cmd == "push-relay":
