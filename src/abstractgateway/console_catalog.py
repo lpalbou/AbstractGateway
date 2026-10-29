@@ -416,8 +416,13 @@ CATALOG_JS = r"""
       const bits = [];
       const chip = p.gpu_name || p.accelerator || "";
       if (chip) bits.push(`<b>${esc(chip)}</b>`);
-      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : "memory"}`);
-      if (uiNum(p.ceiling_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
+      // A GPU with its own memory: VRAM and RAM side by side (QA 2026-10-28 (e): "28.7 GB memory ·
+      // models up to 16.1 GB" hid a 16 GB card behind the RAM figure). Unified memory: one figure.
+      const vram = !p.unified_memory && uiNum(p.vram_bytes) && p.vram_bytes > 0;
+      if (vram) bits.push(`${esc(uiBytes(p.vram_bytes))} VRAM`);
+      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : vram ? "RAM" : "memory"}`);
+      // The model ceiling only when it says something the figures above do not.
+      if (uiNum(p.ceiling_bytes) && !(vram && p.ceiling_bytes === p.vram_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
       return bits.length ? `<span class="mc-host__facts">This computer: ${bits.join(" · ")}</span>` : "";
     }
     function mcChip(group, value, label, on, count, disabled) {
