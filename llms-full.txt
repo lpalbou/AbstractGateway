@@ -1108,6 +1108,42 @@ The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode 
 
 **Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
 
+## Security incidents
+
+Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
+found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
+
+### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
+
+- **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
+  `abstractnote.gateway.router` under `/api/gateway/note` (`abstractnote_seam.py`). Its 14 write routes
+  (`POST .../claims/{claim_id}/retract`, `.../communities/recompute`, `.../entities/normalize`,
+  `.../entities/{entity_id}/unmerge`, `.../insights/{note_id}/ack`, `.../notes/{note_id}/archive`,
+  `.../notes/{note_id}/redate`, `.../processor/ensure`, `.../queue/{note_id}/priority`, `.../queue/{note_id}/retry`,
+  `.../refile`, `.../review/{review_id}/confirm`, `.../tasks/{task_id}/close`, `PUT .../settings`) carried no
+  `GATEWAY_ROUTE_POLICIES` row and were not on the contract test's user-level allowlist.
+- **Effect**: no admin requirement applied, so every route was reachable by ANY signed-in principal (member or
+  admin); an anonymous caller got 401 as for every other write. Each handler resolves the caller's principal and
+  plane itself and acts on that plane's own notebook. In a plane of their own a member could only change their own
+  notebook. In a SHARED plane (several accounts bound to one runtime, or an entity's plane) twelve routes are
+  account-stamped, reversible knowledge edits; two act on the whole plane — `PUT /settings` (filing and answering
+  models, schedules) and `POST /processor/ensure` (archives automations another account may have created and
+  recreates them under the caller) — and a member could run them. Nothing was open to the unauthenticated.
+- **Since**: the seam mount (checkpoint 840af7e9, 2026-10-22) with abstractnote 0.2.0 (the routes exist since
+  2026-10-19). Gateway CI never installs abstractnote, so
+  `tests/test_gateway_route_authorization_contract.py::test_every_write_route_has_an_explicit_authorization_decision`
+  stayed green in CI and failed on every real install.
+- **Found**: 2026-10-29 by a worker running that test on a machine with abstractnote installed; confirmed by the
+  merge desk against the PyPI 0.2.0 wheel.
+- **Decision** (PR #55): all 14 recorded user-level with the reason above; no runtime behaviour changed. An admin row
+  would break the Note app for every member, so the shared-plane gate for `PUT /settings` and `POST /processor/ensure`
+  (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
+  backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).
+- **Rule since** (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today `abstractnote>=0.2.0`, step "Install the seam packages") and
+  `tests/test_gateway_seams_mounted.py` fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.
+
 ---
 
 ## docs/first-run.md
@@ -8967,6 +9003,9 @@ The filter bar above the cards:
   once typing pauses. Its results come under **From Hugging Face**, below the
   catalog's cards, with the same filters, count and **Show more results**.
   Switching to **Hugging Face** mode then reuses that answer.
+- **Every quant**: the switch beside **Fits this computer**. It lists, for each model, every quantization
+  its own repositories ship (from 1-bit to BF16), each with its size and its fit on this computer. The
+  first time, it asks Hugging Face, and the answer is cached for 24 hours.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).
@@ -14212,12 +14251,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
     before the click.
   - Synthesis never checks, and the voice lists already offer only downloaded voices.
+
+- **Saving an automation that now runs a waiting run's tools continues that run, from any client** (operator QA
+  2026-10-29). The operator set a waiting automation to "Run without asking" in the web console and saved; the run
+  stayed "waiting for you".
+  - When an `automation.revise` is applied, the gateway answers "approved" every tool-approval wait of that
+    automation's runs whose every tool the revised definition now grants (`automation_wait_resolver.py`). It does
+    this through the same durable `resume` command a person's answer uses, with the saver's id as the command's
+    client.
+  - The runtime's own grant functions decide what is granted, so message-sending tools are never auto-approved this
+    way.
+  - A wait still partly blocked stays; `still_asks` names its tools.
+  - Only the automation's owner answers its waits this way; a revision by someone else (an admin acting in another
+    owner's plane) leaves them.
+
+### Fixed
+
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
   usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
+
+### Changed
+
+- **LM Studio on Linux without root never asks for an administrator**: when the machine lacks the libatomic1
+  system library, the card says so plainly and names the engines that install here for this account (llama.cpp,
+  Ollama, vLLM where they apply), with no administrator step; a gateway running as root still installs it. An
+  engine job waiting on a prerequisite says "Needs Apple tools" only for Apple's installer, never on Linux.
 
 ### Added
 
@@ -14278,12 +14340,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
 
+- **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
+  server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
+  · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
+  figure, as before.
+- **"Every quant" in the console's Models catalog** (batch item b). A switch beside **Fits this computer** asks for each
+  row's whole quant set: `GET /api/gateway/models/catalog?hub=true&extended=true`, AbstractCore 0865. The extra quants
+  (UD-IQ1_S to BF16) are listed as rows of the same cards, each with its size, fit and **Download**. The setting is
+  part of the link (`#catalog?every=1`). On an AbstractRuntime without the passthrough, the answer is a 501 that says
+  so.
+- **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
+  **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
+  generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.
 - **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
   editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
   server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac.
+- **A route on an engine that is not installed says so** (0958, OVH 8443 2026-10-29). A Text route on an LM Studio or
+  Ollama that this computer has not installed showed a green "configured", and every chat failed ("Circuit breaker
+  open for LMStudioProvider"). `GET /config/capability-defaults` now stamps such a route with `engine_missing`
+  {engine, name, reason, engine_row}, the shape AbstractCore uses for in-process engines. The grid shows "engine
+  missing" with the Providers tab's Install.
+- **AbstractRuntime floor 0.15.3; 0.15.2 is excluded** (backlog 0965). `pyproject.toml` (base, `[apple]`, `[gpu]`) and
+  `live_deltas.ABSTRACTRUNTIME_FLOOR` move to 0.15.3. 0.15.2 has the same API but its index-build replay moved the run
+  store's change token on every boot, so the mail collector's change-driven pass reloaded every finished run (the
+  test `test_400_finished_runs_a_change_to_one_loads_exactly_one` was red on main). The API probes cannot tell the
+  two apart, so the floor check now also refuses by version, naming the installed and required versions; a source
+  checkout without metadata is not refused. Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released
+  2026-10-29).
+
+- **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
+  install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
+  `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
+  with no authorization decision. All 14 are now recorded user-level (every handler resolves the caller's principal
+  and plane and acts on that plane's own notebook); the two plane-wide routes (`PUT /settings`,
+  `POST /processor/ensure`) get their shared-plane gate in abstractnote's handler (AbstractNote backlog 0040), not
+  an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
+  green there and red on every real install; security incident note in docs/security.md; planned 0972.
+
+### Fixed
+
+- **Two timing-dependent tests no longer flake** (tests only; gateway main's integration run on 5efc2bf6).
+  - `test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind` reads each answer's reset time from that
+    answer's own `limit.resets_at`. The second and third clicks can fall either side of a minute (07:24 vs 07:25).
+  - `test_idle_poll_is_stat_only` counts only opens of this store's own files (its tmp folder). `Path.open` is patched
+    for the whole process, and a runner left by an earlier test reads its `runner.takeover` on a timer. Neither that
+    file nor that read belongs to the tail.
+  - Both stay live: opening the ledger is counted (checked in the test), and a tail that opens the file on an idle
+    poll fails it (mutation-checked).
+
+### Added
+
+- **Allow engine installs: a switch on the console's Engines tab** (root backlog 0858). The tab says whether the
+  console may install engines on the gateway's computer and why ("On: your setting", "Off: the default for a
+  gateway other computers reach", "On: the default: you are on the gateway's own computer"), with the CLI twin
+  (`abstractgateway-config set allow_engine_install on|off`). An admin turns it on or off in place ("Saved" or
+  "Not saved: …") or returns to the default (`POST /api/gateway/admin/runtime-config
+  {"allow_engine_install": true|false|null}`, recorded in the audit log); other accounts see it read-only ("Only an
+  admin can change this"). The refused-install message and the network-exposure note now point at this switch.
 
 ## [0.18.0] - 2026-10-28
 

@@ -1129,3 +1129,7 @@ found, what was decided. The runtime incident ledger (unavailability, restarts) 
   would break the Note app for every member, so the shared-plane gate for `PUT /settings` and `POST /processor/ensure`
   (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
   backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).
+- **Rule since** (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today `abstractnote>=0.2.0`, step "Install the seam packages") and
+  `tests/test_gateway_seams_mounted.py` fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.
