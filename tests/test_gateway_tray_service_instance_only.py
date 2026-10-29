@@ -99,3 +99,24 @@ def test_serve_from_a_terminal_starts_no_tray_and_tray_flag_does(monkeypatch) ->
     assert decisions[-1].start is True, decisions
     with pytest.raises(SystemExit):
         gateway_cli.main(["serve", "--tray", "--no-tray"])
+
+
+def test_a_named_instance_is_recognised_by_its_own_label_and_unit(monkeypatch) -> None:
+    from abstractgateway import instances
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_INSTANCE", "work")
+    label, unit = instances.service_names("work")["launchd_label"], instances.service_names("work")["systemd_unit"]
+    assert label == "ai.abstractframework.gateway.work" and unit == "abstractgateway-work.service"
+    assert ts.service_launch(platform="darwin", env={"XPC_SERVICE_NAME": label}) == f"launchd ({label})"
+    # The default instance's service is not this instance's.
+    assert ts.service_launch(platform="darwin", env={"XPC_SERVICE_NAME": LAUNCHD_LABEL}) is None
+    assert ts.service_launch(platform="linux", env={}, cgroup_text=f"0::/app.slice/{unit}\n") == f"systemd ({unit})"
+    assert ts.service_launch(platform="linux", env={}, cgroup_text=f"0::/app.slice/{SYSTEMD_UNIT}\n") is None
+    assert ts._instance_name() == "work"
+
+
+def test_the_named_instance_icon_says_its_name() -> None:
+    from abstractgateway.tray.app import instance_title
+
+    assert instance_title("AbstractGateway — Running\nMemory 1 GB", "work") == "AbstractGateway (work) — Running\nMemory 1 GB"
+    assert instance_title("AbstractGateway — Running", "default") == "AbstractGateway — Running"

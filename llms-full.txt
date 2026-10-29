@@ -1403,6 +1403,32 @@ When `ABSTRACTGATEWAY_DATA_DIR` is not set, the gateway uses, in order:
 chosen. `serve --data-dir <dir>` or `ABSTRACTGATEWAY_DATA_DIR` choose it
 explicitly.
 
+## Several gateways on one machine (instances)
+
+A second gateway for the same user on the same machine is a named INSTANCE. One name drives
+everything, and nothing is picked by hand:
+
+```bash
+abstractgateway --instance fresh service install --port 8443   # or: install.sh --server --instance fresh --port 8443
+abstractgateway --instance fresh claim --code                  # its setup code
+abstractgateway --instance fresh service status
+```
+
+| | Default instance | Instance `fresh` |
+|---|---|---|
+| Data folder | `~/.local/share/abstractgateway` (macOS: `~/Library/Application Support/AbstractGateway`) | the same with `-fresh` |
+| AbstractCore config (model routes, provider connections) | AbstractCore's default | `<data folder>/core-config` |
+| Gateway port (unless `--port` or the Network setting) | 8080 | 8090 + its slot |
+| App ports (Code, Observer, ...) | 3001-3006, then 3100-3199 | 3001+200×slot..., then 3100+200×slot..3199+200×slot |
+| Login service | `abstractgateway.service`, `ai.abstractframework.gateway` | `abstractgateway-fresh.service`, `ai.abstractframework.gateway.fresh` |
+| Console | "AbstractGateway Console" | "AbstractGateway Console · fresh", and the name in the sidebar |
+
+The SLOT is assigned once per instance (the smallest free one, never two instances on one slot) and
+recorded in `~/.config/abstractgateway/instances.json`, so the app port blocks of two instances never
+collide. `ABSTRACTGATEWAY_INSTANCE=fresh` is the same as `--instance fresh` (the login service runs
+`abstractgateway --instance fresh serve`). A gateway lists and opens only its own apps: a running app
+another instance serves is never shown as this one's. `GET /api/gateway/about` carries `instance`.
+
 ## Exposing the gateway beyond this machine
 
 Choose who can reach the gateway with the network setting:
@@ -14139,6 +14165,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   started (`tray_supervisor.service_launch`, read from the launch itself: `XPC_SERVICE_NAME`, the systemd cgroup, the
   service launcher); a `serve` from a terminal, a test or a harness shows none unless started with the new `--tray`
   (reason `not_service` on the console's Gateway card). Named instances follow with gateway #37's instance names.
+
+### Added
+
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+### Fixed
+
+- **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
+  8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
+  so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
+  usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
+  data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
+  hand-over). Apps of the dev stack that name no gateway are listed as before.
 
 ## [0.18.0] - 2026-10-28
 

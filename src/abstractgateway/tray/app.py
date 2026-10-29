@@ -101,6 +101,14 @@ def attention_words(unseen: int) -> str:
     return "1 thing waiting for you" if n == 1 else f"{n} things waiting for you"
 
 
+def instance_title(text: str, instance: str) -> str:
+    """The tooltip of a named instance's icon names it; the default instance's is unchanged."""
+    name = str(instance or "").strip()
+    if not name or name == "default" or not text.startswith(APP_NAME):
+        return text
+    return (f"{APP_NAME} ({name})" + text[len(APP_NAME):])[:120]
+
+
 def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
     badge = attention_words(attention_unseen)
     text = _tooltip_body(snap)
@@ -265,6 +273,8 @@ class TrayApp:
         self.data_dir = Path(handshake["data_dir"]) if handshake.get("data_dir") else None
         self.version = str(handshake.get("version") or "")
         self.console_path = str(handshake.get("console_path") or "/console")
+        # A named instance (instances.py) says which gateway this icon is: "AbstractGateway (NAME)".
+        self.instance = str(handshake.get("instance") or "default").strip() or "default"
         self.client = GatewayClient(self.base_url, self.token)
         self.sampler = Sampler(self.client, version=self.version)
         self.prefs = Prefs(self.data_dir)
@@ -335,7 +345,7 @@ class TrayApp:
             self._icon = icon_cls(
                 "abstractgateway",
                 first,
-                title=f"{APP_NAME} — Starting…",
+                title=instance_title(f"{APP_NAME} — Starting…", self.instance),
                 menu=pystray.Menu(self._menu_items),
             )
         except Exception as exc:  # noqa: BLE001
@@ -502,7 +512,7 @@ class TrayApp:
                 if len(self._icon_cache) > 256:
                     self._icon_cache.clear()
                 self._icon_cache[sig] = image
-        title = tooltip_text(snap, attention_unseen=self._attention.unseen)
+        title = instance_title(tooltip_text(snap, attention_unseen=self._attention.unseen), self.instance)
         # Menu (rebuilt only on coarse changes; value-only changes are
         # additionally rate-limited off macOS, where a rebuild closes an
         # open menu under the cursor)

@@ -193,21 +193,30 @@ def service_launch(*, platform: str = sys.platform, env: Optional[Mapping[str, s
 
     A relaunch from the tray or console keeps all three (same environment, same cgroup, and the
     launcher's `--tray` is on the relaunched command line)."""
-    from .os_service import LAUNCHD_LABEL, SYSTEMD_UNIT
+    from .os_service import launchd_label, systemd_unit
 
     if _service_launch_marker:
         return _service_launch_marker
     env = os.environ if env is None else env
     if platform == "darwin":
-        if str(env.get("XPC_SERVICE_NAME") or "").strip() == LAUNCHD_LABEL:
-            return f"launchd ({LAUNCHD_LABEL})"
+        # This instance's label (`ai.abstractframework.gateway`, `...gateway.NAME`: instances.py).
+        label = launchd_label()
+        if str(env.get("XPC_SERVICE_NAME") or "").strip() == label:
+            return f"launchd ({label})"
         return None
     if str(platform).startswith("linux"):
+        unit = systemd_unit()  # `abstractgateway.service`, `abstractgateway-NAME.service`
         text = _read_proc_cgroup() if cgroup_text is None else cgroup_text
         for line in text.splitlines():
-            if line.rstrip().endswith("/" + SYSTEMD_UNIT):
-                return f"systemd ({SYSTEMD_UNIT})"
+            if line.rstrip().endswith("/" + unit):
+                return f"systemd ({unit})"
     return None
+
+
+def _instance_name() -> str:
+    from .instances import current_instance
+
+    return current_instance()
 
 
 NOT_SERVICE_HINT = ("only the machine's gateway service shows the icon (started at login by "
@@ -394,6 +403,8 @@ class TraySupervisor:
                 "data_dir": str(data_dir),
                 "version": str(version),
                 "console_path": "/console",
+                # A named instance's icon says which gateway it is (instances.py).
+                "instance": _instance_name(),
                 **(extra or {}),
             }
             cmd = [_child_python(), "-m", "abstractgateway.tray", "--parent-pid", str(os.getpid())]

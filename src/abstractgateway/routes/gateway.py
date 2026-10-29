@@ -15818,7 +15818,11 @@ def about_payload() -> Dict[str, Any]:
         except metadata.PackageNotFoundError:
             return None
 
+    from ..instances import current_instance
+
     return {
+        # The gateway instance (instances.py): "default", or the name of a second gateway on this machine.
+        "instance": current_instance(),
         "abstractframework": installed_framework_version(_v("abstractframework")),
         "abstractgateway": _v("abstractgateway"),
         "packages": dict(sorted(packages.items())),
