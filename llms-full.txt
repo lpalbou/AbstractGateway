@@ -1108,6 +1108,42 @@ The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode 
 
 **Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
 
+## Security incidents
+
+Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
+found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
+
+### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
+
+- **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
+  `abstractnote.gateway.router` under `/api/gateway/note` (`abstractnote_seam.py`). Its 14 write routes
+  (`POST .../claims/{claim_id}/retract`, `.../communities/recompute`, `.../entities/normalize`,
+  `.../entities/{entity_id}/unmerge`, `.../insights/{note_id}/ack`, `.../notes/{note_id}/archive`,
+  `.../notes/{note_id}/redate`, `.../processor/ensure`, `.../queue/{note_id}/priority`, `.../queue/{note_id}/retry`,
+  `.../refile`, `.../review/{review_id}/confirm`, `.../tasks/{task_id}/close`, `PUT .../settings`) carried no
+  `GATEWAY_ROUTE_POLICIES` row and were not on the contract test's user-level allowlist.
+- **Effect**: no admin requirement applied, so every route was reachable by ANY signed-in principal (member or
+  admin); an anonymous caller got 401 as for every other write. Each handler resolves the caller's principal and
+  plane itself and acts on that plane's own notebook. In a plane of their own a member could only change their own
+  notebook. In a SHARED plane (several accounts bound to one runtime, or an entity's plane) twelve routes are
+  account-stamped, reversible knowledge edits; two act on the whole plane — `PUT /settings` (filing and answering
+  models, schedules) and `POST /processor/ensure` (archives automations another account may have created and
+  recreates them under the caller) — and a member could run them. Nothing was open to the unauthenticated.
+- **Since**: the seam mount (checkpoint 840af7e9, 2026-10-22) with abstractnote 0.2.0 (the routes exist since
+  2026-10-19). Gateway CI never installs abstractnote, so
+  `tests/test_gateway_route_authorization_contract.py::test_every_write_route_has_an_explicit_authorization_decision`
+  stayed green in CI and failed on every real install.
+- **Found**: 2026-10-29 by a worker running that test on a machine with abstractnote installed; confirmed by the
+  merge desk against the PyPI 0.2.0 wheel.
+- **Decision** (PR #55): all 14 recorded user-level with the reason above; no runtime behaviour changed. An admin row
+  would break the Note app for every member, so the shared-plane gate for `PUT /settings` and `POST /processor/ensure`
+  (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
+  backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).
+- **Rule since** (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today `abstractnote>=0.2.0`, step "Install the seam packages") and
+  `tests/test_gateway_seams_mounted.py` fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.
+
 ---
 
 ## docs/first-run.md
@@ -14163,6 +14199,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
+  AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
+  guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
+  pick's engine is not installed (AbstractCore's engine inventory) and llama.cpp is, the guide, "Use recommended" and
+  an untouched fresh-install text route use a GGUF build that fits this computer through llama.cpp (the pick's own
+  family when one fits; on the OVH 16 GB server: Qwen3 8B, Q4_K_M), and the card says why ("instead of LM Studio,
+  which is not installed here"). Wherever the pick's engine is installed, nothing changes.
+- **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
+  nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
 ### Changed
 
 - **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
@@ -14241,6 +14288,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
   sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
   printed whatever the state, is gone.
+- **The Models page says what a model's "cache" is and who keeps it in memory.** A GGUF row reads
+  "~5.4 GiB + ~2.0 GiB KV" with the loaded context in the Context column and, in the tooltip, that
+  the KV cache was allocated for that context when the model loaded (an estimate from the file;
+  it does not grow with use), then the session prompt caches. It used to read "+ 8.3 GiB cache"
+  with no context on a freshly restarted server (AbstractCore over-counted hybrid models' KV).
+  Rows carry `kv_cache_bytes`, `kv_cache_estimated` and `held_by`; the residency cell names the
+  holders in words ("held by the runtime of account default/bob (loaded)"), and every account's
+  runtime client is labelled so ("kept in memory: ... still in use by runtime client
+  70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
+  `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
+
+- **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
+  editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
+  server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
+  runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
+  now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
+  may be a Mac.
+- **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
+  install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
+  `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
+  with no authorization decision. All 14 are now recorded user-level (every handler resolves the caller's principal
+  and plane and acts on that plane's own notebook); the two plane-wide routes (`PUT /settings`,
+  `POST /processor/ensure`) get their shared-plane gate in abstractnote's handler (AbstractNote backlog 0040), not
+  an admin row here. No runtime behaviour changed. Gateway CI does not install abstractnote, so the contract was
+  green there and red on every real install; security incident note in docs/security.md; planned 0972.
 
 ## [0.18.0] - 2026-10-28
 
