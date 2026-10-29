@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (routes, voice catalog); abstractuic (shared voice picker state); abstractruntime (retry classification, noted)
 > Type: bug
-> Status: planned (not implemented)
+> Status: completed (2026-10-29, unreleased)
 > Created: 2026-10-28
 > Priority: P1
 > Labels: voice, tts, first-run, error-contract, thin-clients
@@ -90,3 +90,34 @@ network-status and engine-card fixes); next gateway batch.
 - A real crash in synthesis still answers 500 (the typed answer is not a catch-all).
 - Real E2E on a fresh HOME: the console Test button and Code's read-aloud show the download prompt; after
   `POST /models/download` completes, the same request answers 200 with audio.
+
+
+## Implementation (2026-10-29)
+
+- `core_config.model_not_downloaded(provider, model)` runs AbstractCore's availability probe for the pair, through
+  the facade's `annotate_model_availability` (generic: no engine message text). When the status is `absent` and
+  the model is downloadable, it returns the typed body: `reason_code`, `message` (with the size), `provider`,
+  `model`, `artifact`, `size_mb` (from the catalog's `download_bytes` when known), `command`
+  (`abstractgateway models download …`) and `download` (`POST /api/gateway/models/download`). Unknown, installed,
+  remote, or a failed probe give None, so the call goes ahead as before.
+- `routes/gateway.py`: `voice_tts` and `voice_tts_stream` answer **409** with that body before any synthesis,
+  once the provider and model are resolved (the gateway default included), so there are no retries and no 3 s
+  wait. The entity routes delegate to these two routes.
+- `console.py`: the voice picker's sample (`defaultVoiceSample`) turns that 409 into the sentence in the dialog
+  with a **Download (401 MB)** button. A click runs the console's model download (`trackDownloadJob`); nothing
+  is downloaded before the click.
+
+### Evidence
+
+- `tests/test_voice_audio_api_contract.py::test_a_tts_model_not_downloaded_is_a_typed_409_naming_the_download`
+  (both routes): a 409 with the shape above, and nothing synthesized. It is red without the route hook
+  (mutation-checked). `test_a_downloaded_or_remote_tts_model_goes_ahead` covers installed, not applicable,
+  unknown and a failed probe.
+- `tests/test_gateway_console_voice_preview.py::test_a_voice_model_not_downloaded_offers_its_download`: the
+  sentence and the button, no download before the click, then exactly the served download body. It is red
+  without the offer (mutation-checked).
+
+### Not done here
+
+- The voice catalog's `downloaded: true|false` per TTS model, and the shared kit picker's own action, are the
+  abstractuic item named above.

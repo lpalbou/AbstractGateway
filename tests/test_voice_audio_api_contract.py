@@ -64,6 +64,11 @@ def _patch_gateway_capabilities(
     calls: dict | None = None,
 ) -> None:
     calls = calls if calls is not None else {}
+    # The stand-in engines have no weights on a test HOME: their weights count as present here
+    # (the typed 409 of backlog 0955 has its own tests).
+    from abstractgateway import core_config
+
+    monkeypatch.setattr(core_config, "model_not_downloaded", lambda provider, model: None)
     calls.setdefault("tts", [])
     calls.setdefault("tts_stream", [])
     calls.setdefault("stt", [])
@@ -697,3 +702,63 @@ def test_voice_tts_applies_explicit_provider_before_profile_voice(tmp_path: Path
     assert calls["tts"][0]["provider"] == "supertonic"
     assert calls["tts"][0]["model"] == "supertonic-3"
     assert calls["tts"][0]["voice"] == "M1"
+
+
+from abstractgateway.core_config import model_not_downloaded as _REAL_MODEL_NOT_DOWNLOADED  # noqa: E402
+
+
+def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bundle: str) -> dict:
+    _write_min_bundle(bundles_dir=tmp_path / "bundles", bundle_id=bundle, flow_id="root")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    return {"Authorization": "Bearer t"}
+
+
+@pytest.mark.basic
+@pytest.mark.parametrize("path", ["/voice/tts", "/voice/tts/stream"])
+def test_a_tts_model_not_downloaded_is_a_typed_409_naming_the_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str) -> None:
+    """Backlog 0955: the default TTS route on a fresh install (Supertonic's engine, no weights)
+    answered HTTP 500 after 3 s of retries. It is now a typed 409 before any synthesis starts:
+    the model, its size, the command and the download route; nothing is synthesized."""
+    headers = _env(tmp_path, monkeypatch, "bundle-tts-409")
+    from abstractgateway import core_config
+    from abstractgateway.app import app
+    import abstractgateway.routes.gateway as gateway_routes
+
+    calls: dict = {}
+    _patch_gateway_capabilities(monkeypatch, gateway_routes, tts_bytes=b"never", calls=calls)
+    monkeypatch.setattr(core_config, "model_not_downloaded", _REAL_MODEL_NOT_DOWNLOADED)
+
+    def availability(rows):
+        return [dict(r, availability={"provider": "supertonic", "artifact": "supertonic-3", "status": "absent", "downloadable": True}) for r in rows]
+
+    monkeypatch.setattr(core_config.config_facade, "annotate_model_availability", availability)
+    monkeypatch.setattr(core_config.config_facade, "model_catalog", lambda q=None, **kw: {
+        "rows": [{"artifacts": [{"provider": "supertonic", "artifact": "supertonic-3", "download_bytes": 401_276_744}]}]})
+    with TestClient(app) as client:
+        resp = client.post(f"/api/gateway/runs/session_memory_s1{path}",
+                           json={"text": "hello", "provider": "supertonic", "model": "supertonic-3"}, headers=headers)
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["reason_code"] == "model_not_downloaded" and detail["model"] == "supertonic-3" and detail["size_mb"] == 401
+    assert detail["download"] == {"method": "POST", "path": "/api/gateway/models/download", "body": {"provider": "supertonic", "artifact": "supertonic-3"}}
+    assert detail["command"] == "abstractgateway models download supertonic supertonic-3"
+    assert detail["message"].startswith("The voice model supertonic-3 (401 MB) is not downloaded on this computer yet.")
+    assert not calls.get("tts") and not calls.get("tts_stream"), "nothing is synthesized"
+
+
+@pytest.mark.basic
+def test_a_downloaded_or_remote_tts_model_goes_ahead(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import core_config
+
+    for status in ("installed", "not_applicable", "unknown"):
+        monkeypatch.setattr(core_config.config_facade, "annotate_model_availability",
+                            lambda rows, s=status: [dict(r, availability={"status": s}) for r in rows])
+        assert core_config.model_not_downloaded("supertonic", "supertonic-3") is None
+    def broken(rows):
+        raise RuntimeError("probe failed")
+    monkeypatch.setattr(core_config.config_facade, "annotate_model_availability", broken)
+    assert core_config.model_not_downloaded("supertonic", "supertonic-3") is None, "unknown is never 'absent'"

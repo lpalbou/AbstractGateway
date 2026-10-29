@@ -31,6 +31,8 @@ _FUNCS = (
     "activeDefaultProvider",
     "activeDefaultModel",
     "closeDefaultModal",
+    "voiceModelNotDownloaded",
+    "offerVoiceModelDownload",
 )
 
 
@@ -56,6 +58,11 @@ function customLaneValue() {{ return ""; }}
 function setCustomLane() {{}}
 function withQuery(path, params) {{ return path + "?" + Object.entries(params).map(([k, v]) => `${{k}}=${{encodeURIComponent(v)}}`).join("&"); }}
 function sandboxRequestId() {{ return "req1"; }}
+const ESC = {{ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }};
+function esc(v) {{ return String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]); }}
+const tracked = [];
+function trackDownloadJob(job) {{ tracked.push(job); }}
+let ttsError = null;
 function voiceTestRunId() {{ return "voicetest_run"; }}
 function sandboxArtifactUrl(runId, ref) {{ return ref ? `/art/${{runId}}/${{ref.artifact_id}}` : ""; }}
 const calls = [];
@@ -63,6 +70,8 @@ let ttsAnswer = null;  // null = park until the signal aborts
 async function api(path, options = {{}}) {{
   calls.push({{ path, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null, signal: options.signal || null }});
   if (path.startsWith("/api/gateway/voice/voices")) return {{ items: [] }};
+  if (path === "/api/gateway/models/download") return {{ job: {{ job: "dl-1" }} }};
+  if (ttsError) throw ttsError;
   if (ttsAnswer) return ttsAnswer;
   return await new Promise((_, reject) => {{
     options.signal?.addEventListener("abort", () => {{ const e = new Error("Request cancelled."); e.name = "AbortError"; reject(e); }}, {{ once: true }});
@@ -224,3 +233,29 @@ console.log(JSON.stringify(results));
     assert out["notCallerSignal"], "the caller's signal is chained, never replacing the deadline's controller"
     assert out["err"] == {"name": "AbortError", "message": "Request cancelled."}
     assert out["err2"] == "AbortError", "an already-aborted signal cancels at once"
+
+
+def test_a_voice_model_not_downloaded_offers_its_download() -> None:
+    """Backlog 0955: the sample's 409 `model_not_downloaded` puts its sentence in the dialog with
+    a Download button; the click starts the console's model download (nothing before the click)."""
+    scenario = """
+const err = new Error("conflict");
+err.data = { detail: { reason_code: "model_not_downloaded", message: "The voice model supertonic-3 (401 MB) is not downloaded on this computer yet.",
+  size_mb: 401, download: { method: "POST", path: "/api/gateway/models/download", body: { provider: "supertonic", artifact: "supertonic-3" } } } };
+ttsError = err;
+const box = $("default-modal-message");
+let button = null;
+box.querySelector = () => button;
+Object.defineProperty(box, "innerHTML", { set(v) { this._html = v; button = v.includes("data-voice-download") ? { disabled: false } : null; }, get() { return this._html; } });
+let thrown = "";
+try { await defaultVoiceSample({ provider: "supertonic", model: "supertonic-3" }); } catch (e) { thrown = e.message; }
+const before = calls.filter((c) => c.path === "/api/gateway/models/download").length;
+await button.onclick();
+results.push({ thrown, html: box._html, before, downloads: calls.filter((c) => c.path === "/api/gateway/models/download").map((c) => c.body), tracked, after: box.textContent });
+"""
+    out = _node(_harness(scenario))[0]
+    assert out["thrown"] == "not downloaded yet"
+    assert "is not downloaded on this computer yet." in out["html"] and "Download (401 MB)" in out["html"]
+    assert out["before"] == 0, "nothing is downloaded before the click"
+    assert out["downloads"] == [{"provider": "supertonic", "artifact": "supertonic-3"}] and out["tracked"] == [{"job": "dl-1"}]
+    assert out["after"].startswith("Downloading the voice model.")

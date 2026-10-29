@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A voice model that is not downloaded is a typed answer, not a 500** (backlog 0955). A fresh install's default
+  TTS route (Supertonic: engine here, weights not) answered HTTP 500 after 3 s of retries. `voice/tts` and
+  `voice/tts/stream` now answer 409 `model_not_downloaded` before any synthesis. The answer names the model, its
+  size, the command and the download route. The console's voice picker shows that sentence with a
+  **Download (401 MB)** button; nothing downloads before the click.
+
+### Fixed
+
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a

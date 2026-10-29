@@ -12836,6 +12836,18 @@ def _voice_tts_timeout_fail_loud(*, svc: Any, parent_run_id: str, request_id: st
     )
 
 
+async def _refuse_tts_without_weights(provider: Optional[str], model: Optional[str]) -> None:
+    """409 `model_not_downloaded` (backlog 0955) when the TTS route's engine is installed but its
+    model is not on disk; nothing (the call goes ahead) when that cannot be told."""
+    if not provider or not model:
+        return
+    from ..core_config import model_not_downloaded
+
+    missing = await off_loop("light", model_not_downloaded, provider, model)
+    if missing:
+        raise HTTPException(status_code=409, detail=missing)
+
+
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
 async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     """Delegate TTS to Runtime-owned durable child execution."""
@@ -12909,6 +12921,10 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
                 model_name = str(_voice_defaults["model"])
             if _voice_defaults.get("voice"):
                 voice_name = str(_voice_defaults["voice"])
+
+    # Engine here, weights not (backlog 0955): a typed 409 naming the model, its size and the
+    # download, instead of a child that retries a missing-file error and ends in a 500.
+    await _refuse_tts_without_weights(provider_name, model_name)
 
     output_spec: Dict[str, Any] = {
         "modality": "voice",
@@ -13101,6 +13117,9 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
                 model_name = str(_voice_defaults["model"])
             if _voice_defaults.get("voice"):
                 voice_name = str(_voice_defaults["voice"])
+
+    # The same typed 409 before the stream opens (backlog 0955).
+    await _refuse_tts_without_weights(provider_name, model_name)
 
     output_spec: Dict[str, Any] = {
         "modality": "voice",

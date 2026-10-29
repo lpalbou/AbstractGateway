@@ -16145,12 +16145,51 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (voice) body.voice = voice;
 	      const runId = voiceTestRunId();
 	      const signal = opts && opts.signal ? opts.signal : undefined;
-	      const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body), signal });
+	      let res;
+	      try {
+	        res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body), signal });
+	      } catch (err) {
+	        // Backlog 0955: the engine is here, its model is not. Say so in the dialog with the
+	        // download as a button (the console's model download, after the person's click).
+	        const missing = voiceModelNotDownloaded(err);
+	        if (missing) {
+	          offerVoiceModelDownload(missing);
+	          throw new Error("not downloaded yet");
+	        }
+	        throw err;
+	      }
 	      const url = sandboxArtifactUrl(runId, res.audio_artifact);
 	      if (!url) throw new Error("the synthesis returned no audio");
 	      const audio = await fetch(url, { method: "GET", credentials: "same-origin", signal });
 	      if (!audio.ok) throw new Error(`audio download failed (HTTP ${audio.status})`);
 	      return await audio.arrayBuffer();
+	    }
+	    // The gateway's typed "download it first" answer (409 `model_not_downloaded`, backlog 0955).
+	    function voiceModelNotDownloaded(err) {
+	      const data = err && err.data;
+	      const detail = data && typeof data.detail === "object" && data.detail ? data.detail : data;
+	      return detail && detail.reason_code === "model_not_downloaded" && detail.download ? detail : null;
+	    }
+	    function offerVoiceModelDownload(missing) {
+	      const box = $("default-modal-message");
+	      const size = missing.size_mb ? ` (${missing.size_mb} MB)` : "";
+	      box.className = "message";
+	      box.innerHTML = `${esc(missing.message || "This voice model is not downloaded yet.")} `
+	        + `<button type="button" class="btn btn-secondary" data-voice-download="1">Download${esc(size)}</button>`;
+	      const btn = typeof box.querySelector === "function" ? box.querySelector("[data-voice-download]") : null;
+	      if (!btn) return;
+	      btn.onclick = async () => {
+	        btn.disabled = true;
+	        try {
+	          const dl = missing.download || {};
+	          const res = await api(dl.path || "/api/gateway/models/download", { slow: true, method: dl.method || "POST", body: JSON.stringify(dl.body || {}) });
+	          trackDownloadJob(res.job);
+	          box.textContent = "Downloading the voice model. Its progress is on the Models page; play the voice again when it is done.";
+	        } catch (e) {
+	          box.textContent = `The download did not start: ${String((e && e.message) || e)}`;
+	          box.className = "message error";
+	        }
+	      };
 	    }
 	    function defaultVoicePickerProps() {
 	      return {

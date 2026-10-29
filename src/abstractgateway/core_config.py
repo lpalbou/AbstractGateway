@@ -776,6 +776,47 @@ def gateway_model_availability_payload(*, base_dir: Optional[Path] = None) -> Di
     return out
 
 
+def model_not_downloaded(provider: str, model: str) -> Optional[Dict[str, Any]]:
+    """The typed "download it first" answer for a route whose engine is here but whose weights
+    are not (gateway backlog 0955), else None. Generic: AbstractCore's availability probe for
+    the (provider, model) pair, never an engine's message text; the size comes from the
+    catalog when it knows the artifact. Read-only, no download, no hub call for the probe."""
+    pid, mid = str(provider or "").strip(), str(model or "").strip()
+    if not pid or not mid:
+        return None
+    try:
+        with config_facade.model_presence_sweep():
+            rows = config_facade.annotate_model_availability([{"provider": pid, "model": mid}])
+    except Exception:  # noqa: BLE001 - unknown is not "absent": the call goes ahead as before
+        return None
+    availability = (rows[0] or {}).get("availability") if rows else None
+    if not isinstance(availability, dict) or availability.get("status") != "absent" or availability.get("downloadable") is False:
+        return None
+    artifact = str(availability.get("artifact") or rows[0].get("download_artifact") or mid)
+    size_bytes: Optional[int] = None
+    try:
+        payload = config_facade.model_catalog(artifact)
+        for row in payload.get("rows") or []:
+            for art in row.get("artifacts") or []:
+                if art.get("provider") == pid and str(art.get("artifact")) == artifact and isinstance(art.get("download_bytes"), int):
+                    size_bytes = int(art["download_bytes"])
+    except Exception:  # noqa: BLE001 - the size is advice; the answer stands without it
+        size_bytes = None
+    size_mb = round(size_bytes / 1_000_000) if size_bytes else None
+    command = f"{GATEWAY_CLI} models download {pid} {artifact}"
+    size_text = f" ({size_mb} MB)" if size_mb else ""
+    return {
+        "reason_code": "model_not_downloaded",
+        "message": f"The voice model {artifact}{size_text} is not downloaded on this computer yet. Download it from the Models page, or run: {command}",
+        "provider": pid,
+        "model": mid,
+        "artifact": artifact,
+        "size_mb": size_mb,
+        "command": command,
+        "download": {"method": "POST", "path": "/api/gateway/models/download", "body": {"provider": pid, "artifact": artifact}},
+    }
+
+
 def recommended_core_model_downloads() -> list[Dict[str, str]]:
     """`{route, provider, artifact}` for the recommended fresh-install set."""
 
