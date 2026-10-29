@@ -89,7 +89,9 @@ def _login_name() -> str:
 
         return pwd.getpwuid(os.getuid()).pw_name
     except Exception:  # noqa: BLE001
-        return os.environ.get("USER") or os.environ.get("LOGNAME") or "$USER"
+        # No passwd entry (a container's arbitrary uid): the command is shown with the shell's $USER.
+        # Never read from the environment here: env reads are declared in env_registry.py.
+        return "$USER"
 
 
 def linger_state(runner: Optional[Runner] = None, user: Optional[str] = None) -> Optional[bool]:
