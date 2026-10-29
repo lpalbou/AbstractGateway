@@ -1494,6 +1494,16 @@ def _local_core_payload() -> Dict[str, Any]:
     return payload
 
 
+def set_model_context(provider: str, model: str, context_length: Optional[int], *, config_file: Optional[Path]) -> Any:
+    """Set (or clear) the context a local model is loaded with, through AbstractRuntime's config
+    facade (gateway ADR 0001: no AbstractCore import here). An older Runtime -> RuntimeTooOld; an
+    older Core -> CoreTooOld; both in words (501), never a silent no-op."""
+    fn = getattr(config_facade, "set_model_context", None)
+    if fn is None:
+        raise RuntimeTooOld("Setting a model's context", missing="config_facade.set_model_context")
+    return fn(provider, model, context_length, config_file=config_file)
+
+
 def runtime_core_config_file(base_dir: Optional[Path]) -> Optional[Path]:
     """The AbstractCore config file a RUNTIME built for this scope should read.
 
