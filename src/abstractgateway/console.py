@@ -11905,7 +11905,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            lockBtn.type = "button";
 	            // "Keep loaded" (AbstractCore ADR 0010): a kept model is never evicted
 	            // to make room for another load. Icon + words; the tooltip says why.
-	            lockBtn.textContent = row.locked === true ? "\U0001F512 Kept loaded" : "\U0001F513 Keep loaded";
+	            lockBtn.textContent = row.locked === true ? "Kept loaded" : "Keep loaded";
+	            const lockIcon = document.createElement("span");
+	            lockIcon.className = "button-icon";
+	            lockIcon.innerHTML = ICONS.lock;  // the registry SVG, never an emoji
+	            lockBtn.prepend(lockIcon);
 	            lockBtn.title = row.locked === true
 	              ? (row.resident === true
 	                ? "Kept loaded: never evicted to make room for another model. Click to release it (it can then be unloaded or evicted when memory is needed)"
