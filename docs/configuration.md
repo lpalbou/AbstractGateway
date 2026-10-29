@@ -1517,6 +1517,62 @@ Core catalog proxy settings:
   This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
+## Model host: the models run in a supervised child process
+
+ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
+`--model-host process` (the default on Linux) the gateway process loads no model and calls no
+provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
+shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
+memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
+`/api/health` keep answering.
+
+```bash
+abstractgateway serve                         # Linux: --model-host process
+abstractgateway serve --model-host in-process # everything in one process (macOS and Windows default)
+```
+
+| Work | gateway process | model host child |
+|---|---|---|
+| Accounts, sign-in, routes, console, live streams, `/api/health` | yes | no |
+| Run stores, ledger, run ticking, tools, mail, push, bridges | yes | no |
+| Every AbstractCore provider call and model load (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
+| The OpenAI-compatible `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it (Core's app, the same model pool) |
+
+- **The default**: `process` on Linux (servers), `in-process` on macOS and Windows (the menu-bar tray;
+  Apple unified memory) and with `--reload`. A gateway embedded without the CLI (tests) is in-process.
+  `serve --no-runner` (the split API process) holds no model and starts no child; the split `runner`
+  takes the same flags and starts the child itself.
+- **Limits**: `--model-host-memory-gb GB` kills and restarts the child when its resident memory passes
+  GB (default 80 % of this machine's memory; `0` turns it off); `--model-host-nice N` (default 5) lets
+  the gateway answer first when inference uses every CPU. No environment variable.
+- **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
+  after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
+  10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
+  restarts. The child exits when the gateway does (its stdin closes), so it never outlives it.
+- **A request when the child dies** fails within a second: "The model host (the process that runs the
+  models) stopped while answering (killed by signal 9 (SIGKILL)). The gateway is fine and is restarting
+  it; send the message again in a few seconds." (status 424, not retried automatically: the request may
+  be what crashed it). A request while it restarts fails at once with status 503 (retried by the
+  runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.
+- **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
+  (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
+  `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,
+  `memory_ceiling_bytes`, `inflight` (`[{method, provider, model, since}]`), `restart` (`will_restart`,
+  `backoff_s`, `restarts_in_window`) and `log_tail`. The child's log is `<data dir>/logs/model-host.log`.
+- **Health**: `GET /api/health` carries `model_host`: `mode`, `state` (`starting`, `up`, `restarting`,
+  `failed`, `stopped`; `in-process` in that mode), `pid`, `generation`, `restarts_in_window`,
+  `rss_bytes`, `memory_ceiling_bytes`, `nice`, `inflight`, `last_exit`, `last_incident`.
+- **What a restart loses**: what the child held in memory (resident models, warmed again at once;
+  prompt caches; residency locks). Runs, sessions and the ledger are the gateway's and are untouched.
+- **Cost**: the hop adds about 0.1 ms p50 to a chat step on localhost (`scripts/bench_model_host_hop.py`;
+  budget 2 ms). The child is one more Python process with AbstractCore's imports.
+- **Not yet in the child** (backlog 0968): speech routes that call the voice library directly
+  (console voice preview, dictation), the embeddings index, and providers that tools build through the
+  session-route path. Generated media already runs in its own subprocesses.
+
+Evidence: `src/abstractgateway/model_host.py`, `src/abstractgateway/model_host_child.py`,
+`tests/test_model_host_rpc.py`, `tests/test_model_host_kill_e2e.py` (opt-in, `ABSTRACT_E2E_MODEL_HOST=1`).
+
 ## Split mode: API and runner in two processes (opt-in)
 
 By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
@@ -1568,7 +1624,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -1576,6 +1632,9 @@ Most-used:
   environment variable.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
+  - `--model-host process|in-process`: where the models run (default `process` on Linux, `in-process`
+    on macOS, Windows and with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
+    child's limits ([model host](#model-host-the-models-run-in-a-supervised-child-process)).
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
     `--print-token` is treated as a test gateway and shows no icon either.

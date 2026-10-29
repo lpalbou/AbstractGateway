@@ -139,6 +139,20 @@ conversation continues.
 - `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
   on a breakpoint); it is never active with `--reload`.
 
+### A reply failed with "The model host ... stopped while answering"
+
+On Linux the models run in a child process (`--model-host process`, see
+[configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process)). That
+child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
+kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. The gateway kept running
+and restarted it; send the message again. The cause is in the incident file the sentence names
+(`<data dir>/incidents/model-host-*.json`: `kind`, `signal`, `rss_bytes_last`, `inflight`, `log_tail`)
+and in `<data dir>/logs/model-host.log`. The same request crashing it again points at the model or its
+settings (a context larger than the KV cache, a broken GGUF): choose another model or a smaller context.
+After 5 crashes in 10 minutes the gateway stops restarting it (`GET /api/health`: `model_host.state:
+failed`, `status: degraded`); restart the gateway once the cause is fixed. "is restarting" (status 503)
+means a request arrived during the restart: try again in a few seconds.
+
 ## Network access
 
 ### A change of network mode "needs a restart"

@@ -66,6 +66,26 @@ def is_api_process() -> bool:
     return role() == ROLE_API
 
 
+def forwards_core() -> bool:
+    """Whether `/v1` is forwarded from this process: the split API process (to the runner's model
+    host), or any process whose models run in a model host child (ADR 0002)."""
+    from . import model_host
+
+    return is_api_process() or model_host.active()
+
+
+def core_unavailable_sentence() -> str:
+    from . import model_host
+
+    if model_host.active() and not is_api_process():
+        return ("The OpenAI API is served by the model host (the process that runs the models), which is not "
+                "answering right now: it is starting or restarting. Try again in a few seconds; "
+                "`GET /api/health` shows its state (`model_host`).")
+    from .core_endpoint import RUNNER_UNAVAILABLE
+
+    return RUNNER_UNAVAILABLE
+
+
 def mode() -> str:
     from .live_deltas import ROLE_COMBINED
 
@@ -221,7 +241,7 @@ class ModelHost:
             time.sleep(0.02)
         _write_address(self.data_dir, {"url": self.url, "pid": os.getpid(), "secret": self.secret,
                                        "started_at": time.time()})
-        logger.info("split mode: model host on %s (the API process forwards /v1 here)", self.url)
+        logger.info("model host: Core's serving app on %s (the gateway process forwards /v1 here)", self.url)
         return self
 
     def stop(self) -> None:

@@ -349,9 +349,10 @@ class _RuntimeLLMAdapter:
     def __init__(
         self, provider: str, *, model: str, thinking: Optional[str] = None, speculation: Any = None, **llm_kwargs: Any
     ) -> None:
-        from abstractruntime.integrations.abstractcore import LocalAbstractCoreLLMClient
+        from . import model_host
 
-        self._client = LocalAbstractCoreLLMClient(provider=provider, model=model, llm_kwargs=dict(llm_kwargs))
+        # ADR 0002: in the model host child when this process has one, else here.
+        self._client = model_host.local_client(provider=provider, model=model, llm_kwargs=dict(llm_kwargs))
         # The mind's reasoning effort (substrate triple). Injected into each
         # call's params on the one wire name; None sends nothing.
         self._thinking = str(thinking or "").strip() or None

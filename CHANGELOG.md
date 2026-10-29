@@ -10,7 +10,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
-
 ### Changed
 
 - **Only the machine's gateway service shows the tray icon** (operator ruling 2026-10-29: two icons on one Mac, a
