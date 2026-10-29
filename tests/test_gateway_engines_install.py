@@ -880,3 +880,32 @@ def test_a_new_llamacpp_restarts_the_model_host_child(tmp_path, monkeypatch):
     job = reg.get(snap["job_id"]).snapshot()
     assert job["state"] == "done" and killed and "llama.cpp updated" in killed[0]
     assert job["result"]["message"] == "The model host restarts with the new llama.cpp; the next model load uses it"
+
+
+def test_linux_host_with_nvidia_smi_is_cuda(monkeypatch):
+    """OVH 8080 (2026-10-29): the installer was built with accelerator=None, so the CUDA branch never
+    ran and "Update llama.cpp" chose the CPU wheel. MUTANT: no detection -> None -> RED."""
+    import subprocess as sp
+    monkeypatch.setattr(ei.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(ei.shutil, "which", lambda n: "/usr/bin/nvidia-smi" if n == "nvidia-smi" else None)
+    monkeypatch.setattr(ei.subprocess, "run", lambda argv, **k: sp.CompletedProcess(argv, 0, "GPU 0: Quadro RTX 5000 (UUID: x)\\n", ""))
+    assert ei.detect_host().accelerator == "cuda"
+    monkeypatch.setattr(ei.shutil, "which", lambda n: None)
+    assert ei.detect_host().accelerator is None
+
+
+def test_an_update_installs_llama_cpp_alone_without_its_dependencies(tmp_path):
+    """Re-resolving abstractcore[gpu] built stable-diffusion-cpp-python from source (no compiler on
+    the server). MUTANT: the core spec on an update -> RED."""
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[1:2] == ["-c"] and "m.version('llama-cpp-python')" in a[2], lambda a: (0, "0.3.35\\n"))
+    sysd.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\\n"))
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.3.36", "gpu_offload": true}'))
+    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
+    snap, _ = reg.start("llamacpp", run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "done", job
+    pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert pip and not any(x.startswith("abstractcore") for x in pip[0]), pip
+    assert "--no-deps" in pip[0] and "llama-cpp-python==0.3.36" in pip[0] and any("/cu125/" in x for x in pip[0])

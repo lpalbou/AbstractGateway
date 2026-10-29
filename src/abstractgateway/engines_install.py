@@ -355,9 +355,25 @@ def detect_host(accelerator: Optional[str] = None) -> HostFacts:
         libc = platform.libc_ver()[0] or ""
         facts.libc = "glibc" if libc == "glibc" else ("musl" if not libc else libc)
         facts.gui_session = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if facts.accelerator is None:
+            facts.accelerator = _linux_accelerator()
     if hasattr(os, "geteuid"):
         facts.is_root = os.geteuid() == 0
     return facts
+
+
+def _linux_accelerator() -> Optional[str]:
+    """"cuda" when an NVIDIA GPU answers `nvidia-smi -L` (the root installer's test), else None.
+    The engine installer was built without it (OVH 8080, 2026-10-29): "Update llama.cpp" chose
+    the CPU wheel on an NVIDIA server."""
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return None
+    try:
+        out = subprocess.run([smi, "-L"], capture_output=True, text=True, timeout=10)
+        return "cuda" if out.returncode == 0 and "GPU" in (out.stdout or "") else None
+    except Exception:
+        return None
 
 
 def _current_login_name() -> str:
@@ -1064,6 +1080,11 @@ class EngineInstaller:
         major = (out or "").strip().splitlines()[-1].split(".")[0] if rc == 0 and (out or "").strip() else ""
         return LLAMA_CUDA_BUILDS.get(major)
 
+    def _installed_llama_version(self) -> Optional[str]:
+        rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('llama-cpp-python'))"], timeout=60)
+        v = (out or "").strip().splitlines()[-1] if rc == 0 and (out or "").strip() else ""
+        return v or None
+
     def _installed_llama_cuda_build(self) -> Optional[str]:
         """The CUDA build of the llama-cpp-python ALREADY installed (the root installer chooses it
         by the driver, not by PyTorch): the CUDA runtime its libggml-cuda links, or None."""
@@ -1369,8 +1390,19 @@ class EngineInstaller:
             )
         if wheel:
             pin, backend, links = wheel
-            ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
-            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links, version), *pins], lo=5, hi=90)
+            if self._installed_llama_version():
+                # AN UPDATE: llama.cpp alone (its dependencies are there). Re-resolving AbstractCore's
+                # setting pulled the gpu extras' sdists (stable-diffusion-cpp-python) the root
+                # installer overrides away, and needed a C compiler on the OVH server.
+                ctx.state("downloading", f"Updating llama.cpp to the prebuilt {backend} wheel {pin}", percent=5)
+                argv = [*self.pip_prefix(), f"llama-cpp-python=={pin}", "--find-links", links,
+                        "--only-binary", "llama-cpp-python", "--no-deps"]
+                if self.pip_prefix()[1:3] == ["pip", "install"]:
+                    argv += ["--reinstall-package", "llama-cpp-python"]
+                rc, out = self._pip(ctx, argv, lo=5, hi=90)
+            else:
+                ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
+                rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links, version), *pins], lo=5, hi=90)
             if rc == 0:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
