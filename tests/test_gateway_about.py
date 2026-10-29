@@ -19,7 +19,8 @@ def test_about_is_public_and_holds_versions_only(tmp_path: Path, monkeypatch: py
         r = client.get("/api/gateway/about")  # no Authorization header
         assert r.status_code == 200, r.text
         body = r.json()
-        assert set(body) == {"abstractframework", "abstractgateway", "packages"}
+        # `instance` (instances.py): a label ("default" or a second gateway's name), no path, host or secret.
+        assert set(body) == {"abstractframework", "abstractgateway", "packages", "instance"} and body["instance"] == "default"
         assert body["abstractgateway"] == metadata.version("abstractgateway")
         assert body["packages"]["abstractcore"] == metadata.version("abstractcore")
         assert all(k.startswith("abstract") for k in body["packages"])
