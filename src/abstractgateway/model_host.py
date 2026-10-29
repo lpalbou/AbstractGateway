@@ -617,7 +617,10 @@ CONFIG_ATTRS = ("_llm_kwargs", "_default_provider", "_default_model", "_provider
 def _class_callables(kind: str) -> frozenset:
     from abstractruntime.integrations.abstractcore import llm_client as lc
 
-    cls = lc.MultiLocalAbstractCoreLLMClient if kind == "multi" else lc.LocalAbstractCoreLLMClient
+    if kind == "embeddings":
+        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient as cls
+    else:
+        cls = lc.MultiLocalAbstractCoreLLMClient if kind == "multi" else lc.LocalAbstractCoreLLMClient
     names = set()
     for name in dir(cls):
         if name.startswith("__"):
@@ -643,7 +646,7 @@ class ModelHostClient:
     """
 
     def __init__(self, host: "ModelHostSupervisor", *, kind: str, ctor: Dict[str, Any]) -> None:
-        if kind not in ("multi", "local"):
+        if kind not in ("multi", "local", "embeddings"):
             raise ValueError(f"unknown model host client kind {kind!r}")
         self._mh_host = host
         self._mh_kind = kind
@@ -663,6 +666,9 @@ class ModelHostClient:
         if kind == "multi":
             self._mh_config["_default_provider"] = str(ctor.get("provider") or "").strip().lower()
             self._mh_config["_default_model"] = str(ctor.get("model") or "").strip()
+        if kind == "embeddings":  # read on the routes; never worth a round trip
+            self._mh_config["provider"] = str(ctor.get("provider") or "")
+            self._mh_config["model"] = str(ctor.get("model") or "")
         # Read in the gateway by the tool executor's late-bound resolver getter
         # (`build_effect_handlers`), so it is kept here as well as forwarded.
         self._provider_endpoint_profile_resolver: Any = None
@@ -676,6 +682,28 @@ class ModelHostClient:
     def _mh_refresh_config(self, attrs: Any) -> None:
         if isinstance(attrs, dict):
             self._mh_config.update(attrs)
+
+    def _mh_fold_identity(self) -> None:
+        """A pool client's CURRENT default (after `set_default_provider_model`) becomes its constructor
+        identity, so a rebuild after a restart warms that model directly, once (pass three,
+        2026-10-29): rebuilding with the boot-time identity warmed the old default first, and the
+        replayed switch then asked for another copy."""
+        if self._mh_kind != "multi":
+            return
+        cfg = self._mh_config
+        if "_default_provider" in cfg and "_default_model" in cfg:
+            self._mh_ctor["provider"] = cfg["_default_provider"]
+            self._mh_ctor["model"] = cfg["_default_model"]
+        if isinstance(cfg.get("_llm_kwargs"), dict):
+            self._mh_ctor["llm_kwargs"] = dict(cfg["_llm_kwargs"])
+        if "_capability_defaults_explicit" in cfg:
+            self._mh_ctor["capability_defaults"] = (cfg.get("_capability_defaults")
+                                                    if cfg["_capability_defaults_explicit"] else None)
+        # The switch is in the constructor now: replaying it would only rebuild (and, with a local
+        # engine, load again) the model the constructor already warmed.
+        with self._mh_setters_lock:
+            if self._mh_setters.pop("set_default_provider_model", None) is not None:
+                self._mh_setters_version += 1
 
     # -- building in the child
     def _mh_ensure(self) -> None:
@@ -716,6 +744,7 @@ class ModelHostClient:
             attrs = _Exchange(host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                               what={"method": "getattrs"}).run()
             self._mh_refresh_config(attrs)
+            self._mh_fold_identity()
             self._mh_built_generation = generation
 
     def _mh_call(self, name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
@@ -738,6 +767,7 @@ class ModelHostClient:
             with contextlib.suppress(ModelHostUnavailable, ModelHostCrashed):
                 self._mh_refresh_config(_Exchange(self._mh_host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                                                   what={"method": "getattrs"}).run())
+            self._mh_fold_identity()
             return result
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
@@ -771,7 +801,7 @@ class ModelHostClient:
         assigned = self.__dict__.get("_mh_assigned") or {}
         if name in assigned:
             return assigned[name]
-        if name in CONFIG_ATTRS:
+        if name in CONFIG_ATTRS or name in self._mh_config:
             config = self._mh_config
             if name in config:
                 value = config[name]
@@ -861,6 +891,10 @@ def read_incidents(data_dir: Path, *, limit: int = 20) -> List[Dict[str, Any]]:
             out.append(doc)
     return out
 
+
+# Built at once (and after every restart): the runtimes' pools and the embeddings client, whose
+# models warm in the loading phase. A gateway-side `local` client is built by its first call.
+_EAGER_KINDS = frozenset({"multi", "embeddings"})
 
 _UNIX_PATH_MAX = 100  # sun_path is 104 bytes on macOS, 108 on Linux; leave room for the file name
 
@@ -1033,8 +1067,7 @@ class ModelHostSupervisor:
                 self.last_error = None
                 self._cond.notify_all()
                 logger.info("model host: pid %s ready (generation %s)", proc.pid, generation)
-                for client in list(self._clients):
-                    self._warm_queue.append(weakref.ref(client))
+                self._queue_warm_builds()
                 self._wake.set()
             else:
                 self.last_error = str(ready.get("reason") or "the model host did not report ready")
@@ -1228,8 +1261,20 @@ class ModelHostSupervisor:
 
     def _register(self, client: ModelHostClient) -> None:
         self._clients.add(client)
-        self._warm_queue.append(weakref.ref(client))
-        self._wake.set()
+        if client._mh_kind in _EAGER_KINDS:
+            self._warm_queue.append(weakref.ref(client))
+            self._wake.set()
+
+    def _queue_warm_builds(self) -> None:
+        """After a (re)start, rebuild the runtimes' pool clients at once (their default model warms in
+        the loading phase); a gateway-side client (`local`: a summary, Ask on a run, the sandbox,
+        entity chat) is rebuilt by its next call. Built eagerly, such a client loaded the model as
+        an instance of its own before the pool could, and the pool's copy was then a second one
+        (pass three, 2026-10-29: refused by the residency failsafe; chat broke after every
+        restart)."""
+        for client in list(self._clients):
+            if client._mh_kind in _EAGER_KINDS:
+                self._warm_queue.append(weakref.ref(client))
 
     # -- connections
     def _acquire(self, *, connect_timeout_s: Optional[float] = None) -> _Connection:
@@ -1350,6 +1395,18 @@ def multi_client(**ctor: Any) -> ModelHostClient:
     if sup is None:
         raise RuntimeError("model_host.multi_client: no model host in this process")
     return ModelHostClient(sup, kind="multi", ctor=ctor)
+
+
+def embeddings_client(**ctor: Any) -> Any:
+    """AbstractRuntime's `AbstractCoreEmbeddingsClient`: in the model host when this process has one
+    (the embedding model's weights live with the other models, never in the gateway process), else
+    in this process."""
+    sup = _supervisor
+    if sup is not None:
+        return ModelHostClient(sup, kind="embeddings", ctor=ctor)
+    from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+
+    return AbstractCoreEmbeddingsClient(**ctor)
 
 
 def local_client(**ctor: Any) -> Any:

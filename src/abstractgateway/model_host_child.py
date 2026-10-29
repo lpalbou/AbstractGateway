@@ -313,6 +313,10 @@ def _build_client(kind: str, ctor: Dict[str, Any]) -> Any:
         return lc.MultiLocalAbstractCoreLLMClient(**ctor)
     if kind == "local":
         return lc.LocalAbstractCoreLLMClient(**ctor)
+    if kind == "embeddings":
+        from abstractruntime.integrations.abstractcore.embeddings_client import AbstractCoreEmbeddingsClient
+
+        return AbstractCoreEmbeddingsClient(**ctor)
     raise ValueError(f"unknown client kind {kind!r}")
 
 

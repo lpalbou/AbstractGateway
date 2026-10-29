@@ -28121,24 +28121,34 @@ def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[D
     capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
     knows none of these: Ask on a run failed at once with "Unknown provider:
     endpoint:<id>" on a gateway whose runs used that default fine."""
-    from .. import model_host
+    from ..generation_pool import PoolGeneration, generation_client
 
     svc = get_gateway_service()
     current_base, root_base = _gateway_profile_dirs()
     routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
-    # ADR 0002: in the model host child when this process has one, else here.
-    llm = model_host.local_client(
+    # R2 (2026-10-29): the principal's runtime pool, so an in-process model is ONE resident instance
+    # shared with the runs (a client per request was a full extra copy). Without a pool, a client of
+    # its own as before (in the model host child when this process has one, ADR 0002).
+    llm = generation_client(
         provider=routed_provider,
         model=model,
         llm_kwargs=llm_kwargs or None,
-        artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
-        # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
-        # `runtime_core_config_file` is the seam the bundle host uses (this
-        # scope's overlay when it has one, else THE Core store), never the
-        # retired `<data_dir>/config/abstractcore.json`.
-        core_config_file=runtime_core_config_file(current_base),
-        capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        local_ctor=dict(
+            provider=routed_provider,
+            model=model,
+            llm_kwargs=llm_kwargs or None,
+            artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
+            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
+            # `runtime_core_config_file` is the seam the bundle host uses (this
+            # scope's overlay when it has one, else THE Core store), never the
+            # retired `<data_dir>/config/abstractcore.json`.
+            core_config_file=runtime_core_config_file(current_base),
+            capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        ),
     )
+    if isinstance(llm, PoolGeneration):
+        # The pool resolves endpoint profiles with the host's resolver already.
+        return llm, routed_provider, profile_public
 
     def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
         try:
