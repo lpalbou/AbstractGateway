@@ -113,8 +113,11 @@ no MCP endpoint of its own (it is an MCP client).
   model host proxies.
 
 ## Validation
-- The kill test numbers and the hop latency in the release report (the PR that ships this ADR
-  records the first ones).
+- The kill test numbers and the hop latency in the release report. First numbers (2026-10-29, PR
+  #28): `kill -9` on the child during a run: the run failed 0.06 s (macOS) / 0.10 s (Linux) after
+  the kill with the sentence, `/api/health` answered 200 throughout, the incident file existed, the
+  child was back after 0.62 s / 0.76 s and the next run completed. Hop: plain chat step +0.10 ms
+  p50 (macOS) / +0.52 ms p50 (Linux, 4 vCPU), streamed with live deltas within noise; budget 2 ms.
 
 ## Backlog links
 - 0944 (endpoint as a supervised process: `/v1` through the model host), 0943 (incident ledger:
