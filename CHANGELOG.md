@@ -114,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
 
+- **A text model outside the catalog can be the default** (operator QA 2026-10-28, item c). A downloaded model under
+  **Not in the catalog** had only the delete button. It now offers **Use as default** when the engine says it
+  generates text (AbstractCore 0866 reads a GGUF's own header). A TTS, image or embedding model does not offer it.
 - **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
   editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
   server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
