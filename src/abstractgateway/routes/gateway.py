@@ -29906,7 +29906,7 @@ async def host_tray_show(request: Request) -> Dict[str, Any]:
     ctx = serve_context()
     if not ctx:
         raise HTTPException(status_code=409, detail="this process was not started by `abstractgateway serve`; there is no tray to show")
-    decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")))
+    decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")), tray=bool(ctx.get("tray")), service=ctx.get("service"))
     if not decision.start:
         raise HTTPException(status_code=409, detail=f"the tray cannot start here ({decision.reason}): {decision.hint or ''}".strip())
     await off_loop(
