@@ -42,7 +42,7 @@ class Runner:
 
     def mutating(self) -> List[List[str]]:
         """Calls that CHANGE the service manager (probes filtered out)."""
-        probes = {("launchctl", "print"), ("launchctl", "print-disabled"), ("systemctl", "--user", "is-enabled"), ("systemctl", "--user", "is-active"), ("systemctl", "--user", "show-environment")}
+        probes = {("launchctl", "print"), ("launchctl", "print-disabled"), ("systemctl", "--user", "is-enabled"), ("systemctl", "--user", "is-active"), ("systemctl", "--user", "show-environment"), ("loginctl", "show-user")}
         return [c for c in self.calls if not any(tuple(c[: len(p)]) == p for p in probes)]
 
 
@@ -463,3 +463,36 @@ def test_cli_status_prints_the_repair_and_enable_fixes_it(tmp_path: Path, monkey
     assert firstrun_cli.run_service(argparse.Namespace(service_cmd="status", data_dir=None, json=True), platform="darwin", home=home) == 0
     st = json.loads(capsys.readouterr().out)
     assert st["state"] == "on" and st["needs_repair"] is False and st["bind_source"] == "network_setting"
+
+
+
+# 0957: a systemd USER unit stops at SSH logout and never starts at boot without lingering.
+@pytest.mark.parametrize("linger, noted", [("Linger=no\n", True), ("Linger=yes\n", False), (None, False)])
+def test_linux_enable_and_status_say_when_lingering_is_off(tmp_path: Path, capsys: pytest.CaptureFixture[str], linger, noted) -> None:
+    from abstractgateway import firstrun_cli
+
+    home, data = tmp_path / "home", tmp_path / "data"
+    answers = {("systemctl", "--user", "is-enabled"): (0, "enabled\n"), ("loginctl", "show-user"): (0, linger) if linger else None}
+    run = Runner(answers)
+    out = autostart.enable_autostart(data_dir=data, host="127.0.0.1", port=18840, platform="linux", home=home, exe_argv=[str(_exe(tmp_path))], runner=run, env={})
+    after = out["after"]
+    assert after["state"] == "on"
+    user = autostart._login_name()
+    line = f"sudo loginctl enable-linger {user}"
+    assert after["linger"] is ({"Linger=no\n": False, "Linger=yes\n": True}.get(linger))
+    assert (line in after["summary"]) is noted and ("linger_note" in after) is noted
+    assert ["loginctl", "show-user", user, "-p", "Linger"] in run.calls
+    firstrun_cli._print_autostart_result(out)  # what `abstractgateway service enable` prints
+    assert (line in capsys.readouterr().out) is noted
+    assert run.mutating() == [["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "abstractgateway.service"]]
+
+
+def test_macos_and_the_xdg_fallback_never_ask_about_lingering(tmp_path: Path) -> None:
+    run = Runner({("loginctl", "show-user"): (0, "Linger=no\n")})
+    st = autostart.autostart_status(data_dir=tmp_path / "d", platform="darwin", home=tmp_path / "h", runner=run, uid=501)
+    assert "linger" not in st and not any(c[:1] == ["loginctl"] for c in run.calls)
+
+
+def test_the_install_plan_no_longer_prints_an_unconditional_linger_hint(tmp_path: Path) -> None:
+    plan = os_service.build_install_plan(platform="linux", home=tmp_path / "h", host="127.0.0.1", port=1, data_dir=tmp_path / "d", exe_argv=[str(_exe(tmp_path))], env={})
+    assert not any("enable-linger" in n for n in plan.notes)
