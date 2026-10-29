@@ -138,6 +138,17 @@ async function fetch(path, options = {}) {
     return res(200, { ok: true, profile: { id: body.id, provider_family: body.provider_family, display_name: body.display_name } });
   }
   if (path === "/api/gateway/config/provider-endpoint-profiles/discover-models") return res(200, { ok: true, models: ["claude-small", "claude-large"] });
+  if (path.startsWith("/api/gateway/models/download/") && method === "GET") {
+    const child = { job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 40 };
+    return res(200, path.endsWith("/grp_1") ? { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 40, children: [child] } : child);
+  }
+  if (path === "/api/gateway/models/download" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    if (body.recommended) return res(200, { group: { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 10,
+      children: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] },
+      jobs: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] });
+    return res(200, { job: { job_id: `dl_${body.artifact}`, provider: body.provider, artifact: body.artifact, status: "running", state: "downloading" } });
+  }
   if (path === "/api/gateway/config/capability-defaults/apply-recommended") return res(200, { applied_recommended: { routes: [{ route: "input.text", action: "applied" }] } });
   if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
   if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
@@ -214,7 +225,7 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
-  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: [] });
+  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: (scenario.existingProfiles || []).map((id) => ({ id })) });
   if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
   return res(200, {});
 }
@@ -511,38 +522,75 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+const dmClick = async (boxId, dataset) => { el(boxId).onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
 if (scenario.name === "default-models") {
-  // 1069: one row per capability with in -> out, now, AbstractCore's pick, and the actions.
+  // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
   context.firstRunGoto("model"); await settle();
+  if (!el("first-run-default-models").innerHTML.includes('data-dm-badge="in-text"')) fail("the step must open in Simple mode");
+  await dmClick("first-run-default-models", { dmMode: "advanced" });
   const html = el("first-run-default-models").innerHTML;
   const rows = (html.match(/data-dm-row="/g) || []).length;
   if (rows !== 9) fail("expected 9 capability rows, got " + rows);
-  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="text"', "Use recommended for all", "Choose…"]) {
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
     if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
   }
-  const click = async (dataset) => { el("first-run-default-models").onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
-  await click({ dmUse: "text" });
+  await dmClick("first-run-default-models", { dmUse: "input.text" });
+  const put = calls.find((c) => c.method === "PUT" && c.path === "/api/gateway/config/capability-defaults/input/text");
+  if (!put) fail("Use recommended did not set the text route");
+  const pb = JSON.parse(put.body);
+  // Review 1069: the previous model's base URL and reasoning effort are cleared, never carried over.
+  if (pb.provider !== "lmstudio" || pb.model !== "qwen/qwen3.5-9b@4bit" || pb.base_url !== "" || pb.reasoning !== "") fail("Use recommended body: " + put.body);
+  if (calls.some((c) => c.method === "PUT" && c.path.endsWith("/output/text"))) fail("output.text is derived from input.text: one write only");
+}
+if (scenario.name === "simple-mode") {
+  // 1069 Simple mode (default): one Use recommended, then capability badges in readable names.
+  context.firstRunGoto("model"); await settle();
+  let html = el("first-run-default-models").innerHTML;
+  const ins = (html.match(/data-dm-badge="in-/g) || []).length;
+  const outs = (html.match(/data-dm-badge="out-/g) || []).length;
+  if (ins !== 5 || outs !== 8) fail(`expected 5 input and 8 output badges, got ${ins} and ${outs}`);
+  for (const want of ["Use recommended", "Recommended for this computer", ">Input <", ">Output <", "Embeddings", "Rankers", "Files", "Qwen3.5 9B", "dm-badge--recommended", "dm-badge--covered", "dm-badge--none", "<svg"]) {
+    if (!html.includes(want)) fail("simple mode missing " + want + ": " + html.slice(0, 1200));
+  }
+  const badges = html.slice(html.indexOf('class="dm-groups"'));
+  if (/qwen\//.test(badges) || /@4bit/.test(badges)) fail("a badge shows a model id (ADR 0043: readable names only)");
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("Simple mode must hide the tables and catalog below");
+  // The one button: recommended routes without force, then the recommended downloads as one job.
+  await dmClick("first-run-default-models", { dmRecommended: "1" });
   const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
-  if (!apply) fail("Use recommended did not call apply-recommended");
-  const ab = JSON.parse(apply.body);
-  if (JSON.stringify(ab.only) !== '["text"]' || ab.force !== true) fail("Use recommended body: " + apply.body);
-  await click({ dmDownload: "1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit" });
+  if (!apply || JSON.parse(apply.body).force !== false) fail("Use recommended must keep the person's own choices (force false): " + (apply && apply.body));
   const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
-  if (!dl || JSON.parse(dl.body).artifact !== "qwen/qwen3.5-9b@4bit") fail("Download did not start the recommended artifact");
-  // A subscription for text: connect (profile + model list), choose, use.
-  if (!el("first-run-subscription").innerHTML.includes("Use a subscription for text")) fail("no subscription panel");
-  el("sub-family").value = "anthropic";
-  el("sub-key").value = "sk-ant-test-key";
-  await context.connectSubscription(); await settle();
-  const prof = calls.find((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST");
-  const pb = JSON.parse(prof.body);
-  if (pb.provider_family !== "anthropic" || pb.api_key !== "sk-ant-test-key" || pb.id !== "anthropic-subscription") fail("profile body: " + prof.body);
-  if (!el("first-run-subscription").innerHTML.includes("claude-large")) fail("discovered models not offered");
-  if (el("sub-key").value) fail("the API key stayed in the field");
-  el("sub-model").value = "claude-large";
-  await context.useSubscriptionModel(); await settle();
-  const puts = calls.filter((c) => c.method === "PUT" && /capability-defaults\/(input|output)\/text$/.test(c.path)).map((c) => [c.path, JSON.parse(c.body)]);
-  if (puts.length !== 2 || puts.some(([, b]) => b.provider !== "endpoint:anthropic-subscription" || b.model !== "claude-large")) fail("text default not set to the subscription: " + JSON.stringify(puts));
+  if (!dl || JSON.parse(dl.body).recommended !== true) fail("Use recommended did not start the recommended downloads");
+  html = el("first-run-default-models").innerHTML;
+  if (!html.includes("data-dl-group=") || !html.includes("ui-dl-child")) fail("no per-download progress after Use recommended: " + html.slice(0, 800));
+  // Guided choice: recommended first, other models that fit, an API key (text).
+  await dmClick("first-run-default-models", { dmBadge: "in-text" });
+  if (String(el("dm-choice-backdrop").className).includes("hidden")) fail("the badge did not open its choice");
+  let choice = el("dm-choice-body").innerHTML;
+  for (const want of ["Recommended for this computer", "Other models that fit", "Qwen3.5 9B", 'data-dmc="use-other"', "All engines and models…", "Or use an API key"]) {
+    if (!choice.includes(want)) fail("guided choice missing " + want + ": " + choice.slice(0, 900));
+  }
+  if (choice.includes("Big Model")) fail("a model that does not fit this computer is offered");
+  // The key is checked before anything is stored, and an existing connection is never overwritten.
+  el("dm-key-family").value = "anthropic";
+  el("dm-key-value").value = "sk-ant-test-key";
+  await dmClick("dm-choice-body", { dmc: "key-check" });
+  const disc = calls.find((c) => c.path.endsWith("/discover-models"));
+  const db = JSON.parse(disc.body);
+  if (db.provider_family !== "anthropic" || db.api_key !== "sk-ant-test-key" || db.profile_id) fail("the key must be checked as a draft: " + disc.body);
+  if (calls.some((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST")) fail("a connection was stored before the key was checked");
+  choice = el("dm-choice-body").innerHTML;
+  if (!choice.includes("claude-large")) fail("the key's models are not offered");
+  el("dm-key-model").value = "claude-large";
+  const before = calls.length;
+  await dmClick("dm-choice-body", { dmc: "key-use" });
+  const prof = calls.slice(before).find((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST");
+  const pp = JSON.parse(prof.body);
+  if (pp.id !== "anthropic-key-2" || pp.base_url !== "" || pp.api_key !== "sk-ant-test-key") fail("existing connection must not be overwritten (expected anthropic-key-2): " + prof.body);
+  const puts = calls.slice(before).filter((c) => c.method === "PUT" && /capability-defaults\/(input|output)\/text$/.test(c.path));
+  if (puts.length !== 1 || !puts[0].path.endsWith("/input/text")) fail("one write to input/text expected: " + JSON.stringify(puts.map((c) => c.path)));
+  const tb = JSON.parse(puts[0].body);
+  if (tb.provider !== "endpoint:anthropic-key-2" || tb.model !== "claude-large" || tb.base_url !== "" || tb.reasoning !== "") fail("text route body: " + puts[0].body);
 }
 if (scenario.name === "apps-gate") {
   // No default text model yet: the Apps step proposes no app and points back to the model step.
@@ -609,6 +657,13 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
                   "password_rule": "At least 10 characters.", "password_min_length": 10}
     result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
                    "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_simple_mode_badges_recommended_flow_and_guided_choice() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"]})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 
