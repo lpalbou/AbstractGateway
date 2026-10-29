@@ -109,3 +109,21 @@ def pool_stats() -> Dict[str, Dict[str, int]]:
             "queued": int(pool._work_queue.qsize()) if pool is not None else 0,
         }
     return out
+
+
+def shutdown_all(*, timeout_s: float = 2.0) -> None:
+    """Stop every pool at process exit: queued work is cancelled, idle workers
+    leave, and each worker thread is joined for up to `timeout_s` in all (a
+    worker still inside a long call is left to the exit belt)."""
+    import time
+
+    with _guard:
+        pools = list(_pools.values())
+        _pools.clear()
+    for pool in pools:
+        pool.shutdown(wait=False, cancel_futures=True)
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    for pool in pools:
+        for thread in list(getattr(pool, "_threads", ()) or ()):
+            thread.join(max(0.0, deadline - time.monotonic()))
+
