@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import shutil
 import threading
 import time
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.basic
 
 ZIP_BYTES = b"PK-fake-ollama-zip" * 1000
 ZIP_SHA = hashlib.sha256(ZIP_BYTES).hexdigest()
+PREBUILT = ei.EngineInstaller._prebuilt_only_args(None)
 MAC = ei.HostFacts(os_id="darwin", arch="arm64", accelerator="metal", macos_version=(15, 0))
 
 
@@ -176,8 +178,10 @@ def test_admin_command_runs_only_after_needs_admin_was_surfaced_and_continued(tm
     dest = tmp_path / "Applications" / "Ollama.app"
     assert prompt["method"] == "osascript" and prompt["button"] == "Continue with administrator password"
     assert "cannot write" in prompt["reason"]
+    # ADR 0003: copied beside the installed app, then swapped in (a failed copy keeps the old one).
     assert prompt["command"] == (
-        f"/bin/mkdir -p {tmp_path / 'Applications'} && /bin/rm -rf {dest} && /usr/bin/ditto {staged} {dest}"
+        f"/bin/mkdir -p {tmp_path / 'Applications'} && /bin/rm -rf {dest}.new && /usr/bin/ditto {staged} {dest}.new"
+        + f" && {{ [ ! -e {dest} ] || /bin/mv {dest} {dest}.old; }} && /bin/mv {dest}.new {dest} && /bin/rm -rf {dest}.old"
         + f" && /usr/sbin/chown -R {owner}:admin {dest}"
     )
     assert job["continue_actions"] == ["approve_admin"]
@@ -298,8 +302,9 @@ def test_linux_ollama_installs_for_the_user_without_an_administrator(tmp_path) -
         home = root / "home"
 
         def unpack(argv):
-            (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
-            (home / ".local" / "bin" / "ollama").write_text("#!/bin/sh\n")
+            into = Path(shlex.split(argv[2].split("| tar -xf - -C", 1)[1])[0])
+            (into / "bin").mkdir(parents=True, exist_ok=True)
+            (into / "bin" / "ollama").write_text("#!/bin/sh\n")
             return 0, ""
 
         sysd.on(lambda a: a[:2] == ["sh", "-c"] and "zstd -d -c" in a[2], unpack)
@@ -349,7 +354,7 @@ def test_llamacpp_installs_the_metal_wheel_without_a_compiler(tmp_path) -> None:
     # AbstractCore's apple setting (ruling 2026-09-29: never a bare engine package), its
     # llama-cpp-python taken from upstream's prebuilt Metal wheel.
     assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[apple]", "llama-cpp-python==0.3.28", "--find-links",
-                    "https://abetlen.github.io/llama-cpp-python/whl/metal/llama-cpp-python/", "--only-binary", "llama-cpp-python"]]
+                    "https://abetlen.github.io/llama-cpp-python/whl/metal/llama-cpp-python/", *PREBUILT]]
     assert ["xcode-select", "-p"] not in sysd.calls  # no compiler question when a wheel exists
 
 
@@ -377,7 +382,10 @@ def test_engine_installs_pin_the_gateway_packages_when_the_cache_path_has_a_spac
     job = reg.get(snap["job_id"]).snapshot()
     assert job["state"] == "done", job
     pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
-    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[apple]", "--only-binary", "mlx",
+    # llama-cpp-python is part of the apple setting: its prebuilt Metal wheel is named (it is not
+    # installed yet here), and every native package is wheels-only (ADR 0003).
+    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[apple]", "llama-cpp-python==0.3.28",
+                    "--find-links", "https://abetlen.github.io/llama-cpp-python/whl/metal/llama-cpp-python/", *PREBUILT,
                     "AbstractRuntime==0.4.34", "abstractcore==2.15.1", "abstractgateway==0.4.2"]]
 
 
@@ -396,72 +404,55 @@ def test_an_importable_engine_is_already_installed_unless_forced(tmp_path) -> No
     assert len([c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]) == 1
 
 
-BUILD_LOG = [f"      cmake line {i}: -- Detecting C compiler ABI info" for i in range(500)] + [
-    "      CMake Error: CMAKE_C_COMPILER not set, after EnableLanguage",
-    "      *** CMake configuration failed",
-]
-
-
-def test_no_wheel_and_no_command_line_tools_is_needs_tools_then_resumes(tmp_path) -> None:
-    sysd = FakeSystem(tmp_path)
-    clt = {"present": False}
-    sysd.on(lambda a: a[:2] == ["xcode-select", "-p"], lambda a: (0, f"{sysd.clt}\n") if clt["present"] else (2, "xcode-select: error: unable to get active developer directory"))
-    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"] and "--only-binary" in a, lambda a: (1, "  x No solution found when resolving dependencies:\n  Because llama-cpp-python==0.3.28 has no wheels with a matching platform tag"))
-
-    def install_tools(argv):
-        clt["present"] = True  # Apple's installer finishes a moment later
-        return 0, "xcode-select: note: install requested for command line developer tools"
-
-    sysd.on(lambda a: a == ["xcode-select", "--install"], install_tools)
-    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.3.35", "gpu_offload": true}'))
-    reg = _registry(_installer(tmp_path, sysd), tmp_path)
-    snap, _ = reg.start("llamacpp", run_inline=True)
-    job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "needs_tools"
-    assert job["message"] == ("The prebuilt llama.cpp wheel did not install (no matching package for this Python and machine); "
-                              "building from source needs the Apple command-line tools.")
-    assert job["tools_prompt"]["action"] == {"kind": "xcode_select_install", "command": "xcode-select --install", "available": True, "button": "Install tools"}
-    assert job["continue_actions"] == ["install_tools", "recheck"]
-    source_builds = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"] and "--only-binary" not in c]
-    assert sysd.tools_installs() == [] and source_builds == []  # no build started before the tools are there
-
-    reg.continue_job(job["job_id"], "install_tools", run_inline=True)
-    done = reg.get(job["job_id"]).snapshot()
-    assert done["state"] == "done", done["message"]
-    assert sysd.tools_installs() == [["xcode-select", "--install"]]
-    assert done["result"]["method"] == "source build"
-    assert sysd.elevated() == []  # xcode-select --install is Apple's own dialog, not an elevation
-
-
-def test_a_failed_build_puts_the_message_first_and_the_whole_log_in_details(tmp_path) -> None:
-    sysd = FakeSystem(tmp_path)
-    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"] and "--only-binary" in a, lambda a: (1, "error: Failed to read `llama-cpp-python==0.3.28`\n  Caused by: invalid CRC in zip entry"))
-    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"] and "--only-binary" not in a, lambda a: (1, "Building llama-cpp-python==0.3.35\n" + "\n".join(BUILD_LOG)))
-    reg = _registry(_installer(tmp_path, sysd), tmp_path)
-    snap, _ = reg.start("llamacpp", run_inline=True)
-    job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "failed" and job["error"]["code"] == "build_failed"
-    assert job["message"] == (
-        "The prebuilt llama.cpp wheel did not install (the wheel file is corrupted), and building it from source failed: "
-        "no C compiler was found. The full build log is in the details."
-    )
-    assert "\n" not in job["message"] and "cmake line" not in job["message"]
-    details = job["details"].splitlines()
-    for line in BUILD_LOG:  # every line, never a tail
-        assert line in details
-    assert Path(job["log_path"]).read_text().count("cmake line") == 500
-
-
-def test_linux_without_a_compiler_names_the_package_to_install(tmp_path) -> None:
+def test_no_prebuilt_llamacpp_build_is_not_offered_and_never_built(tmp_path) -> None:
+    """ADR 0003: prebuilt binaries only. A host without a prebuilt llama.cpp build gets no install
+    action and one sentence (the same on every OS); no compiler question, no source build."""
     host = ei.HostFacts(os_id="linux", arch="riscv64", libc="glibc")
     sysd = FakeSystem(tmp_path)
-    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
+    inst = _installer(tmp_path, sysd, host=host)
+    plan = inst.plan("llamacpp").public(None)
+    assert plan["available"] is False and plan["needs_tools"] is False
+    assert "no prebuilt build" in plan["notes"] and "never builds engines from source" in plan["notes"]
+    reg = _registry(inst, tmp_path)
     snap, _ = reg.start("llamacpp", run_inline=True)
     job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "needs_tools"
-    assert job["tools_prompt"]["action"]["available"] is False and "build-essential" in job["tools_prompt"]["action"]["command"]
-    with pytest.raises(ei.JobStateError):
-        reg.continue_job(job["job_id"], "install_tools")
+    assert job["state"] == "failed" and job["error"]["code"] in {"unsupported", "no_prebuilt_build"}
+    assert sysd.tools_installs() == [] and not [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert not [c for c in sysd.calls if c[:1] in (["cc"], ["gcc"]) or c[:2] == ["xcode-select", "-p"]]
+
+
+def test_a_failed_wheel_never_falls_back_to_a_source_build_and_restores_the_old_packages(tmp_path) -> None:
+    """ADR 0003: the prebuilt wheel failing fails the install with its reason, and the packages the
+    attempt changed go back to their previous versions (the engine installed before stays)."""
+    sysd = FakeSystem(tmp_path)
+    versions = {"llama-cpp-python": "0.3.20", "abstractcore": "2.31.0"}
+
+    def snapshot(argv):
+        return 0, "__AG_PKGS__" + json.dumps(versions)
+
+    def uv_install(argv):
+        if "--no-deps" in argv:  # the restore
+            for spec in argv:
+                if "==" in spec and not spec.startswith("--"):
+                    name, ver = spec.split("==", 1)
+                    versions[name] = ver
+            return 0, "restored"
+        versions["llama-cpp-python"] = "0.3.28"  # half-done: a package changed, then the install failed
+        return 1, "error: Failed to read `llama-cpp-python==0.3.28`\n  Caused by: invalid CRC in zip entry"
+
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "__AG_PKGS__" in a[-1], snapshot)
+    sysd.on(lambda a: a[:3] == ["/fake/uv", "pip", "install"], uv_install)
+    reg = _registry(_installer(tmp_path, sysd), tmp_path)
+    snap, _ = reg.start("llamacpp", force=True, run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "failed" and job["error"]["code"] == "wheel_failed", job["message"]
+    assert "Nothing was built from source" in job["message"] and "unchanged" in job["message"]
+    assert "\n" not in job["message"]
+    installs = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
+    assert len(installs) == 2 and all(any(x == "--only-binary" for x in c) for c in installs), installs
+    assert installs[1][5:7] == ["--no-deps", "llama-cpp-python==0.3.20"]
+    assert versions["llama-cpp-python"] == "0.3.20"
+    assert ["xcode-select", "-p"] not in sysd.calls and sysd.tools_installs() == []
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +489,8 @@ def test_vllm_on_linux_with_cuda_is_a_user_level_wheel(tmp_path) -> None:
     host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
     plan = _installer(tmp_path, FakeSystem(tmp_path), host=host).plan("vllm")
     assert plan.available and plan.method == "wheel" and not plan.needs_admin
-    assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[gpu]", "--torch-backend=auto"]
+    assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[gpu]", "--torch-backend=auto",
+                                    *PREBUILT]
 
 
 @pytest.mark.parametrize("engine", ["llamacpp", "huggingface"])
@@ -721,7 +713,7 @@ def test_windows_huggingface_installs_the_gpu_setting_with_pytorchs_cuda_build(t
     plan = _installer(tmp_path, FakeSystem(tmp_path), host=WIN).plan("huggingface")
     assert plan.available and plan.method == "wheel"
     assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python",
-                                    "abstractcore[gpu]==<installed>", "--torch-backend=auto"]
+                                    "abstractcore[gpu]==<installed>", "--torch-backend=auto", *PREBUILT]
 
 
 def test_windows_llamacpp_points_to_the_installer_never_a_bare_package(tmp_path) -> None:
@@ -795,7 +787,7 @@ def test_linux_lmstudio_without_libatomic_and_without_root_says_what_installs_he
     plan = inst.plan("lmstudio")
     assert not plan.available and not plan.needs_admin and not plan.needs_tools
     assert "libatomic1" in plan.notes and "Apple" not in plan.notes and "sudo" not in plan.notes
-    assert "Installs here for this account:" in plan.notes and "llama.cpp" in plan.notes
+    assert "Installs here without an administrator:" in plan.notes and "llama.cpp" in plan.notes
     row = ei.engine_row(inst, {"id": "lmstudio", "installed": False}, active_job=None, install_allowed=True)
     assert not any(a.get("id") == "install" for a in row.get("actions") or [])
 
