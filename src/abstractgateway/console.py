@@ -1428,6 +1428,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .provider-modal-grid { display: grid; gap: 12px; }
 	    .providers-workspace { display: grid; gap: 16px; }
 	    .providers-workspace #provider-preset-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+	    .providers-workspace .cloud-providers-root { margin-bottom: 18px; }
+	    .providers-workspace .provider-custom-head { margin-top: 4px; }
 	    .sandbox-workspace {
 	      display: grid;
 	      grid-template-columns: minmax(0, 1fr);
@@ -2610,8 +2612,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <section id="provider-setup-section" class="session-only">
 	            <div class="section-head">
 	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Remote providers</span></h2>
-	                <p class="section-note">Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.</p>
+	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Cloud providers</span></h2>
+	                <p class="section-note">Paste a key, check it, save it. Keys stay on the gateway; only fingerprints show.</p>
+	              </div>
+	            </div>
+	            <!-- The kit's CloudProviderCards (islands mountCloudProviderCards), the SAME cards
+	                 as the setup guide's Cloud providers step. -->
+	            <div id="cloud-providers-root" class="cloud-providers-root"></div>
+	            <div class="section-head provider-custom-head">
+	              <div>
+	                <h3 class="section-title">OpenAI-compatible servers</h3>
+	                <p class="section-note">Any other /v1 server: vLLM, llama.cpp, LocalAI.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -3194,7 +3205,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div class="first-run-brand"><span class="shell_brand_mark" aria-hidden="true">↔</span><span>AbstractGateway</span></div>
 	        <div class="first-run-intro">
 	          <h2 id="first-run-title">Set up AbstractGateway</h2>
-	          <p>Five short, optional steps. Skip anything you do not need: this guide stays one click away (Setup, at the bottom of the sidebar).</p>
+	          <p>Six short, optional steps. Skip anything you do not need: this guide stays one click away (Setup, at the bottom of the sidebar).</p>
 	        </div>
 	        <ol id="first-run-steps" class="first-run-steps" aria-label="Setup steps"></ol>
 	        <div class="first-run-rail-foot">
@@ -3206,7 +3217,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="first-run-scroll" class="first-run-scroll">
 	          <div class="first-run-content">
 	            <header class="first-run-head">
-	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 5</div>
+	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 6</div>
 	              <h3 id="first-run-step-title">Welcome</h3>
 	              <p id="first-run-step-lede"></p>
 	              <!-- A step's view switch sits on the header line (Default models: Simple / Advanced). -->
@@ -3221,6 +3232,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            </section>
 	            <section id="first-run-step-engines" class="first-run-panel hidden" data-step="engines">
 	              <div id="first-run-engines-body"></div>
+	            </section>
+	            <!-- Cloud providers (operator 2026-10-29: "where do I configure the cloud engines?"):
+	                 the kit's CloudProviderCards (islands mountCloudProviderCards), the SAME cards as the
+	                 Providers tab's Cloud providers section. -->
+	            <section id="first-run-step-cloud" class="first-run-panel hidden" data-step="cloud">
+	              <div id="first-run-cloud-body"></div>
 	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
 	              <div id="first-run-model-body" class="first-run-panel dm-simple">
@@ -10050,7 +10067,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       lmstudio: { family: "lmstudio" },
       vllm: { family: "openai-compatible", profileId: "vllm", name: "vLLM server", description: "vLLM OpenAI-compatible server." },
     };
-    const REMOTE_PROVIDER_FAMILIES = ["openai", "anthropic", "openrouter", "portkey", "openai-compatible"];
+    // The cloud providers are the kit's cards (mountCloudProviderCards); the preset grid keeps the
+    // one family that has no card: a custom OpenAI-compatible server.
+    const REMOTE_PROVIDER_FAMILIES = ["openai-compatible"];
     const LOCAL_CONNECTION_PROFILE_IDS = new Set(Object.values(LOCAL_PROVIDER_CONNECTIONS).map((c) => c.profileId).filter(Boolean));
     function localConnectionProfiles(engineId) {
       const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
@@ -10105,6 +10124,84 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (add) { openLocalProviderConnection(add.dataset.providerConnect); return; }
       const edit = t.closest("[data-provider-connection-edit]");
       if (edit) editEndpointProfileById(edit.dataset.providerConnectionEdit);
+    }
+    // ---- Cloud providers: the kit's CloudProviderCards (islands mountCloudProviderCards, ui-kit
+    // 0.9.9), ONE component in the setup guide's Cloud providers step and in the Providers tab.
+    // The kit reads AbstractCore's provider list (GET discovery/providers), checks a pasted key
+    // before anything is stored (discover-models: a draft, nothing written) and saves a NEW
+    // connection (fresh id, create_only: never an overwrite). The console refreshes its own tables
+    // after a save. A bundle without the cards is a vendoring defect, said where the cards go.
+    const cloudCards = { handles: new Map(), refresh: 0 };
+    function kitIslandsApi() {
+      try {
+        const w = typeof window !== "undefined" ? window : null;
+        return (w && w.AfConsoleIslands) || null;
+      } catch { return null; }
+    }
+    // The kit clients' request: the console's own api() (cookie session + CSRF), JSON body.
+    function kitRequest(path, init) {
+      const o = { method: (init && init.method) || "GET" };
+      if (init && init.body !== undefined) o.body = JSON.stringify(init.body);
+      return api(path, o);
+    }
+    function kitCloudProviders() {
+      const lib = kitIslandsApi();
+      const cp = lib && lib.cloudProviders;
+      if (!cp || typeof cp.client !== "function") {
+        throw new Error(lib ? "the abstractuic islands bundle has no cloudProviders (ui-kit 0.9.9+ required)" : "the abstractuic islands bundle did not load");
+      }
+      return cp;
+    }
+    function cloudCardsProps(opts) {
+      return {
+        request: kitRequest,
+        base: "/api/gateway",
+        scope: state.principal && state.principal.admin ? "gateway" : "user",
+        heading: opts.heading !== false,
+        refreshKey: cloudCards.refresh,
+        onConfigure: opts.configure ? (family) => openEndpointModalForFamily(family) : undefined,
+        onSaved: () => { void cloudCardsSaved(); },
+      };
+    }
+    function mountCloudProviderCards(viewKey, el, opts = {}) {
+      if (!el) return;
+      const lib = kitIslandsApi();
+      if (!lib || typeof lib.mountCloudProviderCards !== "function") {
+        const why = lib ? "the abstractuic islands bundle has no mountCloudProviderCards (ui-kit 0.9.9+ required)" : "the abstractuic islands bundle did not load";
+        console.error(`AbstractGateway console: ${why}; the cloud provider cards are unavailable.`);
+        el.innerHTML = `<div class="ui-alert tone-warn" role="alert"><strong>The cloud provider cards are unavailable.</strong><span>${esc(why)}.</span></div>`;
+        return;
+      }
+      const cur = cloudCards.handles.get(viewKey);
+      if (cur && cur.el === el) {
+        cur.opts = opts;
+        cur.handle.update(cloudCardsProps(opts));
+        return;
+      }
+      if (cur) unmountCloudProviderCards(viewKey);
+      cloudCards.handles.set(viewKey, { el, opts, handle: lib.mountCloudProviderCards(el, cloudCardsProps(opts)) });
+    }
+    function unmountCloudProviderCards(viewKey) {
+      const cur = cloudCards.handles.get(viewKey);
+      if (!cur) return;
+      cloudCards.handles.delete(viewKey);
+      try { cur.handle.unmount(); } catch (err) { console.error("cloud provider cards unmount", err); }
+    }
+    // The connections changed elsewhere (the connection editor, a delete): the cards re-read them.
+    function cloudCardsRefresh() {
+      cloudCards.refresh += 1;
+      for (const h of cloudCards.handles.values()) h.handle.update(cloudCardsProps(h.opts));
+    }
+    async function cloudCardsSaved() {
+      // A card saved a NEW connection: the Available Providers table, the provider lists and the
+      // capability defaults catch up (renderEndpointProfiles also refreshes the other cards).
+      try {
+        await loadEndpointProfiles();
+        state.providerModels.clear();
+        await loadProviders();
+      } catch (err) {
+        console.error("AbstractGateway console: reloading the provider connections after a save failed", err);
+      }
     }
     function renderProviderPresets() {
       const grid = $("provider-preset-grid");
@@ -10280,6 +10377,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tbody.append(tr);
 	        renderProviderPresets();
 	        engineRender();
+	        cloudCardsRefresh();
 	        return;
 	      }
       for (const p of state.endpointProfiles) {
@@ -10319,9 +10417,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.append(actions);
         tbody.append(tr);
       }
-      // The Remote presets and the Local provider cards show these connections.
+      // The Remote presets, the Local provider cards and the cloud cards show these connections.
       renderProviderPresets();
       engineRender();
+      cloudCardsRefresh();
     }
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
@@ -15064,6 +15163,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // AbstractCore's table: one card per engine, one primary action per
         // state, plus the provider's connection (localProviderExtras).
         mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras, onClick: onLocalProviderClick });
+        // Cloud providers: the kit cards, the same as the setup guide's step; "More settings"
+        // opens this tab's connection editor (base URL, allowed models).
+        mountCloudProviderCards("providers", $("cloud-providers-root"), { heading: false, configure: true });
         return;
       }
       if (tab === "catalog") {
@@ -15238,17 +15340,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       backlogSettingsRefresh();
     }
     function unmountBacklogSettings() { backlogSetStore.el = null; }
-    const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
+    // Cloud providers is a step of its own (not a section of Local engines): the rail answers
+    // "where do I configure the cloud engines?" by name, the engines step stays about software on
+    // this computer, and a key saved here is offered by the next step (Default models).
+    const FIRST_RUN_STEPS = ["welcome", "engines", "cloud", "model", "apps", "done"];
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
       engines: "Local engines",
+      cloud: "Cloud providers",
       model: "Default models",
       apps: "Apps",
       done: "Done",
     };
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
-      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
+      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; to use a cloud account instead, the next step takes its API key." },
+      cloud: { title: "Cloud providers", hint: "OpenAI, Anthropic, OpenRouter...", lede: "Use models from a cloud account: paste its API key, check it, then save it. The key stays on this gateway and is never shown again; billing is the provider's, per use. The same cards are on the Providers tab." },
       model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
@@ -15354,6 +15461,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Models/Engines tabs keep theirs.
       unmountModelCatalog("first-run");
       unmountEngineCards("first-run");
+      unmountCloudProviderCards("first-run");
       unmountAppCards("first-run");
       unmountNetworkPanel("first-run");
       // Focus goes back to what opened the guide (keyboard users keep their
@@ -15416,6 +15524,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       renderFirstRunSteps();
       if (step === "welcome") loadFirstRunWelcome();
       if (step === "engines") loadFirstRunEngines();
+      if (step === "cloud") loadFirstRunCloud();
       if (step === "model") loadFirstRunModel();
       if (step === "apps") renderFirstRunApps();
       if (step === "done") renderFirstRunDone();
@@ -15463,7 +15572,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : `Keeps the gateway running after a restart <span class="ui-advanced"><code>abstractgateway service install</code></span>`],
       ])
         + `<div class="ui-section-title"><h3>What this guide sets up</h3><span class="ui-sub">Each step takes a minute; skip any of them.</span></div>`
-        + `<div class="ui-card-grid is-fit">${["engines", "model", "apps"].map((step) => {
+        + `<div class="ui-card-grid is-fit">${["engines", "cloud", "model", "apps"].map((step) => {
           const copy = FIRST_RUN_STEP_COPY[step] || {};
           const n = FIRST_RUN_STEPS.indexOf(step) + 1;
           return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${n}</span>`
@@ -15481,6 +15590,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Install with inline progress, plain-language failures, the log behind
       // "Show details". Nothing here depends on AbstractCore's table screen.
       mountEngineCards("first-run", $("first-run-engines-body"));
+    }
+    function loadFirstRunCloud() {
+      mountCloudProviderCards("first-run", $("first-run-cloud-body"), { heading: false });
     }
     async function loadFirstRunModel() {
       const box = $("first-run-model-recommended");
@@ -16019,15 +16131,37 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("dm-choice-body").innerHTML = parts.join("");
       if (draft && $("dm-key-value")) $("dm-key-value").value = draft;
     }
-    // ---- An API key for text (OpenAI or Anthropic). The key is checked FIRST (discover-models on a
-    // draft, nothing stored); only then is it kept as a NEW gateway-wide provider connection (a fresh
-    // id: an existing connection is never overwritten, review 1069), and the chosen model becomes the
-    // text model.
-    const KEY_FAMILIES = [{ id: "openai", label: "OpenAI" }, { id: "anthropic", label: "Anthropic" }];
+    // ---- An API key for text: the SAME logic as the cloud provider cards (the kit's cloudProviders,
+    // ui-kit 0.9.9): the providers are AbstractCore's cloud providers (GET discovery/providers), the
+    // key is checked FIRST (discover-models on a draft, nothing stored), and only then kept as a NEW
+    // gateway-wide provider connection (a fresh id with create_only: an existing connection is never
+    // overwritten, review 1069); the chosen model becomes the text model.
+    function dmKeyClient() { return kitCloudProviders().client(kitRequest, "/api/gateway"); }
+    async function dmLoadKeyProviders() {
+      if (dmUi.keyProviders || dmUi.keyProvidersLoading) return;
+      dmUi.keyProvidersLoading = true;
+      try {
+        dmUi.keyProviders = await dmKeyClient().listProviders();
+        dmUi.keyProvidersError = "";
+      } catch (err) {
+        dmUi.keyProviders = [];
+        dmUi.keyProvidersError = String((err && err.message) || err);
+      } finally {
+        dmUi.keyProvidersLoading = false;
+      }
+      if (dmUi.choice) renderDmChoice();
+    }
     function dmKeyMarkup() {
       const k = (dmUi.choice && dmUi.choice.key) || {};
-      return `<section class="dm-choice__part"><h3>Or use an API key</h3><p class="muted">Billed by the provider per use. The gateway keeps the key as a provider connection (Providers page) and never shows it again.</p>`
-        + `<div class="af-form"><div class="af-form__field"><label class="af-form__label" for="dm-key-family">Provider</label><select id="dm-key-family">${KEY_FAMILIES.map((f) => `<option value="${f.id}"${k.family === f.id ? " selected" : ""}>${f.label}</option>`).join("")}</select></div>`
+      if (!dmUi.keyProviders) void dmLoadKeyProviders();
+      const providers = dmUi.keyProviders || [];
+      const head = `<section class="dm-choice__part"><h3>Or use an API key</h3><p class="muted">Billed by the provider per use. The gateway keeps the key as a provider connection (Providers page) and never shows it again.</p>`;
+      if (!providers.length) {
+        const note = dmUi.keyProvidersError ? `The cloud providers could not be loaded: ${dmUi.keyProvidersError}` : (dmUi.keyProviders ? "This gateway's AbstractCore lists no cloud provider." : "Loading the cloud providers…");
+        return head + `<p class="inline-state ${dmUi.keyProvidersError ? "error" : ""}" role="status">${esc(note)}</p></section>`;
+      }
+      return head
+        + `<div class="af-form"><div class="af-form__field"><label class="af-form__label" for="dm-key-family">Provider</label><select id="dm-key-family">${providers.map((f) => `<option value="${esc(f.id)}"${k.family === f.id ? " selected" : ""}>${esc(f.name)}</option>`).join("")}</select></div>`
         + (k.models && k.models.length
           ? `<div class="af-form__field"><label class="af-form__label" for="dm-key-model">Text model</label><select id="dm-key-model">${k.models.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select></div><div class="modal-actions"><button type="button" data-dmc="key-use">Use for text</button></div>`
           : `<div class="af-form__field"><label class="af-form__label" for="dm-key-value">API key</label><input id="dm-key-value" type="password" autocomplete="off" spellcheck="false"></div><div class="modal-actions"><button type="button" class="secondary" data-dmc="key-check">Check the key</button></div>`)
@@ -16040,42 +16174,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function dmKeyCheck() {
       const family = $("dm-key-family").value;
+      const provider = (dmUi.keyProviders || []).find((p) => p.id === family);
       const apiKey = String($("dm-key-value").value || "").trim();
+      if (!provider) return dmKeySay("Choose a provider first.", "error");
       if (!apiKey) return dmKeySay("Paste the API key first.", "error");
       dmKeySay("Checking the key…");
+      let checked;
       try {
-        const found = await api("/api/gateway/config/provider-endpoint-profiles/discover-models", { method: "POST", body: JSON.stringify({ provider_family: family, api_key: apiKey }) });
-        const models = parseModelItems(found);
-        if (!models.length) return dmKeySay(found.error || "The provider listed no models for this key: check it.", "error");
-        dmUi.choice.key = { family, apiKey, models, message: `The key works: ${models.length} models. Choose the text model.`, tone: "ok" };
-        renderDmChoice();
+        checked = await dmKeyClient().checkKey(provider, apiKey);
       } catch (err) {
-        dmKeySay(`The key was not accepted: ${String(err.message || err)}`, "error");
+        return dmKeySay(`The key could not be checked: ${String((err && err.message) || err)}`, "error");
       }
-    }
-    function parseProfileIds(payload) {
-      const rows = Array.isArray(payload && payload.profiles) ? payload.profiles : (Array.isArray(payload) ? payload : []);
-      return rows.map((p) => String((p && (p.id || p.profile_id)) || "")).filter(Boolean);
+      if (!checked.result.ok) return dmKeySay(checked.result.sentence, "error");
+      dmUi.choice.key = { family, provider, checked, models: checked.result.models, message: `${checked.result.sentence}. Choose the text model.`, tone: "ok" };
+      renderDmChoice();
     }
     async function dmKeyUse() {
       const k = dmUi.choice && dmUi.choice.key;
-      if (!k || !k.apiKey) return;
+      if (!k || !k.checked) return;
       const model = $("dm-key-model").value;
-      const label = (KEY_FAMILIES.find((f) => f.id === k.family) || { label: k.family }).label;
       dmKeySay("Saving…");
       try {
-        const taken = new Set(parseProfileIds(await api("/api/gateway/config/provider-endpoint-profiles")));
-        let id = `${k.family}-key`;
-        for (let n = 2; taken.has(id) || taken.has(`endpoint:${id}`); n++) id = `${k.family}-key-${n}`;
-        await api("/api/gateway/config/provider-endpoint-profiles", { method: "POST", body: JSON.stringify({
-          id, display_name: `${label} (API key)`, provider_family: k.family, api_key: k.apiKey, base_url: "", scope: "gateway", capabilities: ["text"] }) });
-        await dmSetRoute("input.text", `endpoint:${id}`, model);
-        dmUi.choice.key = { message: `Text now uses ${model} with your ${label} key.`, tone: "ok" };
+        const saved = await dmKeyClient().saveCheckedKey(k.provider, k.checked, state.principal && state.principal.admin === false ? "user" : "gateway");
+        await dmSetRoute("input.text", saved.virtualProvider, model);
+        dmUi.choice.key = { message: `Text now uses ${model} with your ${k.provider.name} key.`, tone: "ok" };
         await dmRefreshDefaults();
         renderFirstRunModel();
         renderDmChoice();
       } catch (err) {
-        dmKeySay(`Not saved: ${String(err.message || err)}`, "error");
+        dmKeySay(`Not saved: ${String((err && err.message) || err)}`, "error");
       }
     }
     async function dmChoiceClick(event) {

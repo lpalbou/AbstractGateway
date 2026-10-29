@@ -81,6 +81,23 @@ _HARNESS = r"""
 import vm from "node:vm";
 const source = __SOURCE__;
 const scenario = __SCENARIO__;
+// The REAL vendored kit bundle (console_islands.py), evaluated on its own: the console's key flows
+// call its cloudProviders logic and its brandMarks. The React mounts are recorded stubs (no DOM).
+const islandsCtx = vm.createContext({ console });
+islandsCtx.globalThis = islandsCtx;
+islandsCtx.window = islandsCtx;
+vm.runInContext(__ISLANDS__, islandsCtx);
+const kitLib = islandsCtx.AfConsoleIslands;
+const cloudMounts = [];
+const kitIslands = {
+  cloudProviders: kitLib.cloudProviders,
+  brandMarks: kitLib.brandMarks,
+  mountCloudProviderCards(el, props) {
+    const rec = { id: el.id, props, updates: 0, unmounted: 0 };
+    cloudMounts.push(rec);
+    return { update(p) { rec.props = p; rec.updates += 1; }, unmount() { rec.unmounted += 1; } };
+  },
+};
 
 class Element {
   constructor(id) {
@@ -234,7 +251,14 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
   if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: (scenario.existingProfiles || []).map((id) => ({ id })) });
-  if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
+  // AbstractCore's registry as the gateway serves it: the cloud providers are local_provider false.
+  if (path === "/api/gateway/discovery/providers") return res(200, { items: [
+    { name: "anthropic", display_name: "Anthropic", local_provider: false },
+    { name: "lmstudio", display_name: "LMStudio", local_provider: true },
+    { name: "openai", display_name: "OpenAI", local_provider: false },
+    { name: "openrouter", display_name: "OpenRouter", local_provider: false },
+    { name: "portkey", display_name: "Portkey", local_provider: false },
+  ] });
   return res(200, {});
 }
 // AbstractCore's model_catalog_v1 (with W1's quant_class): one text model
@@ -264,7 +288,7 @@ const coreLib = {
     return { kind, refresh() { rec.refreshed += 1; }, unmount() { rec.unmounted += 1; } };
   },
 };
-const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib } : {};
+const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib, AfConsoleIslands: kitIslands } : { AfConsoleIslands: kitIslands };
 const context = vm.createContext({
   // Web Crypto, as in every browser (randomId: DESIGN §11).
   crypto: globalThis.crypto,
@@ -304,6 +328,9 @@ if (scenario.name === "claim") {
     for (const want of scenario.enginesWant) if (!engines.includes(want)) fail("engines failure view missing " + want + ": " + engines);
   } else {
     for (const want of ['data-engine-card="ollama"', 'data-engine-card="mlx"', "Not installed", "Ready", 'data-engine-action="install"']) if (!engines.includes(want)) fail("engine cards missing " + want + ": " + engines);
+    // Official marks from the kit (brand_icons.tsx), never the old two-letter badges.
+    for (const id of ["ollama", "mlx"]) if (!new RegExp('<span class="af-brand-mark" data-brand="' + id + '" role="img" aria-label="[^"]+"><svg viewBox=').test(engines)) fail("engine card " + id + " must show its official mark: " + engines.slice(0, 600));
+    if (/<span class="ui-mark" aria-hidden="true">(Ol|MLX)<\/span>/.test(engines)) fail("the two-letter engine badges are gone");
     // Install asks first, then POSTs a real (non-dry-run) job with CSRF.
     await context.engineAction("install", "ollama"); await settle(); await settle();
     const confirmHtml = el("first-run-engines-body").innerHTML;
@@ -328,6 +355,21 @@ if (scenario.name === "claim") {
     if (!after.includes("Show details") || !after.includes("ui-log")) fail("the raw log must sit behind Show details: " + after);
     if (!after.includes("Try again")) fail("a failed install offers Try again");
   }
+
+  // Cloud providers: its own step, the kit's cards (the same island as the Providers tab).
+  context.firstRunStep(1); await settle();
+  if (hidden("first-run-step-cloud") || !hidden("first-run-step-engines")) fail("the Cloud providers step did not open after Local engines");
+  if (el("first-run-step-title").textContent !== "Cloud providers") fail("cloud step title: " + el("first-run-step-title").textContent);
+  if (el("first-run-kicker").textContent !== "Step 3 of 6") fail("cloud step kicker: " + el("first-run-kicker").textContent);
+  const cm = cloudMounts.find((m) => m.id === "first-run-cloud-body");
+  if (!cm) fail("the cloud provider cards were not mounted in the guide: " + JSON.stringify(cloudMounts.map((m) => m.id)));
+  if (cm.props.base !== "/api/gateway" || cm.props.scope !== "gateway" || cm.props.heading !== false || typeof cm.props.onSaved !== "function") fail("guide cards props: " + JSON.stringify(cm.props));
+  // The cards' request is the console's api(): JSON body, CSRF header.
+  const reqBefore = calls.length;
+  await cm.props.request("/api/gateway/config/provider-endpoint-profiles/discover-models", { method: "POST", body: { provider_family: "openrouter", api_key: "sk-or-check" } });
+  const rq = calls.slice(reqBefore).find((c) => c.path.endsWith("/discover-models"));
+  if (!rq || rq.method !== "POST" || rq.csrf !== "agcsrf_wizard" || JSON.parse(rq.body).provider_family !== "openrouter") fail("the cards' request must be the console api with CSRF: " + JSON.stringify(rq));
+  if (calls.slice(reqBefore).some((c) => c.method === "POST" && c.path === "/api/gateway/config/provider-endpoint-profiles")) fail("checking a key stored a connection");
 
   context.firstRunStep(1); await settle();
   const model = el("first-run-model-recommended").innerHTML;
@@ -427,6 +469,13 @@ if (scenario.name === "claim") {
     if (mounts.some((x) => x.kind === "models")) fail("the Models tab must not mount AbstractCore's Models screen: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
     if (mounts.some((x) => x.id === "engines-core-root")) fail("the Providers tab renders engine cards, it must not mount AbstractCore's table");
     if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Providers tab shows no local provider cards: " + el("engines-core-root").innerHTML);
+    // The Providers tab's Cloud providers: the SAME kit cards as the guide, plus "More settings"
+    // (the connection editor); the guide's copy was unmounted when the guide closed.
+    const tabCards = cloudMounts.find((m) => m.id === "cloud-providers-root");
+    if (!tabCards) fail("the Providers tab did not mount the cloud provider cards: " + JSON.stringify(cloudMounts.map((m) => m.id)));
+    if (tabCards.props.base !== "/api/gateway" || typeof tabCards.props.onConfigure !== "function" || tabCards.props.heading !== false) fail("Providers tab cards props: " + JSON.stringify(tabCards.props));
+    const guideCards = cloudMounts.find((m) => m.id === "first-run-cloud-body");
+    if (guideCards && guideCards.unmounted !== 1) fail("the guide's cards were not unmounted when the guide closed");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
@@ -724,8 +773,11 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
         tag = re.search(r'<[^>]*\bid="%s"[^>]*>' % re.escape(element_id), html)
         cls = re.search(r'\bclass="([^"]*)"', tag.group(0)) if tag else None
         classes[element_id] = cls.group(1) if cls else ""
+    from abstractgateway.console_islands import ISLANDS_JS
+
     harness = (
-        _HARNESS.replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts)))
         .replace("__SCENARIO__", json.dumps(scenario))
         .replace("__CLASSES__", json.dumps(classes))
     )

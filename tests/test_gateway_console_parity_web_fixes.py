@@ -298,9 +298,9 @@ def test_welcome_computer_tile_reads_host_name_and_service_platform() -> None:
     source = _console_script()
     extra = r"""
 const CORE_CONSOLE = { hostName: "page-server-name" };
-const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
+const FIRST_RUN_STEPS = ["welcome", "engines", "cloud", "model", "apps", "done"];
 const FIRST_RUN_STEP_COPY = {};
-const FIRST_RUN_STEP_TITLES = { engines: "Engines", model: "Model", apps: "Apps" };
+const FIRST_RUN_STEP_TITLES = { engines: "Engines", cloud: "Cloud providers", model: "Model", apps: "Apps" };
 const firstRun = {};
 const box = { innerHTML: "" };
 const $ = () => box;
