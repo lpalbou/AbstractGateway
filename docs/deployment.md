@@ -218,8 +218,8 @@ restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](./troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
 
-**On a Linux server the models run in a child process.** `serve` defaults to
-`--model-host process` on Linux: every AbstractCore provider call and model load
+**The models run in a child process, on every OS.** `serve` defaults to
+`--model-host process` (Linux, macOS, Windows): every AbstractCore provider call and model load
 happens in one child the gateway starts, pings, restarts (backoff, at most 5
 restarts in 10 minutes) and kills above a memory ceiling (default 80 % of the
 machine's memory, `--model-host-memory-gb`). A llama.cpp abort, a KV cache that

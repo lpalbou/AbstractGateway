@@ -1,4 +1,4 @@
-# 0968-gateway: Model host stage 2: the engines still in the gateway process, and MCP (ADR 0002)
+# 0968-gateway: Stage 2 of ADR 0002: the run-execution loop in its own process on every OS, the engines still in the gateway, and MCP
 
 > Package: abstractgateway (+ abstractruntime facade additions)
 > Type: reliability / security
@@ -9,6 +9,12 @@
 > Root link: root 1060; ADR 0002; follows 0967
 
 ## Summary
+
+**Stage 2 is the run-execution loop in its own supervised process, by default, on every OS** (operator ruling
+2026-10-29: "BUILD FOR ALL OS"; root 1054 item 2's tick half). Today run ticking shares the gateway's process
+and GIL unless split mode is chosen. Stage 2 makes the runner a child the gateway starts and supervises under ADR
+0002's rules (readiness, ping, backoff, restart limit, memory ceiling, incident file), the same on Linux, macOS
+and Windows, with the model host as a sibling. Then, in the same stage:
 
 Stage 1 (0967) moved every runtime LLM client and `/v1` into the model host child. Still in the gateway
 process in `process` mode: (1) speech routes that call the runtime's voice facade directly (console voice

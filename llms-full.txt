@@ -3064,15 +3064,15 @@ Core catalog proxy settings:
 ## Model host: the models run in a supervised child process
 
 ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
-`--model-host process` (the default on Linux) the gateway process loads no model and calls no
+`--model-host process` (the default on every OS) the gateway process loads no model and calls no
 provider: one child process it starts, watches and restarts holds every AbstractCore provider and the
 shared model pool. A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
 memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
 `/api/health` keep answering.
 
 ```bash
-abstractgateway serve                         # Linux: --model-host process
-abstractgateway serve --model-host in-process # everything in one process (macOS and Windows default)
+abstractgateway serve                         # every OS: --model-host process
+abstractgateway serve --model-host in-process # everything in one process (development, --reload)
 ```
 
 | Work | gateway process | model host child |
@@ -3082,8 +3082,9 @@ abstractgateway serve --model-host in-process # everything in one process (macOS
 | Every AbstractCore provider call and model load (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
 | The OpenAI-compatible `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it (Core's app, the same model pool) |
 
-- **The default**: `process` on Linux (servers), `in-process` on macOS and Windows (the menu-bar tray;
-  Apple unified memory) and with `--reload`. A gateway embedded without the CLI (tests) is in-process.
+- **The default**: `process` on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
+  the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
+  `in-process` only with `--reload` or when chosen. A gateway embedded without the CLI (tests) is in-process.
   `serve --no-runner` (the split API process) holds no model and starts no child; the split `runner`
   takes the same flags and starts the child itself.
 - **Limits**: `--model-host-memory-gb GB` kills and restarts the child when its resident memory passes
@@ -3176,8 +3177,8 @@ Most-used:
   environment variable.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
-  - `--model-host process|in-process`: where the models run (default `process` on Linux, `in-process`
-    on macOS, Windows and with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
+  - `--model-host process|in-process`: where the models run (default `process` on every OS,
+    `in-process` with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
     child's limits ([model host](#model-host-the-models-run-in-a-supervised-child-process)).
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
@@ -10635,13 +10636,12 @@ flowchart LR
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
 - **Model host** (ADR 0002,
-  `--model-host process`, the default on Linux): the models and every
+  `--model-host process`, the default on every OS): the models and every
   AbstractCore provider call run in one child process the gateway supervises;
   the runtime's LLM clients in the gateway are proxies with the same API, and
   `/v1` is admitted by the gateway and served by the child. A crash there costs
   the requests in flight, is recorded in `<data dir>/incidents/`, and the child
-  is restarted; the gateway keeps answering. macOS and Windows default to
-  `in-process`. Details: [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process).
+  is restarted; the gateway keeps answering, on Linux, macOS and Windows alike. Details: [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 - **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
   (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
   one data dir, so you can restart the API without pausing durable execution.
@@ -12684,8 +12684,8 @@ restart policy (`restart: unless-stopped`) for the same effect. `GET
 /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
 [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
 
-**On a Linux server the models run in a child process.** `serve` defaults to
-`--model-host process` on Linux: every AbstractCore provider call and model load
+**The models run in a child process, on every OS.** `serve` defaults to
+`--model-host process` (Linux, macOS, Windows): every AbstractCore provider call and model load
 happens in one child the gateway starts, pings, restarts (backoff, at most 5
 restarts in 10 minutes) and kills above a memory ceiling (default 80 % of the
 machine's memory, `--model-host-memory-gb`). A llama.cpp abort, a KV cache that

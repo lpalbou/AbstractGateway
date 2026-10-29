@@ -77,8 +77,11 @@ no MCP endpoint of its own (it is an MCP client).
    used only when the process died; a broken connection to a child that is still running, or a
    request while the child is restarting, fails at once with status 503 (retryable).
 8. **Modes.** `serve --model-host process|in-process` (also on `runner`). Default: `process` on
-   Linux (servers), `in-process` on macOS and Windows (the menu-bar tray, Apple unified memory)
-   and with `--reload`. Embedding the app without the CLI (tests, `create_app`) is `in-process`.
+   every OS: Linux, macOS (MLX and Metal run in the child) and Windows (named-pipe transport,
+   no console window). Operator ruling 2026-10-29: "BUILD FOR ALL OS ... we must be consistent
+   across OS"; the earlier Linux-only default is withdrawn. `in-process` only with `--reload`
+   (the app runs in uvicorn's reloader child) or when chosen. Embedding the app without the CLI
+   (tests, `create_app`) is `in-process`.
    The gateway never falls back from `process` to `in-process` silently: a child that cannot
    start leaves inference unavailable with that reason in `/api/health`.
 9. **Latency budget (root 1060).** The hop may add at most 2 ms p50 to a chat step on localhost,
@@ -90,13 +93,11 @@ no MCP endpoint of its own (it is an MCP client).
 - **Root 1054, structural item 2** ("the runner and the in-process model in their own process by
   default; the API process must never share the GIL with ticks and model calls"). Stage 1 (0967)
   delivers the model half: in the `process` mode no model call and no model load runs in the
-  gateway process, so the API never shares the GIL with inference. It is the default on Linux now
-  (this release line); macOS and Windows stay `in-process` by default until 0968 has measured the
-  tray machines (Apple unified memory, MLX prompt caches) with the child, then the default moves
-  there too, in the release that ships 0968. The tick half is not changed here: run ticking stays
-  in the gateway process unless split mode (`serve --no-runner` + `runner`, opt-in) is used; making
-  split mode the default remains 1054 item 2's open half, with the runner process supervised under
-  this ADR's rules when it is.
+  gateway process, so the API never shares the GIL with inference. It is the default on every OS
+  (Linux, macOS, Windows) in this release line. The tick half is stage 2 (backlog 0968): the
+  run-execution loop in its own supervised process by default, on every OS, under this ADR's
+  rules; until then run ticking stays in the gateway process unless split mode (`serve
+  --no-runner` + `runner`, opt-in) is used.
 - **Gateway 0944** ("the OpenAI-compatible endpoint as a separately supervised process"):
   rejected as asked and deprecated. A `/v1` process of its own would either load every model a
   second time (inference must use the one model pool) or forward to the model host anyway: one
@@ -137,7 +138,11 @@ no MCP endpoint of its own (it is an MCP client).
   model host proxies.
 
 ## Validation
-- The kill test numbers and the hop latency in the release report. First numbers (2026-10-29, PR
+- The kill test numbers and the hop latency in the release report. macOS with MLX (2026-10-29,
+  M-series, Qwen3.6-27B-4bit, tray running): `kill -9` mid-chat failed the chat 0.11 s after the
+  kill with the sentence, `/api/health` 200 throughout, child back 0.77 s, next chat answered
+  (model reloaded in 1.2-4.2 s); warm 16-token chat p50 810 ms in the child versus 819 ms
+  in-process; the tray child kept running across the kill. First numbers (2026-10-29, PR
   #28): `kill -9` on the child during a run: the run failed 0.06 s (macOS) / 0.10 s (Linux) after
   the kill with the sentence, `/api/health` answered 200 throughout, the incident file existed, the
   child was back after 0.62 s / 0.76 s and the next run completed. Hop: plain chat step +0.10 ms

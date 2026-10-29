@@ -1,6 +1,6 @@
 """The model host: AbstractCore's providers and model pool in a supervised child process (ADR 0002).
 
-In the `process` mode (`serve --model-host process`, the default on Linux) the gateway process loads
+In the `process` mode (`serve --model-host process`, the default on every OS) the gateway process loads
 no model and calls no provider. One child, `python -m abstractgateway.model_host_child`, holds them:
 
 - the runtime's LLM clients. In the gateway each one is a `ModelHostClient`: a proxy with the same
@@ -94,9 +94,10 @@ _state_lock = threading.Lock()
 
 
 def default_mode(*, platform: str = sys.platform) -> str:
-    """`process` on Linux (servers), `in-process` elsewhere (the macOS tray, Apple unified memory,
-    Windows desktops)."""
-    return MODE_PROCESS if str(platform).startswith("linux") else MODE_IN_PROCESS
+    """`process` on every OS (operator ruling 2026-10-29: "BUILD FOR ALL OS ... we must be consistent
+    across OS"). `platform` stays a parameter so a test can name the OS it means."""
+    _ = platform
+    return MODE_PROCESS
 
 
 def set_mode(value: Optional[str], *, source: str) -> str:
@@ -993,9 +994,12 @@ class ModelHostSupervisor:
         log = self._open_log()
         log.write(f"\n--- model host generation {generation} starting {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n".encode())
         log.flush()
+        # Windows: no console window for the child (the gateway itself may run under pythonw.exe
+        # from the login entry); the pipes carry the handshake and readiness line either way.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
         try:
             proc = subprocess.Popen(self._child_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
-                                    env=env, cwd=str(self.data_dir), close_fds=True)
+                                    env=env, cwd=str(self.data_dir), close_fds=True, creationflags=flags)
         except OSError as exc:
             log.close()
             self._on_spawn_failed(generation, f"could not start: {exc}")

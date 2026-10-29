@@ -844,13 +844,12 @@ flowchart LR
   runner. On a desktop session it also starts the tray helper, and it starts
   the browser apps you enabled.
 - **Model host** (ADR 0002,
-  `--model-host process`, the default on Linux): the models and every
+  `--model-host process`, the default on every OS): the models and every
   AbstractCore provider call run in one child process the gateway supervises;
   the runtime's LLM clients in the gateway are proxies with the same API, and
   `/v1` is admitted by the gateway and served by the child. A crash there costs
   the requests in flight, is recorded in `<data dir>/incidents/`, and the child
-  is restarted; the gateway keeps answering. macOS and Windows default to
-  `in-process`. Details: [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
+  is restarted; the gateway keeps answering, on Linux, macOS and Windows alike. Details: [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 - **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
   (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
   one data dir, so you can restart the API without pausing durable execution.
