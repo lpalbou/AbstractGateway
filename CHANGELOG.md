@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requests in flight get 10 s (`ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S`, was 120), and
   a SIGTERM exits 0 instead of 143. Measured: a real `serve` with a live stream exits 0 in 0.2-0.4 s (before:
   120.7 s); `tests/test_gateway_sigterm_bounded_shutdown.py`.
+- **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
+  AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
+  guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
+  pick's engine is not installed (AbstractCore's engine inventory) and llama.cpp is, the guide, "Use recommended" and
+  an untouched fresh-install text route use a GGUF build that fits this computer through llama.cpp (the pick's own
+  family when one fits; on the OVH 16 GB server: Qwen3 8B, Q4_K_M), and the card says why ("instead of LM Studio,
+  which is not installed here"). Wherever the pick's engine is installed, nothing changes.
+- **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
+  nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
+### Changed
+
+- **Ollama on Linux installs for the account running the gateway, never with an administrator** (operator
+  2026-10-29): its official `ollama-linux-<arch>.tar.zst` (SHA-256 checked) is unpacked into `~/.local` and served by
+  a systemd user service on port 11434 (its program path quoted, so a home directory with a space works; a detached `ollama serve` without a user bus). The card no longer says
+  "Install (administrator)"; without `zstd` it says why, with no administrator step.
+### Fixed
 
 - **A gateway that fails to start now exits non-zero**: the exit belt kept exiting 0 when a non-daemon thread was
   alive, so a port-in-use start under systemd (`Restart=on-failure`) was never retried (OVH 2026-10-28). The off-loop
@@ -41,6 +57,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
+  server).
+  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
+    **Show more results** appends the next page.
+  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
+  - A catalog search of three characters or more also asks Hugging Face. Its results come under
+    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
+  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
+  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
+- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
+  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
+  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
+  bad before (OVH 2026-10-29).
+
 - **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
   `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
   own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
@@ -49,6 +79,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
   `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
   `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+
+### Fixed
+
+- **A voice can be the default only once its model is downloaded** (operator ruling 2026-10-29; backlog 0955
+  closed as rejected and replaced by this rule).
+  - Setting the default voice to a local model whose weights are not on disk is refused when it is chosen: 409
+    with the sentence ("The voice model supertonic-3 (401 MB) is not downloaded on this computer yet, so it cannot
+    be the default voice…") as a plain `detail`, and the download action under `error`.
+  - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
+    before the click.
+  - Synthesis never checks, and the voice lists already offer only downloaded voices.
+- **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
+  8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
+  so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
+  usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
+  data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
+  hand-over). Apps of the dev stack that name no gateway are listed as before.
+- **`service enable` says when the service will stop at logout** (backlog 0957). On a Linux server with lingering
+  off (the default), a systemd user unit stops when the last SSH session ends and never starts at boot, yet
+  `abstractgateway service enable` answered only "start at login [on]". `service install`, `service enable` and
+  `service status`, and the consoles' Start at login switch, now add one line when `loginctl show-user <user> -p
+  Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
+  sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
+  printed whatever the state, is gone.
+- **The Models page says what a model's "cache" is and who keeps it in memory.** A GGUF row reads
+  "~5.4 GiB + ~2.0 GiB KV" with the loaded context in the Context column and, in the tooltip, that
+  the KV cache was allocated for that context when the model loaded (an estimate from the file;
+  it does not grow with use), then the session prompt caches. It used to read "+ 8.3 GiB cache"
+  with no context on a freshly restarted server (AbstractCore over-counted hybrid models' KV).
+  Rows carry `kv_cache_bytes`, `kv_cache_estimated` and `held_by`; the residency cell names the
+  holders in words ("held by the runtime of account default/bob (loaded)"), and every account's
+  runtime client is labelled so ("kept in memory: ... still in use by runtime client
+  70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
+  `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
+
+- **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
+  editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
+  server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
+  runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
+  now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
+  may be a Mac.
 
 ## [0.18.0] - 2026-10-28
 
