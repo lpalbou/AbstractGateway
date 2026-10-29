@@ -1,0 +1,2 @@
+### Changed
+- Models catalog: a build that is in memory now shows a small "Loaded" badge (or "Kept loaded", with the lock icon, when it is kept). Its tooltip says who holds the model. Clicking it opens the Resources page, where the residency controls live (Keep loaded, Unload, Set context, refusal reasons): operator ruling 2026-10-29, Resources is memory management and the Models page stays the catalog. Read from the host snapshot the top bar already polls. A different quant of the same repository does not get the badge.
