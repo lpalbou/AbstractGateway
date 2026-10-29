@@ -163,6 +163,16 @@ async def engine_install_start(engine_id: str, request: Request, req: Optional[E
     if body.dry_run:
         installer = await off_loop("watchers", ei.default_installer)
         return await off_loop("watchers", ei.dry_run_payload, installer, engine_id, location=body.location)
+    if engine_id == "llamacpp":
+        # llama.cpp cannot be replaced under a model it holds (in this process or in the model
+        # host child): refuse with the names instead (merge desk review).
+        held = await off_loop("watchers", loaded_llamacpp_models)
+        if held:
+            return _host_action_error(
+                409, "refused",
+                f"Unload {', '.join(held)} first: llama.cpp cannot be updated while it holds a model.",
+                reason="llamacpp_model_loaded", loaded=held,
+            )
     policy = _engine_install_policy(request)
     if not bool(policy.get("value")):
         bind = policy.get("bind_host")
@@ -215,3 +225,21 @@ async def engine_start(engine_id: str, request: Request) -> Any:
 async def engine_stop(engine_id: str, request: Request) -> Any:
     """Stop a local engine server (quits the Ollama app / `lms server stop`)."""
     return await _server_action(engine_id, request, "stop")
+
+
+def loaded_llamacpp_models() -> list:
+    """The GGUF models resident now (llama.cpp holds them), by name, from the gateway's own
+    residency listing (in-process or the model host child)."""
+    from .gateway import _gateway_model_residency_client_call
+
+    out = _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded") or {}
+    names = []
+    for m in out.get("models") or []:
+        if not isinstance(m, dict) or m.get("resident") is not True:
+            continue
+        details = m.get("details") if isinstance(m.get("details"), dict) else {}
+        lane = str(m.get("process_lane") or details.get("process_lane") or "")
+        model = str(m.get("model") or "")
+        if str(m.get("provider") or "") == "huggingface" and (lane == "gguf" or "gguf" in model.lower()):
+            names.append(model)
+    return sorted(set(names))

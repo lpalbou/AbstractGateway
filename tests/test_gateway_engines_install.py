@@ -343,7 +343,8 @@ def test_llamacpp_installs_the_metal_wheel_without_a_compiler(tmp_path) -> None:
     reg = _registry(_installer(tmp_path, sysd), tmp_path)
     snap, _ = reg.start("llamacpp", run_inline=True)
     job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "done" and job["result"] == {"installed": True, "version": "0.3.28", "gpu_offload": True, "location": "/gw/bin/python", "method": "metal wheel"}
+    assert job["state"] == "done" and job["result"] == {"installed": True, "version": "0.3.28", "gpu_offload": True, "location": "/gw/bin/python", "method": "metal wheel",
+                                                        "message": "The next model load uses the new llama.cpp"}
     pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
     # AbstractCore's apple setting (ruling 2026-09-29: never a bare engine package), its
     # llama-cpp-python taken from upstream's prebuilt Metal wheel.
@@ -811,3 +812,71 @@ def test_ollama_user_unit_quotes_its_program_path():
     # A home directory with a space (or a quote, a backslash, a literal %) stays ONE argument.
     assert ei._systemd_exec_path("/home/a b/.local/bin/ollama") == '"/home/a b/.local/bin/ollama"'
     assert ei._systemd_exec_path('/home/x"y\\z/50%/ollama') == '"/home/x\\"y\\\\z/50%%/ollama"'
+
+
+# -- llama.cpp update on an NVIDIA host keeps the CUDA build (operator 2026-10-29) ---------------
+def test_llama_update_on_a_cuda_host_takes_the_matching_cuda_build(tmp_path):
+    """The engine path used to install the CPU wheel on every Linux host: an "Update llama.cpp"
+    on the OVH NVIDIA server would have dropped GPU offload. MUTANT: cpu index -> RED."""
+    system = FakeSystem(tmp_path)
+    system.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\n"))
+    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+    inst = _installer(tmp_path, system, host=host)
+    pin, backend, links = inst._llama_wheel()
+    assert (pin, backend) == (ei.LLAMA_CPU_PIN, "cu125") and links.endswith("/cu125/llama-cpp-python/")
+    argv = inst._llama_wheel_argv(pin, links)
+    assert "--reinstall-package" in argv and argv[argv.index("--reinstall-package") + 1] == "llama-cpp-python", (
+        "uv would keep the installed CPU build of the same version")
+
+
+def test_llama_update_without_a_cuda_torch_stays_on_the_cpu_build(tmp_path):
+    system = FakeSystem(tmp_path)
+    system.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "\n"))
+    inst = _installer(tmp_path, system, host=ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc"))
+    assert inst._llama_wheel()[1] == "cpu"
+
+
+def test_llama_pin_is_the_release_that_knows_spark2_5():
+    assert ei.LLAMA_CPU_PIN == "0.3.36"   # llama.cpp 0c1e5709 (vendored by 0.3.36) names spark2_5
+
+
+
+_TORCH_PROBE = "import torch; print(torch.version.cuda or '')"
+
+
+def test_nvidia_host_without_any_cuda_build_refuses_never_the_cpu_wheel(tmp_path):
+    """Merge desk review: a CPU PyTorch on an NVIDIA box must not lead to the CPU wheel
+    replacing a GPU llama.cpp. MUTANT: no refusal -> cpu index installed -> RED."""
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[1:3] == ["-c", _TORCH_PROBE], lambda a: (0, "\n"))
+    sysd.on(lambda a: a[1:2] == ["-c"] and "libggml-cuda" in a[2], lambda a: (0, "\n"))
+    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+    reg = _registry(_installer(tmp_path, sysd, host=host), tmp_path)
+    snap, _ = reg.start("llamacpp", run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "failed" and "NVIDIA GPU" in str(job.get("message") or job.get("details") or job), job
+    assert not [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]], "nothing may be installed"
+
+
+def test_nvidia_host_with_a_cpu_torch_keeps_the_installed_cuda_llama_build(tmp_path):
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[1:3] == ["-c", _TORCH_PROBE], lambda a: (0, "\n"))
+    sysd.on(lambda a: a[1:2] == ["-c"] and "libggml-cuda" in a[2], lambda a: (0, "12\n"))
+    inst = _installer(tmp_path, sysd, host=ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc"))
+    assert inst._llama_wheel()[1] == "cu125"
+
+
+def test_a_new_llamacpp_restarts_the_model_host_child(tmp_path, monkeypatch):
+    """After the update the model host child (gateway #28) still holds the OLD llama.cpp:
+    it is restarted and the result says so. MUTANT: no restart -> RED."""
+    import abstractgateway.model_host as mh
+
+    killed = []
+    monkeypatch.setattr(mh, "supervisor", lambda: type("S", (), {"kill": lambda self, reason: killed.append(reason)})())
+    sysd = FakeSystem(tmp_path)
+    sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.3.28", "gpu_offload": true}'))
+    reg = _registry(_installer(tmp_path, sysd), tmp_path)
+    snap, _ = reg.start("llamacpp", run_inline=True)
+    job = reg.get(snap["job_id"]).snapshot()
+    assert job["state"] == "done" and killed and "llama.cpp updated" in killed[0]
+    assert job["result"]["message"] == "The model host restarts with the new llama.cpp; the next model load uses it"

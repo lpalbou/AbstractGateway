@@ -75,11 +75,15 @@ HEARTBEAT_S = 3.0
 # PyPI carries only the sdist, so a plain `pip install llama-cpp-python` is a
 # CMake build. Upstream publishes wheels per backend under one flat
 # `--find-links` page per backend. The pins match scripts/install.sh (the
-# root installer measured them): Metal 0.3.32-0.3.35 wheels fail zip CRC
+# root installer measured them): Metal 0.3.32-0.3.36 wheels fail zip CRC
 # checks and uv refuses them, 0.3.28 is the newest that installs.
 LLAMA_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl"
 LLAMA_METAL_PIN = "0.3.28"
-LLAMA_CPU_PIN = "0.3.35"
+LLAMA_CPU_PIN = "0.3.36"
+# llama.cpp's CUDA builds of the same pin, by PyTorch's CUDA major (the root installer's rule:
+# torch CUDA 13 -> cu130 with driver 580+, CUDA 12 -> cu125 with driver 525+). An update on an
+# NVIDIA host keeps the CUDA build: the CPU wheel would silently drop GPU offload.
+LLAMA_CUDA_BUILDS = {"13": "cu130", "12": "cu125"}
 
 # --- Ollama -----------------------------------------------------------------------
 OLLAMA_RELEASES = "https://github.com/ollama/ollama/releases"
@@ -254,6 +258,22 @@ class NeedsTools(Exception):
     def __init__(self, prompt: ToolsPrompt):
         super().__init__(prompt.reason)
         self.prompt = prompt
+
+
+def _llama_takes_effect() -> str:
+    """Make a new llama.cpp take effect, and say when: the model host child (gateway #28)
+    imported the old one, so it is restarted (no model is loaded: the route refused the update
+    otherwise); in-process, the next model load uses it."""
+    try:
+        from . import model_host
+
+        sup = model_host.supervisor()
+    except Exception:  # noqa: BLE001
+        sup = None
+    if sup is not None:
+        sup.kill("llama.cpp updated: restarting the model host with the new llama.cpp")
+        return "The model host restarts with the new llama.cpp; the next model load uses it"
+    return "The next model load uses the new llama.cpp"
 
 
 class InstallFailed(Exception):
@@ -1029,17 +1049,43 @@ class EngineInstaller:
         if h.os_id == "darwin" and h.arch == "arm64" and not h.translated:
             return LLAMA_METAL_PIN, "metal", f"{self.llama_index}/metal/llama-cpp-python/"
         if h.os_id == "linux" and h.arch in {"x86_64", "arm64"}:
+            cuda = (self._torch_cuda_build() or self._installed_llama_cuda_build()) if h.accelerator == "cuda" else None
+            if cuda:
+                return LLAMA_CPU_PIN, cuda, f"{self.llama_index}/{cuda}/llama-cpp-python/"
             return LLAMA_CPU_PIN, "cpu", f"{self.llama_index}/cpu/llama-cpp-python/"
         if h.os_id == "windows" and h.arch == "x86_64":
             return LLAMA_CPU_PIN, "cpu", f"{self.llama_index}/cpu/llama-cpp-python/"
         return None
 
+    def _torch_cuda_build(self) -> Optional[str]:
+        """The llama.cpp CUDA build matching the gateway environment's PyTorch CUDA major, or
+        None (no torch, a CPU torch, or a CUDA major with no llama.cpp build)."""
+        rc, out = self.system.run([self.python, "-c", "import torch; print(torch.version.cuda or '')"], timeout=120)
+        major = (out or "").strip().splitlines()[-1].split(".")[0] if rc == 0 and (out or "").strip() else ""
+        return LLAMA_CUDA_BUILDS.get(major)
+
+    def _installed_llama_cuda_build(self) -> Optional[str]:
+        """The CUDA build of the llama-cpp-python ALREADY installed (the root installer chooses it
+        by the driver, not by PyTorch): the CUDA runtime its libggml-cuda links, or None."""
+        probe = ("import pathlib, llama_cpp; d = pathlib.Path(llama_cpp.__file__).parent / 'lib'; "
+                 "f = next(iter(sorted(d.glob('libggml-cuda*'))), None); "
+                 "b = f.read_bytes() if f else b''; "
+                 "print('13' if b'libcudart.so.13' in b else ('12' if b'libcudart.so.12' in b else ''))")
+        rc, out = self.system.run([self.python, "-c", probe], timeout=120)
+        major = (out or "").strip().splitlines()[-1] if rc == 0 and (out or "").strip() else ""
+        return LLAMA_CUDA_BUILDS.get(major)
+
     def _llama_wheel_argv(self, pin: str, links: str, version: Optional[str] = None) -> List[str]:
         # The host's setting, with its llama-cpp-python taken from upstream's prebuilt wheel
         # (`--only-binary`, uv pip and pip alike): the PyPI sdist is never built on this path.
         setting = self.local_setting() or "apple"
-        return [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
+        argv = [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
                 "--find-links", links, "--only-binary", "llama-cpp-python"]
+        if self.pip_prefix()[1:3] == ["pip", "install"] and "/cu1" in links:
+            # uv keeps an installed llama-cpp-python of the same version: a CPU build already there
+            # would stay in place of the CUDA one.
+            argv += ["--reinstall-package", "llama-cpp-python"]
+        return argv
 
     def _compiler_present(self) -> bool:
         if self.host.os_id == "darwin":
@@ -1312,6 +1358,15 @@ class EngineInstaller:
         if setting is None:
             raise InstallFailed(_not_available_here(_SETTING_ENGINE_WHAT["llamacpp"]), code="unsupported")
         version = self._core_version()
+        if wheel and h.os_id == "linux" and h.accelerator == "cuda" and wheel[1] == "cpu":
+            # Never replace a GPU llama.cpp by the CPU wheel (merge desk review): no CUDA build
+            # could be determined (no CUDA PyTorch, no CUDA llama.cpp installed).
+            raise InstallFailed(
+                "This computer has an NVIDIA GPU, but neither the gateway's PyTorch nor its llama.cpp has a CUDA "
+                "build, so this update would install llama.cpp without GPU offload. Install the GPU stack first "
+                "(re-run the installer with --profile gpu), then update llama.cpp.",
+                code="needs_cuda_stack",
+            )
         if wheel:
             pin, backend, links = wheel
             ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
@@ -1320,8 +1375,11 @@ class EngineInstaller:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
                     ctx.log("warning: llama.cpp loaded but reports no GPU offload (Metal)")
+                if backend.startswith("cu") and not info.get("gpu_offload"):
+                    ctx.log(f"warning: llama.cpp's {backend} build loaded but reports no GPU offload")
                 importlib.invalidate_caches()
-                return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python, "method": f"{backend} wheel"}
+                return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python,
+                        "method": f"{backend} wheel", "message": _llama_takes_effect()}
             wheel_error = _last_error_line(out)
             ctx.log(f"the prebuilt wheel did not install: {wheel_error}")
             why = f"The prebuilt llama.cpp wheel did not install ({wheel_error})"
