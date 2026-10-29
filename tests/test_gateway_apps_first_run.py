@@ -201,9 +201,10 @@ def test_an_entity_app_started_outside_counts_only_for_this_gateway(tmp_path: Pa
         m._external_cache = None
         row = m.app_row(spec)
         assert row["source"] == "external" and row["content_summary"] == {"entities_count": 0}, same
+    # An entity app another gateway serves is not this gateway's at all (P0 2026-10-29): not listed.
     m.external_probe = lambda **_kw: {"entity": am.ExternalApp("entity", 18997, "http://127.0.0.1:18997/", gateway_url="http://127.0.0.1:8080")}
     m._external_cache = None
-    assert m.app_row(spec)["content_summary"] == {"entities_count": None}
+    assert m.app_row(spec)["source"] is None
 
 
 def test_the_count_is_the_entries_get_entities_lists(tmp_path: Path, monkeypatch) -> None:
