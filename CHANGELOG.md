@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The setup guide recommends a text engine that is installed** (backlog 0958). On a headless Linux server
+  AbstractCore's portable text pick is LM Studio, a desktop app that is not installed there, while llama.cpp is: the
+  guide recommended a model nothing could run and the fresh-install defaults pointed `input.text` at it. When the
+  pick's engine is not installed (AbstractCore's engine inventory) and llama.cpp is, the guide, "Use recommended" and
+  an untouched fresh-install text route use a GGUF build that fits this computer through llama.cpp (the pick's own
+  family when one fits; on the OVH 16 GB server: Qwen3 8B, Q4_K_M), and the card says why ("instead of LM Studio,
+  which is not installed here"). Wherever the pick's engine is installed, nothing changes.
 - **The mailbox form's outgoing server defaults to port 465 with SSL** (993 for incoming) when discovery finds
   nothing, and switching Security to STARTTLS moves a standard port to 587 (143), never a port typed by hand.
 ### Changed
@@ -98,6 +105,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
+- **`service enable` says when the service will stop at logout** (backlog 0957). On a Linux server with lingering
+  off (the default), a systemd user unit stops when the last SSH session ends and never starts at boot, yet
+  `abstractgateway service enable` answered only "start at login [on]". `service install`, `service enable` and
+  `service status`, and the consoles' Start at login switch, now add one line when `loginctl show-user <user> -p
+  Linger` says `no`: "On a server, this service stops when you log out and does not start at boot until you run once:
+  sudo loginctl enable-linger <user>". The start-at-login status carries `linger: true|false|null`. The old hint,
+  printed whatever the state, is gone.
 - **The Models page says what a model's "cache" is and who keeps it in memory.** A GGUF row reads
   "~5.4 GiB + ~2.0 GiB KV" with the loaded context in the Context column and, in the tooltip, that
   the KV cache was allocated for that context when the model loaded (an estimate from the file;
@@ -108,6 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime client is labelled so ("kept in memory: ... still in use by runtime client
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
+
+- **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
+  editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
+  server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
+  runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
+  now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
+  may be a Mac.
 
 ## [0.18.0] - 2026-10-28
 
