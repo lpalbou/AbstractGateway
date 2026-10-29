@@ -113,6 +113,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
   now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
   may be a Mac.
+- **AbstractRuntime floor 0.15.3; 0.15.2 is excluded** (backlog 0965). `pyproject.toml` (base, `[apple]`, `[gpu]`) and
+  `live_deltas.ABSTRACTRUNTIME_FLOOR` move to 0.15.3. 0.15.2 has the same API but its index-build replay moved the run
+  store's change token on every boot, so the mail collector's change-driven pass reloaded every finished run (the
+  test `test_400_finished_runs_a_change_to_one_loads_exactly_one` was red on main). The API probes cannot tell the
+  two apart, so the floor check now also refuses by version, naming the installed and required versions; a source
+  checkout without metadata is not refused. Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released
+  2026-10-29).
+
 
 ## [0.18.0] - 2026-10-28
 
