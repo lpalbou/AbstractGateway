@@ -194,6 +194,9 @@ if (__SCRIPT__ === "hf") {
   snap("second");
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
 }
+if (__SCRIPT__ === "host") {
+  out.host = vm.runInContext("mcHostMarkup()", ctx);
+}
 if (__SCRIPT__ === "gpulimit") {
   out.html = root.innerHTML;
   root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
@@ -411,6 +414,22 @@ def test_hugging_face_texts() -> None:
     for text in ("Hugging Face has no model matching", "Hugging Face could not be searched right now.", "Hugging Face could not be reached, so these results may be incomplete."):
         assert text in js
     assert "export " not in js and "HF_TOKEN" not in js and "environment variable" not in js
+
+
+@pytest.mark.parametrize("profile,expected,absent", [
+    ({"accelerator": "cuda", "gpu_name": "Quadro RTX 5000", "unified_memory": False, "ram_bytes": 28734308352,
+      "vram_bytes": 16106127360, "ceiling_bytes": 16106127360}, ["Quadro RTX 5000", "16.1 GB VRAM", "28.7 GB RAM"], ["models up to", "memory"]),
+    ({"accelerator": "metal", "unified_memory": True, "ram_bytes": 137438953472, "ceiling_bytes": 103079215104},
+     ["137 GB unified memory", "models up to about"], ["VRAM"]),
+])
+def test_the_machine_line_shows_vram_and_ram_separately(profile, expected, absent) -> None:
+    """QA 2026-10-28 (e): a 16 GB GPU + 26 GB RAM server read "28.7 GB memory · models up to 16.1 GB"."""
+    cat = dict(_catalog(2), host_profile=profile)
+    host = _run(cat, "host")["host"]
+    for text in expected:
+        assert text in host, host
+    for text in absent:
+        assert text not in host, host
 
 
 def _gpu_limit_catalog() -> dict:

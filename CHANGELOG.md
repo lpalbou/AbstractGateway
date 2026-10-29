@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
+  server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
+  · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
+  figure, as before.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
