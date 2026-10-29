@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **mflux and MLX images & video are never offered off a Mac** (operator QA 2026-10-28, item d). The capability
+  editor's provider list (`GET /api/gateway/vision/provider_models?providers_only=true`) offered both on the Linux
+  server. The prune applied only to the `abstractvision.local` answer, and the providers-only answer comes from the
+  runtime's local catalog (`abstractruntime.discovery`); its `details` named them too. Every local answer is pruned
+  now, `details` and `image_providers` included. An answer from a remote Core (`base_url`) is kept, since that host
+  may be a Mac.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
