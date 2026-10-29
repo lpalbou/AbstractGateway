@@ -52,6 +52,12 @@
   and **Delete** (after the web's question); **New connection** renders the source's `connection_schema` and shows a
   webhook's address and one-time signing secret once, with Copy. Same routes and words as the web page.
 
+### Added
+- **Providers → Local providers: Allow engine installs (the web's Engines-tab switch, root backlog 0858).** Above the
+  engines: *Allow engine installs from the console: On|Off. <where the value comes from>.*, the CLI twin, and for an
+  admin **E** (turn it on or off) and **D** (use the default, when a choice is stored), with *Saved* or *Not saved: …*
+  in place; the engines are read again after a save. Other accounts see *Only an admin can change this.*
+
 ## [0.16.0] - 2026-10-15
 The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row
 actions, switches, choices, dialogs — and every control is still reachable from the keyboard.
