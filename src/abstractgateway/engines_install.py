@@ -59,7 +59,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 ENGINES_SCHEMA = "gateway_engines_v2"
 JOB_SCHEMA = "engine_install_job_v1"
@@ -84,6 +84,11 @@ LLAMA_CPU_PIN = "0.3.36"
 # torch CUDA 13 -> cu130 with driver 580+, CUDA 12 -> cu125 with driver 525+). An update on an
 # NVIDIA host keeps the CUDA build: the CPU wheel would silently drop GPU offload.
 LLAMA_CUDA_BUILDS = {"13": "cu130", "12": "cu125"}
+# ADR 0003 (engine installation contract): prebuilt binaries only. The native packages an
+# AbstractCore setting pulls in are installed from wheels only; a missing wheel refuses the
+# install with its reason, never a source build (a compiler on an operator's server is not a
+# prerequisite: OVH 2026-10-29, a Hugging Face install started building llama.cpp from source).
+PREBUILT_ONLY = ("llama-cpp-python", "torch", "torchvision", "torchaudio", "vllm", "mlx", "mlx-lm", "mlx-metal")
 
 # --- Ollama -----------------------------------------------------------------------
 OLLAMA_RELEASES = "https://github.com/ollama/ollama/releases"
@@ -188,6 +193,7 @@ ENGINE_TEXT: Dict[str, Dict[str, str]] = {
 }
 ENGINE_IDS: Tuple[str, ...] = ("ollama", "lmstudio", "mlx", "llamacpp", "vllm", "huggingface")
 SERVER_ENGINES = frozenset({"ollama", "lmstudio"})
+PYTHON_ENGINES = frozenset({"llamacpp", "mlx", "huggingface", "vllm"})
 
 
 # ---------------------------------------------------------------------------
@@ -1101,21 +1107,41 @@ class EngineInstaller:
         # (`--only-binary`, uv pip and pip alike): the PyPI sdist is never built on this path.
         setting = self.local_setting() or "apple"
         argv = [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
-                "--find-links", links, "--only-binary", "llama-cpp-python"]
+                "--find-links", links, *self._prebuilt_only_args()]
         if self.pip_prefix()[1:3] == ["pip", "install"] and "/cu1" in links:
             # uv keeps an installed llama-cpp-python of the same version: a CPU build already there
             # would stay in place of the CUDA one.
             argv += ["--reinstall-package", "llama-cpp-python"]
         return argv
 
-    def _compiler_present(self) -> bool:
-        if self.host.os_id == "darwin":
-            # `xcode-select -p` never pops Apple's dialog (unlike /usr/bin/clang on a machine without the tools).
-            rc, out = self.system.run(["xcode-select", "-p"], timeout=10)
-            return rc == 0 and bool(out.strip()) and Path(out.strip().splitlines()[0]).exists()
-        if self.host.os_id == "linux":
-            return bool((self.system.which("cc") or self.system.which("gcc")) and (self.system.which("c++") or self.system.which("g++")))
-        return True  # windows: not planned here (see legacy path)
+    def _raise_if_no_wheel(self, out: str, *, links: Optional[str] = None) -> None:
+        if links is None:
+            wheel = self._llama_wheel() if self.host.os_id != "windows" else None
+            links = wheel[2] if wheel else None
+        sentence = _no_wheel_failure(out, host=self.host, links=links)
+        if sentence:
+            raise InstallFailed(sentence, code="no_prebuilt_wheel")
+
+    def _prebuilt_only_args(self) -> List[str]:
+        out: List[str] = []
+        for name in PREBUILT_ONLY:
+            out += ["--only-binary", name]
+        return out
+
+    def _setting_argv(self, setting: str, version: Optional[str], *, extra: Sequence[str] = ()) -> List[str]:
+        """Every install of an AbstractCore setting (llama.cpp, MLX, Hugging Face, vLLM): the setting
+        pins llama-cpp-python, so when it is not installed yet its prebuilt wheel for this host is
+        named here (the same wheel the llama.cpp install takes); every native package is wheels-only."""
+        argv = [*self.pip_prefix(), self._core_spec(setting, version), *extra]
+        # On Windows the settings leave llama-cpp-python out (PyPI has only its source build; the
+        # AbstractFramework installer adds the prebuilt build), so nothing is named there.
+        wheel = self._llama_wheel() if self.host.os_id != "windows" else None
+        if wheel and self.host.os_id == "linux" and self.host.accelerator == "cuda" and not wheel[1].startswith("cu"):
+            wheel = None  # never the CPU llama.cpp on an NVIDIA host; wheels-only then refuses loudly
+        if wheel and not self._installed_llama_version():
+            pin, _backend, links = wheel
+            argv += [f"llama-cpp-python=={pin}", "--find-links", links]
+        return argv + self._prebuilt_only_args()
 
     _LIBATOMIC_DIRS = ("/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/lib/x86_64-linux-gnu",
                        "/lib/aarch64-linux-gnu", "/usr/lib64", "/lib64", "/usr/lib")
@@ -1140,12 +1166,6 @@ class EngineInstaller:
             "manual",
             "sudo apt-get install -y libatomic1   # Fedora/RHEL: sudo dnf install -y libatomic",
         )
-
-    def _tools_prompt(self, reason: str) -> ToolsPrompt:
-        if self.host.os_id == "darwin":
-            return ToolsPrompt("xcode-clt", reason, "Apple command-line developer tools", "xcode_select_install", "xcode-select --install")
-        return ToolsPrompt("c-compiler", reason, "a C/C++ compiler", "manual",
-                           "sudo apt-get install -y build-essential   # Fedora: sudo dnf install gcc gcc-c++ make")
 
     # -- plans ----------------------------------------------------------------------------
     def plan(self, eid: str, *, location: str = "auto") -> InstallPlan:
@@ -1178,17 +1198,9 @@ class EngineInstaller:
                     command_preview=self._llama_wheel_argv(pin, links),
                     steps=["download the prebuilt wheel", "install into the gateway's Python", "check that it loads"],
                 )
-            present = self._compiler_present()
-            reason_text = (f"No prebuilt llama.cpp wheel exists for {h.os_id} {h.arch}; building from source needs "
-                           + ("the Apple command-line tools." if h.os_id == "darwin" else "a C/C++ compiler."))
-            prompt = self._tools_prompt(reason_text)
             return InstallPlan(
-                eid, True, "wheel", target=self.python, needs_tools=not present,
-                tools_action=prompt.public()["action"] if not present else None,
-                notes=(f"Installs AbstractCore's {setting} setting and builds its llama.cpp from source (5-15 minutes)."
-                       + ("" if present else " " + reason_text)),
-                command_preview=[*self.pip_prefix(), self._core_spec(setting)],
-                steps=["check the compiler", "build llama.cpp from source", "check that it loads"],
+                eid, False, "unsupported",
+                notes=_no_prebuilt_llama(h),
             )
         if eid == "mlx":
             return InstallPlan(eid, True, "wheel", target=self.python,
@@ -1198,7 +1210,7 @@ class EngineInstaller:
             setting = self.local_setting()
             return InstallPlan(eid, True, "wheel", target=self.python,
                                notes=f"Installs AbstractCore's {setting} setting (every local engine for this machine, including transformers, torch and huggingface_hub) into the gateway's Python; several GB, no admin.",
-                               command_preview=[*self.pip_prefix(), self._core_spec(setting or "gpu", "<installed>"), *self._torch_backend_args()], steps=["install", "check that it loads"])
+                               command_preview=self._setting_argv(setting or "gpu", "<installed>", extra=self._torch_backend_args()), steps=["install", "check that it loads"])
         if eid == "vllm":
             return InstallPlan(eid, True, "wheel", target=self.python,
                                notes="Installs AbstractCore's gpu setting (every local engine for GPU machines, including vLLM: PyTorch + CUDA wheels, several GB) into the gateway's Python; no admin.",
@@ -1208,22 +1220,21 @@ class EngineInstaller:
                 apps, admin = self.app_target(location)
                 return InstallPlan(
                     eid, True, "app", target=str(apps / "Ollama.app"), needs_admin=admin,
-                    admin_reason=(f"{apps} is not writable by this account; placing Ollama.app there needs an administrator." if admin else None),
+                    admin_reason=(f"{apps} is not writable by the gateway's service account; placing Ollama.app there needs an administrator." if admin else None),
                     notes=f"Downloads Ollama's signed macOS app from its official GitHub release, checks its SHA-256 and signature, places it in {apps} and starts it.",
                     command_preview=[f"download {OLLAMA_RELEASES}/latest/download/{OLLAMA_MAC_ASSET}", f"place {apps}/Ollama.app", "open -j -a Ollama.app --args hidden"],
                     steps=["download (about 200 MB)", "verify checksum and signature", f"place in {apps}", "start the server"],
                     download_bytes=None,
                 )
-            if h.is_root:
-                return InstallPlan(eid, True, "script", notes="Runs Ollama's official Linux installer (installs to /usr/local and a systemd service).",
-                                   command_preview=["sh", "-c", OLLAMA_LINUX_SCRIPT], steps=["run the vendor installer", "check the server"])
+            # ADR 0003: the vendor's non-root path (its release archive), whatever account the
+            # gateway runs as; never `curl | sh` as root.
             return self._ollama_user_plan()
         if eid == "lmstudio":
             if h.os_id == "darwin":
                 apps, admin = self.app_target(location)
                 return InstallPlan(
                     eid, True, "app", target=str(apps / "LM Studio.app"), needs_admin=admin,
-                    admin_reason=(f"{apps} is not writable by this account; placing LM Studio.app there needs an administrator." if admin else None),
+                    admin_reason=(f"{apps} is not writable by the gateway's service account; placing LM Studio.app there needs an administrator." if admin else None),
                     notes=f"Downloads LM Studio's signed disk image from lmstudio.ai, checks its signature, copies the app to {apps} and starts its local server.",
                     command_preview=[f"download {LMSTUDIO_MAC_LATEST}", "hdiutil attach -readonly -nobrowse", f"ditto 'LM Studio.app' {apps}", "hdiutil detach", "lms server start"],
                     steps=["download (about 570 MB)", "verify signature", f"copy to {apps}", "start the local server"],
@@ -1238,7 +1249,7 @@ class EngineInstaller:
                     notes=("LM Studio's Linux daemon needs the libatomic1 system library, which this machine does not have; "
                            "a system library is installed by the machine's administrator (the AbstractFramework server "
                            "installer adds it). "
-                           + (f"Installs here for this account: {here}." if here else "No other engine installs here for this account either.")),
+                           + (f"Installs here without an administrator: {here}." if here else "No other engine installs here without an administrator either.")),
                 )
             prompt = self._libatomic_prompt()
             return InstallPlan(eid, True, "script", needs_tools=not atomic,
@@ -1250,7 +1261,7 @@ class EngineInstaller:
         return InstallPlan(eid, False, "unsupported", notes=f"unknown engine {eid}")
 
     def _user_space_engines(self, *, exclude: str = "") -> str:
-        """The engines that install here for this account, no administrator ("llama.cpp, Ollama and vLLM")."""
+        """The engines that install here without an administrator ("llama.cpp, Ollama and vLLM")."""
         names = []
         for other in ("llamacpp", "ollama", "vllm", "huggingface", "mlx"):
             if other == exclude:
@@ -1266,12 +1277,11 @@ class EngineInstaller:
         return ", ".join(names[:-1]) + " and " + names[-1]
 
     def _mlx_argv(self, version: Optional[str] = None) -> List[str]:
-        return [*self.pip_prefix(), self._core_spec("apple", version), "--only-binary", "mlx"]
+        return self._setting_argv("apple", version)
 
     def _vllm_argv(self, version: Optional[str] = None) -> List[str]:
-        base = self.pip_prefix()
-        extra = ["--torch-backend=auto"] if base[1:3] == ["pip", "install"] else []
-        return [*base, self._core_spec("gpu", version), *extra]
+        extra = ["--torch-backend=auto"] if self.pip_prefix()[1:3] == ["pip", "install"] else []
+        return self._setting_argv("gpu", version, extra=extra)
 
     # -- detection this module adds --------------------------------------------------
     def app_version(self, app: Path) -> Optional[str]:
@@ -1312,7 +1322,51 @@ class EngineInstaller:
             "ollama": self._install_ollama,
             "lmstudio": self._install_lmstudio,
         }[eid]
+        if eid in PYTHON_ENGINES:
+            return self._atomically(ctx, fn)
         return fn(ctx)
+
+    # ADR 0003: an engine update is atomic -- if the new one fails to install or to load, the
+    # packages it changed go back to the versions they had, so the engine installed before stays.
+    _SNAPSHOT = ("import json, importlib.metadata as m; "
+                 "print('__AG_PKGS__' + json.dumps({(d.metadata['Name'] or '').lower(): d.version "
+                 "for d in m.distributions() if d.metadata['Name']}))")
+
+    def _packages(self) -> Optional[Dict[str, str]]:
+        rc, out = self.system.run([self.python, "-c", self._SNAPSHOT], timeout=120)
+        for line in (out or "").splitlines() if rc == 0 else []:
+            if line.startswith("__AG_PKGS__"):
+                try:
+                    return {str(k): str(v) for k, v in json.loads(line[len("__AG_PKGS__"):]).items()}
+                except ValueError:
+                    return None
+        return None
+
+    def _atomically(self, ctx: "_JobContext", fn: Callable[["_JobContext"], Dict[str, Any]]) -> Dict[str, Any]:
+        before = self._packages()
+        try:
+            return fn(ctx)
+        except InstallFailed as exc:
+            after = self._packages() if before is not None else None
+            changed = sorted(n for n, v in (before or {}).items() if after is not None and after.get(n) != v)
+            if not changed:
+                raise
+            ctx.log("restoring the packages this install changed: " + ", ".join(f"{n}=={before[n]}" for n in changed))
+            rc, out = ctx.run([*self.pip_prefix(), "--no-deps", *[f"{n}=={before[n]}" for n in changed],
+                               *self._prebuilt_only_args()], timeout=3600)
+            if rc != 0:
+                raise InstallFailed(f"{exc} Restoring the previous versions also failed ({_last_error_line(out) or 'see the log'}); "
+                                    "the log lists them.", code=exc.code) from exc
+            loads = ""
+            probe = _ALREADY_PROBES.get(getattr(ctx.job, "engine", "") or "")
+            if probe:
+                rc2, out2 = ctx.run([self.python, "-c", probe], timeout=180)
+                info = next((json.loads(l[len("__AG_VERIFY__"):]) for l in (out2 or "").splitlines()
+                             if l.startswith("__AG_VERIFY__")), None) if rc2 == 0 else None
+                loads = (f" The previous version loads again ({info.get('version')})." if info
+                         else " The previous version was reinstalled but does not load; the log shows why.")
+            raise InstallFailed(f"{exc} The packages it changed were put back to the versions they had: the engine "
+                                "installed before is unchanged." + loads, code=exc.code) from exc
 
     # wheels -------------------------------------------------------------------------------
     def _abstract_pins(self, ctx: _JobContext) -> List[str]:
@@ -1424,30 +1478,21 @@ class EngineInstaller:
                 importlib.invalidate_caches()
                 return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python,
                         "method": f"{backend} wheel", "message": _llama_takes_effect()}
+            self._raise_if_no_wheel(out, links=links)
             wheel_error = _last_error_line(out)
             ctx.log(f"the prebuilt wheel did not install: {wheel_error}")
-            why = f"The prebuilt llama.cpp wheel did not install ({wheel_error})"
-        else:
-            why = f"No prebuilt llama.cpp wheel exists for {h.os_id} {h.arch}" + (" under Rosetta" if h.translated else "")
-        # Source build: say so, and check the compiler BEFORE starting it.
-        tools_reason = why + "; building from source needs " + ("the Apple command-line tools." if h.os_id == "darwin" else "a C/C++ compiler.")
-        ctx.require_tools(self._compiler_present, self._tools_prompt(tools_reason))
-        ctx.state("installing", why + ". Building llama.cpp from source instead (5-15 minutes).", percent=20)
-        env = {"CMAKE_ARGS": "-DGGML_METAL=on"} if h.os_id == "darwin" and h.arch == "arm64" else {}
-        rc, out = self._pip(ctx, [*self.pip_prefix(), self._core_spec(setting, version), *pins], lo=20, hi=92, env=env)
-        if rc != 0:
             raise InstallFailed(
-                why + ", and building it from source failed: " + (_last_error_line(out) or "see the log") + ". The full build log is in the details.",
-                code="build_failed",
+                f"The prebuilt llama.cpp {backend} wheel {pin} did not install ({wheel_error or 'see the log'}). "
+                "Nothing was built from source, and the llama.cpp that was installed before (if any) is kept.",
+                code="wheel_failed",
             )
-        info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
-        importlib.invalidate_caches()
-        return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python, "method": "source build"}
+        raise InstallFailed(_no_prebuilt_llama(h), code="no_prebuilt_build")
 
     def _install_mlx(self, ctx: _JobContext) -> Dict[str, Any]:
         ctx.state("downloading", "Installing AbstractCore's apple setting (MLX as prebuilt wheels)", percent=5)
         rc, out = self._pip(ctx, [*self._mlx_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("MLX could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, mlx.core as mx, importlib.metadata as m; print(json.dumps({'version': m.version('mlx'), 'mlx_lm': m.version('mlx-lm'), 'device': str(mx.default_device())}))", "MLX")
         importlib.invalidate_caches()
@@ -1457,10 +1502,11 @@ class EngineInstaller:
         setting = self.local_setting()
         if setting is None:
             raise InstallFailed(_not_available_here(_SETTING_ENGINE_WHAT["huggingface"]), code="unsupported")
-        spec = self._core_spec(setting, self._core_version())
         ctx.state("downloading", f"Installing AbstractCore's {setting} setting: transformers and PyTorch (several GB)", percent=5)
-        rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._torch_backend_args(), *self._abstract_pins(ctx)], lo=5, hi=90)
+        rc, out = self._pip(ctx, [*self._setting_argv(setting, self._core_version(), extra=self._torch_backend_args()),
+                                  *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("The Hugging Face stack could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import transformers; print(json.dumps({'version': m.version('transformers')}))", "transformers")
         importlib.invalidate_caches()
@@ -1470,6 +1516,7 @@ class EngineInstaller:
         ctx.state("downloading", "Installing AbstractCore's gpu setting: vLLM (PyTorch + CUDA wheels, several GB)", percent=5)
         rc, out = self._pip(ctx, [*self._vllm_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
+            self._raise_if_no_wheel(out)
             raise InstallFailed("vLLM could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import vllm; print(json.dumps({'version': m.version('vllm')}))", "vLLM")
         importlib.invalidate_caches()
@@ -1505,12 +1552,18 @@ class EngineInstaller:
         dest = apps_dir / staged.name
         if needs_admin:
             user = _current_login_name()
-            cmd = f"/bin/mkdir -p {shlex.quote(str(apps_dir))} && /bin/rm -rf {shlex.quote(str(dest))} && /usr/bin/ditto {shlex.quote(str(staged))} {shlex.quote(str(dest))}"
+            # Copied beside the installed app, then swapped in (ADR 0003: a failed copy keeps the old one).
+            new = shlex.quote(str(dest) + ".new")
+            old = shlex.quote(str(dest) + ".old")
+            q = shlex.quote(str(dest))
+            cmd = (f"/bin/mkdir -p {shlex.quote(str(apps_dir))} && /bin/rm -rf {new} && "
+                   f"/usr/bin/ditto {shlex.quote(str(staged))} {new} && "
+                   f"{{ [ ! -e {q} ] || /bin/mv {q} {old}; }} && /bin/mv {new} {q} && /bin/rm -rf {old}")
             if user:
                 cmd += f" && /usr/sbin/chown -R {shlex.quote(user)}:admin {shlex.quote(str(dest))}"
             prompt = AdminPrompt(
                 key=f"place:{dest}",
-                reason=f"Copying {staged.name} into {apps_dir}, which this account cannot write, needs an administrator.",
+                reason=f"Copying {staged.name} into {apps_dir}, which the gateway's service account cannot write, needs an administrator.",
                 command=cmd,
                 method="osascript",
                 prompt_text=f"AbstractGateway wants to install {vendor} in {apps_dir}.",
@@ -1526,9 +1579,13 @@ class EngineInstaller:
                 os.rename(dest, aside)
             rc, _ = ctx.run(["ditto", str(staged), str(dest)], timeout=900)
             if rc != 0:
-                if aside is not None and not dest.exists():
+                # ADR 0003, atomic update: a half-copied app goes, the previous one comes back.
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                if aside is not None:
                     os.rename(aside, dest)
-                raise InstallFailed(f"Copying {staged.name} to {apps_dir} failed; the log shows why.", code="place_failed")
+                raise InstallFailed(f"Copying {staged.name} to {apps_dir} failed; the version installed before (if any) "
+                                    "is unchanged. The log shows why.", code="place_failed")
             if aside is not None:
                 shutil.rmtree(aside, ignore_errors=True)
         if not (dest / "Contents" / "Info.plist").exists():
@@ -1641,8 +1698,9 @@ class EngineInstaller:
         return InstallPlan(
             "ollama", True, "user_archive", target=str(dest),
             notes=(f"Downloads Ollama's official Linux build ({asset}, about 1.5 GB) from its GitHub release, checks its "
-                   f"SHA-256, unpacks it into {dest} (bin/ollama, lib/ollama) for this account, no administrator, and "
-                   "starts `ollama serve` on its default port as a user service."),
+                   f"SHA-256, unpacks it into {dest} (bin/ollama, lib/ollama) under the gateway's service account, once "
+                   "for this computer and shared by every user of the gateway, no administrator, and starts `ollama "
+                   "serve` on its default port as a user service."),
             command_preview=[f"download {OLLAMA_RELEASES}/latest/download/{asset}", f"zstd -d | tar -x -C {dest}",
                              f"systemctl --user enable --now {OLLAMA_USER_UNIT}"],
             steps=["download (about 1.5 GB)", "verify checksum", f"unpack into {dest}", "start the server"],
@@ -1671,10 +1729,21 @@ class EngineInstaller:
         dest = self.home / ".local"
         dest.mkdir(parents=True, exist_ok=True)
         ctx.state("installing", f"Unpacking Ollama into {dest}", percent=82)
-        rc, _ = ctx.run(["sh", "-c", f"zstd -d -c {shlex.quote(str(archive))} | tar -xf - -C {shlex.quote(str(dest))}"], timeout=1800)
+        # ADR 0003, atomic update: unpack beside the installed Ollama, then swap it in; a failed
+        # unpack leaves the installed one exactly as it was.
+        staging = dest / f".ollama-staging-{uuid.uuid4().hex[:8]}"
+        staging.mkdir(parents=True)
+        try:
+            rc, _ = ctx.run(["sh", "-c", f"zstd -d -c {shlex.quote(str(archive))} | tar -xf - -C {shlex.quote(str(staging))}"], timeout=1800)
+            if rc != 0 or not (staging / "bin" / "ollama").exists():
+                raise InstallFailed("The Ollama download could not be unpacked; the Ollama installed before (if any) is "
+                                    "unchanged. The log shows why.", code="unpack_failed")
+            _swap_in(staging / "bin" / "ollama", dest / "bin" / "ollama")
+            if (staging / "lib" / "ollama").exists():
+                _swap_in(staging / "lib" / "ollama", dest / "lib" / "ollama")
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
         binary = self.ollama_user_binary()
-        if rc != 0 or not binary.exists():
-            raise InstallFailed("The Ollama download could not be unpacked; the log shows why.", code="unpack_failed")
         archive.unlink(missing_ok=True)
         ctx.state("installing", "Starting Ollama", percent=92)
         started = self._start_ollama_user_service(ctx, binary)
@@ -1691,7 +1760,7 @@ class EngineInstaller:
             unit_dir.mkdir(parents=True, exist_ok=True)
             host = urllib.parse.urlparse(self.ollama_url).netloc
             (unit_dir / OLLAMA_USER_UNIT).write_text(
-                "# Written by AbstractGateway (Ollama installed for this account in ~/.local).\n"
+                "# Written by AbstractGateway (Ollama for this computer, under the gateway's service account, in ~/.local).\n"
                 "[Unit]\nDescription=Ollama (user)\nAfter=network-online.target\n\n"
                 f"[Service]\nExecStart={_systemd_exec_path(binary)} serve\nEnvironment=OLLAMA_HOST={host}\nRestart=on-failure\nRestartSec=3\n\n"
                 "[Install]\nWantedBy=default.target\n",
@@ -1708,15 +1777,7 @@ class EngineInstaller:
     def _install_ollama_linux(self, ctx: _JobContext) -> Dict[str, Any]:
         if self._ollama_binary() and not ctx.job.force:
             return {"installed": True, "already_installed": True, **self.start_ollama(ctx)}
-        if not self.host.is_root:
-            return self._install_ollama_user(ctx)
-        # A gateway running as root: Ollama's own installer (/usr/local, a system service).
-        ctx.state("installing", "Running Ollama's official Linux installer", percent=10)
-        rc, out = ctx.stream(["sh", "-c", OLLAMA_LINUX_SCRIPT])
-        if rc != 0:
-            raise InstallFailed("Ollama's installer failed: " + (_last_error_line(out) or "see the log"), code="installer_failed")
-        got = self._wait_http(ctx, self.ollama_url + "/api/version", "Ollama")
-        return {"installed": True, "running": got is not None, "server_version": (got or {}).get("version"), "base_url": self.ollama_url}
+        return self._install_ollama_user(ctx)
 
     def start_ollama(self, ctx: Optional[_JobContext] = None) -> Dict[str, Any]:
         got = self.system.http_json(self.ollama_url + "/api/version")
@@ -1886,6 +1947,54 @@ _ALREADY_PROBES: Dict[str, str] = {
     "vllm": "import json, importlib.metadata as m; import vllm; print('__AG_VERIFY__' + json.dumps({'version': m.version('vllm')}))",
     "huggingface": "import json, importlib.metadata as m; import transformers, torch; print('__AG_VERIFY__' + json.dumps({'version': m.version('transformers')}))",
 }
+
+
+_NO_WHEEL_MARKERS = ("has no wheels with a matching platform tag", "no matching distribution found",
+                     "could not find a version that satisfies the requirement", "building source distributions is disabled",
+                     "only-binary", "has no usable wheels", "no wheels are available")
+
+
+def _no_wheel_failure(out: str, *, host: "HostFacts", links: Optional[str]) -> Optional[str]:
+    """ADR 0003: the sentence for an install that needed a source build (wheels-only refused it), naming
+    the package, the host and the index; None when the failure is something else."""
+    text = out or ""
+    if not any(m in text.lower() for m in _NO_WHEEL_MARKERS):
+        return None
+    found = re.search(r"(?:Because|because|requirement|for)\s+([A-Za-z0-9_.\-]+)(?:==|\[|\s|$)", text)
+    package = found.group(1) if found else "a native package"
+    where = f"{host.os_id} {host.arch}" + (f", {host.accelerator}" if getattr(host, "accelerator", None) else "")
+    index = links or "PyPI"
+    return (f"A prebuilt wheel is not available for this platform ({package} for {where}, from {index}). The gateway "
+            "never builds engines from source; nothing was installed or changed.")
+
+
+def _swap_in(new: Path, target: Path) -> None:
+    """Replace `target` (a file or a directory) by `new` with renames on one filesystem: the old one is
+    moved aside first and restored if the move of the new one fails."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    aside = target.with_name(f".{target.name}.previous-{uuid.uuid4().hex[:8]}")
+    had = target.exists() or target.is_symlink()
+    if had:
+        os.replace(target, aside)
+    try:
+        os.replace(new, target)
+    except BaseException:
+        if had:
+            os.replace(aside, target)
+        raise
+    if had:
+        if aside.is_dir() and not aside.is_symlink():
+            shutil.rmtree(aside, ignore_errors=True)
+        else:
+            aside.unlink(missing_ok=True)
+
+
+def _no_prebuilt_llama(h: "HostFacts") -> str:
+    """ADR 0003: no prebuilt llama.cpp build for this host means llama.cpp is not offered here (never
+    a source build, never a compiler requirement); the same sentence on every OS."""
+    where = f"{h.os_id} {h.arch}" + (" under Rosetta" if getattr(h, "translated", False) else "")
+    return (f"llama.cpp has no prebuilt build for this computer ({where}), and the gateway never builds engines from "
+            "source. Ollama or LM Studio run GGUF models here when they are offered on this computer.")
 
 
 def _md5_file(path: Path) -> str:

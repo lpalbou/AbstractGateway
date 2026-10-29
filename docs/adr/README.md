@@ -11,6 +11,7 @@ first or is refused.
 |----|-------|--------|------|---------|
 | 0001 | [AbstractCore access goes through AbstractRuntime facades](0001_abstractcore_access_through_runtime_facades.md) | Accepted | 2026-10-27 | The gateway imports AbstractRuntime, never AbstractCore; a missing facade name is a runtime patch, not a gateway import |
 | 0002 | [Inference and public endpoints run outside the gateway process](0002_inference_and_public_endpoints_run_outside_the_gateway_process.md) | Accepted | 2026-10-29 | Providers, the model pool and `/v1` run in a supervised model host child (`--model-host process`, default on Linux); the gateway keeps accounts, routes, auth, the ledger and supervision; every crash is an incident |
+| 0003 | [Engine installation contract](0003_engine_installation_contract.md) | Accepted | 2026-10-29 | Engines are installed once per computer under the gateway's service account, without root where the vendor allows, from prebuilt binaries only (never a source build), with the same states on every OS and atomic updates |
 
 ## Adding an ADR
 
