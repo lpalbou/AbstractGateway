@@ -141,7 +141,7 @@ no MCP endpoint of its own (it is an MCP client).
   #28): `kill -9` on the child during a run: the run failed 0.06 s (macOS) / 0.10 s (Linux) after
   the kill with the sentence, `/api/health` answered 200 throughout, the incident file existed, the
   child was back after 0.62 s / 0.76 s and the next run completed. Hop: plain chat step +0.10 ms
-  p50 (macOS) / +0.52 ms p50 (Linux, 4 vCPU), streamed with live deltas within noise; budget 2 ms.
+  p50 (macOS) / +0.5 to +1.0 ms p50 (Linux, 4 vCPU, across runs), streamed with live deltas within noise; budget 2 ms.
 
 ## Backlog links
 - 0944 (deprecated by this ADR: `/v1` is served by the model host child), root 1054 item 2 (the model half), 0943 (incident ledger:
