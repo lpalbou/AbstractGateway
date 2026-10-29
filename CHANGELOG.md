@@ -112,13 +112,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
 
-### Added
-
-- **Models page: "Keep loaded" and refused loads (AbstractCore ADR 0010).** The lock toggle reads "Keep loaded" /
-  "Kept loaded" with the registry lock icon and a tooltip that says what it does (a kept model is never evicted to make room for another
-  model); the last load the fit check refused shows as an error line with its sentence ("X needs 13.7 GB but only
-  6.1 GB is free on the GPU (kept: ...). Choose a smaller model, for example ..."), from the runtime's residency
-  diagnostics (`refusals`).
 - **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
   server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
   · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
@@ -166,6 +159,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
     file nor that read belongs to the tail.
   - Both stay live: opening the ledger is counted (checked in the test), and a tail that opens the file on an idle
     poll fails it (mutation-checked).
+
+### Added
+
 - **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
   server).
   - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
