@@ -247,6 +247,19 @@ def gateway_console_html() -> str:
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
         .replace("__GATEWAY_ABOUT_JSON__", _script_json(console_about_config()))
     )
+    # A named gateway instance (instances.py) says its name in the tab title, the sidebar brand and the
+    # signed-out heading, so two consoles of one machine are never mistaken for each other.
+    from .instances import current_instance, is_default
+
+    if not is_default():
+        name = html.escape(current_instance())
+        page = (
+            page.replace("<title>AbstractGateway Console</title>", f"<title>AbstractGateway Console · {name}</title>", 1)
+            .replace('<span class="shell_brand_name">AbstractGateway</span>',
+                     f'<span class="shell_brand_name">AbstractGateway</span><span class="shell_brand_instance" data-af-tip="Gateway instance {name}">{name}</span>', 1)
+            .replace('<h1 id="page-title">AbstractGateway Console</h1>', f'<h1 id="page-title">AbstractGateway Console · {name}</h1>', 1)
+            .replace('$("page-title").textContent = "AbstractGateway Console";', f'$("page-title").textContent = "AbstractGateway Console · {name}";', 1)
+        )
     # Fragment content last, each placeholder exactly once. The layer and the
     # kit islands go first (they are console-owned); `<script`/`</` inside the
     # React bundle are hex-escaped (valid in any JS string/regex context) so
@@ -418,6 +431,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .shell_brand { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
 	    .shell_brand_mark { font-size: var(--font-size-xl); line-height: 1; color: var(--accent); font-weight: 700; }
 	    .shell_brand_name { font-weight: 700; letter-spacing: .3px; white-space: nowrap; font-size: var(--font-size-md); }
+	    .shell_brand_instance { padding: 1px 7px; border-radius: 999px; font-size: var(--font-size-xs, 11px); font-weight: 650; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 	    .shell_nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: var(--font-size-md); opacity: .8; }
 	    .shell_nav_label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -16285,6 +16299,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        button.disabled = false;
 	      }
 	    }
+	    function offerDefaultModelDownload(missing) {
+	      const box = $("default-modal-message");
+	      const size = missing.size_mb ? ` (${missing.size_mb} MB)` : "";
+	      box.className = "message error";
+	      box.innerHTML = `${esc(missing.message || "This model is not downloaded yet.")} `
+	        + `<button type="button" class="btn btn-secondary" data-default-download="1">Download${esc(size)}</button>`;
+	      const btn = typeof box.querySelector === "function" ? box.querySelector("[data-default-download]") : null;
+	      if (!btn) return;
+	      btn.onclick = async () => {
+	        btn.disabled = true;
+	        try {
+	          const dl = missing.download || {};
+	          const res = await api(dl.path || "/api/gateway/models/download", { slow: true, method: dl.method || "POST", body: JSON.stringify(dl.body || {}) });
+	          trackDownloadJob(res.job);
+	          box.className = "message";
+	          box.textContent = "Downloading the voice model. Its progress is on the Models page; save this voice again when it is done.";
+	        } catch (e) {
+	          box.textContent = `The download did not start: ${String((e && e.message) || e)}`;
+	        }
+	      };
+	    }
 	    async function saveDefault() {
 	      $("default-modal-message").textContent = "";
 	      try {
@@ -16369,6 +16404,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        closeDefaultModal();
 	        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	      } catch (err) {
+	        // A voice is selectable only once its model is downloaded (operator ruling 2026-10-29): the
+	        // gateway refuses the save with the sentence and the download, offered here as a button.
+	        const typed = err && err.data && typeof err.data.error === "object" ? err.data.error : null;
+	        if (typed && typed.reason_code === "model_not_downloaded" && typed.download) {
+	          offerDefaultModelDownload(typed);
+	          return;
+	        }
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }
