@@ -428,6 +428,10 @@ CATALOG_CSS = r"""
     .mc-art__size { grid-area: size; color: var(--text-primary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
     .mc-art__chips .ui-pill[title] { cursor: help; }
+    .mc-art__chips .mc-loaded { cursor: pointer; font-family: inherit; font-size: var(--font-size-xs); font-weight: 600; line-height: 1.4; }
+    .mc-art__chips .mc-loaded:hover { filter: brightness(1.15); }
+    .mc-art__chips .mc-loaded .button-icon svg { width: 11px; height: 11px; }
+    .mc-art__chips .mc-loaded:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 1px; }
     .mc-art__action { grid-area: action; display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
     .mc-art__action .ui-btn { min-height: 44px; padding: 6px 12px; white-space: nowrap; }
     .mc-art__action .ui-btn.mc-del { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
@@ -955,6 +959,33 @@ CATALOG_JS = r"""
       if (notice) out += `<div class="ui-alert tone-${esc(notice.tone)}" role="status">${esc(notice.text)}</div>`;
       return out;
     }
+    // Residency lives on the Resources page (operator ruling 2026-10-29): the catalog row only
+    // says that this build is in memory now, as a small badge that opens Resources (keep it
+    // loaded, unload it, its context). Read from the host snapshot the top bar already polls.
+    function mcResidentRow(a) {
+      const hs = state.hostState;
+      const rows = hs && Array.isArray(hs.models) ? hs.models : [];
+      const prov = String(a.provider || "").toLowerCase();
+      const raw = String(a.artifact || "");
+      const repo = mcNorm(raw.split(":")[0]);
+      const quant = raw.includes(":") ? raw.split(":").slice(1).join(":").toUpperCase() : "";
+      return rows.find((m) => {
+        if (!m || m.resident !== true || String(m.provider || "").toLowerCase() !== prov) return false;
+        if (mcNorm(m.model) !== repo && mcNorm(m.model) !== mcNorm(raw)) return false;
+        const path = String(m.model_path || (m.details || {}).model_path || "").toUpperCase();
+        return !quant || !path || path.includes(quant);
+      }) || null;
+    }
+    function mcLoadedBadge(a) {
+      const m = mcResidentRow(a);
+      if (!m) return "";
+      const kept = m.locked === true;
+      const held = Array.isArray(m.held_by) && m.held_by.length ? ` Held by ${m.held_by.join("; ")}.` : "";
+      const title = (kept ? "Kept loaded: never evicted to make room for another model." : "Loaded in memory now.")
+        + held + ` Open Resources to ${kept ? "release it or unload it" : "keep it loaded or unload it"}.`;
+      const icon = kept ? `<span class="button-icon" aria-hidden="true">${ICONS.lock}</span>` : "";
+      return `<button type="button" class="ui-pill tone-${kept ? "ok" : "info"} mc-loaded${kept ? " is-plain" : ""}" data-mc-open-resources="1" title="${esc(title)}" aria-label="${esc(title)}">${icon}${kept ? "Kept loaded" : "Loaded"}</button>`;
+    }
     function mcArtMarkup(row, a, alone) {
       const job = mcJob(a);
       const presence = a.presence || {};
@@ -984,7 +1015,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(a.engine && a.engine !== a.provider ? `${mcProviderLabel(a.provider)} (runs on ${mcProviderLabel(a.engine)})` : mcProviderLabel(a.provider))}">${esc(mcProviderLabel(a.provider))}</span></div>`
         + `<div class="mc-art__quant" title="${esc(quantTitle)}"><b>${esc(quantMain)}</b></div>`
         + `<div class="mc-art__size" title="${esc(sizeTitle)}">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${weights}${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
+        + `<div class="mc-art__chips">${weights}${mcLoadedBadge(a)}${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
         + `</div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
         + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div>`
@@ -998,7 +1029,7 @@ CATALOG_JS = r"""
       const attrs = `data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}"`;
       const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "Size unknown";
       const quant = r.quant ? String(r.quant) : "Not stated";
-      const chips = uiPill("Downloaded", "ok", String(r.location || "")) + (r.loaded === true ? uiPill("Loaded", "info") : "");
+      const chips = uiPill("Downloaded", "ok", String(r.location || "")) + (mcLoadedBadge(r) || (r.loaded === true ? uiPill("Loaded", "info") : ""));
       return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
         + `<div class="mc-art__id"><code class="mc-id" tabindex="0" role="button" title="${esc(r.artifact)} (click to copy)" data-mc-copy="${esc(r.artifact)}">${esc(r.artifact)}</code></div>`
         + `<div class="mc-art__facts">`
@@ -1538,7 +1569,8 @@ CATALOG_JS = r"""
         const b = t.closest("[data-mc-action]");
         if (b && !b.disabled) { mcAction(view, b.dataset.mcAction, b); return; }
         const copy = t.closest("[data-mc-copy]");
-        if (copy) uiCopy(copy.dataset.mcCopy);
+        if (copy) { uiCopy(copy.dataset.mcCopy); return; }
+        if (t.closest("[data-mc-open-resources]")) $("tab-button-models").click();  // the Resources page
       };
       el.oninput = (event) => {
         const t = event && event.target;
