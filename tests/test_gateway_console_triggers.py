@@ -1046,3 +1046,26 @@ console.log(JSON.stringify({{
     assert 'trgOpenApp("flow", "Flow", trgFlowPath(k), k)' in source and 'trgOpenApp("observer", "Observer", TRG_OBSERVER_PATH, k)' in source
     assert 'trgOpenApp("flow", "Flow", trgLibraryPath(t.dataset.trgOpenflow), trgRowKey(t))' in source
     assert "trg.library = trgLibraryIds(out.items);" in _slice_function(source, "loadTriggerFlows")
+
+
+
+def test_the_mailbox_form_defaults_smtp_to_465_ssl_and_follows_the_security_choice() -> None:
+    """Operator 2026-10-29: the outgoing server's port defaulted to empty when discovery found
+    nothing; it is 465 with SSL (993 for IMAP), and switching to STARTTLS moves a standard port to
+    587 (143), never a port typed by hand."""
+    source = _console_script()
+    harness = HELPERS + MBX_HELPERS + _fns(source, "mailboxServerDefaults", "mailboxPortForSecurity") + """
+console.log(JSON.stringify([
+  mailboxServerDefaults(null, 465), mailboxServerDefaults({host: "smtp.x", port: 587, security: "starttls"}, 465),
+  mailboxServerDefaults({host: "", port: 993, security: "ssl"}, 993),
+  mailboxPortForSecurity("smtp", "starttls", "465"), mailboxPortForSecurity("smtp", "ssl", "587"),
+  mailboxPortForSecurity("smtp", "starttls", "2525"), mailboxPortForSecurity("imap", "starttls", "993"),
+]));
+"""
+    (none, kept, imap, to587, to465, typed, to143) = _node(harness)
+    assert none == {"host": "", "port": 465, "security": "ssl"}
+    assert kept == {"host": "smtp.x", "port": 587, "security": "starttls"}
+    assert imap == {"host": "", "port": 993, "security": "ssl"}
+    assert (to587, to465, typed, to143) == ("587", "465", "2525", "143")
+    # The discovery result fills the form through it (a found row as it is; nothing found: the defaults).
+    assert "st.smtp = mailboxServerDefaults(d.smtp, 465);" in source and "st.imap = mailboxServerDefaults(d.imap, 993);" in source
