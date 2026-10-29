@@ -811,3 +811,29 @@ def test_ollama_user_unit_quotes_its_program_path():
     # A home directory with a space (or a quote, a backslash, a literal %) stays ONE argument.
     assert ei._systemd_exec_path("/home/a b/.local/bin/ollama") == '"/home/a b/.local/bin/ollama"'
     assert ei._systemd_exec_path('/home/x"y\\z/50%/ollama') == '"/home/x\\"y\\\\z/50%%/ollama"'
+
+
+# -- llama.cpp update on an NVIDIA host keeps the CUDA build (operator 2026-10-29) ---------------
+def test_llama_update_on_a_cuda_host_takes_the_matching_cuda_build(tmp_path):
+    """The engine path used to install the CPU wheel on every Linux host: an "Update llama.cpp"
+    on the OVH NVIDIA server would have dropped GPU offload. MUTANT: cpu index -> RED."""
+    system = FakeSystem(tmp_path)
+    system.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "12.4\n"))
+    host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
+    inst = _installer(tmp_path, system, host=host)
+    pin, backend, links = inst._llama_wheel()
+    assert (pin, backend) == (ei.LLAMA_CPU_PIN, "cu125") and links.endswith("/cu125/llama-cpp-python/")
+    argv = inst._llama_wheel_argv(pin, links)
+    assert "--reinstall-package" in argv and argv[argv.index("--reinstall-package") + 1] == "llama-cpp-python", (
+        "uv would keep the installed CPU build of the same version")
+
+
+def test_llama_update_without_a_cuda_torch_stays_on_the_cpu_build(tmp_path):
+    system = FakeSystem(tmp_path)
+    system.on(lambda a: a[1:3] == ["-c", "import torch; print(torch.version.cuda or '')"], lambda a: (0, "\n"))
+    inst = _installer(tmp_path, system, host=ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc"))
+    assert inst._llama_wheel()[1] == "cpu"
+
+
+def test_llama_pin_is_the_release_that_knows_spark2_5():
+    assert ei.LLAMA_CPU_PIN == "0.3.36"   # llama.cpp 0c1e5709 (vendored by 0.3.36) names spark2_5

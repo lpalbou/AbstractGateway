@@ -520,6 +520,23 @@ CATALOG_JS = r"""
       }
       return "";
     }
+    // A NEWER llama.cpp loads it (AbstractCore `llamacpp_update`: the newest llama-cpp-python
+    // release knows the architecture): the row offers "Update llama.cpp" (one click, the engine
+    // install path) instead of only greying. `{architecture, installed, update_to}` or null.
+    function mcLlamaUpdate(a) {
+      if (a && a.llamacpp_update && a.llamacpp_update.update_to) return a.llamacpp_update;
+      for (const r of mcInstalledRows()) {
+        if (r.llamacpp_update && r.llamacpp_update.update_to && mcSameFiles(a, r)) return r.llamacpp_update;
+      }
+      return null;
+    }
+    function mcLlamaUpdateMarkup(a, unloadable, admin) {
+      const up = mcLlamaUpdate(a);
+      if (!up) return "";
+      if (mcStore.llamaUpdating) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Updating llama.cpp...</button>`;
+      const tip = `${unloadable} Installs llama-cpp-python ${up.update_to} through the engine installer (it keeps this computer's GPU build).`;
+      return `<button type="button" class="ui-btn is-primary" data-mc-action="llama-update" title="${esc(tip)}"${admin ? "" : ' disabled title="Only an admin can update llama.cpp"'}>Update llama.cpp</button>`;
+    }
     // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
     // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
     function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
@@ -543,12 +560,12 @@ CATALOG_JS = r"""
         const del = mcDeleteButton(a, attrs, admin);
         if (!mcCanBeDefault(row)) return del;
         // Greyed with the reason: a default it cannot load would fail at the first call.
-        if (unloadable) return `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Use as default</button>` + del;
+        if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Use as default</button>`) + del;
         const cur = mcCurrentDefault();
         if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
         return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
       }
-      if (unloadable) return `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Download</button>`;
+      if (unloadable) return mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Download</button>`;
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
         return `<span class="mc-muted" title="${esc(why)}">Not available here</span>`;
@@ -652,7 +669,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
         + `<div class="mc-art__chips">${chips}</div>`
         + `</div>`
-        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(mcUnloadable(r))}">Use as default</button>` : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(mcUnloadable(r))}">Use as default</button>`) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
         + `</li>`;
     }
@@ -1023,6 +1040,27 @@ CATALOG_JS = r"""
       mcWriteHash(view);
       mcRenderView(view);
     }
+    // "Update llama.cpp": the engine installer's own job (POST /engines/llamacpp/install), polled
+    // until it ends; then the catalog and the installed rows are read again.
+    async function mcLlamaUpdateRun() {
+      if (mcStore.llamaUpdating) return;
+      mcStore.llamaUpdating = true;
+      mcRender();
+      try {
+        const res = await api("/api/gateway/engines/llamacpp/install", { slow: true, method: "POST", body: JSON.stringify({ dry_run: false, location: "auto" }) });
+        let job = (res && res.job_id) ? res : ((res && res.job) || null);
+        const deadline = Date.now() + 30 * 60 * 1000;
+        while (job && job.job_id && !["done", "failed", "cancelled", "succeeded", "completed"].includes(String(job.status || job.state || "")) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          job = await api(`/api/gateway/engines/jobs/${encodeURIComponent(job.job_id)}`);
+        }
+      } catch (e) {
+        mcStore.message = `Could not update llama.cpp: ${String((e && e.message) || e)}`;
+      } finally {
+        mcStore.llamaUpdating = false;
+        await mcLoad();
+      }
+    }
     async function mcDownload(view, provider, artifact) {
       const key = downloadJobKey(provider, artifact);
       const rows = mcRowsOf(mcStore.data).concat(mcRowsOf(mcStore.hub.data));
@@ -1137,6 +1175,7 @@ CATALOG_JS = r"""
       }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
+      if (action === "llama-update") { mcLlamaUpdateRun(); return; }
       if (action === "cancel") { dlCancel(b.dataset.job, b, b.dataset.dlStep); return; }
       if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); return; }
       if (action === "delete-ask") { mcDeleteAsk(b.dataset.provider, b.dataset.artifact); return; }

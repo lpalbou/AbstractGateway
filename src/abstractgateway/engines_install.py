@@ -75,11 +75,15 @@ HEARTBEAT_S = 3.0
 # PyPI carries only the sdist, so a plain `pip install llama-cpp-python` is a
 # CMake build. Upstream publishes wheels per backend under one flat
 # `--find-links` page per backend. The pins match scripts/install.sh (the
-# root installer measured them): Metal 0.3.32-0.3.35 wheels fail zip CRC
+# root installer measured them): Metal 0.3.32-0.3.36 wheels fail zip CRC
 # checks and uv refuses them, 0.3.28 is the newest that installs.
 LLAMA_WHEEL_INDEX = "https://abetlen.github.io/llama-cpp-python/whl"
 LLAMA_METAL_PIN = "0.3.28"
-LLAMA_CPU_PIN = "0.3.35"
+LLAMA_CPU_PIN = "0.3.36"
+# llama.cpp's CUDA builds of the same pin, by PyTorch's CUDA major (the root installer's rule:
+# torch CUDA 13 -> cu130 with driver 580+, CUDA 12 -> cu125 with driver 525+). An update on an
+# NVIDIA host keeps the CUDA build: the CPU wheel would silently drop GPU offload.
+LLAMA_CUDA_BUILDS = {"13": "cu130", "12": "cu125"}
 
 # --- Ollama -----------------------------------------------------------------------
 OLLAMA_RELEASES = "https://github.com/ollama/ollama/releases"
@@ -1029,17 +1033,32 @@ class EngineInstaller:
         if h.os_id == "darwin" and h.arch == "arm64" and not h.translated:
             return LLAMA_METAL_PIN, "metal", f"{self.llama_index}/metal/llama-cpp-python/"
         if h.os_id == "linux" and h.arch in {"x86_64", "arm64"}:
+            cuda = self._torch_cuda_build() if h.accelerator == "cuda" else None
+            if cuda:
+                return LLAMA_CPU_PIN, cuda, f"{self.llama_index}/{cuda}/llama-cpp-python/"
             return LLAMA_CPU_PIN, "cpu", f"{self.llama_index}/cpu/llama-cpp-python/"
         if h.os_id == "windows" and h.arch == "x86_64":
             return LLAMA_CPU_PIN, "cpu", f"{self.llama_index}/cpu/llama-cpp-python/"
         return None
 
+    def _torch_cuda_build(self) -> Optional[str]:
+        """The llama.cpp CUDA build matching the gateway environment's PyTorch CUDA major, or
+        None (no torch, a CPU torch, or a CUDA major with no llama.cpp build)."""
+        rc, out = self.system.run([self.python, "-c", "import torch; print(torch.version.cuda or '')"], timeout=120)
+        major = (out or "").strip().splitlines()[-1].split(".")[0] if rc == 0 and (out or "").strip() else ""
+        return LLAMA_CUDA_BUILDS.get(major)
+
     def _llama_wheel_argv(self, pin: str, links: str, version: Optional[str] = None) -> List[str]:
         # The host's setting, with its llama-cpp-python taken from upstream's prebuilt wheel
         # (`--only-binary`, uv pip and pip alike): the PyPI sdist is never built on this path.
         setting = self.local_setting() or "apple"
-        return [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
+        argv = [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
                 "--find-links", links, "--only-binary", "llama-cpp-python"]
+        if self.pip_prefix()[1:3] == ["pip", "install"] and "/cu1" in links:
+            # uv keeps an installed llama-cpp-python of the same version: a CPU build already there
+            # would stay in place of the CUDA one.
+            argv += ["--reinstall-package", "llama-cpp-python"]
+        return argv
 
     def _compiler_present(self) -> bool:
         if self.host.os_id == "darwin":
@@ -1320,6 +1339,8 @@ class EngineInstaller:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
                     ctx.log("warning: llama.cpp loaded but reports no GPU offload (Metal)")
+                if backend.startswith("cu") and not info.get("gpu_offload"):
+                    ctx.log(f"warning: llama.cpp's {backend} build loaded but reports no GPU offload")
                 importlib.invalidate_caches()
                 return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python, "method": f"{backend} wheel"}
             wheel_error = _last_error_line(out)

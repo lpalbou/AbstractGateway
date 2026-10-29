@@ -626,3 +626,14 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
     # Model 0's downloaded build (no flag) keeps its working buttons.
     assert 'data-mc-unloadable' not in html[:html.index('data-mc-model="model-1"')]
 
+
+
+def test_an_unloadable_gguf_a_newer_llamacpp_loads_offers_the_update() -> None:
+    """AbstractCore `llamacpp_update`: "Update llama.cpp" instead of only greying (operator
+    2026-10-29). MUTANT: greyed Download only -> RED."""
+    from abstractgateway.console import gateway_console_html
+
+    html = gateway_console_html()
+    assert 'data-mc-action="llama-update"' in html and "Update llama.cpp" in html
+    assert '/api/gateway/engines/llamacpp/install' in html
+    assert "mcLlamaUpdateMarkup(a, unloadable, admin) ||" in html, "the greyed button stays only without an update"
