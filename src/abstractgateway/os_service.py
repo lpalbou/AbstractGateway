@@ -113,6 +113,10 @@ LAUNCHD_POLL_S = 0.25
 LAUNCHD_RETRY_RC = (5, 37)
 LAUNCHD_BOOTSTRAP_ATTEMPTS = 4
 LAUNCHD_BACKOFF_S = 1.0
+# `service uninstall` (backlog 0934): how long the gateway's process tree gets to exit after the
+# service manager stopped the serve process, before SIGTERM (then SIGKILL) for what is left.
+STOP_TREE_WAIT_S = 20.0
+STOP_TREE_STEP = "@stop-gateway-tree"
 # Clock seams (tests drive a fake launchd through them).
 _sleep = time.sleep
 _monotonic = time.monotonic
@@ -925,6 +929,7 @@ def build_uninstall_plan(
         if stop:
             uid_v = os.getuid() if uid is None and hasattr(os, "getuid") else int(uid or 0)
             plan.commands.append(["launchctl", "bootout", f"gui/{uid_v}/{launchd_label()}"])
+            plan.commands.append([STOP_TREE_STEP, f"{STOP_TREE_WAIT_S:g}"])
         else:
             plan.notes.append(keeps_running + " launchd forgets the removed agent at logout.")
         plan.remove.append(str(target))
@@ -938,8 +943,12 @@ def build_uninstall_plan(
             plan.commands.append(["systemctl", "--user", "disable", *(["--now"] if stop else []), systemd_unit()])
             plan.remove.append(str(unit))
             plan.commands.append(["systemctl", "--user", "daemon-reload"])
+        if stop:
+            # systemd stopped the serve process: its tree gets the wait. An XDG-autostart gateway
+            # has no manager that stops it: its tree is stopped at once.
+            plan.commands.append([STOP_TREE_STEP, f"{STOP_TREE_WAIT_S if unit.exists() else 0:g}"])
         plan.remove.append(str(desktop))
-        if not stop or desktop.exists():
+        if not stop:
             plan.notes.append(keeps_running)
     else:
         plan.experimental = True
@@ -1011,6 +1020,13 @@ def execute_plan(
     run = runner or _default_runner
     spawn = start_detached or _start_detached
     results: List[Dict[str, Any]] = []
+    # The gateway's process tree, captured before the service manager stops the serve process
+    # (its detached children are linked to it only while it lives; process_tree).
+    tree: Optional[Dict[int, str]] = None
+    if any(c and c[0] == STOP_TREE_STEP for c in plan.commands):
+        from . import process_tree
+
+        tree = process_tree.snapshot(plan.data_dir)
     for d in plan.dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     for f in plan.files:
@@ -1039,6 +1055,20 @@ def execute_plan(
                 results.append({"registry": "delete", "key": op["key"], "name": op["name"], "removed": removed})
                 echo(f"registry: delete {where} -> {'removed' if removed else 'not present (fine)'}")
     for cmd in plan.commands:
+        if cmd and cmd[0] == STOP_TREE_STEP:
+            from . import process_tree
+
+            outcome = process_tree.stop_tree(tree or {}, data_dir=plan.data_dir, wait_s=float(cmd[1]), echo=echo)
+            results.append({"stop_tree": outcome})
+            survivors = outcome.get("survivors") or []
+            if survivors:
+                listed = "\n".join(f"  {s['pid']}  {s['args']}" for s in survivors)  # type: ignore[index]
+                raise SystemExit(
+                    f"service {plan.action} failed: these gateway processes could not be stopped:\n{listed}\n"
+                    "Quit them (Activity Monitor, or `kill -KILL <pid>`), or log out and back in, then run "
+                    "`abstractgateway service uninstall` again."
+                )
+            continue
         if cmd and cmd[0] == "@start-detached":
             spawn(cmd[1:])
             results.append({"argv": cmd, "returncode": 0})

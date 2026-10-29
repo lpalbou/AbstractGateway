@@ -261,6 +261,8 @@ def add_service_subparser(sub: Any) -> None:
 
 
 def _print_plan(plan: Any) -> None:
+    from . import os_service
+
     d = plan.public_dict()
     print(f"# abstractgateway service {d['action']} ({d['platform']}{', EXPERIMENTAL' if d['experimental'] else ''})")
     print(f"# data dir: {d['data_dir']}")
@@ -278,6 +280,13 @@ def _print_plan(plan: Any) -> None:
     for c in d["commands"]:
         import shlex
 
+        if c and c[0] == os_service.STOP_TREE_STEP:
+            wait = float(c[1]) if len(c) > 1 else 0.0
+            print(
+                "stop: the gateway's processes and the children it started"
+                + (f" (wait up to {wait:g} s for them to exit, then SIGTERM, then SIGKILL)" if wait else " (SIGTERM, then SIGKILL)")
+            )
+            continue
         shown = [a for a in c if a != "@start-detached"]
         prefix = "start (detached, hidden): " if c and c[0] == "@start-detached" else "run: "
         print(prefix + " ".join(shlex.quote(a) for a in shown))

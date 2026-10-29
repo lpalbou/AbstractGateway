@@ -93,6 +93,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
 
+### Fixed
+
+- **`abstractgateway service uninstall` waits for the whole gateway process tree** (backlog 0934). It captures the
+  gateway's processes before launchd or systemd stops the serve process: the recorded serve and app pids, this
+  data folder's app watcher, and every descendant, including the children started in their own session (entity
+  loops, model downloads, managed processes, apps, the tray). It waits up to 20 s for them to exit, then sends
+  SIGTERM, then SIGKILL, and says what it stopped. It fails, naming the process, when one survives. On Linux
+  XDG autostart, where no service manager stops the gateway, it stops the gateway itself. `--dry-run` shows the
+  step, and `service disable` still stops nothing.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
