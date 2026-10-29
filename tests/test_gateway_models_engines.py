@@ -202,6 +202,8 @@ def test_reads_serve_the_core_payloads_with_their_arguments(facade, tmp_path, mo
             "engine": None, "fits_only": False, "hub": True, "tags": None, "hub_page": 2, "hub_page_size": 10,
         }
         assert client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=0", headers=h).status_code == 422
+        client.get("/api/gateway/models/catalog?hub=1&extended=1", headers=h)
+        assert facade.calls["model_catalog"][-1][1]["extended"] is True
 
         # An AbstractRuntime whose facade has no `hub_page` (0.15.3): a page beyond the first is
         # refused in words (501), never a 500 and never page 1 again; no page asked still works.

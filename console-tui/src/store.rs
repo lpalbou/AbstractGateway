@@ -1859,6 +1859,30 @@ pub struct RuntimeConfigData {
     /// Backlog settings (triage_repo_root, backlog_exec_runner,
     /// process_manager) — rendered by their own rows, not as knobs.
     pub backlog: Vec<operator::BacklogSetting>,
+    /// `allow_engine_install` (root backlog 0858): may the console install
+    /// engines on the gateway's computer. None when this gateway's read lacks it.
+    pub allow_engine_install: Option<EngineInstallSetting>,
+}
+
+/// `allow_engine_install` of GET /admin/runtime-config ({value: bool,
+/// source, loopback_bind}).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineInstallSetting {
+    pub value: bool,
+    /// stored | default | default_same_machine
+    pub source: String,
+    pub loopback_bind: bool,
+}
+
+/// Parse `allow_engine_install`; a missing block or a non-boolean value is
+/// None — never guessed.
+pub fn engine_install_from(v: &Value) -> Option<EngineInstallSetting> {
+    let r = v.get("allow_engine_install")?;
+    Some(EngineInstallSetting {
+        value: r.get("value")?.as_bool()?,
+        source: s(r, "source").unwrap_or_else(|| "?".into()),
+        loopback_bind: b(r, "loopback_bind").unwrap_or(false),
+    })
 }
 
 /// `agents.streaming_default`: whether interactive runs that do not ask
@@ -2147,6 +2171,7 @@ impl RuntimeConfigData {
             skills_shelf: skills_shelf_from(v),
             streaming_default: streaming_default_from(v),
             backlog: operator::backlog_settings_from(v),
+            allow_engine_install: engine_install_from(v),
         }
     }
 }

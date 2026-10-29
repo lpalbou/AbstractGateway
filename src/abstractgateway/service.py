@@ -881,6 +881,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     from .events_stream import plane_owner, stream_for
 
     runner.attach_user_stream(stream_for(cfg.data_dir, *plane_owner(cfg)))
+    runner.set_plane_owner(*plane_owner(cfg))
 
     policy = load_gateway_auth_policy_from_env()
 

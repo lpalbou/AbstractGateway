@@ -460,6 +460,53 @@ CONSOLE_UI_CSS = r"""
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
     .first-run-panel { display: grid; gap: 22px; min-width: 0; border: 0; background: transparent; padding: 0; box-shadow: none; border-radius: var(--radius-sm); }
     .first-run-panel.hidden { display: none !important; }
+    /* 1069: the Default models table. The table scrolls inside its wrap on a narrow screen; the
+       actions wrap inside their cell instead of pushing the table past the panel. */
+    .first-run-default-models { width: 100%; border-collapse: collapse; }
+    .first-run-default-models th, .first-run-default-models td { vertical-align: top; padding: 10px 8px; text-align: left; }
+    .first-run-default-models td.actions { width: 1%; }
+    .first-run-default-models .dm-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 9.5em; }
+    .first-run-default-models .chip { white-space: nowrap; }
+    #first-run-default-models .ui-section-title .ui-sub { white-space: normal; }
+    /* 1069 Simple mode: the guide's model step shows only the hero and the badges (Advanced shows
+       the table, the download cards and the catalog). */
+    #first-run-model-body.dm-simple > :not(#first-run-default-models) { display: none; }
+    .dm-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--ui-overlay-bg, rgba(127,127,127,.12)); justify-self: end; }
+    .dm-mode button { border: 0; background: transparent; color: var(--text-secondary); padding: 6px 14px; border-radius: 999px; font-weight: 600; cursor: pointer; }
+    .dm-mode button[aria-pressed="true"] { background: var(--bg-card, var(--bg-secondary)); color: var(--text-primary); box-shadow: var(--ui-shadow-1); }
+    #first-run-default-models { display: grid; gap: 20px; }
+    .dm-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px 28px; flex-wrap: wrap; padding: 22px 24px; border-radius: var(--radius-md);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, #6366f1 16%, transparent));
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+    .dm-hero__text { flex: 1 1 340px; min-width: 0; }
+    .dm-hero h3 { margin: 0 0 6px; font-size: var(--font-size-xl); }
+    .dm-hero p { margin: 0; color: var(--text-secondary); }
+    .dm-hero__btn { font-size: var(--font-size-lg); padding: 12px 26px; }
+    .dm-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; }
+    .dm-group h4 { margin: 0 0 10px; font-size: var(--font-size-md); text-transform: uppercase; letter-spacing: .06em; }
+    .dm-group h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-secondary); margin-left: 6px; }
+    .dm-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; min-width: 0; }
+    .dm-group { min-width: 0; }
+    .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-width: 0; width: 100%; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
+      background: color-mix(in srgb, var(--dm-hue) 13%, var(--bg-card, transparent)); border: 1px solid color-mix(in srgb, var(--dm-hue) 38%, transparent); color: var(--text-primary); }
+    .dm-badge:hover, .dm-badge:focus-visible { border-color: var(--dm-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-hue) 35%, transparent); outline: none; }
+    .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--radius-sm); background: var(--dm-hue); color: #fff; }
+    .dm-badge__icon { width: 20px; height: 20px; }
+    .dm-badge__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
+    .dm-badge__label { font-weight: 650; }
+    .dm-badge__state { font-size: var(--font-size-sm); font-weight: 600; color: color-mix(in srgb, var(--dm-hue) 75%, var(--text-primary)); }
+    .dm-badge--none .dm-badge__state { color: var(--text-secondary); }
+    .dm-badge--none .dm-badge__mark { background: color-mix(in srgb, var(--dm-hue) 45%, var(--text-secondary)); }
+    .dm-badge__model { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; white-space: normal; }
+    .dm-progress { min-width: 0; }
+    .dm-choice { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
+    .dm-choice__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .dm-choice__head h2 { margin: 0; font-size: var(--font-size-lg); }
+    .dm-choice__body { display: grid; gap: 18px; margin-top: 12px; }
+    .dm-choice__part h3 { margin: 0 0 8px; font-size: var(--font-size-md); }
+    .dm-choice__pick { display: grid; gap: 2px; }
+    .dm-choice__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+    .dm-choice__list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--ui-overlay-bg, rgba(127,127,127,.08)); }
     .first-run-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 14px clamp(20px, 3.4vw, 60px); border-top: 1px solid var(--ui-border-1); background: var(--bg-secondary); }
     .first-run-footer .message { flex: 1 1 auto; margin: 0; min-width: 0; font-size: var(--font-size-md); }
     .first-run-footer button { min-width: 96px; }
@@ -1238,7 +1285,8 @@ CONSOLE_UI_JS = r"""
     function engineAction_(e, id) { return (Array.isArray(e.actions) ? e.actions : []).find((a) => a && a.id === id) || null; }
     function engineState(e, job) {
       if (job && job.state === "needs_admin") return { key: "waiting", pill: uiPill("Needs your approval", "warn") };
-      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill("Needs Apple tools", "warn") };
+      // Apple's command-line tools only on a Mac; anywhere else the job names its own prerequisite.
+      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill((job.tools_prompt && job.tools_prompt.action && job.tools_prompt.action.kind === "xcode_select_install") ? "Needs Apple tools" : "Needs a prerequisite", "warn") };
       if (engineJobActive(job)) return { key: "installing", pill: uiPill("Installing", "info tone-busy") };
       if (e.supported === false) return { key: "unsupported", pill: uiPill("Not for this computer", "muted") };
       if (e.installed !== true) return { key: "absent", pill: uiPill("Not installed", "muted") };
@@ -1344,6 +1392,57 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
+    // ---- "Allow engine installs" (root backlog 0858): the effective value, where it comes from,
+    // and an admin switch (GET/POST /api/gateway/admin/runtime-config `allow_engine_install`).
+    const engineSetting = { data: null, error: "", busy: false, note: null };
+    function engineInstallSourceText(r) {
+      if (r.source === "stored") return "your setting";
+      if (r.source === "default_same_machine") return "the default: you are on the gateway's own computer";
+      return r.loopback_bind ? "the default for a gateway that only this computer reaches" : "the default for a gateway other computers reach";
+    }
+    function engineInstallSettingMarkup() {
+      const r = engineSetting.data && engineSetting.data.allow_engine_install;
+      const allowed = engineStore.data && engineStore.data.install_allowed !== false;
+      if (!r || typeof r !== "object") {
+        // Not read (yet, or not allowed for this account): the engines answer still says the effective value.
+        return allowed ? "" : `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can turn it on here, on the Engines tab. You can still install an engine yourself and check again.</span></div>`;
+      }
+      const admin = !!engineSetting.data.writable;
+      const on = !!r.value;
+      const note = engineSetting.note ? `<span class="ui-row-saved tone-${esc(engineSetting.note.tone)}" role="status" data-engine-install-saved>${esc(engineSetting.note.text)}</span>` : "";
+      const reason = admin ? "" : "Only an admin can change this";
+      return `<div class="ui-apps-setting" data-engine-install-setting="${on ? "on" : "off"}" data-source="${esc(r.source || "")}"><div class="ui-apps-setting__head">`
+        + `<button type="button" role="switch" class="af-switch af-switch--row" data-engine-action="allow-install" aria-checked="${on ? "true" : "false"}"${reason ? ` aria-disabled="true" title="${esc(reason)}"` : ""}${engineSetting.busy ? ' aria-busy="true"' : ""}>`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Allow engine installs from the console</span>`
+        + `<span class="af-switch__desc">${on ? "On" : "Off"}: ${esc(engineInstallSourceText(r))}. Installs run on the gateway's computer.</span></span></button>${note}</div>`
+        + (admin && r.source === "stored" ? `<p><button type="button" class="ui-btn is-text" data-engine-action="allow-install-default"${engineSetting.busy ? " disabled" : ""}>Use the default</button></p>` : "")
+        + `<p class="ui-advanced ui-sub">CLI: <code>abstractgateway-config set allow_engine_install ${on ? "off" : "on"}</code></p></div>`;
+    }
+    async function engineInstallSettingRefresh() {
+      try {
+        engineSetting.data = await api("/api/gateway/admin/runtime-config");
+        engineSetting.error = "";
+      } catch (err) {
+        engineSetting.data = null;
+        engineSetting.error = String((err && err.message) || err);
+      }
+      engineRender();
+    }
+    async function engineInstallSettingSave(value) {
+      if (engineSetting.busy) return;
+      engineSetting.busy = true;
+      engineSetting.note = null;
+      engineRender();
+      try {
+        engineSetting.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ allow_engine_install: value }) });
+        engineSetting.note = { tone: "ok", text: "Saved" };
+      } catch (err) {
+        const data = (err && err.data) || {};
+        engineSetting.note = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
+      }
+      engineSetting.busy = false;
+      await engineRefresh();  // the engines' own install_allowed follows the setting
+    }
     function engineViewMarkup(key) {
       const extra = engineStore.extras.get(key);
       if (engineStore.error && !engineStore.data) {
@@ -1365,8 +1464,7 @@ CONSOLE_UI_JS = r"""
       const installed = engines.filter((e) => e.installed === true).length;
       const running = engines.filter((e) => e.running === true).length;
       const when = engineStore.data.generated_at ? new Date(engineStore.data.generated_at).toLocaleTimeString() : "";
-      const policy = engineStore.data.install_allowed === false
-        ? `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can allow it in the gateway settings (allow engine install). You can still install an engine yourself and check again.</span></div>` : "";
+      const policy = engineInstallSettingMarkup();
       const summary = `<div class="ui-toolbar"><span>${installed} of ${engines.length} installed${running ? `, ${running} running` : ""}${when ? ` · checked ${esc(when)}` : ""}</span>`
         + `<button type="button" class="ui-btn is-quiet" data-engine-action="refresh">${engineStore.loading ? "Checking..." : "Check again"}</button>`
         + `<span class="ui-advanced ui-sub">CLI: <code>abstractgateway engines status --probe</code></span></div>`;
@@ -1462,6 +1560,13 @@ CONSOLE_UI_JS = r"""
     };
     async function engineAction(action, id, button) {
       if (action === "refresh") { engineStore.message = ""; engineStore.notices.clear(); await engineRefresh(); return; }
+      if (action === "allow-install") {
+        const r = engineSetting.data && engineSetting.data.allow_engine_install;
+        if (!r || !engineSetting.data.writable || (button && button.getAttribute && button.getAttribute("aria-disabled") === "true")) return;
+        await engineInstallSettingSave(!r.value);
+        return;
+      }
+      if (action === "allow-install-default") { await engineInstallSettingSave(null); return; }
       // "Browse models": the catalog cards, filtered to this engine's builds.
       if (action === "models") { closeFirstRunWizard(); openCatalogTab(MC_ENGINE_PROVIDER[id] ? { provider: MC_ENGINE_PROVIDER[id] } : {}); return; }
       const e = engineById(id) || { id, name: id };
@@ -1527,6 +1632,7 @@ CONSOLE_UI_JS = r"""
       };
       engineRender();
       engineRefresh();
+      engineInstallSettingRefresh();
       if (fresh) engineRestoreJobs();
     }
     function unmountEngineCards(key) { engineStore.views.delete(key); }
@@ -1870,6 +1976,8 @@ CONSOLE_UI_JS = r"""
       if (desk && desk.source_checkout && desk.version_reason) body += `<p class="ui-card__note" data-app-version-reason="${esc(app.id)}">${esc(desk.version_reason)}</p>`;
       if (updateElsewhere && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
       if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
+      // An app older than a release's pin (the gateway's one sentence): an action to take.
+      if (app.installed && app.pin_warning) body += `<p class="ui-field-msg tone-warn" data-app-pin-warning="${esc(app.id)}">${esc(app.pin_warning)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;

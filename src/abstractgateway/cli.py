@@ -527,7 +527,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     """
     from . import host_control
     from .self_update import installed_version
-    from .tray_supervisor import get_tray_supervisor, record_serve_context, tray_decision
+    from .tray_supervisor import get_tray_supervisor, record_serve_context, service_launch, tray_decision
     from .users import gateway_data_dir_from_env
 
     data_dir = gateway_data_dir_from_env()
@@ -538,6 +538,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False,
         no_tray=bool(getattr(args, "no_tray", False)),
         no_tray_reason=getattr(args, "no_tray_reason", None),
+        tray=bool(getattr(args, "tray", False)),
+        service=service_launch(),
     )
 
     if reload:
@@ -613,7 +615,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
     # `tray_decision` is only what this machine can or cannot do.
-    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)), no_tray_reason=getattr(args, "no_tray_reason", None))
+    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)), no_tray_reason=getattr(args, "no_tray_reason", None), tray=bool(getattr(args, "tray", False)), service=service_launch())
     if decision.start:
         # Spawn AFTER the listener is bound (a second `serve` on a busy port
         # must never point a tray at the FIRST gateway with the wrong token
@@ -889,8 +891,15 @@ def main(argv: list[str] | None = None) -> None:
         "--no-tray",
         action="store_true",
         dest="no_tray",
-        help="Do not show the menu bar / tray icon for this run (a test or scratch gateway next to your usual one). "
-        "Without it the icon is shown whenever this computer can hold one.",
+        help="Do not show the menu bar / tray icon for this run. Only the machine's gateway service (started by "
+        "launchd, systemd or the login entry that `abstractgateway service install` writes) shows it anyway.",
+    )
+    serve.add_argument(
+        "--tray",
+        action="store_true",
+        dest="tray",
+        help="Show the menu bar / tray icon for this run although it was not started as the machine's gateway "
+        "service (a `serve` from a terminal, a test or a script shows none).",
     )
     serve.add_argument(
         "--watchdog-seconds",
@@ -1250,6 +1259,8 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(run_network_command(args))
 
+    if args.cmd == "serve" and getattr(args, "tray", False) and getattr(args, "no_tray", False):
+        parser.error("--tray and --no-tray contradict each other")
     if args.cmd == "serve":
         # ------------------------------------------------------------------
         # ONE STORE (operator ruling 2026-08-01). A legacy Gateway-scoped
