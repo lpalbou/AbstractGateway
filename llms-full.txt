@@ -4755,7 +4755,7 @@ renders.
 
 | Engine | macOS (Apple silicon) | Linux | Windows (x86_64) | Admin rights? |
 |---|---|---|---|---|
-| **Ollama** | Downloads the signed `Ollama-darwin.zip` from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team `3MU9H2V9Y9`), places `Ollama.app` in `/Applications` when your account can write it (an admin account can, with no password) or else in `~/Applications`, then starts it and waits until `http://127.0.0.1:11434/api/version` answers | Ollama's official installer (`curl -fsSL https://ollama.com/install.sh \| sh`) | `winget install Ollama.Ollama` (per-user) | macOS: no. Linux: yes (the installer writes `/usr/local` and a systemd service). Windows: no |
+| **Ollama** | Downloads the signed `Ollama-darwin.zip` from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team `3MU9H2V9Y9`), places `Ollama.app` in `/Applications` when your account can write it (an admin account can, with no password) or else in `~/Applications`, then starts it and waits until `http://127.0.0.1:11434/api/version` answers | For the account running the gateway: Ollama's official `ollama-linux-<arch>.tar.zst` from its GitHub release (SHA-256 checked) unpacked into `~/.local`, served by a systemd user service `ollama.service` on port 11434 (a gateway running as root uses Ollama's own installer). Needs `zstd` to unpack | `winget install Ollama.Ollama` (per-user) | No, on every system |
 | **LM Studio** | Downloads the signed disk image from lmstudio.ai, checks the signature (team `D65G88RHWN`), copies `LM Studio.app` to `/Applications` or `~/Applications`, opens it once and starts its local server (`lms server start`) | LM Studio's official installer: the headless daemon and the `lms` CLI under `~/.lmstudio`. It needs the `libatomic1` system library, which minimal server images lack: the install checks it first and, when it is missing, stops in *needs tools* with the line to run (`sudo apt-get install -y libatomic1`; Fedora: `sudo dnf install -y libatomic`), then **re-check** continues | LM Studio's official PowerShell installer (the `lms` CLI under `~/.lmstudio`) | no |
 | **MLX** | `abstractcore[apple]` at the installed AbstractCore version (MLX as prebuilt wheels) into the gateway's own Python | not supported | not supported | no |
 | **llama.cpp** | `abstractcore[apple]`, with its llama.cpp taken from upstream's prebuilt Metal wheel (`llama-cpp-python` 0.3.28); no compiler | `abstractcore[gpu]` with the prebuilt CPU wheel (0.3.35) | comes with the AbstractFramework installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build; the row's Install shows that installer's command | no |
@@ -8946,7 +8946,15 @@ The filter bar above the cards:
   the Hub it says "Hugging Face could not be searched right now" (the raw
   reason sits behind **Show details**), and results the Hub only partly
   answered carry a warning. The query is part of the address:
-  `/console#catalog?hf=smollm`.
+  `/console#catalog?hf=smollm`. Below the cards, a line says how many Hugging
+  Face results are shown and whether more exist. **Show more results** appends
+  the next page. An exact repo handle (`Qwen/Qwen3.5-9B`) lists that repo first,
+  then the builds of its name. When the Hub has no such repo, the line says so.
+  The catalog's own models that match the words are listed too.
+  In **Catalog** mode, a search of three characters or more also asks Hugging Face
+  once typing pauses. Its results come under **From Hugging Face**, below the
+  catalog's cards, with the same filters, count and **Show more results**.
+  Switching to **Hugging Face** mode then reuses that answer.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).
@@ -14148,18 +14156,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per pull request;
+`python scripts/changelog.py assemble X.Y.Z` writes them here at release.
+
 ## [Unreleased]
-
-### Added
-
-- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
-  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
-  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
-  (8090 + slot), its own app port block (derived from a slot registered once in
-  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
-  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
-  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
-  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
 
 ## [0.18.0] - 2026-10-28
 
@@ -17549,8 +17549,10 @@ latency checks use the helper, never a bare `assert elapsed < ...`.
    - `docs/getting-started.md` and `docs/first-run.md` are the step-by-step
      guides; `docs/faq.md` answers recurring questions and
      `docs/troubleshooting.md` holds symptom → cause → fix entries.
-   - Describe current behavior. Put what changed, and any upgrade steps, in
-     `CHANGELOG.md`.
+   - Describe current behavior. Put what changed, and any upgrade steps, in a
+     changelog fragment: a new file `changelog.d/<pr-number-or-slug>.md`, never an
+     edit of `CHANGELOG.md` ([changelog.d/README.md](changelog.d/README.md); CI
+     fails a PR that changes `src/` without one).
    - `llms.txt` indexes the docs and is also the corpus of the console's docs
      assistant; update it when a key fact changes, then regenerate the
      snapshot: `python scripts/generate-llms-full.py` (updates `llms-full.txt`).
@@ -17573,7 +17575,8 @@ bundle has a contract test (for example
 
 ## Release checklist (maintainers)
 
-1. Update `CHANGELOG.md`.
+1. Assemble the changelog: `python scripts/changelog.py assemble X.Y.Z` (writes
+   `## [X.Y.Z] - <date>` from `changelog.d/` and deletes the fragments).
 2. Bump version in:
    - `pyproject.toml`
    - `src/abstractgateway/__init__.py`
