@@ -509,6 +509,12 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         "advertised_context_length",
         "context_source",
         "memory_buffer",
+        # slot pool (core ADR 0011)
+        "slots",
+        "slots_max",
+        "active",
+        "queued",
+        "slot_refusal_reason",
         "loaded_at",
         "last_used_at",
         # additive-optional lock/modality/calibration wave fields

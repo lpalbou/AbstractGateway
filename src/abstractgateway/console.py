@@ -11951,6 +11951,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          held.textContent = `held by ${row.held_by.join("; ")}`;
 	          resTd.append(held);
 	        }
+	        // The slot pool (core ADR 0011): how many requests run and wait on this one copy, and
+	        // why another slot is not built ("needs 8.3 GiB ..., 1.0 GiB free").
+	        if (row.resident === true && Number.isInteger(row.slots_max)) {
+	          const pool = document.createElement("div");
+	          pool.className = "muted";
+	          if (row.queued) pool.style.color = "var(--warning)";  // requests are waiting
+	          pool.dataset.slotPool = "1";
+	          const busy = Number.isInteger(row.active) ? row.active : 0;
+	          const slots = Number.isInteger(row.slots) ? row.slots : 1;
+	          pool.textContent = `${busy} of ${slots} slot${slots === 1 ? "" : "s"} busy (up to ${row.slots_max})`
+	            + (row.queued ? ` · ${row.queued} request${row.queued === 1 ? "" : "s"} waiting` : "");
+	          if (row.slot_refusal_reason) pool.title = `Why not more slots: ${row.slot_refusal_reason}`;
+	          resTd.append(pool);
+	          if (row.queued && row.slot_refusal_reason) {
+	            const why = document.createElement("div");
+	            why.className = "muted";
+	            why.textContent = row.slot_refusal_reason;
+	            resTd.append(why);
+	          }
+	        }
 	        tr.append(resTd);
 	        // SIZE (operator: "an estimate of the current memory footprint used
 	        // for each model currently loaded"). The coalesced display size
