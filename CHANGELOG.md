@@ -83,6 +83,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
   hand-over). Apps of the dev stack that name no gateway are listed as before.
 
+### Added
+
+- **Allow engine installs: a switch on the console's Engines tab** (root backlog 0858). The tab says whether the
+  console may install engines on the gateway's computer and why ("On: your setting", "Off: the default for a
+  gateway other computers reach", "On: the default: you are on the gateway's own computer"), with the CLI twin
+  (`abstractgateway-config set allow_engine_install on|off`). An admin turns it on or off in place ("Saved" or
+  "Not saved: …") or returns to the default (`POST /api/gateway/admin/runtime-config
+  {"allow_engine_install": true|false|null}`, recorded in the audit log); other accounts see it read-only ("Only an
+  admin can change this"). The refused-install message and the network-exposure note now point at this switch.
+
 ## [0.18.0] - 2026-10-28
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
