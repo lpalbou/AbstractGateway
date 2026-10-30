@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 51
-- Completed: 49
+- Completed: 50
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,7 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0987 Models library redesign](planned/0987_models_library_visual_redesign.md) | P1. Compact browsing grid, icon management actions, on-demand details and filters, exact operations and browser-verified redeploy. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -190,6 +189,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0987 Models library (completed 2026-10-30, unreleased) | `planned/0987_models_library_visual_redesign.md` | [completed/0987_models_library_visual_redesign.md](completed/0987_models_library_visual_redesign.md) | Compact responsive grid, icon actions, explicit default-text star, Downloaded library and on-demand details/filters. | `e0da0fdc`; 81-test gate, final 43-test focused gate, 222 browser checks and healthy live redeploy; [evidence](../../design/models-library-0987/REVIEW.md). |
 | 0984 (completed 2026-10-30, unreleased) | `planned/0984_catalog_loading_and_version_disclosure.md` | [completed/0984_catalog_loading_and_version_disclosure.md](completed/0984_catalog_loading_and_version_disclosure.md) | 4-bit by default, five-version disclosure, visible loading and explicit All links; fetch latency follow-up in 0986. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
 | 0985 (completed 2026-10-30, unreleased) | `planned/0985_wizard_shared_provider_cards_and_official_marks.md` | [completed/0985_wizard_shared_provider_cards_and_official_marks.md](completed/0985_wizard_shared_provider_cards_and_official_marks.md) | Official shared company marks; kit 0.9.10 OVH/generic cards integrated; interim filter copies removed. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
 | Memory inspector clarity (0983, completed 2026-10-30, unreleased) | `planned/0983_simplify_memory_inspector.md` | [completed/resources/0983_simplify_memory_inspector.md](completed/resources/0983_simplify_memory_inspector.md) | Two compact memory cards, three allocation figures and kit info details; topology and measurement scope preserved. | `08f963ff`; 18 focused tests, 122 browser checks, live graceful restart and browser verification (44 visible words). |
