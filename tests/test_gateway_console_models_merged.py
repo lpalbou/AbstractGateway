@@ -108,7 +108,7 @@ def test_the_condensed_card_and_row() -> None:
     card = html.split('data-mc-model="model-3"')[1].split("</article>")[0]
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
-    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Recommended<" in head
+    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Recommended<" in card
     assert 'class="mc-version-count" aria-hidden="true">3</span>' in head and 'aria-expanded="false"' in head
     assert "4B" in head and "apache-2.0" in card
     assert "ui-mark" not in card

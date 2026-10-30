@@ -80,18 +80,18 @@ CATALOG_CSS = r"""
     .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
     .mc-card { container: mc-card / inline-size; display: grid; gap: 8px; min-width: 0; padding: 0 12px 8px; }
     .mc-card.is-starter { border-color: var(--accent-border); }
-    .mc-card__head { display: grid; grid-template-columns: minmax(0, 1fr) 56px 44px; align-items: center; gap: 6px 12px; min-width: 0; margin: 0 -12px; padding: 8px 12px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .mc-card__head { display: grid; grid-template-columns: minmax(max-content, 1fr) max-content 44px 44px; align-items: center; gap: 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; min-width: 0; margin: 0 -12px; padding: 8px 12px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
     .mc-card__head.is-expandable { cursor: pointer; transition: background-color .15s ease; }
     .mc-card__head.is-expandable:hover, .mc-card__head.is-expandable:focus-within { background: color-mix(in srgb, var(--text-primary) 7%, var(--ui-surface-2)); }
     .mc-card__head.is-expandable:hover .mc-versions, .mc-card__head.is-expandable:focus-within .mc-versions { color: var(--accent); }
     @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
-    .mc-card__title-wrap { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+    .mc-card__title-wrap { display: flex; align-items: center; gap: 8px; min-width: max-content; min-height: 28px; }
     .mc-card__title-wrap .mc-badge { margin-left: auto; }
     .mc-version-count { font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
-    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; white-space: normal; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
-    .mc-card__meta { flex: none; width: 56px; text-align: right; font-size: var(--font-size-xs); color: var(--text-secondary); }
+    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; white-space: nowrap; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
+    .mc-card__meta { flex: none; width: 44px; text-align: right; font-size: var(--font-size-xs); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
-    .mc-caps { justify-self: end; display: grid; grid-template-columns: repeat(9, 24px); align-items: center; justify-content: end; gap: 4px; flex: none; color: var(--text-secondary); }
+    .mc-caps { justify-self: end; display: grid; grid-template-columns: repeat(9, 24px); align-items: center; justify-content: end; gap: 2px; flex: none; color: var(--text-secondary); }
     .mc-cap-slot { display: grid; place-items: center; width: 24px; height: 24px; }
     .mc-versions-slot { width: 44px; height: 28px; }
     .mc-cap { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border-radius: 999px; color: var(--info); background: color-mix(in srgb, currentColor 10%, transparent); }
@@ -111,7 +111,8 @@ CATALOG_CSS = r"""
     .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px max-content auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
     .mc-art.is-primary { background: var(--ui-surface-1); }
-    .mc-art__id { grid-area: id; min-width: 0; }
+    .mc-art__id { grid-area: id; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+    .mc-art__id .mc-build-inspect { width: auto; flex: 0 1 auto; }
     .mc-build-name { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px; min-width: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
     .mc-build-name strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mc-build-publisher { display: inline; max-width: 104px; flex: 0 2 auto; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 0; }
@@ -155,19 +156,7 @@ CATALOG_CSS = r"""
     .mc-del-confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
     .mc-del-confirm__actions .ui-btn { min-height: 40px; }
     .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
-    @container mc-card (max-width: 580px) {
-      .mc-card__head { gap: 6px; }
-      .mc-card__head { grid-template-columns: minmax(0, 1fr) 44px 44px; }
-      .mc-card__meta { width: 44px; }
-    }
     @container mc-card (max-width: 360px) {
-      .mc-card__head { grid-template-columns: minmax(0, 1fr) 32px 44px; }
-      .mc-card__title-wrap { display: grid; grid-template-columns: 24px minmax(0, 1fr); }
-      .mc-card__title { grid-column: 2; }
-      .mc-card__title-wrap .mc-badge { grid-column: 2; justify-self: start; margin-left: 0; }
-      .mc-caps { grid-column: 1 / -1; grid-template-columns: repeat(9, 24px); gap: 1px; }
-      .mc-card__meta { grid-column: 2; width: 32px; }
-      .mc-versions, .mc-versions-slot { grid-column: 3; }
       .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; }
       .mc-art__chips { justify-content: flex-start; }
       .mc-art__size { text-align: left; }
@@ -767,7 +756,8 @@ CATALOG_JS = r"""
       const content = {title:kept ? "Kept loaded" : "Loaded in memory",description:kept ? "Protected from automatic eviction." : "Available for inference now.",sections:held.length ? [{label:"Held by",items:held}] : [],note:"Open Resources to manage residency."};
       return `<button type="button" class="mc-loaded" data-mc-open-resources="1" ${mcTooltipAttrs(content)} aria-label="${kept ? "Kept loaded" : "Loaded"}. Open Resources">${kept ? ICONS.lock : ICONS.gear}</button>`;
     }
-    function mcArtMarkup(row, a, alone, view) {
+    function mcRecommendedBadge() { return `<span class="mc-badge mc-badge--recommended" tabindex="0" ${mcTooltipAttrs({title:"Recommended for this computer",description:"Selected for this computer’s hardware and available engines. Check its fit status before loading."})}>${ICONS.star}Recommended</span>`; }
+    function mcArtMarkup(row, a, alone, view, featured) {
       const job = mcJob(a), installed = mcHasLocalFiles(a), presence = a.presence || {};
       const verdict = String((a.fit || {}).verdict || "unknown");
       const [fLabel, fTone] = a.inventory && a.inventory.complete !== true ? [a.inventory.incomplete_files || a.inventory.missing_shards ? "Partial" : "Cache", "muted"] : a.asset_kind === "adapter" ? ["Needs base", "muted"] : a.asset_kind === "component" ? ["Pipeline", "muted"] : a.asset_kind === "unknown" ? ["Unrated", "muted"] : a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
@@ -778,8 +768,8 @@ CATALOG_JS = r"""
       const size = uiNum(bytes) ? `${exact ? "" : "~"}${uiBytes(bytes)}` : "—";
       const text = [row.license ? "License: " + row.license : "", ...(a.inventory ? ["Type: " + (a.asset_kind || a.inventory.kind || "unknown"), "Metadata: " + (a.inventory.tasks_source || "not reported"), Array.isArray(a.inventory.tasks) && a.inventory.tasks.length ? "Tasks: " + a.inventory.tasks.map(t => t.replaceAll("_", " ")).join(", ") : ""] : []), presence.location, presence.evidence].filter(Boolean).join(" · ");
       const details = mcBuildDetails(a, text, view);
-      return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
-        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button></div>`
+      return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}" data-mc-featured="${featured ? "1" : "0"}">`
+        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button>${row.starter && featured ? mcRecommendedBadge() : ""}</div>`
         + `<div class="mc-art__size" data-af-tip="${a.inventory ? "Cache size on this host" : exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
         + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="${mcInstalled(a) ? "Downloaded" : "Cached files"}" >${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" ${mcTooltipAttrs(mcFitTooltip(a))} aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
@@ -829,7 +819,7 @@ CATALOG_JS = r"""
         const kind = row.asset_kind, title = ({adapter:"Adapter",component:"Component",unknown:"Unclassified"})[kind];
         badges.push(`<span class="mc-badge mc-badge--kind" tabindex="0" ${mcTooltipAttrs({title,description:kind === "adapter" ? "Modifies a compatible base model; use it with the matching pipeline." : kind === "component" ? "A supporting part of a larger pipeline, rather than a chat model." : "Cached locally. Its role has not been identified from the available metadata."})}>${title}</span>`);
       }
-      if (row.starter) badges.push(`<span class="mc-badge mc-badge--recommended" tabindex="0" ${mcTooltipAttrs({title:"Recommended for this computer",description:"Selected for this computer’s hardware and available engines. Check its fit status before loading."})}>${ICONS.star}Recommended</span>`);
+
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}"${row.asset_kind ? ` data-mc-kind="${esc(row.asset_kind)}"` : ""}>`
         + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${badges.join("")}</div>`
@@ -837,7 +827,7 @@ CATALOG_JS = r"""
         + `<span class="mc-card__meta" tabindex="0" data-af-tip="${esc(parameterTip)}" aria-label="${esc(parameterTip)}">${esc(params || "—")}</span>`
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show the primary build" : `Compare all ${item.arts.length} builds`)}"><span class="mc-version-count" aria-hidden="true">${item.arts.length}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : '<span class="mc-versions-slot" aria-hidden="true"></span>')
         + `</header>`
-        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1, view)).join("")}</ul>`
+        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a,i) => mcArtMarkup(row, a, mcArts(row).length === 1, view, i === 0)).join("")}</ul>`
         + `</article>`;
     }
     function mcListMarkup(view, list, extras) {
@@ -1030,7 +1020,7 @@ CATALOG_JS = r"""
         el.querySelectorAll("li[data-mc-art]").forEach((li) => {
           const hit = byKey.get(li.dataset.mcArt);
           if (!hit) return;
-          const html = mcArtMarkup(hit[0], hit[1], mcArts(hit[0]).length === 1);
+          const html = mcArtMarkup(hit[0], hit[1], mcArts(hit[0]).length === 1, view, li.dataset.mcFeatured === "1");
           if (li.outerHTML !== html) li.outerHTML = html;
         });
         const count = mcPart(view, "count");

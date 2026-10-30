@@ -68,11 +68,14 @@ try {
   check(await root.locator('.mc-cap-slot[aria-hidden="true"]').evaluateAll(es=>es.every(e=>!e.querySelector('svg')&&!e.hasAttribute('tabindex')&&!e.hasAttribute('data-af-tip'))),`${theme}: absent capabilities have blank slots without claims, hovers or focus stops`);
   const statusInline=async()=>root.locator('.mc-art__chips:has(.mc-installed):has(.mc-fit)').evaluateAll(groups=>groups.length>0&&groups.every(e=>{const r=e.getBoundingClientRect(),fit=e.querySelector('.mc-fit').getBoundingClientRect(),icons=[...e.querySelectorAll('.mc-installed,.mc-loaded')].map(x=>x.getBoundingClientRect());return icons.every(i=>Math.abs((i.top+i.height/2)-(fit.top+fit.height/2))<1&&i.right<=fit.left+1)&&fit.right<=r.right+1;}));
   check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side on desktop`);
-  check(await root.locator('.mc-badge--recommended').first().innerText()==='Recommended'&&await root.locator('.mc-badge--recommended svg').count()>0,`${theme}: visible recommendation uses a star and clear wording`);
+  check(await root.locator('.mc-art__id .mc-badge--recommended').count()===1&&await root.locator('header .mc-badge--recommended').count()===0&&await root.locator('.mc-badge--recommended').first().innerText()==='Recommended'&&await root.locator('.mc-badge--recommended svg').count()>0,`${theme}: visible recommendation uses a star and clear wording`);
   const fits=root.getByRole('switch',{name:'Fits this computer',exact:true});
   check(await fits.isChecked(), `${theme}: Fits this computer is enabled by default`);
   const signalOrder=await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const caps=h.querySelector('.mc-caps'),params=h.querySelector('.mc-card__meta');return caps.nextElementSibling===params&&params.nextElementSibling?.classList.contains('mc-versions');}));
   check(signalOrder, `${theme}: header order is capabilities, total parameters, chevron`);
+  const singleHeader=async()=>root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const r=[...h.children].map(e=>e.getBoundingClientRect());return r.every(e=>Math.abs(e.top+e.height/2-r[0].top-r[0].height/2)<1);}));
+  check(await singleHeader(),`${theme}: all header elements share a single row`);
+
   const vision=root.locator('.mc-cap[data-mc-cap="vision"]').first();
   check(await vision.getAttribute('aria-label')==='Image input'&&(await vision.getAttribute('data-af-tip')).includes('Understands images')&&await vision.locator('svg').count()===1, `${theme}: native vision input has an explained eye icon`);
   const signals=await root.locator('.mc-card').first().locator('.mc-cap').evaluateAll(es=>Object.fromEntries(es.map(e=>[e.dataset.mcCap,{color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor}])));
@@ -97,14 +100,14 @@ try {
   await page.keyboard.press('Escape');await fitAnchor.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await fitTip.waitFor();
   check(!!await fitAnchor.getAttribute('aria-describedby'), `${theme}: structured fit tooltip is keyboard-accessible and describes its anchor`);await page.keyboard.press('Escape');
   const compact=await root.locator('.mc-card').first().evaluate(el=>({height:el.getBoundingClientRect().height,header:el.querySelector('header').getBoundingClientRect().height,rows:[...el.querySelectorAll('.mc-art')].map(r=>r.getBoundingClientRect().height),columns:getComputedStyle(el.parentElement).gridTemplateColumns.split(' ').length}));
-  check(compact.height>=110&&compact.height<=165&&compact.header>=65&&compact.header<=95&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: compact overview has a readable name, signals and one primary build (${JSON.stringify(compact)})`);
+  check(compact.height>=85&&compact.height<=130&&compact.header>=40&&compact.header<=60&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: compact overview has a readable name, signals and one primary build (${JSON.stringify(compact)})`);
   check(compact.columns===2,`${theme}: desktop uses two comfortable model columns`);
-  check(await root.locator('.mc-card__title').first().innerText()==='Qwen3.8 Flash-Next'&&await root.locator('.mc-card__title').first().evaluate(e=>getComputedStyle(e).whiteSpace==='normal'&&e.scrollWidth<=e.clientWidth+1),`${theme}: recommended model name is visible in full`);
-  check(await root.locator('.mc-card__title-wrap').first().evaluate(e=>e.scrollWidth<=e.clientWidth+1),`${theme}: full name and Recommended badge fit without overlap`);
+  check(await root.locator('.mc-card__title').first().innerText()==='Qwen3.8 Flash-Next'&&await root.locator('.mc-card__title').first().evaluate(e=>getComputedStyle(e).whiteSpace==='nowrap'&&e.scrollWidth<=e.clientWidth+1),`${theme}: recommended model name is visible in full`);
+  check(await root.locator('.mc-card__title-wrap').first().evaluate(e=>e.scrollWidth<=e.clientWidth+1),`${theme}: full name stays on one header line`);
 
   check(await root.locator('.mc-card__head > .mc-caps svg').count()>0&&await root.locator('.mc-tags').count()===0,`${theme}: capability icons sit in the header without a separate text line`);
-  const alignment=await root.locator('.mc-card').evaluateAll(cards=>cards.map(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('.mc-caps').getBoundingClientRect(),t=e.querySelector('.mc-card__title').getBoundingClientRect();return {right:a.right-b.right,afterTitle:b.top>=t.bottom};}));
-  check(alignment.every(a=>a.afterTitle)&&Math.max(...alignment.map(a=>a.right))-Math.min(...alignment.map(a=>a.right))<1,`${theme}: capability groups align at the right edge on a second row independently of title/parameter lengths`);
+  const alignment=await root.locator('.mc-card').evaluateAll(cards=>cards.map(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('.mc-caps').getBoundingClientRect(),t=e.querySelector('.mc-card__title').getBoundingClientRect();return {right:a.right-b.right,afterTitle:b.left>=t.right&&Math.abs(b.top+b.height/2-t.top-t.height/2)<1};}));
+  check(alignment.every(a=>a.afterTitle)&&Math.max(...alignment.map(a=>a.right))-Math.min(...alignment.map(a=>a.right))<1,`${theme}: capability groups align at the right edge on the same row as the model name`);
   check(await root.locator('.mc-art__action [data-mc-action="details"]').count()===0,`${theme}: no redundant info action beside each version`);
   check(await root.locator('.mc-build-inspect').first().getAttribute('data-af-tip')===null,`${theme}: build identity has no repetitive hover tooltip`);
   await root.locator('.mc-caps .mc-cap').first().hover();
@@ -147,7 +150,7 @@ try {
   await first.getByRole('button',{name:'Show all versions of Qwen3.8 Flash-Next',exact:true}).focus();await page.waitForTimeout(180);
   check(await header.evaluate((e,base)=>getComputedStyle(e).backgroundColor!==base,headerBase),`${theme}: keyboard focus also highlights the header`);
   await first.getByRole('button',{name:'Show all versions of Qwen3.8 Flash-Next',exact:true}).press('Enter');
-  check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
+  check(await first.locator('.mc-art').count()===18&&await first.locator('.mc-badge--recommended').count()===1,`${theme}: expansion exposes all builds without duplicating the recommendation`);
   check(await first.getByRole('button',{name:'Show fewer versions of Qwen3.8 Flash-Next',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
   check(await root.locator('.mc-art').count()===20,`${theme}: expansion belongs to one card`);
   check((await root.locator('[data-mc-part="count"]').innerText())==='3 of 3 models',`${theme}: summary shows models only and stays stable when versions expand`);
@@ -217,7 +220,7 @@ try {
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-mobile-${theme}.png`)});
   await page.setViewportSize({width:320,height:844});
   check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: narrow mobile catalog fits`);
-  check(await matrixAligned(),`${theme}: capability columns remain fixed at 320px`);
+  check(await matrixAligned()&&await singleHeader(),`${theme}: fixed capability columns and single-row headers remain at 320px`);
   check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side at 320px`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-narrow-${theme}.png`)});
   await root.locator('.mc-fit').first().hover();await fitTip.waitFor();
