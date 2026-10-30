@@ -21,12 +21,26 @@ RESOURCES_MODAL_HTML = r"""
   <div class="af-modal af-modal--wide res-inspector" role="dialog" aria-modal="true" aria-labelledby="resources-inspector-title">
     <div class="af-modal__header"><h2 id="resources-inspector-title" class="af-modal__title">Resource details</h2><button id="resources-inspector-close" type="button" class="af-modal__close" aria-label="Close resource inspector" data-af-tip="Close">×</button></div>
     <div class="af-modal__body">
-      <div id="res-memory-details" hidden><p class="muted">Independent measurements of overlapping allocations. These counters must not be summed.</p><div id="res-memory-legacy"></div></div>
+      <div id="res-memory-details" hidden>
+        <div class="res-mem-mode"><span id="res-mem-kind" class="state-pill"></span><button type="button" class="secondary res-info" aria-label="About memory layout" data-af-tip="Unified memory is shared by the CPU and GPU. Dedicated VRAM is a separate pool. The allocations below can overlap: do not add them together.">i</button></div>
+        <div class="res-mem-pools">
+          <article class="res-mem-pool"><div class="res-mem-label"><span>Available RAM</span><button id="res-mem-ram-info" type="button" class="secondary res-info" aria-label="About available RAM">i</button></div><strong id="res-mem-ram-value" class="res-mem-value">—</strong><div id="res-mem-ram-bar" class="res-mem-track" role="img"><span></span></div><span id="res-mem-ram-caption" class="res-mem-caption"></span></article>
+          <article class="res-mem-pool res-mem-gpu"><div class="res-mem-label"><span id="res-mem-gpu-label">GPU memory</span><button id="res-mem-gpu-info" type="button" class="secondary res-info" aria-label="About GPU memory">i</button></div><strong id="res-mem-gpu-value" class="res-mem-value">—</strong><div id="res-mem-gpu-bar" class="res-mem-track" role="img"><span></span></div><div class="res-mem-caption"><span id="res-mem-gpu-caption"></span><span id="res-mem-gpu-scope" class="res-mem-badge"></span></div></article>
+        </div>
+        <div class="res-mem-detail-head"><span>Allocations</span><span class="res-mem-badge">May overlap</span></div>
+        <div class="res-mem-facts">
+          <div><div class="res-mem-label"><span>Model weights</span><button id="res-mem-weights-info" type="button" class="secondary res-info" aria-label="About model weights">i</button></div><strong id="res-mem-weights-value">—</strong><span id="res-mem-weights-note" class="res-mem-fact-note" hidden>Partial</span></div>
+          <div><div class="res-mem-label"><span>Model cache</span><button id="res-mem-cache-info" type="button" class="secondary res-info" aria-label="About model cache">i</button></div><strong id="res-mem-cache-value">—</strong></div>
+          <div><div class="res-mem-label"><span>Process memory</span><button id="res-mem-process-info" type="button" class="secondary res-info" aria-label="About process memory" data-af-tip="Resident process memory (RSS), including mapped model files. GPU buffers and model weights may overlap this counter. It is not an extra allocation to add to the other values.">i</button></div><strong id="res-mem-process-value">—</strong></div>
+        </div>
+        <div class="res-mem-footer"><span id="res-mem-model-count"></span><span id="res-mem-session-count" tabindex="0" data-af-tip="Session KV caches are a separate inventory and may overlap model cache bytes. Clearing a cache requires re-encoding on the next turn; it does not delete conversation history."></span></div>
+      </div>
       <div id="res-gateway-details" hidden><p class="muted">Pause controls workflow steps. Restart and quit affect connected clients.</p><div id="res-gateway-legacy"></div></div>
       <div id="res-system-details" hidden></div>
     </div>
   </div>
 </div>
+<div id="res-memory-legacy" hidden aria-hidden="true"></div>
 """
 
 RESOURCES_CSS = r"""
@@ -98,6 +112,24 @@ RESOURCES_CSS = r"""
   .res-gateway-summary { color: var(--text-secondary); font-size: var(--font-size-sm); margin: 14px 0; }
   .res-gateway-summary span { display: block; margin: 5px 0; }
   .res-inspector { max-width: min(920px, calc(100vw - 24px)); }
+  .res-inspector[data-inspector="memory"] { width: min(680px, calc(100vw - 24px)); max-width: min(680px, calc(100vw - 24px)); }
+  .res-mem-mode { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .res-mem-pools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .res-mem-pool { border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); background: var(--ui-surface-1); padding: 16px; min-width: 0; }
+  .res-mem-label { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+  .res-mem-value { display: block; margin: 16px 0; font-size: calc(30px * var(--font-scale)); line-height: 1.25; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .res-mem-track { height: 7px; background: var(--ui-surface-3); border-radius: var(--radius-sm); overflow: hidden; }
+  .res-mem-track > span { display: block; height: 100%; background: var(--info); }
+  .res-mem-gpu .res-mem-track > span { background: var(--success); }
+  .res-mem-caption { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: var(--font-size-xs); margin-top: 10px; }
+  .res-mem-badge { color: var(--text-secondary); font-size: var(--font-size-xs); white-space: nowrap; }
+  .res-mem-detail-head { display: flex; align-items: center; justify-content: space-between; margin: 22px 0 12px; font-size: var(--font-size-sm); font-weight: 500; }
+  .res-mem-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .res-mem-facts > div { min-width: 0; }
+  .res-mem-facts strong { display: block; margin-top: 10px; font-size: var(--font-size-xl); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .res-mem-fact-note { color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .res-mem-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--ui-border-1); margin-top: 22px; padding-top: 12px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+  @media (max-width: 479.98px) { .res-mem-pools { grid-template-columns: minmax(0, 1fr); gap: 10px; } .res-mem-pool { padding: 12px 14px; } .res-mem-value { margin: 8px 0 12px; font-size: calc(27px * var(--font-scale)); } .res-mem-facts { grid-template-columns: minmax(0, 1fr); gap: 0; } .res-mem-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 40px; } .res-mem-facts strong { margin: 0; font-size: var(--font-size-base); } .res-mem-facts .res-mem-label { justify-content: flex-start; } .res-mem-fact-note { grid-column: 2; } .res-mem-detail-head, .res-mem-footer { margin-top: 16px; } }
   .res-inspector .entity-overview { margin-top: 15px; }
   .res-inspector .res-details-list { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); margin: 0; font-size: var(--font-size-base); }
   .res-details-list dt, .res-details-list dd { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--ui-border-1); overflow-wrap: anywhere; }
@@ -207,7 +239,56 @@ RESOURCES_JS = r"""
       const focusedInfo = document.activeElement && $("res-capacity").contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
       $("res-capacity").innerHTML = capacity;
       if (focusedInfo) Array.from($("res-capacity").querySelectorAll("button")).find(b=>b.getAttribute("aria-label")===focusedInfo)?.focus();
-      resourcesRenderChart(); resourcesSparks(); resourcesRunnerSummary();
+      resourcesRenderChart(); resourcesSparks(); resourcesRunnerSummary(); renderResourcesMemory();
+    }
+    function resourceMemoryInspectorView(data) {
+      const view = resourceMemoryView(data), breakdown = memoryBreakdown(data || {});
+      const rows = data && Array.isArray(data.models) ? data.models : null;
+      const loaded = rows ? rows.filter(r => r && r.resident === true) : null;
+      const weights = breakdown.items.filter(i => i.key.startsWith("model:"));
+      const knownEmpty = rows !== null && rows.every(r => r && r.resident === false);
+      const weightBytes = weights.length ? weights.reduce((sum, i) => sum + i.bytes, 0) : knownEmpty ? 0 : null;
+      const partial = !!loaded && weights.length > 0 && weights.length < loaded.length;
+      const cache = breakdown.items.find(i => i.key === "model_caches");
+      const process = breakdown.items.find(i => i.key === "process_rss");
+      return { ...view, weightBytes, partial, estimated: weights.some(i => i.estimated),
+        cacheBytes: cache ? cache.bytes : null, processBytes: process ? process.bytes : null,
+        modelCount: loaded === null ? null : loaded.length,
+        sessionCount: data && Array.isArray(data.session_caches) ? data.session_caches.length : null,
+        sessionBytes: breakdown.items.find(i => i.key === "session_caches")?.bytes ?? null };
+    }
+    function renderResourcesMemory() {
+      const data = resUi.last, view = resourceMemoryInspectorView(data), ram = view.ram, gpu = view.device;
+      const fmt = value => value === null ? "—" : _fmtBytes(value);
+      const available = resourceNumber(ram.available_bytes), total = resourceNumber(ram.total_bytes);
+      const shared = view.topology === "unified", gpuAvailable = !shared && gpu.free !== null;
+      const gpuValue = gpuAvailable ? gpu.free : gpu.used;
+      const meter = (id, value, ceiling, name) => {
+        const fraction = value !== null && ceiling !== null && ceiling > 0 ? Math.min(100,Math.max(0,value/ceiling*100)) : null;
+        $(id).firstElementChild.style.width = `${fraction ?? 0}%`;
+        $(id).setAttribute("aria-label", value === null ? name + " unavailable" : `${name}: ${_fmtBytes(value)}${ceiling === null ? "" : " of " + _fmtBytes(ceiling)}`);
+      };
+      $("res-mem-kind").textContent = shared ? "Unified memory" : view.topology === "dedicated" ? "Separate RAM & VRAM" : view.topology === "gpu" ? "RAM & GPU memory" : "Memory type unknown";
+      $("res-mem-ram-value").textContent = fmt(available);
+      $("res-mem-ram-caption").textContent = total === null ? "Capacity not reported" : _fmtBytes(total) + " total";
+      $("res-mem-ram-info").dataset.afTip = "Available system RAM, reported by the operating system. This is not a model-fit guarantee. " + (resourceNumber(ram.used_bytes) === null ? "Used RAM is not reported." : "Reported used RAM: " + _fmtBytes(ram.used_bytes) + ". OS used and available counters need not sum to installed RAM.");
+      meter("res-mem-ram-bar",available,total,"Available RAM");
+      $("res-mem-gpu-label").textContent = shared ? "GPU allocations" : gpuAvailable ? "Available VRAM" : "GPU memory";
+      $("res-mem-gpu-value").textContent = fmt(gpuValue);
+      $("res-mem-gpu-caption").textContent = shared ? "Shares RAM" : gpu.ceiling === null ? "Capacity not reported" : _fmtBytes(gpu.ceiling) + " total";
+      $("res-mem-gpu-scope").textContent = gpu.used === null && gpu.ceiling === null ? "Not reported" : gpu.scope === "all processes" ? "All processes" : gpu.scope === "Device-wide" ? "GPU device" : "This process";
+      $("res-mem-gpu-info").dataset.afTip = shared
+        ? `GPU allocations overlap system RAM. ${gpu.ceiling === null ? "The accelerator limit is not reported." : "Accelerator limit: " + _fmtBytes(gpu.ceiling) + "."} ${gpu.scope}. Memory-mapped GGUF weights may be absent; do not subtract this counter from RAM.`
+        : `${gpu.scope}. ${gpu.note} ${gpu.used === null ? "Usage not reported." : "Reported use: " + _fmtBytes(gpu.used) + "."}`;
+      meter("res-mem-gpu-bar",gpuValue,gpu.ceiling,shared ? "GPU allocations (shared RAM)" : gpuAvailable ? "Available VRAM" : "GPU memory");
+      $("res-mem-weights-value").textContent = (view.estimated && view.weightBytes !== null ? "~" : "") + fmt(view.weightBytes);
+      $("res-mem-weights-note").hidden = !view.partial;
+      $("res-mem-weights-info").dataset.afTip = view.weightBytes === null ? "The host did not report weight sizes for loaded models. A dash means unknown, not zero." : `${view.estimated ? "Includes estimated on-disk weight sizes." : "Weight sizes reported by the model provider."} ${view.partial ? "Partial: some loaded model sizes are not reported." : ""} Weights may overlap GPU allocations and process memory; this is not a promise of memory freed by unloading.`;
+      $("res-mem-cache-value").textContent = fmt(view.cacheBytes);
+      $("res-mem-cache-info").dataset.afTip = "Prompt/KV cache bytes reported for resident models. Session caches may overlap this counter; do not add them together. " + (view.sessionBytes === null ? "Session cache size is not reported." : "Session inventory: " + _fmtBytes(view.sessionBytes) + ".");
+      $("res-mem-process-value").textContent = fmt(view.processBytes);
+      $("res-mem-model-count").textContent = view.modelCount === null ? "Models unavailable" : `${view.modelCount} model${view.modelCount === 1 ? "" : "s"} loaded`;
+      $("res-mem-session-count").textContent = view.sessionCount === null ? "Session caches unavailable" : `${view.sessionCount} session cache${view.sessionCount === 1 ? "" : "s"}`;
     }
     function resourceSeries() {
       const last = resUi.samples[resUi.samples.length-1];
@@ -277,7 +358,9 @@ RESOURCES_JS = r"""
     function resourcesOpenInspector(which) {
       resourcesCloseInspector();
       ["memory","gateway","system"].forEach(k=>$("res-"+k+"-details").hidden=k!==which);
-      $("resources-inspector-title").textContent=which==="memory"?"Memory counters":which==="gateway"?"Manage gateway":"System metrics";
+      $("resources-inspector-title").textContent=which==="memory"?"Memory":which==="gateway"?"Manage gateway":"System metrics";
+      $("resources-inspector-backdrop").querySelector(".res-inspector").dataset.inspector=which;
+      if(which==="memory")renderResourcesMemory();
       if(which==="system") {
         const sys=resUi.last&&resUi.last.system||{};
         const cpu=sys.cpu||{},swap=sys.swap||{},disk=sys.storage||{},io=sys.disk_io||{},net=sys.network||{};

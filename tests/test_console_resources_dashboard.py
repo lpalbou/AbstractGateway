@@ -73,3 +73,28 @@ def test_resources_reuses_shared_widgets_and_tooltip_modal_primitives():
     assert 'id="af-topbar-root"' in html
     for token in ["mountTopBar", "mountAppearance", 'identity: "menu"', 'label: "Docs assistant"', 'label: "About AbstractGateway"']:
         assert token in html
+
+
+def test_memory_inspector_preserves_unknown_zero_and_partial_weights():
+    source = gateway_console_html()
+    functions = "\n".join(_slice_function(source, name) for name in [
+        "resourceMemoryInspectorView", "resourceNumber", "resourceMemoryView",
+        "memoryBreakdown", "modelDisplaySize", "modelCacheBytes", "deviceMeterView",
+        "processHeldBasisWords", "_fmtBytes",
+    ])
+    js = functions + """
+const cases = [null, {models:[]}, {models:[{resident:true}]},
+ {models:[{resident:true,est_weights_bytes:100},{resident:true}],
+  totals:{cache_bytes_models:0},memory:{process:{rss_bytes:0}}},
+ {models:[{resident:false,est_weights_bytes:100}]}];
+console.log(JSON.stringify(cases.map(resourceMemoryInspectorView)));
+"""
+    result = subprocess.run([require_node(), "-e", js], capture_output=True, text=True, check=True)
+    unavailable, empty, missing, partial, unloaded = json.loads(result.stdout)
+    assert unavailable["weightBytes"] is None and unavailable["modelCount"] is None
+    assert empty["weightBytes"] == 0 and empty["modelCount"] == 0
+    assert missing["weightBytes"] is None and missing["modelCount"] == 1
+    assert partial["weightBytes"] == 100 and partial["modelCount"] == 2
+    assert partial["partial"] and partial["estimated"]
+    assert partial["cacheBytes"] == 0 and partial["processBytes"] == 0
+    assert unloaded["weightBytes"] == 0
