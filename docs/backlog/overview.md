@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 60
+- Completed: 61
 - Deprecated: 4
 - Recurrent: 0
 
@@ -191,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0999 Toolbar and capability matrix (completed 2026-10-30, unreleased) | `planned/0999_models_toolbar_and_capability_matrix.md` | [completed/0999_models_toolbar_and_capability_matrix.md](completed/0999_models_toolbar_and_capability_matrix.md) | Machine in resource widget, refresh after Filters, shorter search, Downloaded label and fixed capability columns. | `cde6956e`/`4a69ff88`; focused gates, 222 browser assertions and healthy live dark/light/320px/touch redeploy; [evidence](../../design/model-matrix-0999/REVIEW.md). |
 | 0998 Recommendation and one library toggle (completed 2026-10-30, unreleased) | `planned/0998_model_recommendation_badge_and_single_library_toggle.md` | [completed/0998_model_recommendation_badge_and_single_library_toggle.md](completed/0998_model_recommendation_badge_and_single_library_toggle.md) | Visible Recommended badge; one quick toggle; Core catalogue adoption. | `334dd3bb`; 36 tests, 214 browser assertions and healthy live redeploy; [evidence](../../design/model-library-catalog-0998/REVIEW.md). |
 | 0997 Model count and inline status (completed 2026-10-30, unreleased) | `planned/0997_models_count_and_inline_fit_status.md` | [completed/0997_models_count_and_inline_fit_status.md](completed/0997_models_count_and_inline_fit_status.md) | Model-only summary; downloaded/resident icons and fit labels stay on one line. | `55763bab`; 35 tests, 212 browser assertions and healthy live dark/light/mobile redeploy; [evidence](../../design/model-count-status-0997/REVIEW.md). |
 | 0996 Explain capability badges (completed 2026-10-30, unreleased) | `planned/0996_explain_model_capability_badges.md` | [completed/0996_explain_model_capability_badges.md](completed/0996_explain_model_capability_badges.md) | Useful explanations for all nine capabilities, native/prompted tools and individual keyboard access. | `c332731e`; 34 tests, 208 browser assertions and healthy live dark/light/mobile redeploy; [evidence](../../design/model-capabilities-0996/REVIEW.md). |
@@ -309,4 +310,4 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 
 - [0998 Clear recommendation badge and one library control](completed/0998_model_recommendation_badge_and_single_library_toggle.md)
 
-2026-10-30: [0999 Models toolbar and capability matrix](planned/0999_models_toolbar_and_capability_matrix.md) tracks the operator layout follow-up.
+2026-10-30: [0999 Models toolbar and capability matrix](completed/0999_models_toolbar_and_capability_matrix.md) tracks the operator layout follow-up.

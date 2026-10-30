@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, accessibility, seat-framework
 > Work-item id: abstractgateway-0999
@@ -33,5 +35,24 @@ geometry across mixed models, contrast, keyboard and narrow layout. Scoped
 commits, authorized local redeploy and live verification with saved evidence.
 Existing UI ownership remains; no new ADR, registry publication or model actions.
 
-- [ ] Implement the requested toolbar, widget and header layout.
-- [ ] Validate, commit, redeploy and retain evidence.
+- [x] Implement the requested toolbar, widget and header layout.
+- [x] Validate, commit, redeploy and retain evidence.
+
+## Completion report
+
+`cde6956e` / `4a69ff88` move the live machine name into the memory/GPU widget,
+remove the Models host row, group refresh after Filters, shorten the desktop
+search field and label the switch Downloaded. Fixed capability and disclosure
+slots align cards with different reported capabilities and version counts.
+Empty cells are inert; theme, meaningful tooltips and keyboard access retained.
+
+70 primary checks, 7 widget checks, 35 disclosure follow-up checks and 15 final
+responsive checks passed (overlapping gates); 222 catalog browser assertions.
+Healthy graceful redeploy and live dark/light/390px/320px/touch checks passed.
+All 88 browse / 29 downloaded cards align. Desktop search measures 10.02% less
+than its unrestricted width. Full phone machine name and grouped actions verified;
+no page errors, management writes or horizontal overflow.
+[Review and captures](../../../design/model-matrix-0999/REVIEW.md),
+[validation](../../../design/model-matrix-0999/validation.json).
+No new ADR impact, publication or residual work; Agora unavailable. Existing
+Core deployment and unrelated changes preserved.
