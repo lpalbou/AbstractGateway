@@ -146,9 +146,12 @@ const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel)
 const scope = (mode) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-scope]" ? { dataset: { afScope: mode } } : null) } });
 const snap = (name) => {
   const html = root.innerHTML;
-  const m = /<b>(\d+)<\/b> of (\d+) models? · <b>(\d+)<\/b>/.exec(html);
+  const m = /<b>(\d+)<\/b> of (\d+) models?/.exec(html);
+  // The UI reports models only; retain filter/inventory coverage for every
+  // reachable artifact independently of the visible model summary.
+  const available = vm.runInContext(`(() => { const v = mcStore.views.get('tab'); return mcWithView(v, () => mcCountArts(mcVisible(v.filters)) + mcExtras(v, v.filters).length); })()`, ctx);
   out[name] = {
-    count: m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null,
+    count: m ? [Number(m[1]), Number(m[2]), available] : null,
     cards: (html.match(/data-mc-model="/g) || []).length,
     arts: (html.match(/<li class="mc-art/g) || []).length,
     classes: [...html.matchAll(/data-quant-class="([^"]*)"/g)].map((x) => x[1]),

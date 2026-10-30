@@ -56,7 +56,7 @@ try {
   check(hold&&await root.locator('[data-mc-part="count"]').innerText().then(t=>t.includes('so far')),`${theme}: curated cards paint before full enrichment with explicitly provisional counts`);
   check(await root.getByRole('status').filter({hasText:'Loading more versions'}).isVisible(),`${theme}: enrichment remains visible while curated cards are usable`);
   check(await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>!h.classList.contains('is-expandable')&&getComputedStyle(h).cursor!=='pointer')),`${theme}: headers without hidden versions do not imply clickability`);
-  release();await root.locator('[data-mc-part="count"]').filter({hasText:'18 matching versions'}).waitFor();
+  release();await root.locator('[data-mc-part="count"]').filter({hasText:/^3 of 3 models$/}).waitFor();
   check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
   check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
   holdInstalled=false;installedWaiters.splice(0).forEach(r=>r());
@@ -69,6 +69,8 @@ try {
   check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
+  const statusInline=async()=>root.locator('.mc-art__chips:has(.mc-installed):has(.mc-fit)').evaluateAll(groups=>groups.length>0&&groups.every(e=>{const r=e.getBoundingClientRect(),fit=e.querySelector('.mc-fit').getBoundingClientRect(),icons=[...e.querySelectorAll('.mc-installed,.mc-loaded')].map(x=>x.getBoundingClientRect());return icons.every(i=>Math.abs((i.top+i.height/2)-(fit.top+fit.height/2))<1&&i.right<=fit.left+1)&&fit.right<=r.right+1;}));
+  check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side on desktop`);
   const fits=root.getByRole('switch',{name:'Fits this computer',exact:true});
   check(await fits.isChecked(), `${theme}: Fits this computer is enabled by default`);
   const signalOrder=await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const caps=h.querySelector('.mc-caps'),params=h.querySelector('.mc-card__meta');return caps.nextElementSibling===params&&params.nextElementSibling?.classList.contains('mc-versions');}));
@@ -147,7 +149,7 @@ try {
   check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
   check(await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
   check(await root.locator('.mc-art').count()===24,`${theme}: expansion belongs to one card`);
-  check((await root.locator('[data-mc-part="count"]').innerText()).includes('54 matching versions'),`${theme}: count includes reachable collapsed versions`);
+  check((await root.locator('[data-mc-part="count"]').innerText())==='3 of 3 models',`${theme}: summary shows models only and stays stable when versions expand`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-expanded-${theme}.png`)});
   await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).click();
   check(await first.locator('.mc-art').count()===3,`${theme}: collapse returns to three`);
@@ -214,6 +216,7 @@ try {
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-mobile-${theme}.png`)});
   await page.setViewportSize({width:320,height:844});
   check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: narrow mobile catalog fits`);
+  check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side at 320px`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-narrow-${theme}.png`)});
   await root.locator('.mc-fit').first().hover();await fitTip.waitFor();
   check(await fitTip.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=7&&r.right<=innerWidth-7&&r.top>=7&&r.bottom<=innerHeight-7;}), `${theme}: structured fit tooltip stays within the 320px viewport`);

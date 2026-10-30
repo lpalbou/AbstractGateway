@@ -105,7 +105,7 @@ CATALOG_CSS = r"""
     .mc-cap:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
+    .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px max-content auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
     .mc-art.is-primary { background: var(--ui-surface-1); }
     .mc-art__id { grid-area: id; min-width: 0; }
@@ -115,12 +115,12 @@ CATALOG_CSS = r"""
     .mc-prov { font-size: var(--font-size-xs); font-weight: 650; color: var(--text-secondary); white-space: nowrap; }
     .mc-rec { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--accent); }
     .mc-art__size { grid-area: size; font-size: var(--font-size-sm); color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
+    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 4px; }
     .mc-fit { font-size: var(--font-size-xs); color: var(--text-secondary); white-space: nowrap; }
     .mc-fit.tone-ok { color: var(--success); }
     .mc-fit.tone-warn { color: var(--warning); }
     .mc-fit.tone-err { color: var(--error); }
-    .mc-installed, .mc-loaded { display: inline-flex; align-items: center; justify-content: center; color: var(--info); }
+    .mc-installed, .mc-loaded { display: inline-flex; flex: none; align-items: center; justify-content: center; color: var(--info); }
     .mc-installed svg, .mc-loaded svg, .mc-to-filters svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-installed svg, .mc-loaded svg { width: 14px; height: 14px; }
     .mc-loaded { min-height: 24px; padding: 2px; background: none; border: 0; }
@@ -489,8 +489,7 @@ CATALOG_JS = r"""
     }
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
-      const arts = mcCountArts(list) + (extras || []).length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> matching ${arts === 1 ? "version" : "versions"}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
