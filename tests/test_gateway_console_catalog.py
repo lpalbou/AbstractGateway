@@ -114,7 +114,7 @@ const ctx = vm.createContext({
     calls.push({ path, method: (opts && opts.method) || "GET", body: (opts && opts.body) || "" });
     // The console's catalog asks every quant of the rows' own repos (operator ruling 2026-10-29).
     if (path === "/api/gateway/models/catalog?hub=true&extended=true") return JSON.parse(JSON.stringify(FIXTURE));
-    if (path === "/api/gateway/models/catalog") throw new Error("the console asked the catalog without extended=true");
+    if (path === "/api/gateway/models/catalog") throw new Error("curated preview unavailable in this fixture");
     if (path.startsWith("/api/gateway/models/catalog?")) {
       if (HUB === null) throw new Error("hub search failed (offline?): connection refused");
       if (HUB.__pages) {  // one answer per `hub_page` (page 1 when absent)
@@ -535,7 +535,7 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
     for row in cat["rows"]:
         row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", quant="ud-q3_k_xl", quant_class="4bit", extended=True))
     out = _run(cat, "allquants", "")
-    assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog?hub=true&extended=true"}
+    assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog", "/api/gateway/models/catalog?hub=true&extended=true"}
     total = sum(len(r["artifacts"]) for r in cat["rows"])
     assert out["all"]["arts"] == sum(min(3, len(r["artifacts"])) for r in cat["rows"])
     assert out["all"]["count"] == [10, 10, total] and out["all"]["hash"] == "#catalog?quant=all"

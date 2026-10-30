@@ -12,7 +12,7 @@ try {
  for(const theme of ['dark','light']){
   const context=await browser.newContext({viewport:{width:1600,height:1100}});
   await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
-  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],holdInstalled=true,installedWaiters=[],rejectInstalled=true,catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],baseHold=true,baseWaiters=[],holdInstalled=true,installedWaiters=[],rejectInstalled=true,catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
   const current=structuredClone(catalog);
   const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
   page.on('pageerror',e=>errors.push(e.message));
@@ -25,6 +25,11 @@ try {
    if(p.endsWith('/me'))data={principal:{admin,user_id:'admin',tenant_id:'default',roles:[admin?'admin':'user']},auth:{user_auth_enabled:true}};
    if(p.endsWith('/host/first-run'))data={completed:true,needs_setup:false};
    if(p.endsWith('/models/catalog')){
+    if(!url.search){
+     if(baseHold)await new Promise(r=>baseWaiters.push(r));
+     const preview=structuredClone(current);for(const r of preview.rows)r.artifacts=r.artifacts.filter(a=>a.quant_class==='4bit').slice(0,3);
+     return route.fulfill({status:reject?503:200,contentType:'application/json',body:JSON.stringify(reject?{detail:'Catalog unavailable'}:preview)});
+    }
     catalogRequests++;
     if(hold)await new Promise(r=>waiters.push(r));
     if(reject)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Catalog unavailable"}'});
@@ -46,7 +51,11 @@ try {
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-loading-${theme}.png`)});
   await page.evaluate(()=>{mcLoad();mcLoad();});
   check(catalogRequests===1,`${theme}: repeated loads coalesce into one catalog request`);
-  release();await root.locator('.mc-card').first().waitFor();
+  baseHold=false;baseWaiters.splice(0).forEach(r=>r());
+  await root.locator('.mc-card').first().waitFor();
+  check(hold&&await root.locator('[data-mc-part="count"]').innerText().then(t=>t.includes('so far')),`${theme}: curated cards paint before full enrichment with explicitly provisional counts`);
+  check(await root.getByRole('status').filter({hasText:'Loading more versions'}).isVisible(),`${theme}: enrichment remains visible while curated cards are usable`);
+  release();await root.locator('[data-mc-part="count"]').filter({hasText:'18 matching versions'}).waitFor();
   check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
   check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
   holdInstalled=false;installedWaiters.splice(0).forEach(r=>r());

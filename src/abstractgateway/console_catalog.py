@@ -180,7 +180,7 @@ CATALOG_JS = r"""
     // The "fits this computer" filter keeps AbstractCore's FITS_FILTER_VERDICTS.
     const MC_FITS_FILTER_VERDICTS = ["fits", "tight", "needs_gpu_limit"];
     const MC_ENGINE_PROVIDER = { mlx: "mlx", ollama: "ollama", lmstudio: "lmstudio", huggingface: "huggingface", llamacpp: "huggingface" };
-    const mcStore = { data: null, error: "", loading: false, seq: 0, views: new Map(), busy: new Set(), notices: new Map(), reloadFor: new Set(), reloadTimer: null,
+    const mcStore = { data: null, partial: false, catalogPending: false, error: "", loading: false, seq: 0, views: new Map(), busy: new Set(), notices: new Map(), reloadFor: new Set(), reloadTimer: null,
       // "Delete download": `del` = key -> {phase: checking|confirm|deleting, plan, at};
       // `deleted` = keys whose files this page deleted (a finished download job
       // in the shared feed must not draw them as Downloaded again).
@@ -464,7 +464,7 @@ CATALOG_JS = r"""
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
       const arts = mcCountArts(list) + (extras || []).length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> matching ${arts === 1 ? "version" : "versions"}`;
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> matching ${arts === 1 ? "version" : "versions"}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -749,6 +749,9 @@ CATALOG_JS = r"""
         return `<div class="ui-alert tone-err" role="alert"><strong>The model catalog did not load.</strong><span>${esc(mcStore.error)}</span></div>`;
       }
       if (!mcStore.data) return mcLoadingMarkup("Loading the model catalog…");
+      if (!mcHfMode(view.filters) && mcStore.partial && !list.length && !extras.length) {
+        return mcStore.catalogPending ? mcLoadingMarkup("Looking for more versions…") : `<div class="ui-empty">No matching version in the initial catalog. Retry loading more versions.</div>`;
+      }
       if (!list.length && extras.length) return mcExtrasMarkup(view, extras);
       if (!list.length) {
         return `<div class="ui-empty mc-empty" data-mc-empty="1"><strong>No model matches these filters.</strong>`
@@ -865,9 +868,9 @@ CATALOG_JS = r"""
         count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
         controls: have ? mcControlsMarkup(view) : "",
-        notice: mcNoticeMarkup(view),
+        notice: mcNoticeMarkup(view) + (!mcHfMode(view.filters) && mcStore.data && mcStore.error ? `<div class="ui-alert tone-warn" role="alert"><strong>${mcStore.partial ? "More versions could not be loaded." : "Models could not be refreshed."}</strong><details class="ui-details"><summary>Details</summary><pre class="ui-log">${esc(mcStore.error)}</pre></details></div>` : ""),
         message: view.message ? `<div class="ui-alert tone-${esc(view.message.tone)}" role="status">${esc(view.message.text)}</div>` : "",
-        loading: have && (mcHfMode(view.filters) ? mcStore.hub.loading || mcStore.hub.loadingMore : mcStore.loading) ? mcLoadingMarkup("Refreshing models…") : "",
+        loading: have && (mcHfMode(view.filters) ? mcStore.hub.loading || mcStore.hub.loadingMore : mcStore.loading) ? mcLoadingMarkup(!mcHfMode(view.filters) && mcStore.partial && mcStore.catalogPending ? "Loading more versions…" : "Refreshing models…") : "",
         list: mcListMarkup(view, list, extras),
       };
       if (!mcPart(view, "list")) {
@@ -979,7 +982,20 @@ CATALOG_JS = r"""
     async function mcLoadOnce() {
       const seq = ++mcStore.seq;
       mcStore.loading = true;
+      mcStore.catalogPending = true;
       mcRender();
+      // A first paint needs no Hub enrichment or extended-quant probes. This
+      // existing curated contract is a truthful preview, explicitly incomplete.
+      // The full request below always runs and replaces it; a late preview can
+      // never overwrite the complete answer. Refreshes keep their current data.
+      if (!mcStore.data) {
+        api("/api/gateway/models/catalog", { slow: true }).then(data => {
+          if (seq !== mcStore.seq || mcStore.data || !data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) return;
+          mcStore.data = data;
+          mcStore.partial = true;
+          mcRender();
+        }, () => {}); // An unavailable preview leaves the authoritative request in charge.
+      }
       // The engines' own list, in parallel with the catalog (the Models tab only).
       let installedP = mcWantsInstalled()
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
@@ -993,6 +1009,7 @@ CATALOG_JS = r"""
           throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
         }
         mcStore.data = data;
+        mcStore.partial = false;
         mcStore.error = "";
         // The engines' own answer wins: a row they still report installed is
         // drawn installed again (the marker only outvotes a finished job).
@@ -1001,6 +1018,7 @@ CATALOG_JS = r"""
         if (seq !== mcStore.seq) return;
         mcStore.error = String((err && err.message) || err);
       }
+      mcStore.catalogPending = false;
       // Paint the complete catalog as soon as it arrives. Optional installed
       // discovery must never leave usable catalog data behind the initial spinner.
       mcRender();
