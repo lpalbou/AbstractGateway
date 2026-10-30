@@ -399,7 +399,7 @@ if (scenario.name === "claim") {
     const body = JSON.parse(put.body);
     if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Use as default body wrong: " + put.body);
     if (put.csrf !== "agcsrf_wizard") fail("Use as default PUT carried no CSRF header");
-    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Use as default");
+    if (!el("first-run-message").textContent.includes("Default text model set to Qwen3.5 9B")) fail("no readable confirmation after Use as default");
   }
 
   context.firstRunStep(1); await settle();

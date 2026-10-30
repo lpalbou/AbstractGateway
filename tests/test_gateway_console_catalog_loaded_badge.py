@@ -21,7 +21,7 @@ const ctx = vm.createContext({
   console, setTimeout, clearTimeout, encodeURIComponent, decodeURIComponent,
   location: { hash: "", pathname: "/console", search: "" }, history: { replaceState() {} }, document: { activeElement: null }, window: {},
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
-  ICONS: { trash: "<svg data-icon=\"trash\"></svg>", lock: "<svg data-icon=\"lock\"></svg>" },
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   $: (id) => ({ click: () => clicks.push(id) }),
   state: { principal: { admin: true }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map(),
            hostState: { models: [
@@ -61,10 +61,10 @@ def test_the_catalog_row_says_loaded_or_kept_and_opens_resources():
     proc = subprocess.run([node, f.name], capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert ">Loaded</button>" in out["loaded"] and 'data-mc-open-resources="1"' in out["loaded"]
+    assert 'data-icon="gear"' in out["loaded"] and 'data-mc-open-resources="1"' in out["loaded"]
     assert "Held by the runtime of account default/admin" in out["loaded"] and "Open Resources to keep it loaded" in out["loaded"]
     assert out["otherQuant"] == "", "another quant of the same repo is not the build in memory"
-    assert "Kept loaded</button>" in out["kept"] and 'data-icon="lock"' in out["kept"]
+    assert "Kept loaded:" in out["kept"] and 'data-icon="lock"' in out["kept"]
     assert out["notResident"] == "" and out["otherProvider"] == ""
     assert "tab-button-models" in out["clicks"], "the badge opens the Resources page"
-    assert "Kept loaded</button>" in out["row"], "the catalog row carries the badge"
+    assert "Kept loaded:" in out["row"], "the catalog row carries the badge"

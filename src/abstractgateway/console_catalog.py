@@ -10,12 +10,12 @@ console UI layer (``console_ui.py``), inside the same main script, so its
 functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 ``uiProgressMarkup``, ``trackDownloadJob``, ``dlCancel``...).
 
-- ONE CARD PER MODEL. Header: name, organisation, parameters, licence,
-  capability tags, a "Starter" badge when the row carries ``starter``. Body:
-  the model's artifacts as compact rows (provider, artifact id in mono with
-  ellipsis + tooltip + copy on click, quantization, download size, weights
-  and fit pills, one action per state). The recommended artifact is first
-  and primary; the others are quieter.
+- RESPONSIVE MODEL GRID. Header: name, organisation, parameters; licence
+  lives in the info help. Build rows show provider, precision, publisher, size
+  and fit, with standard download/default/delete/detail icon actions. Full ids
+  and technical metadata are on demand, with exact-id copying. The recommended
+  build is first. Browse and Downloaded are quick library views; advanced
+  kit filters start collapsed. Downloaded includes every precision.
 - ONE DOWNLOAD RENDERER. A running download is N's job
   (``state.downloadJobs``, fed by the SSE stream or polling in
   ``console_ui.py``) drawn by ``uiProgressMarkup`` -- the same component the
@@ -63,81 +63,83 @@ CATALOG_CSS = r"""
     .mc-active { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: 4px 10px; min-width: min-content; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
     .mc-active:empty { display: none; }
     .mc-active span + span::before { content: "\00B7"; margin-right: 10px; color: var(--text-muted); font-weight: 400; }
-    /* "Filters" (back up to the facet rows) only once they have scrolled under the line. */
-    .mc-filterbar .mc-to-filters { visibility: hidden; }
-    .mc-filterbar.af-filterbar--stuck .mc-to-filters { visibility: visible; }
     .mc-root > [data-mc-part]:empty { display: none; }
     .mc-id:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .mc-seam strong { font-weight: 650; }
-    /* Cards: one per model, condensed (R5.2): the header is one line (name,
-       organisation, parameters, licence, capability tags, badges) and each
-       artifact is one 44 px row. */
-    .mc-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; min-width: 0; }
-    .mc-hub-beside { display: grid; gap: 10px; min-width: 0; margin-top: 6px; }
-    .mc-hub-beside__title { margin: 6px 0 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-secondary); }
-    .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--text-secondary); font-size: var(--font-size-sm); }
-    .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 8px 14px 4px; }
-    .mc-card.is-starter { border-color: var(--accent-border, var(--ui-border-2)); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; padding: 2px 0; }
-    .mc-card__title { margin: 0; font-size: var(--font-size-md, 1rem); font-weight: 650; line-height: 1.3; color: var(--text-primary); letter-spacing: -.01em; overflow-wrap: break-word; min-width: 0; }
-    .mc-card__meta { color: var(--text-secondary); font-size: var(--font-size-sm); }
+    /* A library grid: one model per card, concise build identity, actions at the edge. */
+    .mc-library-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .mc-library { display: flex; gap: 6px; }
+    .mc-library .ui-btn { min-height: 36px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-library .ui-btn[aria-pressed="true"] { background: var(--ui-surface-2); color: var(--text-primary); box-shadow: inset 0 -2px var(--accent); }
+    .mc-host { margin-left: auto; font-size: var(--font-size-xs); }
+    .mc-root:not(.mc-filters-open) .af-filterbar__facets { display: none; }
+    .mc-root:not(.mc-filters-open) .af-filterbar__lead { border-bottom-color: var(--ui-border-1); border-radius: var(--radius-lg); }
+    .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
+    .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
+    .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
+    .mc-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); align-items: start; min-width: 0; }
+    .mc-hub-beside, .mc-hub-more, .mc-extra, .mc-list > .ui-empty, .mc-list > .ui-alert { grid-column: 1 / -1; }
+    .mc-hub-beside { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); min-width: 0; }
+    .mc-hub-beside__title { grid-column: 1 / -1; margin: 4px 0; font-size: var(--font-size-sm); font-weight: 600; color: var(--text-secondary); }
+    .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-card { container: mc-card / inline-size; display: grid; gap: 14px; min-width: 0; padding: 18px 18px 6px; }
+    .mc-card.is-starter { border-color: var(--accent-border); }
+    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+    .mc-card__title { margin: 0; flex: 1 1 auto; min-width: 0; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
+    .mc-card__meta { font-size: var(--font-size-sm); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
-    .mc-badge { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent-border, var(--ui-border-2)); }
-    .mc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
-    .mc-tag { padding: 1px 8px; border-radius: 999px; background: var(--ui-surface-2); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; white-space: nowrap; }
-    .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.45; }
-    /* Artifact rows: one grid line per row with fixed columns, so the columns
-       line up across every card: engine · id · quant · size · status chips ·
-       actions. Narrower cards (container queries) put the facts under the id. */
+    .mc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; width: 100%; }
+    .mc-tag { color: var(--text-secondary); font-size: var(--font-size-xs); }
+    .mc-tag + .mc-tag::before { content: "\00B7"; margin-right: 5px; color: var(--text-muted); }
+    .mc-badge { border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
     .mc-arts { display: grid; margin: 0 -8px; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; gap: 0 12px; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: var(--radius-md);
-      grid-template-columns: 96px minmax(0, 1fr) 72px 84px 236px 188px;
-      grid-template-areas: "prov id quant size chips action" "job job job job job job"; }
+    .mc-art { display: grid; align-items: center; min-height: 58px; padding: 6px 8px; min-width: 0; gap: 2px 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 64px 56px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
-    .mc-art.is-primary { background: var(--ui-surface-1); box-shadow: inset 3px 0 0 var(--accent); }
-    .mc-art.is-primary + .mc-art { border-top-color: transparent; }
-    .mc-art__facts { display: contents; }
-    .mc-art__prov { grid-area: prov; min-width: 0; }
-    .mc-prov { display: inline-flex; max-width: 100%; padding: 1px 8px; border-radius: var(--radius-sm); background: var(--ui-surface-2); border: 1px solid var(--ui-border-1); color: var(--text-primary); font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-art__id { grid-area: id; display: flex; align-items: center; gap: 7px; min-width: 0; }
-    .mc-id { display: block; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; font-family: var(--font-mono); font-size: var(--font-size-sm); line-height: 44px; color: var(--text-primary); background: transparent; border: 0; padding: 0; cursor: copy; }
-    .mc-art:not(.is-primary) .mc-id { color: var(--text-secondary); }
-    /* The recommended build: a small accent dot before its id (plus the row's accent edge). */
-    .mc-rec { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); }
-    .mc-art__quant { grid-area: quant; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-art__quant b { font-weight: 650; }
-    .mc-art__size { grid-area: size; color: var(--text-primary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
-    .mc-art__chips .ui-pill[title] { cursor: help; }
-    .mc-art__chips .mc-loaded { cursor: pointer; font-family: inherit; font-size: var(--font-size-xs); font-weight: 600; line-height: 1.4; }
-    .mc-art__chips .mc-loaded:hover { filter: brightness(1.15); }
-    .mc-art__chips .mc-loaded .button-icon svg { width: 11px; height: 11px; }
-    .mc-art__chips .mc-loaded:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 1px; }
-    .mc-art__action { grid-area: action; display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
-    .mc-art__action .ui-btn { min-height: 44px; padding: 6px 12px; white-space: nowrap; }
-    .mc-art__action .ui-btn.mc-del { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
-    .mc-art__action .ui-pill { white-space: nowrap; }
-    .mc-del .button-icon { display: inline-flex; }
-    .mc-del .button-icon svg { width: 18px; height: 18px; }
-    .mc-del[aria-busy="true"] .button-icon { animation: mc-del-busy 1s ease-in-out infinite alternate; }
+    .mc-art.is-primary { background: var(--ui-surface-1); }
+    .mc-art__id { grid-area: id; min-width: 0; }
+    .mc-build-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
+    .mc-build-name strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-build-publisher { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+    .mc-prov { font-size: var(--font-size-xs); font-weight: 650; color: var(--text-secondary); white-space: nowrap; }
+    .mc-rec { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--accent); }
+    .mc-art__size { grid-area: size; font-size: var(--font-size-sm); color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; }
+    .mc-fit { font-size: var(--font-size-xs); color: var(--text-secondary); white-space: nowrap; }
+    .mc-fit.tone-ok { color: var(--success); }
+    .mc-fit.tone-warn { color: var(--warning); }
+    .mc-fit.tone-err { color: var(--error); }
+    .mc-installed, .mc-loaded { display: inline-flex; align-items: center; justify-content: center; color: var(--info); }
+    .mc-installed svg, .mc-loaded svg, .mc-to-filters svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-installed svg, .mc-loaded svg { width: 14px; height: 14px; }
+    .mc-loaded { min-height: 24px; padding: 2px; background: none; border: 0; }
+    .mc-art__action { grid-area: action; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+    .mc-icon-wrap { display: inline-flex; }
+    .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 36px; min-height: 36px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
+    .mc-icon-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-art__action .mc-icon-action:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); border-color: var(--ui-border-1); }
+    .mc-art__action .mc-icon-action.is-primary { color: var(--accent); background: var(--accent-subtle); }
+    .mc-art__action .mc-icon-action.is-current { color: var(--accent); }
+    .mc-icon-action.is-current svg { fill: currentColor; }
+    .mc-icon-action[aria-busy="true"] svg { animation: mc-del-busy 1s ease-in-out infinite alternate; }
+    .mc-icon-action:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
     @keyframes mc-del-busy { from { opacity: 1; } to { opacity: .3; } }
-    .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
-    .mc-del-confirm__q { flex: 1 1 260px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.45; }
-    .mc-del-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-    .mc-del-confirm__actions .ui-btn { min-height: 44px; padding: 6px 14px; }
-    .mc-art__action .mc-muted { color: var(--text-muted); font-size: var(--font-size-xs); text-align: right; }
-    .mc-art__job { grid-area: job; display: grid; gap: 6px; min-width: 0; padding-bottom: 6px; }
+    .mc-art__details { grid-area: details; margin-top: 8px; padding: 12px; border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); background: var(--ui-surface-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-art__details[hidden] { display: none; }
+    .mc-art__details p { margin: 8px 0 0; line-height: 1.5; }
+    .mc-id { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); color: var(--text-primary); cursor: copy; padding: 6px 0; }
+    .mc-id:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+    .mc-art__job { grid-area: job; display: grid; min-width: 0; gap: 6px; }
     .mc-art__job:empty { display: none; }
-    .mc-art:not(.is-primary) .ui-pill.tone-muted { opacity: .85; }
-    @container mc-card (max-width: 1000px) {
-      .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id action" "facts action" "job job"; padding-bottom: 6px; }
-      .mc-art__facts { grid-area: facts; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
-      .mc-id { line-height: 1.4; padding: 6px 0 2px; }
-    }
-    @container mc-card (max-width: 560px) {
-      .mc-art { grid-template-areas: "id action" "facts facts" "job job"; }
-      .mc-id { line-height: 44px; padding: 0; }
-    }
+    .mc-art__job .ui-dl-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .mc-art__job .ui-dl-confirm .ui-btn { min-height: 36px; }
+    .mc-art__action .mc-muted { color: var(--text-secondary); font-size: var(--font-size-xs); }
+    .mc-del-confirm { display: grid; gap: 10px; padding: 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); font-size: var(--font-size-sm); }
+    .mc-del-confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .mc-del-confirm__actions .ui-btn { min-height: 40px; }
+    .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
+    @container mc-card (max-width: 360px) { .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; } .mc-art__chips { justify-content: flex-start; } .mc-art__size { text-align: left; } }
+    @media (pointer: coarse) { .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { min-width: 44px; min-height: 44px; height: 44px; } }
+    @media (max-width: 479.98px) { .mc-card { padding: 14px 12px 4px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
     /* Downloaded models no catalog entry knows: plain rows under a small heading. */
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
@@ -180,7 +182,7 @@ CATALOG_JS = r"""
       // "Delete download": `del` = key -> {phase: checking|confirm|deleting, plan, at};
       // `deleted` = keys whose files this page deleted (a finished download job
       // in the shared feed must not draw them as Downloaded again).
-      del: new Map(), deleted: new Set(),
+      del: new Map(), deleted: new Set(), defaultBusy: new Set(),
       // GET /models/installed (models_installed_v1): what the local engines
       // hold. Rows no catalog artifact accounts for are drawn as plain rows
       // under "Not in the catalog" (status All / Downloaded).
@@ -535,17 +537,35 @@ CATALOG_JS = r"""
     function mcLlamaUpdateMarkup(a, unloadable, admin) {
       const up = mcLlamaUpdate(a);
       if (!up) return "";
-      if (mcStore.llamaUpdating) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Updating llama.cpp...</button>`;
+      if (mcStore.llamaUpdating) return mcIconButton("", "retry", "Updating llama.cpp", "Updating llama.cpp", 'aria-busy="true"', true);
       const tip = `${unloadable} Installs llama-cpp-python ${up.update_to} through the engine installer (it keeps this computer's GPU build).`;
-      return `<button type="button" class="ui-btn is-primary" data-mc-action="llama-update" title="${esc(tip)}"${admin ? "" : ' disabled title="Only an admin can update llama.cpp"'}>Update llama.cpp</button>`;
+      return mcIconButton("llama-update", "retry", "Update llama.cpp", admin ? tip : "Only an admin can update llama.cpp", "", !admin, " is-primary");
     }
     // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
     // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
     function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
+    function mcIconButton(action, icon, label, tip, attrs, disabled, extra) {
+      return `<span class="mc-icon-wrap" data-af-tip="${esc(tip || label)}"><button type="button" class="ui-btn mc-icon-action${extra || ""}"${action ? ` data-mc-action="${esc(action)}"` : ""} ${attrs || ""} aria-label="${esc(label)}" data-af-tip="${esc(tip || label)}"${disabled ? " disabled" : ""}>${ICONS[icon]}</button></span>`;
+    }
+    function mcBuildIdentity(a, extra) {
+      const id = String(a.artifact || "");
+      const publisher = id.includes("/") ? id.split("/")[0] : extra ? mcProviderLabel(a.provider) : "";
+      const provider = ({huggingface:"HF"})[a.provider] || mcProviderLabel(a.provider);
+      const quant = extra ? id.split("/").pop() : a.quant ? (MC_QUANT_LABEL[a.quant] || String(a.quant)) : (MC_QUANT_LABEL[a.quant_class] || "Unspecified");
+      return `<div class="mc-build-name"><span class="mc-prov" data-af-tip="${esc(mcProviderLabel(a.provider))}">${esc(provider)}</span><strong>${esc(quant)}</strong>${a.recommended ? '<span class="mc-rec" role="img" aria-label="Recommended for this computer" data-af-tip="Recommended for this computer"></span>' : ""}</div>${publisher ? `<span class="mc-build-publisher">${esc(publisher)}</span>` : ""}`;
+    }
+    function mcBuildDetails(a, text, view) {
+      const open = !!view && view.details.has(mcKey(a));
+      const id = `mc-build-${encodeURIComponent(view ? view.key : "model")}-${encodeURIComponent(mcKey(a))}`;
+      return { button: mcIconButton("details", "info", "Build details", "Build details · " + a.artifact, `data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}" aria-expanded="${open}" aria-controls="${esc(id)}"`),
+        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID · ${esc(a.artifact)}" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p></div>` };
+    }
     function mcDefaultMarkup(provider, artifact, attrs, admin) {
       const cur = mcCurrentDefault();
-      if (cur && cur.provider === provider && cur.model === servedModelId(provider, artifact)) return uiPill("Default text model", "info");
-      return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>`;
+      const current = !!cur && cur.provider === provider && cur.model === servedModelId(provider, artifact);
+      const saving = mcStore.defaultBusy.has(downloadJobKey(provider, artifact));
+      const label = saving ? "Saving default text model" : current ? "Default text model" : "Use as default text model";
+      return mcIconButton(current ? "" : "default", "star", label, current || admin ? label : "Only an admin can change the default text model", attrs + ` aria-pressed="${current}"${current ? ' aria-disabled="true"' : ""}${saving ? ' aria-busy="true"' : ""}`, !admin || saving, current ? " is-current" : "");
     }
     function mcActionMarkup(row, a, job) {
       const key = mcKey(a);
@@ -554,27 +574,26 @@ CATALOG_JS = r"""
       if (job && dlActive(job)) {
         const jid = dlJobId(job);
         // Two steps (console_ui.py dlCancelMarkup): a click only asks.
-        return dlCancelMarkup(jid, "Cancel", { attrs: ` data-mc-action="cancel" data-job="${esc(jid)}"` });
+        if (dlConfirming(jid)) return "";
+        if (dlFeed.cancelling.has(jid)) return mcIconButton("", "close", "Cancelling download", "Cancelling download", 'aria-busy="true"', true);
+        return mcIconButton("cancel", "close", "Cancel download", "Cancel this download", `data-job="${esc(jid)}"`);
       }
-      if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
+      if (mcStore.busy.has(key)) return mcIconButton("", "download", "Starting download", "Starting download", 'aria-busy="true"', true);
       const unloadable = mcUnloadable(a);
       if (mcInstalled(a)) {
         const del = mcDeleteButton(a, attrs, admin);
         if (!mcCanBeDefault(row)) return del;
         // Greyed with the reason: a default it cannot load would fail at the first call.
-        if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Use as default</button>`) + del;
-        const cur = mcCurrentDefault();
-        if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
-        return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
+        if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || mcIconButton("", "star", "Use as default text model", unloadable, 'data-mc-unloadable="1"', true)) + del;
+        return mcDefaultMarkup(a.provider, a.artifact, attrs, admin) + del;
       }
-      if (unloadable) return mcLlamaUpdateMarkup(a, unloadable, admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(unloadable)}">Download</button>`;
+      if (unloadable) return mcLlamaUpdateMarkup(a, unloadable, admin) || mcIconButton("", "download", "Download", unloadable, 'data-mc-unloadable="1"', true);
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
-        return `<span class="mc-muted" title="${esc(why)}">Not available here</span>`;
+        return mcIconButton("", "download", "Download unavailable", why, "", true);
       }
-      const label = job && job.status === "failed" ? "Try again" : "Download";
-      const tone = a.recommended ? "is-primary" : "is-ghost";
-      return `<button type="button" class="ui-btn ${tone}" data-mc-action="download" ${attrs}${admin ? "" : ' disabled title="Only an admin can download models"'}>${label}</button>`;
+      const label = job && job.status === "failed" ? "Retry download" : "Download";
+            return mcIconButton("download", label === "Download" ? "download" : "retry", label, admin ? label + " · " + a.artifact : "Only an admin can download models", attrs, !admin, a.recommended ? " is-primary" : "");
     }
     // Delete (a trash-bin icon button, tooltip "Delete"; the row already
     // names the model) on every downloaded row. The first click asks the
@@ -582,12 +601,9 @@ CATALOG_JS = r"""
     // confirmation below the row states that size.
     function mcDeleteButton(a, attrs, admin) {
       const cur = mcStore.del.get(mcKey(a));
-      const icon = `<span class="button-icon" aria-hidden="true">${ICONS.trash}</span>`;
-      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Checking" data-af-tip="Checking what a delete would free">${icon}</button>`;
-      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Deleting" data-af-tip="Deleting the downloaded files">${icon}</button>`;
       if (cur && cur.phase === "confirm") return "";
-      const tip = admin ? `Delete ${a.artifact || "this model"} from this computer (files only)` : "Only an admin can delete downloaded models";
-      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs} aria-label="Delete" data-af-tip="${esc(tip)}"${admin ? "" : " disabled"}>${icon}</button>`;
+      if (cur && ["checking", "deleting"].includes(cur.phase)) return mcIconButton("", "trash", cur.phase === "checking" ? "Checking" : "Deleting", "Checking or deleting downloaded files", 'aria-busy="true"', true, " mc-del");
+      return mcIconButton("delete-ask", "trash", "Delete", admin ? `Delete ${a.artifact || "this model"} from this computer (files only)` : "Only an admin can delete downloaded models", attrs, !admin, " mc-del");
     }
     function mcDeleteConfirmMarkup(a) {
       const cur = mcStore.del.get(mcKey(a));
@@ -608,6 +624,7 @@ CATALOG_JS = r"""
       if (job && dlActive(job)) {
         const phase = uiJobPhase(job);
         out += uiProgressMarkup(job, job.parent_job ? `${UI_PHASE_LABELS[phase] || "Downloading"} · part of Download all` : (UI_PHASE_LABELS[phase] || "Downloading"));
+        if (dlConfirming(dlJobId(job))) out += dlCancelMarkup(dlJobId(job), "Cancel", {attrs:` data-mc-action="cancel" data-job="${esc(dlJobId(job))}"`});
       } else if (job && job.status === "failed") {
         const said = String(job.ended_reason || job.message || "Try again.").trim();
         const why = String(job.error || job.message || "").trim();
@@ -644,63 +661,36 @@ CATALOG_JS = r"""
       const title = (kept ? "Kept loaded: never evicted to make room for another model." : "Loaded in memory now.")
         + held + ` Open Resources to ${kept ? "release it or unload it" : "keep it loaded or unload it"}.`;
       const icon = kept ? `<span class="button-icon" aria-hidden="true">${ICONS.lock}</span>` : "";
-      return `<button type="button" class="ui-pill tone-${kept ? "ok" : "info"} mc-loaded${kept ? " is-plain" : ""}" data-mc-open-resources="1" title="${esc(title)}" aria-label="${esc(title)}">${icon}${kept ? "Kept loaded" : "Loaded"}</button>`;
+      return `<button type="button" class="mc-loaded" data-mc-open-resources="1" data-af-tip="${esc(title)}" aria-label="${esc(title)}">${kept ? ICONS.lock : ICONS.gear}</button>`;
     }
-    function mcArtMarkup(row, a, alone) {
-      const job = mcJob(a);
-      const presence = a.presence || {};
-      const installed = mcInstalled(a);
+    function mcArtMarkup(row, a, alone, view) {
+      const job = mcJob(a), installed = mcInstalled(a), presence = a.presence || {};
       const gone = mcStore.deleted.has(mcKey(a));
-      const [wLabel, wTone] = installed ? MC_WEIGHTS.installed : gone ? MC_WEIGHTS.absent : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
-      const wTitle = gone ? "" : [presence.location, presence.evidence].filter(Boolean).join(" · ");
-      const weights = job && dlActive(job) ? dlStatePill(job) : uiPill(wLabel, wTone, wTitle);
+      const [wLabel] = installed ? MC_WEIGHTS.installed : gone ? MC_WEIGHTS.absent : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
       const verdict = String((a.fit || {}).verdict || "unknown");
-      const [fLabel, fTone] = a.supported_on_host === false ? ["Not for this computer", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
+      const [fLabel, fTone] = a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
       const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
-      const raw = a.quant ? String(a.quant) : "";
-      const bits = uiNum(a.bits) ? `${a.bits} bits` : "";
-      // With quant_class: its label ("8-bit"). Without it: the catalog's own
-      // quant string as sent -- never a class guessed from that string.
-      const quantMain = quantOn ? (MC_QUANT_LABEL[a.quant_class] || a.quant_class) : (raw || "Not stated");
-      const quantTitle = [raw ? `Quantization: ${raw}` : "The catalog does not name a quantization", bits].filter(Boolean).join(" · ");
       const exact = ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
-      const size = uiNum(a.download_bytes) ? `${exact ? "" : "about "}${uiBytes(a.download_bytes)}` : "Size unknown";
-      const sizeTitle = uiNum(a.download_bytes) ? (exact ? "Download size" : "Estimated from the parameter count and quantization") : "The catalog has no size for this build";
-      const primary = !!a.recommended;
-      // The marker only means something next to other builds of the same model.
-      const rec = primary && !alone ? `<span class="mc-rec" role="img" aria-label="Recommended for this computer" title="Recommended for this computer"></span>` : "";
-      return `<li class="mc-art${primary ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
-        + `<div class="mc-art__id">${rec}<code class="mc-id" tabindex="0" role="button" title="${esc(a.artifact)} (click to copy)" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code></div>`
-        + `<div class="mc-art__facts">`
-        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(a.engine && a.engine !== a.provider ? `${mcProviderLabel(a.provider)} (runs on ${mcProviderLabel(a.engine)})` : mcProviderLabel(a.provider))}">${esc(mcProviderLabel(a.provider))}</span></div>`
-        + `<div class="mc-art__quant" title="${esc(quantTitle)}"><b>${esc(quantMain)}</b></div>`
-        + `<div class="mc-art__size" title="${esc(sizeTitle)}">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${weights}${mcLoadedBadge(a)}${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
-        + `</div>`
-        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
-        + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div>`
-        + `</li>`;
+      const size = uiNum(a.download_bytes) ? `${exact ? "" : "~"}${uiBytes(a.download_bytes)}` : "—";
+      const text = [wLabel, !uiNum(a.download_bytes) ? "Download size not reported" : `${exact ? "Download size" : "Estimated size"}: ${uiBytes(a.download_bytes)}`, `Fit: ${fLabel}. ${mcFitTitle(a.fit)}`, row.license ? "License: " + row.license : "", presence.location, presence.evidence].filter(Boolean).join(" · ");
+      const details = mcBuildDetails(a, text, view);
+      return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
+        + `<div class="mc-art__id">${mcBuildIdentity(a)}</div>`
+        + `<div class="mc-art__size" data-af-tip="${exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
+        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" data-af-tip="${esc(mcFitTitle(a.fit))}" aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
+        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}${details.button}</div>`
+        + details.body + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div></li>`;
     }
-    // A downloaded model no catalog entry accounts for: the same row, with
-    // what the engine says (provider, id, quant, size on disk), Downloaded
-    // (and Loaded) chips, and the same Delete.
-    function mcExtraArtMarkup(r) {
+    function mcExtraArtMarkup(r, view) {
       const admin = !!(state.principal && state.principal.admin);
       const attrs = `data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}"`;
-      const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "Size unknown";
-      const quant = r.quant ? String(r.quant) : "Not stated";
-      const chips = uiPill("Downloaded", "ok", String(r.location || "")) + (mcLoadedBadge(r) || (r.loaded === true ? uiPill("Loaded", "info") : ""));
+      const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "—";
+      const details = mcBuildDetails(r, `Downloaded · ${r.quant || "Quantization not reported"} · ${r.location || "Location not reported"}`, view);
       return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
-        + `<div class="mc-art__id"><code class="mc-id" tabindex="0" role="button" title="${esc(r.artifact)} (click to copy)" data-mc-copy="${esc(r.artifact)}">${esc(r.artifact)}</code></div>`
-        + `<div class="mc-art__facts">`
-        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(mcProviderLabel(r.provider))}">${esc(mcProviderLabel(r.provider))}</span></div>`
-        + `<div class="mc-art__quant" title="${esc(r.quant ? `Quantization: ${r.quant}` : "The engine does not name a quantization")}"><b>${esc(quant)}</b></div>`
-        + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${chips}</div>`
-        + `</div>`
-        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || `<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="${esc(mcUnloadable(r))}">Use as default</button>`) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
-        + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
-        + `</li>`;
+        + `<div class="mc-art__id">${mcBuildIdentity(r, true)}</div><div class="mc-art__size">${esc(size)}</div>`
+        + `<div class="mc-art__chips"><span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>${mcLoadedBadge(r)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || mcIconButton("", "star", "Use as default text model", mcUnloadable(r), 'data-mc-unloadable="1"', true)) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}${details.button}</div>`
+        + details.body + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div></li>`;
     }
     function mcExtrasMarkup(view, extras) {
       const f = view.filters;
@@ -710,7 +700,7 @@ CATALOG_JS = r"""
       return `<section class="ui-card mc-card mc-extra" data-mc-extra="1" aria-label="Not in the catalog"><h4 class="mc-extra__title">Not in the catalog</h4>`
         + (note ? `<div class="ui-alert tone-${esc(note.tone)}" role="status">${esc(note.text)}</div>` : "")
         + (err ? `<div class="ui-alert tone-warn" role="alert" data-mc-installed-error="1"><strong>The models outside the catalog could not be listed.</strong><span>${esc(err)}</span></div>` : "")
-        + (extras.length ? `<ul class="mc-arts">${extras.map(mcExtraArtMarkup).join("")}</ul>` : "")
+        + (extras.length ? `<ul class="mc-arts">${extras.map(r => mcExtraArtMarkup(r, view)).join("")}</ul>` : "")
         + `</section>`;
     }
     // One line of facts per model: name · organisation · parameters · licence, the capability tags and badges inline.
@@ -722,18 +712,18 @@ CATALOG_JS = r"""
       const versionsId = `mc-versions-${encodeURIComponent(view ? view.key : "catalog")}-${encodeURIComponent(versionKey)}`;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
-      const meta = [row.vendor, params ? `${params} params${active ? ` (${active} active)` : ""}` : "", row.license].filter(Boolean);
+      const meta = [row.vendor, params ? `${params}${active ? ` / ${active} active` : ""}` : ""].filter(Boolean);
       const caps = mcRowCaps(row).map((c) => (MC_CAPS.find((x) => x[0] === c) || [c, c])[1]);
       const badges = [];
       if (row.starter) badges.push(`<span class="mc-badge" title="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>`
+        + `<header class="mc-card__head"><h4 class="mc-card__title" data-af-tip="${esc(row.license ? "License: " + row.license : "License not reported")}">${esc(row.display_name || row.id)}</h4>`
         + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
         + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
         + badges.join("")
         + `</header>`
-        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1)).join("")}</ul>`
+        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1, view)).join("")}</ul>`
         + (item.arts.length > MC_VERSION_PREVIEW ? `<div class="mc-versions"><button type="button" class="ui-btn is-quiet" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}">${expanded ? "Show fewer" : `Show ${item.arts.length - MC_VERSION_PREVIEW} more ${item.arts.length - MC_VERSION_PREVIEW === 1 ? "version" : "versions"}`}</button></div>` : "")
         + `</article>`;
     }
@@ -814,16 +804,28 @@ CATALOG_JS = r"""
         + (items.length || !mcHubRowCount(hub.data) ? "" : `<div class="ui-empty">No Hugging Face result matches these filters.</div>`)
         + mcHubMoreMarkup(hub.data) + `</section>`;
     }
-    function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search by model, organisation or artifact id"; }
+    function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search models…"; }
     function mcModeMarkup(view) {
       const hf = mcHfMode(view.filters);
       return afFilterScopeButtonsHtml([{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging Face" }], hf ? "hf" : "catalog");
     }
     function mcLoadingMarkup(label) { return `<div class="mc-loading" role="status" aria-live="polite"><span class="mc-loading__wheel" aria-hidden="true"></span><span>${esc(label)}</span></div>`; }
+    function mcLibraryMarkup(view) {
+      if (view.guide) return "";
+      const mine = view.filters.status === "downloaded";
+      return `<button type="button" class="ui-btn is-quiet" data-mc-action="library" data-mc-library="browse" aria-pressed="${!mine}">Browse</button><button type="button" class="ui-btn is-quiet" data-mc-action="library" data-mc-library="downloaded" aria-pressed="${mine}">Downloaded</button>`;
+    }
+    function mcHostSummary(view) {
+      const profile = mcStore.data && mcStore.data.host_profile || {};
+      const facts = mcHostMarkup().replace(/<[^>]*>/g, "");
+      return `<span class="mc-host__facts" data-af-tip="${esc(facts)}">${esc(profile.gpu_name || profile.accelerator || "Host")}</span>`
+        + mcIconButton("refresh", "refresh", mcStore.loading ? "Refreshing models" : "Refresh models", "Refresh the host model inventory", mcStore.loading ? 'aria-busy="true"' : "", mcStore.loading)
+        + (view.guide ? '<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in Models</button>' : "");
+    }
     function mcShellMarkup(view) {
       const f = view.filters;
-      return `<div class="mc-root" data-mc-view="${esc(view.key)}">`
-        + `<div class="mc-host" data-mc-part="host"></div>`
+      return `<div class="mc-root${view.filtersOpen ? " mc-filters-open" : ""}" data-mc-view="${esc(view.key)}">`
+        + `<div class="mc-library-line"><div class="mc-library" role="group" aria-label="Model library" data-mc-part="library"></div><div class="mc-host" data-mc-part="host"></div></div>`
         // The kit's filter bar (docs/filter-bar.md in abstractuic): the first line, then the facet rows.
         + `<div class="af-filterbar af-filterbar--sticky mc-filterbar">`
         + `<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">`
@@ -834,7 +836,7 @@ CATALOG_JS = r"""
         + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}</span>`
         + `</div>`
         + `<div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
-        + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
+        + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button></div></div>`
         + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
         + `</div>`
         + `<div data-mc-part="notice"></div>`
@@ -855,8 +857,8 @@ CATALOG_JS = r"""
       const list = have ? mcVisible(view.filters) : [];
       const extras = have ? mcExtras(view, view.filters) : [];
       const parts = {
-        host: mcHostMarkup() + `<button type="button" class="ui-btn is-quiet" data-mc-action="refresh">${mcStore.loading ? "Checking..." : "Check again"}</button>`
-          + (view.guide ? `<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in the Models tab</button>` : ""),
+        host: mcHostSummary(view),
+        library: mcLibraryMarkup(view),
         mode: mcModeMarkup(view),
         count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
@@ -875,12 +877,14 @@ CATALOG_JS = r"""
       // and redraw the rest; a focused chip, scope button or switch keeps the focus.
       let focus = null;
       let versionFocus = null;
+      let actionFocus = null;
       try {
         const a = document.activeElement;
         const q = (v) => String(v).replace(/"/g, "");
         if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
         else if (a && el.contains(a) && a.dataset && a.dataset.afScope) focus = `[data-af-scope="${q(a.dataset.afScope)}"]`;
         else if (a && el.contains(a) && a.dataset && a.dataset.mcAction === "versions") versionFocus = a.dataset.mcVersionKey;
+        else if (a && el.contains(a) && a.dataset && a.dataset.mcAction) actionFocus = { action:a.dataset.mcAction, provider:a.dataset.provider, artifact:a.dataset.artifact, library:a.dataset.mcLibrary };
       } catch { focus = null; }
       for (const name of Object.keys(parts)) {
         const p = mcPart(view, name);
@@ -900,6 +904,10 @@ CATALOG_JS = r"""
         if (again && typeof again.focus === "function") again.focus();
       }
       if (versionFocus !== null) Array.from(el.querySelectorAll('[data-mc-action="versions"]')).find(b => b.dataset.mcVersionKey === versionFocus)?.focus();
+      if (actionFocus) Array.from(el.querySelectorAll('[data-mc-action]')).find(b => b.dataset.mcAction === actionFocus.action && b.dataset.provider === actionFocus.provider && b.dataset.artifact === actionFocus.artifact && b.dataset.mcLibrary === actionFocus.library)?.focus();
+      const shell = el.querySelector(".mc-root"), filters = el.querySelector('[data-mc-action="filters"]');
+      if (shell) shell.classList.toggle("mc-filters-open", !!view.filtersOpen);
+      if (filters) filters.setAttribute("aria-expanded", String(!!view.filtersOpen));
     }
     function mcRender() { for (const view of mcStore.views.values()) mcRenderView(view); }
     // `af-filterbar--stuck` once the facet rows have scrolled under the sticky
@@ -1127,7 +1135,9 @@ CATALOG_JS = r"""
     }
     async function mcUseDefault(view, provider, artifact, btn) {
       const model = servedModelId(provider, artifact);
-      if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+      const key = downloadJobKey(provider, artifact);
+      const returnFocus = !!btn && document.activeElement === btn;
+      mcStore.defaultBusy.add(key); mcRender();
       try {
         // EXACTLY THE CHOSEN MODEL. The gateway merges a route save field by
         // field (core_config `_merge_over_stored_route`: an unnamed field keeps
@@ -1135,7 +1145,8 @@ CATALOG_JS = r"""
         // the previous route's base_url, reasoning and options: a new provider
         // pointed at the old server's port. The terminal console sends the same.
         await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model, base_url: "", reasoning: "", options: {} }) });
-        const text = `Default text model: ${mcProviderLabel(provider)} · ${model}.`;
+        const selected = mcRowsOf(mcStore.data).concat(mcRowsOf(mcStore.hub.data)).find(r => mcArts(r).some(a => a.provider === provider && a.artifact === artifact));
+        const text = selected ? `Default text model set to ${selected.display_name || selected.id}.` : "Default text model updated.";
         view.message = { tone: "ok", text };
         if (view.guide) { $("first-run-message").textContent = text; $("first-run-message").className = "message ok"; }
         try { await renderDefaults(await api("/api/gateway/config/capability-defaults")); } catch { /* saved; the grid refreshes on its next visit */ }
@@ -1143,7 +1154,10 @@ CATALOG_JS = r"""
       } catch (err) {
         view.message = { tone: "err", text: `Could not set the default: ${String((err && err.message) || err)}` };
       }
-      mcRender();
+      mcStore.defaultBusy.delete(key); mcRender();
+      if (returnFocus && (!document.activeElement || document.activeElement === document.body) && view.el && typeof view.el.querySelectorAll === "function") {
+        Array.from(view.el.querySelectorAll('button[data-provider]')).find(b => b.dataset.provider === provider && b.dataset.artifact === artifact && (b.getAttribute("aria-label") === "Default text model" || b.dataset.mcAction === "default"))?.focus();
+      }
     }
     const MC_DELETE_URL = "/api/gateway/models/delete-download";
     function mcDeleteNotice(err) {
@@ -1214,8 +1228,24 @@ CATALOG_JS = r"""
         return;
       }
       if (action === "filters") {
-        const host = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector(".mc-host") : null;
-        if (host && typeof host.scrollIntoView === "function") host.scrollIntoView({ block: "start", behavior: "smooth" });
+        view.filtersOpen = !view.filtersOpen; mcRenderView(view);
+        const panel = mcPart(view, "controls");
+        if (view.filtersOpen && panel && typeof panel.scrollIntoView === "function") panel.scrollIntoView({block:"nearest"});
+        return;
+      }
+      if (action === "details") {
+        const key = downloadJobKey(b.dataset.provider,b.dataset.artifact);
+        view.details.has(key) ? view.details.delete(key) : view.details.add(key);
+        mcRenderView(view); return;
+      }
+      if (action === "library") {
+        if (b.dataset.mcLibrary === "downloaded") {
+          if (view.filters.status !== "downloaded") view.browseFilters = {...view.filters};
+          mcSetFilter(view,{quant:"all",provider:"all",cap:"all",fits:false,status:"downloaded",hf:null});
+        } else {
+          view.filters = view.browseFilters ? {...view.browseFilters} : mcDefaultFilters();
+          mcWriteHash(view); mcRenderView(view);
+        }
         return;
       }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
@@ -1231,7 +1261,7 @@ CATALOG_JS = r"""
       if (!el) return;
       const o = opts || {};
       const known = mcStore.views.get(key);
-      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), expanded: new Set(), syncHash: !!o.syncHash, guide: !!o.guide, message: null };
+      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), expanded: new Set(), details: new Set(), filtersOpen: false, syncHash: !!o.syncHash, guide: !!o.guide, message: null };
       if (o.filters) view.filters = Object.assign(mcDefaultFilters(), o.filters);
       mcStore.views.set(key, view);
       el.onclick = (event) => {

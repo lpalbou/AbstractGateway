@@ -84,7 +84,7 @@ def test_an_extra_row_has_the_same_trash_confirmation_and_delete_route() -> None
     out = _run(cat, "merged", "#catalog?quant=all", installed=installed)
     row = out["html"].split('data-mc-art="ollama/my-own-model:7b"')[1].split("</li>")[0]
     assert 'data-mc-action="delete-ask"' in row and re.search(r'aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)"', row) and 'title="Delete"' not in row and 'data-icon="trash"' in row
-    assert ">Downloaded<" in row and "q4_k_m" in row and "Use as default" not in row
+    assert 'aria-label="Downloaded"' in row and "q4_k_m" in row and "Use as default" not in row
     confirm = out["confirmHtml"].split('data-mc-art="ollama/my-own-model:7b"')[1].split("</li>")[0]
     assert 'data-mc-del-confirm="ollama/my-own-model:7b"' in confirm and "from this computer. Files only" in confirm
     assert out["deletes"] == [
@@ -109,24 +109,19 @@ def test_the_condensed_card_and_row() -> None:
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
     assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-tags"' in head and ">Starter<" in head
-    assert "4B params" in head and "apache-2.0" in head
+    assert "4B" in head and "apache-2.0" in head
     assert "ui-mark" not in card
     rows = card.split('<li class="mc-art')[1:]
     assert len(rows) == 3
-    order = ["mc-art__id", "mc-art__prov", "mc-art__quant", "mc-art__size", "mc-art__chips", "mc-art__action"]
     for r in rows:
-        at = [r.index(f'class="{c}"') for c in order]
-        assert at == sorted(at), r
-        chips = r.split('class="mc-art__chips">')[1].split("</div>")[0]
-        assert chips.count('class="ui-pill') == 2  # weights + fit
-    primary = [r for r in rows if r.startswith(' is-primary"')]
-    assert len(primary) == 1 and 'class="mc-rec" role="img" aria-label="Recommended for this computer"' in primary[0]
-    assert "Recommended for this computer</span>" not in card  # a dot, not a text line
-    # One grid line per row on a wide card, 44 px targets.
-    assert 'grid-template-areas: "prov id quant size chips action" "job job job job job job"' in CATALOG_CSS
-    assert re.search(r"\.mc-art \{[^}]*min-height: 44px", CATALOG_CSS)
-    assert re.search(r"\.mc-art__action \.ui-btn \{[^}]*min-height: 44px", CATALOG_CSS)
-    assert re.search(r"\.mc-art__action \.ui-btn\.mc-del \{[^}]*width: 44px", CATALOG_CSS)
+        for c in ['mc-art__id','mc-art__size','mc-art__chips','mc-art__action','mc-art__details']:
+            assert f'class="{c}"' in r
+        assert 'aria-label="Build details"' in r
+        assert ' hidden>' in r  # technical prose starts collapsed
+    assert sum('aria-label="Recommended for this computer"' in r for r in rows) == 1
+    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr))' in CATALOG_CSS
+    assert 'min-height: 58px' in CATALOG_CSS
+    assert 'width: 32px; height: 36px' in CATALOG_CSS
 
 
 def test_the_page_has_no_second_list() -> None:

@@ -46,7 +46,7 @@ const ctx = vm.createContext({
   state: { principal: { admin: __ADMIN__ }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
-  ICONS: { trash: '<svg data-icon="trash"></svg>' },
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   downloadJobKey: (p, a) => `${p || ""}/${a || ""}`,
   servedModelId: (p, a) => a,
   trackDownloadJob: () => {},
@@ -90,11 +90,11 @@ vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false, filters: {qua
 await settle();
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
-out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)">(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<\/button>/g) || []).length;
+out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete"[^>]*><svg data-icon="trash"><\/svg><\/button>/g) || []).length;
 out.disabledButtons = (html.match(/data-mc-action="delete-ask"[^>]*disabled/g) || []).length;
 const A = __TARGET__;
 const L = __LMS__;
-out.installedBefore = row(A).includes(">Downloaded<");
+out.installedBefore = row(A).includes('aria-label="Downloaded"');
 // Ask, then Keep: nothing deleted.
 click("delete-ask", A); await settle();
 out.askConfirm = row(A);
@@ -169,7 +169,7 @@ def test_confirm_states_the_size_then_deletes_and_the_row_turns_not_downloaded()
     # Two dry runs (ask, ask again) and no real delete before a deliberate answer.
     assert out["afterFastClick"] == [dict(target, dry_run=True), dict(target, dry_run=True)]
     assert out["deletes"][-1] == dict(target, dry_run=False)
-    assert ">Not downloaded<" in out["afterDelete"]
+    assert 'aria-label="Download"' in out["afterDelete"] and 'aria-label="Downloaded"' not in out["afterDelete"]
     assert 'data-mc-action="download"' in out["afterDelete"]
     assert 'data-mc-action="delete-ask"' not in out["afterDelete"]
     assert "Download deleted. 351 MB freed." in out["afterDelete"]
@@ -188,4 +188,4 @@ def test_the_engines_answer_wins_when_the_reload_still_reports_the_files() -> No
     cat, target, lms = _fixture()
     out = _run(cat, target, lms, stale=True)
     # The catalog reload after the delete still says installed: drawn installed.
-    assert ">Downloaded<" in out["afterDelete"] and 'data-mc-action="delete-ask"' in out["afterDelete"]
+    assert 'aria-label="Downloaded"' in out["afterDelete"] and 'data-mc-action="delete-ask"' in out["afterDelete"]

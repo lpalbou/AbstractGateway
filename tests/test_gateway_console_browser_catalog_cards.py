@@ -24,6 +24,9 @@ def test_catalog_loading_versions_and_provider_cards(tmp_path):
     catalog = _catalog(3)
     for i, row in enumerate(catalog["rows"]):
         row["artifacts"] = [_art(i, j) for j in range(18)]
+        for j, art in enumerate(row["artifacts"]):
+            art["artifact"] += f"-variant-{j}"
+    catalog["rows"][1]["artifacts"][0]["presence"]["status"] = "installed"
     fixture = tmp_path / "catalog.json"
     fixture.write_text(json.dumps(catalog), encoding="utf-8")
     shots = Path(os.getenv("ABSTRACTGATEWAY_BROWSER_SHOTS", str(tmp_path / "shots")))

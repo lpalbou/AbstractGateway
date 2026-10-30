@@ -106,7 +106,7 @@ const ctx = vm.createContext({
   state: { principal: { admin: true }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
-  ICONS: { trash: "<svg data-icon=\"trash\"></svg>" },
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   downloadJobKey: (p, a) => `${p || ""}/${a || ""}`,
   servedModelId: (p, a) => a,
   trackDownloadJob: (job) => { tracked.push(job); },
@@ -156,7 +156,7 @@ const snap = (name) => {
     hash: String(location.hash),
     notice: html.includes('data-mc-notice="quant_class"') && html.includes("This gateway's catalog does not report quant_class yet"),
     quantDisabled: /data-af-facet="quant"[^>]*disabled/.test(html) && !/data-af-facet="quant"[^>]*aria-pressed="true"/.test(html),
-    boldQuant: [...html.matchAll(/<div class="mc-art__quant"[^>]*><b>([^<]*)<\/b>/g)].map((x) => x[1]),
+    boldQuant: [...html.matchAll(/<div class="mc-build-name">.*?<strong>([^<]*)<\/strong>/g)].map((x) => x[1]),
     empty: html.includes('data-mc-empty="1"') && html.includes('data-mc-action="clear"'),
     hfEmpty: html.includes('data-mc-empty="hf"') && html.includes("Hugging Face has no model matching"),
     hfError: html.includes('data-mc-hf="error"') && html.includes("connection refused") && html.includes('data-mc-action="hf-search"'),
@@ -303,7 +303,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["initial"]["count"] == [m4, n, a4]
     assert out["initial"]["hash"] == "#catalog"
     assert out["initial"]["notice"] is False
-    assert set(out["initial"]["boldQuant"]) == {"4-bit"}
+    assert set(out["initial"]["boldQuant"]) == {"q4_k_m"}
     # 8-bit: only quant_class 8bit rows, count and link follow.
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "8bit")
     assert set(out["quant8"]["classes"]) == {"8bit"}
@@ -355,7 +355,7 @@ def _unreported() -> dict:
 def test_catalog_is_spliced_into_the_page_once() -> None:
     html = gateway_console_html()
     assert html.count("function mountModelCatalog(") == 1
-    assert html.count(".mc-card {") == 1
+    assert html.count(".mc-card { container:") == 1
     assert html.count('id="catalog-cards-root"') == 1
     panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
     # R5.2: one page. The cards are the whole panel; no second "On this computer" list.
@@ -618,13 +618,14 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
     ]}
     html = _run(cat, "unloadable", "#catalog?quant=all", installed=installed)["html"]
     card = html[html.index('data-mc-model="model-1"'):]
-    greyed = f'<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="{reason.replace(chr(39), "&#39;")}">'
-    assert greyed + "Download</button>" in card
-    assert greyed + "Use as default</button>" in card
+    disabled = re.findall(r'<button[^>]*data-mc-unloadable="1"[^>]*>', card)
+    assert any('aria-label="Download"' in b and 'disabled' in b for b in disabled)
+    assert any('aria-label="Use as default text model"' in b and 'disabled' in b for b in disabled)
+    assert reason.replace(chr(39), "&#39;") in card
     # The other build of the same model is offered as usual.
     assert f'data-mc-action="download" data-provider="{a2["provider"]}" data-artifact="{a2["artifact"]}"' in card
     extra = html[html.index("XHToken/Spark-X2.6-4B-GGUF"):]
-    assert greyed + "Use as default</button>" in extra and 'data-mc-action="default" data-provider="huggingface" data-artifact="XHToken/Spark-X2.6-4B-GGUF"' not in extra
+    assert re.search(r'aria-label="Use as default text model"[^>]*disabled', extra) and 'data-mc-action="default" data-provider="huggingface" data-artifact="XHToken/Spark-X2.6-4B-GGUF"' not in extra
     # Model 0's downloaded build (no flag) keeps its working buttons.
     assert 'data-mc-unloadable' not in html[:html.index('data-mc-model="model-1"')]
 
@@ -636,7 +637,10 @@ def test_an_unloadable_gguf_a_newer_llamacpp_loads_offers_the_update() -> None:
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    assert 'data-mc-action="llama-update"' in html and "Update llama.cpp" in html
+    cat = _catalog(2)
+    cat["rows"][1]["artifacts"][0].update(loadable=False, unloadable_reason="New architecture", llamacpp_update={"update_to":"0.3.29"})
+    rendered = _run(cat, "unloadable", "#catalog?quant=all")["html"]
+    assert 'data-mc-action="llama-update"' in rendered and 'aria-label="Update llama.cpp"' in rendered
     assert '/api/gateway/engines/llamacpp/install' in html
     assert "mcLlamaUpdateMarkup(a, unloadable, admin) ||" in html, "the greyed button stays only without an update"
 

@@ -12,7 +12,8 @@ try {
  for(const theme of ['dark','light']){
   const context=await browser.newContext({viewport:{width:1600,height:1100}});
   await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
-  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],reject=false;
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],reject=false,admin=true,defaultRoute=null,downloadCount=0;
+  const current=structuredClone(catalog);
   const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',async route=>{
@@ -20,14 +21,18 @@ try {
    if(url.hostname!=='catalog.test'){failures.push('External request: '+url.origin);return route.abort();}
    if(p==='/console')return route.fulfill({contentType:'text/html',body:html});
    let data={ok:true,items:[]};
-   if(req.method()==='POST')writes.push(p);
-   if(p.endsWith('/me'))data={principal:{admin:true,user_id:'admin',tenant_id:'default',roles:['admin']},auth:{user_auth_enabled:true}};
+   if(['POST','PUT'].includes(req.method()))writes.push({path:p,method:req.method(),body:req.postDataJSON()});
+   if(p.endsWith('/me'))data={principal:{admin,user_id:'admin',tenant_id:'default',roles:[admin?'admin':'user']},auth:{user_auth_enabled:true}};
    if(p.endsWith('/host/first-run'))data={completed:true,needs_setup:false};
    if(p.endsWith('/models/catalog')){
     if(hold)await new Promise(r=>waiters.push(r));
     if(reject)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Catalog unavailable"}'});
-    data=catalog;
+    data=current;
    }
+   if(p.endsWith('/models/download')){downloadCount++;const a=req.postDataJSON();data={ok:true,job:{job:'preview-download',provider:a.provider,artifact:a.artifact,status:'running',state:'downloading',bytes_done:100,bytes_total:1000}};}
+   if(p.endsWith('/models/delete-download')){const a=req.postDataJSON();data={status:a.dry_run?'planned':'deleted',freed_bytes:1000};if(!a.dry_run)for(const r of current.rows)for(const art of r.artifacts)if(art.provider===a.provider&&art.artifact===a.artifact)art.presence.status='absent';}
+   if(p.endsWith('/config/capability-defaults/output/text')&&req.method()==='PUT'){defaultRoute=req.postDataJSON();data={ok:true};}
+   if(p.endsWith('/config/capability-defaults'))data={routes:defaultRoute?[{key:'output.text',...defaultRoute}]:[]};
    if(p.endsWith('/models/installed'))data={schema:'models_installed_v1',rows:[],errors:{}};
    if(p.endsWith('/discovery/providers'))data={items:[...['anthropic','openai','openrouter','portkey'].map(name=>({name,display_name:({anthropic:'Anthropic',openai:'OpenAI',openrouter:'OpenRouter',portkey:'Portkey'})[name],local_provider:false})),{name:'openai-compatible',local_provider:true}]};
    if(p.endsWith('/config/provider-endpoint-profiles'))data={profiles:[]};
@@ -39,8 +44,12 @@ try {
   check(await root.getByRole('status').filter({hasText:'Loading the model catalog'}).isVisible(),`${theme}: delayed initial fetch has spinner and accessible status`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-loading-${theme}.png`)});
   release();await root.locator('.mc-card').first().waitFor();
+  check(!(await root.locator('.af-filterbar__facets').isVisible()),`${theme}: advanced filters are closed initially`);
+  check(await root.locator('.mc-art__action button').evaluateAll(bs=>bs.every(b=>b.querySelector('svg')&&b.textContent.trim()==='')),`${theme}: build actions are named icon controls without repeated button text`);
+  check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===15,`${theme}: all matching models, five versions each`);
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
   await root.locator('[data-af-facet="quant"][data-af-value="all"]').click();
   check(page.url().endsWith('#catalog?quant=all'),`${theme}: All is explicit in the URL`);
   check(await root.locator('.mc-art').count()===15,`${theme}: All precision starts with five versions per card`);
@@ -53,20 +62,67 @@ try {
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-expanded-${theme}.png`)});
   await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).click();
   check(await first.locator('.mc-art').count()===5,`${theme}: collapse returns to five`);
-  hold=true;await root.getByRole('button',{name:'Check again',exact:true}).click();
+  hold=true;await root.getByRole('button',{name:'Refresh models',exact:true}).click();
   await root.locator('[data-mc-part="loading"] .mc-loading__wheel').waitFor();
   check(await root.locator('.mc-art').count()===15,`${theme}: refresh keeps the current results and shows a spinner`);
-  release();await root.getByRole('button',{name:'Check again',exact:true}).waitFor();
+  release();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   await page.reload();await root.locator('.mc-card').first().waitFor();
   check(await root.locator('[data-af-value="all"][data-af-facet="quant"]').getAttribute('aria-pressed')==='true',`${theme}: All link survives reload`);
   reject=true;await page.reload();
   await root.getByRole('alert').filter({hasText:'The model catalog did not load'}).waitFor();
   check(await root.locator('.mc-loading__wheel').count()===0,`${theme}: failed load stops the spinner and reports an error`);
-  reject=false;await root.getByRole('button',{name:'Check again',exact:true}).click();
+  reject=false;await root.getByRole('button',{name:'Refresh models',exact:true}).click();
   await root.locator('.mc-card').first().waitFor();
   check(await root.locator('.mc-card').count()===3,`${theme}: retry recovers from an initial failure`);
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
   await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').click();
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-collapsed-${theme}.png`)});
+  check(await root.locator('article[data-mc-model]').evaluateAll(es=>es[0].getBoundingClientRect().left<es[1].getBoundingClientRect().left),`${theme}: desktop uses a model grid`);
+  await page.locator('.shell_content').evaluate(el=>el.scrollTop=500);
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
+  check(await root.locator('.af-filterbar__facets').evaluate(el=>el.getBoundingClientRect().top>=0&&el.getBoundingClientRect().bottom<=innerHeight),`${theme}: sticky filter control reveals the options while scrolled`);
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
+  const info=root.locator('[data-mc-action="details"]').first();
+  await info.press('Enter');
+  check(await root.locator('.mc-art__details:visible').count()===1,`${theme}: build details open from the keyboard`);
+  check(await info.evaluate(el=>el===document.activeElement),`${theme}: build-details focus is retained`);
+  check(await root.getByRole('button',{name:'Copy model ID',exact:true}).filter({visible:true}).count()===1,`${theme}: exact model ID stays reachable for copying`);
+  await info.press('Enter');
+  check(await root.locator('.mc-art__details:visible').count()===0,`${theme}: details close again`);
+  check(!writes.length,`${theme}: browsing and details issue no mutations`);
+  await root.getByRole('button',{name:'Downloaded',exact:true}).click();
+  check(await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: downloaded library includes every precision`);
+  const star=root.getByRole('button',{name:'Use as default text model',exact:true}).first();
+  const provider=await star.getAttribute('data-provider'),artifact=await star.getAttribute('data-artifact');
+  await star.click();
+  await root.getByRole('button',{name:'Default text model',exact:true}).waitFor();
+  check(defaultRoute?.provider===provider&&defaultRoute?.model===artifact&&defaultRoute.base_url===''&&defaultRoute.reasoning===''&&JSON.stringify(defaultRoute.options)==='{}',`${theme}: star saves the exact text route and clears old connection options`);
+  check(await root.getByRole('button',{name:'Default text model',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: default save retains focus on its current-state control`);
+  check(await root.getByRole('button',{name:'Default text model',exact:true}).getAttribute('aria-pressed')==='true',`${theme}: the active default has an explicit current state`);
+  await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-downloaded-${theme}.png`)});
+  const trash=root.getByRole('button',{name:'Delete',exact:true}).first();await trash.click();
+  await root.getByRole('button',{name:'Keep',exact:true}).waitFor();
+  check(writes.filter(w=>w.path.endsWith('/models/delete-download')).every(w=>w.body.dry_run===true),`${theme}: delete icon only asks for a plan`);
+  await root.getByRole('button',{name:'Keep',exact:true}).click();
+  check(writes.filter(w=>w.path.endsWith('/models/delete-download')).length===1,`${theme}: Keep sends no delete`);
+  await root.getByRole('button',{name:'Browse',exact:true}).click();
+  check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: Browse restores prior filters`);
+  await root.getByRole('button',{name:'Download',exact:true}).first().click();
+  await root.getByRole('button',{name:'Cancel download',exact:true}).waitFor();
+  check(downloadCount===1&&await root.locator('.ui-progress').count()>0,`${theme}: download icon starts once and shows real job progress`);
+  await root.getByRole('button',{name:'Cancel download',exact:true}).click();
+  await root.getByRole('button',{name:'Keep downloading',exact:true}).waitFor();
+  check(!writes.some(w=>w.path.endsWith('/cancel')),`${theme}: cancel icon asks before stopping the job`);
+  await root.getByRole('button',{name:'Keep downloading',exact:true}).click();
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.shell_sidebar')).visibility==='hidden');
+  check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: mobile catalog fits`);
+  await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-mobile-${theme}.png`)});
+  await page.setViewportSize({width:320,height:844});
+  check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: narrow mobile catalog fits`);
+  await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-narrow-${theme}.png`)});
+  await page.setViewportSize({width:1600,height:1100});
   await page.locator('#open-setup').click();
   await page.locator('[data-first-run-step="cloud"]').first().click();
   const cloud=page.locator('#first-run-cloud-body');
@@ -83,7 +139,12 @@ try {
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${theme}: mobile no page overflow`);
   check(await cloud.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: mobile provider cards fit`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`wizard-providers-mobile-${theme}.png`)});
-  check(!writes.length,`${theme}: observation sent no mutations`);
+  admin=false;await page.reload();
+  await root.locator('.mc-card').first().waitFor();
+  check(await root.getByRole('button',{name:'Download',exact:true}).first().isDisabled(),`${theme}: reader download action is disabled`);
+  check(await root.getByRole('button',{name:'Delete',exact:true}).first().isDisabled(),`${theme}: reader delete action is disabled`);
+  check(await root.getByRole('button',{name:'Build details',exact:true}).first().isEnabled(),`${theme}: reader can still inspect model details`);
+  check(writes.every(w=>w.path.endsWith('/models/download')||w.path.endsWith('/models/delete-download')&&w.body.dry_run||w.path.endsWith('/config/capability-defaults/output/text')),`${theme}: only intended fixture operations were sent`);
   check(!errors.length,`${theme}: no page errors: ${errors.join('; ')}`);
   await context.close();
  }
