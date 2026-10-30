@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 ### Added
+- The Docs assistant uses the engine's shared ChatTranscript bubbles and measured
+  Markdown layout, retaining the console's history, composer and Stop controls.
+- Align the console and its shared Core screens on one AbstractTUI 0.7.1 runtime.
 - **My email → Notifications → Push forwarder (the web's card, admins).** Beside Devices: where this gateway sends the
   alerts for watches and iPhones (`GET /push/settings`), in words — *Built-in forwarder* (*· none in this release
   yet, so no alerts are sent*), *Off* or the address, and *· set by the launch flag for this run* when `--push-relay`

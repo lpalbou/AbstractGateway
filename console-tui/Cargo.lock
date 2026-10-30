@@ -4,11 +4,10 @@ version = 4
 
 [[package]]
 name = "abstractcore-console"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69efe7093a2562e6a9edef6933852a318131bd9bb05c7486c45c928d8f29d450"
+version = "0.8.1"
 dependencies = [
  "abstracttui",
+ "libc",
  "serde_json",
  "sha2",
 ]
@@ -26,9 +25,7 @@ dependencies = [
 
 [[package]]
 name = "abstracttui"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34fa57af26ff10ec42926c2ebc29c437b9a234387ddbe0020cc95305cdafd8bd"
+version = "0.7.1"
 dependencies = [
  "libc",
  "miniz_oxide 0.9.1",
