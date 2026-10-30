@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 52
 - Completed: 65
 - Deprecated: 4
@@ -323,3 +323,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1002 Catalogue overview and local browsing](completed/1002_catalogue_overview_and_local_browsing.md), operator UX correction to eager enrichment and uneven cards.
 
 2026-10-30: [1003 Single-line model headers](completed/1003_single_line_model_headers.md), operator follow-up to 1002.
+
+2026-10-30: [1004 Primary provider and capability filters](planned/1004_models_primary_provider_and_capability_filters.md), operator request for two-row controls and no duplicate Status facet.
