@@ -314,17 +314,17 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["quant8_mlx"]["count"] == [m, n, a]
     assert out["quant8_mlx"]["hash"] == "#catalog?quant=8bit&provider=mlx"
     m, a = _expected(cat, lambda r, x: x["fit"]["verdict"] in ("fits", "tight"))
-    assert out["fits"]["count"] == [m, n, a] and out["fits"]["hash"] == "#catalog?quant=all&fits=1"
+    assert out["fits"]["count"] == [m, n, a] and out["fits"]["hash"] == "#catalog?quant=all"
     m, a = _expected(cat, lambda r, x: x["presence"]["status"] == "installed")
     assert out["downloaded"]["count"] == [m, n, a] and m > 0
     m, a = _expected(cat, lambda r, x: bool(r["capabilities"].get("vision")))
-    assert out["vision"]["count"] == [m, n, a] and out["vision"]["hash"] == "#catalog?quant=all&cap=vision"
+    assert out["vision"]["count"] == [m, n, a] and out["vision"]["hash"] == "#catalog?quant=all&cap=vision&fits=0"
     assert out["search"]["count"] == [1, n, 1] and out["search"]["providers"] == ["lmstudio"]
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [m4, n, a4] and out["cleared"]["hash"] == "#catalog"
     assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
-    assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
+    assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
     assert out["tracked"] == 1
@@ -373,12 +373,12 @@ def test_a_catalog_link_reproduces_the_view() -> None:
     out = _run(cat, "hash", "#catalog?quant=8bit&provider=mlx&fits=1")
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "8bit" and x["provider"] == "mlx" and x["fit"]["verdict"] in ("fits", "tight"))
     assert out["fromhash"]["count"] == [m, 80, a]
-    assert out["fromhash"]["hash"] == "#catalog?quant=8bit&provider=mlx&fits=1"
+    assert out["fromhash"]["hash"] == "#catalog?quant=8bit&provider=mlx"
 
 
 def test_missing_quant_class_is_said_out_loud_and_never_guessed() -> None:
     cat = _unreported()
-    check_unreported(_run(cat, "unreported", "#catalog?quant=8bit"), cat)
+    check_unreported(_run(cat, "unreported", "#catalog?quant=8bit&fits=0"), cat)
 
 
 def test_no_quant_class_derivation_in_the_view() -> None:
@@ -426,20 +426,20 @@ def check_hf(out: dict, hub: dict) -> None:
     # The Hub answer is drawn as the SAME cards and rows, every one of them.
     assert out["initial"]["cards"] == n and out["initial"]["arts"] == arts
     assert out["initial"]["count"] == [n, n, arts]
-    assert out["initial"]["hash"] == "#catalog?quant=all&hf=smol%20lm"
+    assert out["initial"]["hash"] == "#catalog?quant=all&fits=0&hf=smol%20lm"
     assert 'aria-pressed="true">Hugging Face</button>' in out["html"]
     assert "Hugging Face</span>" in out["html"]  # the card badge
     # quant_class "unknown" reads "Not stated", never a guessed class.
     assert set(out["initial"]["boldQuant"]) == {"8-bit", "Not stated"}
     assert 'data-mc-action="download"' in out["html"]
-    assert out["backToCatalog"]["hash"] == "#catalog?quant=all" and out["backToCatalog"]["cards"] == 80
+    assert out["backToCatalog"]["hash"] == "#catalog?quant=all&fits=0" and out["backToCatalog"]["cards"] == 80
     assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true&extended=true"
-    assert out["second"]["hash"] == "#catalog?quant=all&hf=qwen%20coder"
+    assert out["second"]["hash"] == "#catalog?quant=all&fits=0&hf=qwen%20coder"
 
 
 def test_hugging_face_search_renders_cards_and_keeps_the_query_in_the_link() -> None:
     hub = _hub(6)
-    check_hf(_run(_catalog(80), "hf", "#catalog?quant=all&hf=smol%20lm", hub=hub), hub)
+    check_hf(_run(_catalog(80), "hf", "#catalog?quant=all&fits=0&hf=smol%20lm", hub=hub), hub)
 
 
 def test_hugging_face_empty_and_unreachable_are_plain() -> None:
@@ -488,7 +488,7 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
     """Backlog 0864 (front item 4): the count says how many Hugging Face results are shown and
     whether more exist; "Show more results" appends the next page; the last page has no button."""
     hub = {"__pages": [_hub_page(0, 4, page=1, more=True), _hub_page(4, 4, page=2, more=True), _hub_page(8, 2, page=3, more=False)]}
-    out = _run(_catalog(10), "hfmore", "#catalog?quant=all&hf=smol%20lm", hub=hub)
+    out = _run(_catalog(10), "hfmore", "#catalog?quant=all&fits=0&hf=smol%20lm", hub=hub)
     assert out["initial"]["cards"] == 4
     assert 'data-mc-hub-count="4">Showing 4 Hugging Face results; more are available.' in out["html1"]
     assert 'data-mc-action="hub-more"' in out["html1"]
@@ -534,18 +534,19 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
     cat = _catalog(10)
     for row in cat["rows"]:
         row["artifacts"].append(dict(row["artifacts"][0], artifact=row["artifacts"][0]["artifact"] + ":UD-Q3_K_XL", quant="ud-q3_k_xl", quant_class="4bit", extended=True))
-    out = _run(cat, "allquants", "")
+    out = _run(cat, "allquants", "#catalog?fits=0")
     assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog", "/api/gateway/models/catalog?hub=true&extended=true"}
     total = sum(len(r["artifacts"]) for r in cat["rows"])
     assert out["all"]["arts"] == sum(min(3, len(r["artifacts"])) for r in cat["rows"])
-    assert out["all"]["count"] == [10, 10, total] and out["all"]["hash"] == "#catalog?quant=all"
+    assert out["all"]["count"] == [10, 10, total] and out["all"]["hash"] == "#catalog?quant=all&fits=0"
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
-    assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog"
+    assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog?fits=0"
     # The 4-bit chip's count is the full set's (the extended quants included).
     assert re.search(r'data-af-facet="quant" data-af-value="4bit"[^>]*><span class="af-chip__label">4-bit</span><span class="af-filterbar__count" aria-hidden="true">' + str(a) + "<", out["html"]), out["html"][:2000]
     assert "data-mc-every" not in out["html"] and "Every quant" not in out["html"]
     linked = _run(cat, "hash", "#catalog?every=1")  # an old link: the parameter is ignored
-    assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == a
+    _, default_arts = _expected(cat, lambda r, x: x["quant_class"] == "4bit" and x["fit"]["verdict"] in ("fits", "tight", "needs_gpu_limit"))
+    assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == default_arts
 
 
 def test_a_hugging_face_search_lists_every_quant() -> None:
@@ -617,7 +618,7 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
         {"provider": "huggingface", "artifact": "XHToken/Spark-X2.6-4B-GGUF", "kind": "model", "tasks": ["text_generation"],
          "loadable": False, "unloadable_reason": reason},
     ]}
-    html = _run(cat, "unloadable", "#catalog?quant=all", installed=installed)["html"]
+    html = _run(cat, "unloadable", "#catalog?quant=all&fits=0", installed=installed)["html"]
     card = html[html.index('data-mc-model="model-1"'):]
     disabled = re.findall(r'<button[^>]*data-mc-unloadable="1"[^>]*>', card)
     assert any('aria-label="Download"' in b and 'disabled' in b for b in disabled)
@@ -667,3 +668,13 @@ def test_default_four_bit_and_explicit_all_round_trip() -> None:
     assert set(default["initial"]["classes"]) == {"4bit"}
     assert set(explicit["initial"]["classes"]) == {"4bit", "8bit", "16bit"}
     assert explicit["initial"]["hash"] == "#catalog?quant=all"
+
+
+def test_fits_is_default_and_explicit_off_survives_links() -> None:
+    cat = _catalog(6)
+    on = _run(cat, "hash", "#catalog?quant=all")
+    off = _run(cat, "hash", "#catalog?quant=all&fits=0")
+    models, arts = _expected(cat, lambda r, a: a["fit"]["verdict"] in ("fits", "tight", "needs_gpu_limit"))
+    assert on["initial"]["count"] == [models, 6, arts]
+    assert off["initial"]["count"][2] == 18
+    assert off["fromhash"]["hash"] == "#catalog?quant=all&fits=0"

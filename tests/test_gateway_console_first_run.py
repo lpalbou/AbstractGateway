@@ -482,7 +482,7 @@ if (scenario.name === "claim") {
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
     if (scenario.dumpCatalogs) console.log("CATALOG tab " + JSON.stringify(el("catalog-cards-root").innerHTML));
-    if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
+    if (el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"') || !el("catalog-cards-root").innerHTML.includes('data-mc-fits="1" checked')) fail("the Models tab defaults to Fits this computer");
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
     el("tab-button-catalog").onclick(); await settle();

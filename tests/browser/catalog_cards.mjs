@@ -69,6 +69,16 @@ try {
   check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
+  const fits=root.getByRole('switch',{name:'Fits this computer',exact:true});
+  check(await fits.isChecked(), `${theme}: Fits this computer is enabled by default`);
+  const signalOrder=await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const caps=h.querySelector('.mc-caps'),params=h.querySelector('.mc-card__meta');return caps.nextElementSibling===params&&params.nextElementSibling?.classList.contains('mc-versions');}));
+  check(signalOrder, `${theme}: header order is capabilities, total parameters, chevron`);
+  const vision=root.locator('.mc-cap[data-mc-cap="vision"]').first();
+  check(await vision.getAttribute('data-af-tip')==='Vision input (images)'&&await vision.locator('svg').count()===1, `${theme}: native vision input has a labelled eye icon`);
+  const signals=await root.locator('.mc-card').first().locator('.mc-cap').evaluateAll(es=>Object.fromEntries(es.map(e=>[e.dataset.mcCap,{color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor}])));
+  check(new Set(['vision','thinking','tools'].map(k=>signals[k].color)).size===3&&signals.vision.background!=='rgba(0, 0, 0, 0)', `${theme}: vision, thinking and tools use distinct themed accents and soft discs`);
+  check(await root.locator('.mc-brand [data-brand="qwen"] svg image').count()===1&&await root.locator('.mc-brand [data-brand="meta"] svg image').count()===1, `${theme}: official manufacturer artwork renders beside titles without remote images`);
+  check((await root.locator('article .mc-card__meta').nth(1).innerText()).trim()==='31B'&&(await root.locator('article .mc-card__meta').nth(1).getAttribute('data-af-tip')).includes('3.3B active'), `${theme}: total parameter count stays compact while active count is available on hover`);
   const compact=await root.locator('.mc-card').first().evaluate(el=>({height:el.getBoundingClientRect().height,header:el.querySelector('header').getBoundingClientRect().height,rows:[...el.querySelectorAll('.mc-art')].map(r=>r.getBoundingClientRect().height),columns:getComputedStyle(el.parentElement).gridTemplateColumns.split(' ').length}));
   check(compact.height>=190&&compact.height<=225&&compact.header>=44&&compact.header<=54&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: balanced card has breathing room around three single-line versions (${JSON.stringify(compact)})`);
   check(compact.columns===2,`${theme}: desktop uses two comfortable model columns`);
@@ -84,9 +94,11 @@ try {
   check(tooltipTheme.label===await root.locator('.mc-caps .mc-cap').first().getAttribute('data-af-tip'),`${theme}: capability tooltip explains the icon`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-capability-tooltip-${theme}.png`)});
   await page.mouse.move(1,1);
+  await root.getByText('Fits this computer',{exact:true}).click();
+  check(page.url().endsWith('#catalog?fits=0'), `${theme}: disabling fit writes an explicit shareable override`);
   await root.getByRole('button',{name:'Filters',exact:true}).click();
   await root.locator('[data-af-facet="quant"][data-af-value="all"]').click();
-  check(page.url().endsWith('#catalog?quant=all'),`${theme}: All is explicit in the URL`);
+  check(page.url().endsWith('#catalog?quant=all&fits=0'),`${theme}: All is explicit in the URL`);
   check(await root.locator('.mc-art').count()===9,`${theme}: All precision starts with three versions per card`);
   const first=root.locator('article[data-mc-model="model-0"]');
   await page.mouse.move(1,1);
@@ -117,6 +129,7 @@ try {
   release();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   await page.reload();await root.locator('.mc-card').first().waitFor();
   check(await root.locator('[data-af-value="all"][data-af-facet="quant"]').getAttribute('aria-pressed')==='true',`${theme}: All link survives reload`);
+  check(!(await fits.isChecked()), `${theme}: the explicit fit-off choice survives reload`);
   reject=true;await page.reload();
   await root.getByRole('alert').filter({hasText:'The model catalog did not load'}).waitFor();
   check(await root.locator('.mc-loading__wheel').count()===0,`${theme}: failed load stops the spinner and reports an error`);
@@ -141,7 +154,9 @@ try {
   check(await root.locator('.mc-art__details:visible').count()===0,`${theme}: details close again`);
   check(!writes.length,`${theme}: browsing and details issue no mutations`);
   await root.getByRole('button',{name:'Downloaded',exact:true}).click();
+  check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to expose all local inventory`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: downloaded library includes every precision`);
+  check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to show all local inventory`);
   const star=root.getByRole('button',{name:'Use as default text model',exact:true}).first();
   const provider=await star.getAttribute('data-provider'),artifact=await star.getAttribute('data-artifact');
   await star.click();

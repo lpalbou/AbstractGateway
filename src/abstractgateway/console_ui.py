@@ -1223,9 +1223,9 @@ CONSOLE_UI_JS = r"""
         return lib && lib.brandMarks && typeof lib.brandMarks.html === "function" ? lib.brandMarks : null;
       } catch { return null; }
     }
-    function uiBrandMark(id, name) {
+    function uiBrandMark(id, name, size) {
       const marks = uiKitBrandMarks();
-      if (marks) return marks.html(String(id || ""), String(name || id || ""));
+      if (marks) return marks.html(String(id || ""), String(name || id || ""), size);
       if (!uiBrandMarksMissingLogged) {
         uiBrandMarksMissingLogged = true;
         console.error("AbstractGateway console: the abstractuic islands bundle has no brandMarks (ui-kit 0.9.9+ required); engine cards show initials instead of logos.");

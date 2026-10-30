@@ -91,10 +91,16 @@ CATALOG_CSS = r"""
     @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
     .mc-card__title-wrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
     .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
-    .mc-card__meta { flex: none; font-size: var(--font-size-xs); color: var(--text-secondary); }
+    .mc-card__meta { flex: none; width: 56px; text-align: right; font-size: var(--font-size-xs); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
     .mc-caps { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex: none; color: var(--text-secondary); }
-    .mc-cap { display: inline-flex; }
+    .mc-cap { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border-radius: 999px; color: var(--info); background: color-mix(in srgb, currentColor 10%, transparent); }
+    .mc-cap[data-mc-cap="text"] { color: var(--text-secondary); }
+    .mc-cap[data-mc-cap="thinking"] { color: var(--success); }
+    .mc-cap[data-mc-cap="vision"] { color: var(--warning); }
+    .mc-cap[data-mc-cap="voice"], .mc-cap[data-mc-cap="audio"] { color: var(--accent); }
+    .mc-brand { display: inline-flex; flex: none; }
+    .mc-card__meta:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-caps:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
@@ -203,7 +209,7 @@ CATALOG_JS = r"""
     // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
     const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
     const MC_VERSION_PREVIEW = 3;
-    function mcDefaultFilters() { return { q: "", quant: "4bit", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
+    function mcDefaultFilters() { return { q: "", quant: "4bit", provider: "all", cap: "all", status: "all", fits: true, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
@@ -232,7 +238,7 @@ CATALOG_JS = r"""
       if (f.provider !== "all") parts.push(`provider=${encodeURIComponent(f.provider)}`);
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
-      if (f.fits) parts.push("fits=1");
+      if (!f.fits) parts.push("fits=0");
       if (mcHfMode(f)) parts.push(`hf=${encodeURIComponent(f.hf)}`);
       return parts.length ? `#catalog?${parts.join("&")}` : "#catalog";
     }
@@ -562,8 +568,8 @@ CATALOG_JS = r"""
     function mcCapabilityMarkup(row) {
       const caps = mcRowCaps(row);
       if (!caps.length) return "";
-      const labels = caps.map(c => (MC_CAPS.find(x => x[0] === c) || [c,c])[1]);
-      return `<span class="mc-caps" role="img" aria-label="${esc(labels.join(", "))}" tabindex="0" data-af-tip="${esc(labels.join(" · "))}">${caps.map((c,i) => `<span class="mc-cap" aria-hidden="true" data-af-tip="${esc(labels[i])}">${ICONS[MC_CAP_ICON[c]]}</span>`).join("")}</span>`;
+      const labels = caps.map(c => c === "vision" ? "Vision input (images)" : (MC_CAPS.find(x => x[0] === c) || [c,c])[1]);
+      return `<span class="mc-caps" role="img" aria-label="${esc(labels.join(", "))}" tabindex="0" data-af-tip="${esc(labels.join(" · "))}">${caps.map((c,i) => `<span class="mc-cap" data-mc-cap="${esc(c)}" aria-hidden="true" data-af-tip="${esc(labels[i])}">${ICONS[MC_CAP_ICON[c]]}</span>`).join("")}</span>`;
     }
     function mcBuildIdentity(a, extra) {
       const id = String(a.artifact || "");
@@ -720,6 +726,13 @@ CATALOG_JS = r"""
         + `</section>`;
     }
     // One compact header: model, accessible capability glyphs, parameters and disclosure.
+    const MC_MODEL_BRANDS = {qwen:"qwen", deepseek:"deepseek", google:"google", meta:"meta", "mistral ai":"mistral", microsoft:"microsoft", nvidia:"nvidia", "hugging face":"huggingface"};
+    function mcModelBrand(row) {
+      const name = String(row.vendor || "").trim();
+      if (!name) return "";
+      const id = MC_MODEL_BRANDS[name.toLowerCase()] || name.toLowerCase();
+      return `<span class="mc-brand">${uiBrandMark(id, name, "sm")}</span>`;
+    }
     function mcCardMarkup(item, view) {
       const row = item.row;
       const versionKey = `${row.source || "catalog"}:${row.id}`;
@@ -728,15 +741,15 @@ CATALOG_JS = r"""
       const versionsId = `mc-versions-${encodeURIComponent(view ? view.key : "catalog")}-${encodeURIComponent(versionKey)}`;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
-      const meta = [params ? `${params}${active ? ` / ${active} active` : ""}` : ""].filter(Boolean);
+      const parameterTip = params ? `${params} total parameters${active ? ` · ${active} active parameters` : ""}` : "Parameter count not reported";
       const badges = [];
       if (row.starter) badges.push(`<span class="mc-badge" data-af-tip="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4></div>`
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4></div>`
         + badges.join("")
-        + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
         + mcCapabilityMarkup(row)
+        + `<span class="mc-card__meta" tabindex="0" data-af-tip="${esc(parameterTip)}" aria-label="${esc(parameterTip)}">${esc(params || "—")}</span>`
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")
         + `</header>`
         + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1, view)).join("")}</ul>`

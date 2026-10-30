@@ -22,8 +22,8 @@ def test_catalog_loading_versions_and_provider_cards(tmp_path):
     html = tmp_path / "console.html"
     html.write_text(gateway_console_html(), encoding="utf-8")
     catalog = _catalog(3)
-    catalog["rows"][0]["starter"] = True
-    catalog["rows"][1].update(display_name="A longer model title", params_total=31_000_000_000, params_active=3_300_000_000)
+    catalog["rows"][0].update(starter=True, vendor="Qwen", capabilities={"text": True, "thinking": True, "tools": "native", "vision": True})
+    catalog["rows"][1].update(display_name="A longer model title", vendor="Meta", params_total=31_000_000_000, params_active=3_300_000_000)
     for i, row in enumerate(catalog["rows"]):
         row["artifacts"] = [_art(i, j) for j in range(18)]
         for j, art in enumerate(row["artifacts"]):
