@@ -22,3 +22,5 @@ for a nested header rather than its direct capability child, and was corrected.
 Implementation `af7a33a4` committed and deployed through the existing graceful
 restart after healthy/zero-inflight checks. Live gateway healthy. No new API,
 fetch behavior, shared chrome or ADR changes. Agora unavailable (connection refused).
+
+Final header badge alignment: `fae77d55` places Starter/Hub badges before the right controls; fixture now includes a Starter badge. The 7 browser/merged checks and 140 browser assertions passed again, then healthy live verification passed after redeploy.
