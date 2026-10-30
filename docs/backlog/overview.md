@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 52
 - Completed: 60
 - Deprecated: 4
@@ -308,3 +308,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30 operator catalogue follow-up:
 
 - [0998 Clear recommendation badge and one library control](completed/0998_model_recommendation_badge_and_single_library_toggle.md)
+
+2026-10-30: [0999 Models toolbar and capability matrix](planned/0999_models_toolbar_and_capability_matrix.md) tracks the operator layout follow-up.
