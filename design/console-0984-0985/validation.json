@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-30",
+  "gateway_commit": "334a2e6a",
+  "uic_commits": [
+    "3b99aa4",
+    "8a25c33"
+  ],
+  "targeted_tests": {
+    "console_lane": 71,
+    "deployment_runtime_lane": 15,
+    "total": 86
+  },
+  "browser": {
+    "checks": 52,
+    "failures": []
+  },
+  "resources_browser": {
+    "checks": 122,
+    "failures": []
+  },
+  "kit_checks": {
+    "brand_marks": 289,
+    "cloud_providers": 64,
+    "typescript": "passed",
+    "css_balance": "passed",
+    "theme_tokens": "21 themes passed"
+  },
+  "deployment": {
+    "restart": {
+      "ok": true,
+      "restart": true
+    },
+    "preflight": {
+      "health": "healthy",
+      "runner_inflight": 0,
+      "model_host_inflight": 0
+    },
+    "live_observations": {
+      "catalog_all_matching_versions": 1798,
+      "catalog_all_models": 96,
+      "catalog_disclosure": "Five visible rows and Show more; live expand/collapse exercised",
+      "wizard": "Six cards including OVH and custom endpoint; five official marks visible",
+      "providers": {
+        "cards": 6,
+        "page_errors": []
+      },
+      "fresh_catalog_latency": "Subsequent full catalog reads exceeded 12s; browser initial-load waits exceeded 30s. Tracked in proposed 0986.",
+      "default_catalog": {
+        "defaultQuant4": true,
+        "defaultModelCount": 83,
+        "defaultVersions": 349,
+        "fiveVersionLimit": true,
+        "pageErrors": []
+      }
+    }
+  },
+  "screenshots": "Route-controlled fixtures, not operational credentials."
+}

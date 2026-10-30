@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 24
-- Proposed: 50
-- Completed: 47
+- Planned: 22
+- Proposed: 51
+- Completed: 49
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,8 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0984 Make the model catalog default to 4-bit, show loading and collapse versions](planned/0984_catalog_loading_and_version_disclosure.md) | P1. Operator-requested console correction; scoped code/browser validation and redeployment. |
-| [0985 Update wizard provider cards and use official company marks](planned/0985_wizard_shared_provider_cards_and_official_marks.md) | P1. Operator-requested console correction; scoped code/browser validation and redeployment. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -191,6 +189,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0984 (completed 2026-10-30, unreleased) | `planned/0984_catalog_loading_and_version_disclosure.md` | [completed/0984_catalog_loading_and_version_disclosure.md](completed/0984_catalog_loading_and_version_disclosure.md) | 4-bit by default, five-version disclosure, visible loading and explicit All links; fetch latency follow-up in 0986. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
+| 0985 (completed 2026-10-30, unreleased) | `planned/0985_wizard_shared_provider_cards_and_official_marks.md` | [completed/0985_wizard_shared_provider_cards_and_official_marks.md](completed/0985_wizard_shared_provider_cards_and_official_marks.md) | Official shared company marks; kit 0.9.10 OVH/generic cards integrated; interim filter copies removed. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
 | Memory inspector clarity (0983, completed 2026-10-30, unreleased) | `planned/0983_simplify_memory_inspector.md` | [completed/resources/0983_simplify_memory_inspector.md](completed/resources/0983_simplify_memory_inspector.md) | Two compact memory cards, three allocation figures and kit info details; topology and measurement scope preserved. | `08f963ff`; 18 focused tests, 122 browser checks, live graceful restart and browser verification (44 visible words). |
 | Resources dashboard (0980, completed 2026-10-30, unreleased) | `planned/resources/0980_resources_dashboard_and_memory_topology.md` | [completed/resources/0980_resources_dashboard_and_memory_topology.md](completed/resources/0980_resources_dashboard_and_memory_topology.md) | Shared kit chrome/themes preserved; unified/VRAM capacity, real local history and existing operations. | `ee918dc9`, `dfc72e6f`; 124-test gate + 37-test topology lane; 96 browser checks; two baseline Runtime-gated failures recorded. |
 | Host system observations (0981, completed 2026-10-30, unreleased) | `planned/resources/0981_host_cpu_storage_and_swap_metrics.md` | [completed/resources/0981_host_cpu_storage_and_swap_metrics.md](completed/resources/0981_host_cpu_storage_and_swap_metrics.md) | Independently cached CPU, storage, swap and transfer rates; honest warm-up/reset/failure states. | `ee918dc9`; sampler math/concurrency tests and additive host-state regression. |
@@ -289,3 +289,5 @@ When a planned item is completed:
 5. Update this overview counts, tables, and completed ledger.
 6. Review follow-up signals and create proposed/planned work only when justified
    by code evidence.
+
+Catalog performance follow-up: [0986](proposed/0986_catalog_fetch_latency.md) records observed full-fetch latency after the 0984 presentation improvement; proposed pending measurement and owner review.
