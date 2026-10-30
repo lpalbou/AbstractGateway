@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 52
 - Completed: 63
 - Deprecated: 4
@@ -317,3 +317,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1000 Render discovered catalogue assets as cards](completed/1000_render_discovered_catalog_assets.md), operator follow-up for the remaining HF cache inventory.
 
 2026-10-30: [1001 Models only with advanced asset filters](completed/1001_models_only_with_advanced_asset_filter.md), operator correction to the model/adapter distinction.
+
+2026-10-30: [1002 Catalogue overview and local browsing](planned/1002_catalogue_overview_and_local_browsing.md), operator UX correction to eager enrichment and uneven cards.
