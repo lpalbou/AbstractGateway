@@ -53,3 +53,10 @@ def test_legacy_inventory_fallback_does_not_reintroduce_adapters_or_unknowns():
     assert 'data-mc-extra-row' not in ordinary
     advanced=_run(cat,'unloadable','#catalog?kind=all&quant=all&fits=0&status=downloaded',installed=installed)['html']
     assert advanced.count('data-mc-extra-row="1"')==3
+
+
+def test_adapter_deep_link_restores_downloaded_models_without_precision_restrictions():
+    cat=_catalog(0);cat['rows']=asset_rows()
+    out=_run(cat,'asset-types','#catalog?kind=adapter&status=downloaded',installed={'schema':'models_installed_v1','rows':[],'errors':{}})
+    assert out['initial']['cards']==1 and 'kind=adapter' in out['initial']['hash']
+    assert out['modelsAgain']['cards']==3 and 'quant=all' in out['modelsAgain']['hash'] and 'fits=0' in out['modelsAgain']['hash']

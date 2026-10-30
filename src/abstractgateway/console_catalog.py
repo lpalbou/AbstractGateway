@@ -358,7 +358,7 @@ CATALOG_JS = r"""
     function mcKindMatches(row, kind) { return kind === "all" || mcKindOf(row) === (kind || "model"); }
     function mcKindFilters(view, kind) {
       if (kind === (view.filters.kind || "model")) return {...view.filters};
-      return Object.assign({}, view.filters, kind === "model" ? (view.modelFilters || {quant:"4bit",fits:true,cap:"all"}) : {quant:"all",fits:false,cap:"all"}, {kind});
+      return Object.assign({}, view.filters, kind === "model" ? (view.modelFilters || {quant:view.filters.status === "downloaded" ? "all" : "4bit",fits:view.filters.status !== "downloaded",cap:"all"}) : {quant:"all",fits:false,cap:"all"}, {kind});
     }
     function mcArtMatches(row, a, f, quantOn, tokens) {
       if (quantOn && f.quant !== "all" && mcQuantBucket(a) !== f.quant) return false;
