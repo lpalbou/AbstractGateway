@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: fix
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, seat-framework
 > Work-item id: abstractgateway-0997
@@ -30,5 +32,19 @@ and disclosure coverage. Check actual folder/status vertical alignment and
 non-overlap at desktop and phone widths in light/dark, then scoped commit,
 authorized graceful local redeploy and live verification. No unrelated changes.
 
-- [ ] Simplify the counter and keep the status cluster on one line.
-- [ ] Verify, commit, redeploy and retain completion evidence.
+- [x] Simplify the counter and keep the status cluster on one line.
+- [x] Verify, commit, redeploy and retain completion evidence.
+
+## Completion report
+
+Implemented `55763bab`: model-only summary with provisional-loading truth;
+content-sized status grid column and non-wrapping folder/residency/fit group.
+All versions remain reachable through the existing header disclosure.
+
+35 focused tests and 212 browser assertions passed. Healthy graceful local
+redeploy and live dark/light/320px checks confirm correct 19-of-96 downloaded
+model count and all 23 local catalog build groups keep Fits/Tight beside their
+icons. No page errors, horizontal overflow or management writes.
+[Review and captures](../../../design/model-count-status-0997/REVIEW.md),
+[validation](../../../design/model-count-status-0997/validation.json).
+No new ADR impact or residual work. Agora unavailable; unrelated work excluded.
