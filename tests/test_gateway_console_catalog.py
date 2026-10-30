@@ -537,7 +537,8 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
     out = _run(cat, "allquants", "")
     assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog?hub=true&extended=true"}
     total = sum(len(r["artifacts"]) for r in cat["rows"])
-    assert out["all"]["arts"] == total and out["all"]["hash"] == "#catalog?quant=all"
+    assert out["all"]["arts"] == sum(min(3, len(r["artifacts"])) for r in cat["rows"])
+    assert out["all"]["count"] == [10, 10, total] and out["all"]["hash"] == "#catalog?quant=all"
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
     assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog"
     # The 4-bit chip's count is the full set's (the extended quants included).
@@ -645,18 +646,18 @@ def test_an_unloadable_gguf_a_newer_llamacpp_loads_offers_the_update() -> None:
     assert "mcLlamaUpdateMarkup(a, unloadable, admin) ||" in html, "the greyed button stays only without an update"
 
 
-def test_five_versions_are_a_disclosure_and_never_a_data_cap() -> None:
+def test_three_versions_are_a_disclosure_and_never_a_data_cap() -> None:
     cat = _catalog(2)
     for row in cat["rows"]:
         row["artifacts"] = [_art(0, j) for j in range(12)]
     out = _run(cat, "versions", "#catalog?quant=all")
-    assert out["initial"]["cards"] == 2 and out["initial"]["arts"] == 10
+    assert out["initial"]["cards"] == 2 and out["initial"]["arts"] == 6
     assert out["initial"]["count"] == [2, 2, 24]
-    assert 'Show 7 more versions' in out["collapsedHtml"]
+    assert 'Show all 12 versions' in out["collapsedHtml"] and 'class="ui-btn is-quiet mc-versions"' in out["collapsedHtml"]
     assert 'aria-expanded="false"' in out["collapsedHtml"]
-    assert out["expanded"]["arts"] == 17 and out["refreshed"]["arts"] == 17
+    assert out["expanded"]["arts"] == 15 and out["refreshed"]["arts"] == 15
     assert 'aria-expanded="true"' in out["expandedHtml"] and 'Show fewer' in out["expandedHtml"]
-    assert out["collapsed"]["arts"] == 10
+    assert out["collapsed"]["arts"] == 6
 
 
 def test_default_four_bit_and_explicit_all_round_trip() -> None:

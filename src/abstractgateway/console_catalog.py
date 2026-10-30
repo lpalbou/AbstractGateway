@@ -23,7 +23,7 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 - FILTERS: search, quantization (All / 4-bit / 8-bit / Other), provider,
   capability, "Fits this computer", Downloaded / Not downloaded. Filters
   hide, they never cap (ADR-0026): every matching model is drawn. Each card
-  starts with five matching versions; Show more exposes the rest. The tab's
+  starts with three matching versions; its header chevron exposes the rest. The tab's
   filters live in the URL hash (``#catalog?quant=8bit&provider=mlx``).
 - HUGGING FACE SEARCH: a "Catalog / Hugging Face" switch next to the search
   box. In Hugging Face mode Enter asks the same catalog route with
@@ -148,8 +148,10 @@ CATALOG_CSS = r"""
     .mc-loading__wheel { width: 18px; height: 18px; flex: none; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 999px; animation: mc-loading-spin .8s linear infinite; }
     @keyframes mc-loading-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .mc-loading__wheel { animation: none; } }
-    .mc-versions { display: flex; justify-content: center; padding: 8px; border-top: 1px solid var(--ui-border-1); }
-    .mc-versions .ui-btn { min-height: 36px; font-size: var(--font-size-sm); }
+    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; margin-left: auto; color: var(--text-secondary); }
+    .mc-versions svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; transition: transform .15s; }
+    .mc-versions[aria-expanded="true"] svg { transform: rotate(180deg); }
+    @media (pointer: coarse) { .mc-card__head .mc-versions { min-width: 44px; min-height: 44px; } }
 """
 
 CATALOG_JS = r"""
@@ -191,7 +193,7 @@ CATALOG_JS = r"""
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
     // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
     const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
-    const MC_VERSION_PREVIEW = 5;
+    const MC_VERSION_PREVIEW = 3;
     function mcDefaultFilters() { return { q: "", quant: "4bit", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
@@ -720,11 +722,11 @@ CATALOG_JS = r"""
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
         + `<header class="mc-card__head"><h4 class="mc-card__title" data-af-tip="${esc(row.license ? "License: " + row.license : "License not reported")}">${esc(row.display_name || row.id)}</h4>`
         + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
+        + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")
         + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
         + badges.join("")
         + `</header>`
         + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1, view)).join("")}</ul>`
-        + (item.arts.length > MC_VERSION_PREVIEW ? `<div class="mc-versions"><button type="button" class="ui-btn is-quiet" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}">${expanded ? "Show fewer" : `Show ${item.arts.length - MC_VERSION_PREVIEW} more ${item.arts.length - MC_VERSION_PREVIEW === 1 ? "version" : "versions"}`}</button></div>` : "")
         + `</article>`;
     }
     function mcListMarkup(view, list, extras) {
@@ -968,12 +970,18 @@ CATALOG_JS = r"""
       for (const v of mcStore.views.values()) if (!v.guide) return true;
       return false;
     }
-    async function mcLoad() {
+    function mcLoad() {
+      // Multiple views/refreshes share the same discovery work.
+      if (mcStore.pending) return mcStore.pending;
+      mcStore.pending = mcLoadOnce().finally(() => { mcStore.pending = null; });
+      return mcStore.pending;
+    }
+    async function mcLoadOnce() {
       const seq = ++mcStore.seq;
       mcStore.loading = true;
       mcRender();
       // The engines' own list, in parallel with the catalog (the Models tab only).
-      const installedP = mcWantsInstalled()
+      let installedP = mcWantsInstalled()
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
         : null;
       try {
@@ -992,6 +1000,13 @@ CATALOG_JS = r"""
       } catch (err) {
         if (seq !== mcStore.seq) return;
         mcStore.error = String((err && err.message) || err);
+      }
+      // Paint the complete catalog as soon as it arrives. Optional installed
+      // discovery must never leave usable catalog data behind the initial spinner.
+      mcRender();
+      // A Models view may have joined a load started by the setup guide.
+      if (!installedP && mcWantsInstalled()) {
+        installedP = api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }));
       }
       if (installedP) {
         const got = await installedP;

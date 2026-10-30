@@ -12,7 +12,7 @@ try {
  for(const theme of ['dark','light']){
   const context=await browser.newContext({viewport:{width:1600,height:1100}});
   await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
-  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],reject=false,admin=true,defaultRoute=null,downloadCount=0;
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],holdInstalled=true,installedWaiters=[],catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
   const current=structuredClone(catalog);
   const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
   page.on('pageerror',e=>errors.push(e.message));
@@ -25,6 +25,7 @@ try {
    if(p.endsWith('/me'))data={principal:{admin,user_id:'admin',tenant_id:'default',roles:[admin?'admin':'user']},auth:{user_auth_enabled:true}};
    if(p.endsWith('/host/first-run'))data={completed:true,needs_setup:false};
    if(p.endsWith('/models/catalog')){
+    catalogRequests++;
     if(hold)await new Promise(r=>waiters.push(r));
     if(reject)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Catalog unavailable"}'});
     data=current;
@@ -33,7 +34,7 @@ try {
    if(p.endsWith('/models/delete-download')){const a=req.postDataJSON();data={status:a.dry_run?'planned':'deleted',freed_bytes:1000};if(!a.dry_run)for(const r of current.rows)for(const art of r.artifacts)if(art.provider===a.provider&&art.artifact===a.artifact)art.presence.status='absent';}
    if(p.endsWith('/config/capability-defaults/output/text')&&req.method()==='PUT'){defaultRoute=req.postDataJSON();data={ok:true};}
    if(p.endsWith('/config/capability-defaults'))data={routes:defaultRoute?[{key:'output.text',...defaultRoute}]:[]};
-   if(p.endsWith('/models/installed'))data={schema:'models_installed_v1',rows:[],errors:{}};
+   if(p.endsWith('/models/installed')){if(holdInstalled)await new Promise(r=>installedWaiters.push(r));data={schema:'models_installed_v1',rows:[],errors:{}};}
    if(p.endsWith('/discovery/providers'))data={items:[...['anthropic','openai','openrouter','portkey'].map(name=>({name,display_name:({anthropic:'Anthropic',openai:'OpenAI',openrouter:'OpenRouter',portkey:'Portkey'})[name],local_provider:false})),{name:'openai-compatible',local_provider:true}]};
    if(p.endsWith('/config/provider-endpoint-profiles'))data={profiles:[]};
    return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
@@ -43,28 +44,34 @@ try {
   await root.locator('.mc-loading__wheel').waitFor();
   check(await root.getByRole('status').filter({hasText:'Loading the model catalog'}).isVisible(),`${theme}: delayed initial fetch has spinner and accessible status`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-loading-${theme}.png`)});
+  await page.evaluate(()=>{mcLoad();mcLoad();});
+  check(catalogRequests===1,`${theme}: repeated loads coalesce into one catalog request`);
   release();await root.locator('.mc-card').first().waitFor();
+  check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
+  check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
+  holdInstalled=false;installedWaiters.splice(0).forEach(r=>r());
+  await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   check(!(await root.locator('.af-filterbar__facets').isVisible()),`${theme}: advanced filters are closed initially`);
   check(await root.locator('.mc-art__action button').evaluateAll(bs=>bs.every(b=>b.querySelector('svg')&&b.textContent.trim()==='')),`${theme}: build actions are named icon controls without repeated button text`);
   check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
-  check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===15,`${theme}: all matching models, five versions each`);
+  check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
   await root.getByRole('button',{name:'Filters',exact:true}).click();
   await root.locator('[data-af-facet="quant"][data-af-value="all"]').click();
   check(page.url().endsWith('#catalog?quant=all'),`${theme}: All is explicit in the URL`);
-  check(await root.locator('.mc-art').count()===15,`${theme}: All precision starts with five versions per card`);
+  check(await root.locator('.mc-art').count()===9,`${theme}: All precision starts with three versions per card`);
   const first=root.locator('article[data-mc-model="model-0"]');
   await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).press('Enter');
   check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
   check(await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
-  check(await root.locator('.mc-art').count()===28,`${theme}: expansion belongs to one card`);
+  check(await root.locator('.mc-art').count()===24,`${theme}: expansion belongs to one card`);
   check((await root.locator('[data-mc-part="count"]').innerText()).includes('54 matching versions'),`${theme}: count includes reachable collapsed versions`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-expanded-${theme}.png`)});
   await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).click();
-  check(await first.locator('.mc-art').count()===5,`${theme}: collapse returns to five`);
+  check(await first.locator('.mc-art').count()===3,`${theme}: collapse returns to three`);
   hold=true;await root.getByRole('button',{name:'Refresh models',exact:true}).click();
   await root.locator('[data-mc-part="loading"] .mc-loading__wheel').waitFor();
-  check(await root.locator('.mc-art').count()===15,`${theme}: refresh keeps the current results and shows a spinner`);
+  check(await root.locator('.mc-art').count()===9,`${theme}: refresh keeps the current results and shows a spinner`);
   release();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   await page.reload();await root.locator('.mc-card').first().waitFor();
   check(await root.locator('[data-af-value="all"][data-af-facet="quant"]').getAttribute('aria-pressed')==='true',`${theme}: All link survives reload`);
