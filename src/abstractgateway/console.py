@@ -487,6 +487,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .topbar-resources__long { display: none; }
 	      .topbar-resources__short { display: inline; }
 	    }
+	    @media (max-width: 479.98px) {
+	      .topbar-resources { flex-wrap: wrap; border-radius: var(--radius-lg); justify-content: flex-start; }
+	      .topbar-resources__machine { flex-basis: 100%; max-width: none; text-align: left; }
+	      .topbar-resources__machine-sep { display: none; }
+	    }
 	    /* The kit tooltip keeps line breaks (the widget's tip is one value per
 	       line; every other tip is one sentence without breaks). */
 	    body .af-tooltip { white-space: pre-line; }
@@ -2191,7 +2196,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	         with the real values; a click opens Resources. Gateway-owned, so it
 	         shows with the island and with the static fallback alike. -->
 	    <button id="topbar-resources" class="topbar-resources hidden" type="button" aria-label="Host resources. Open Resources." data-af-tip="Reading host resources…">
-	      <span class="topbar-resources__machine" id="topbar-res-machine">Host</span><span class="topbar-resources__sep" aria-hidden="true">·</span>
+	      <span class="topbar-resources__machine" id="topbar-res-machine">Host</span><span class="topbar-resources__sep topbar-resources__machine-sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-mem-bar"></span></span><span class="topbar-resources__k">Mem</span> <span class="topbar-resources__v topbar-resources__long" id="topbar-res-mem">—</span><span class="topbar-resources__v topbar-resources__short" id="topbar-res-mem-short">—</span></span>
 	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-gpu-bar"></span></span><span class="topbar-resources__k">GPU</span> <span class="topbar-resources__v" id="topbar-res-gpu">—</span></span>

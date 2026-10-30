@@ -55,7 +55,7 @@ CATALOG_CSS = r"""
        places the bar: */
     .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
     /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
-    @media (min-width: 768px) { .mc-filterbar .af-filterbar__line { flex-grow: .9; } }
+    @media (min-width: 768px) { .mc-filterbar .af-filterbar__line { flex-grow: .875; } }
     .mc-filterbar label.af-switch { text-transform: none; letter-spacing: normal; }
     /* Sticky mode: the bar's two parts are items of .mc-root (gap 10px); they read as one surface. */
     .mc-filterbar > .af-filterbar__facets { margin-top: -10px; }
@@ -70,6 +70,8 @@ CATALOG_CSS = r"""
     /* A library grid: one model per card, concise build identity, actions at the edge. */
     .mc-root:not(.mc-filters-open) .af-filterbar__facets { display: none; }
     .mc-root:not(.mc-filters-open) .af-filterbar__lead { border-bottom-color: var(--ui-border-1); border-radius: var(--radius-lg); }
+    .mc-filter-actions { display: inline-flex; align-items: center; flex: none; gap: 4px; }
+    .mc-filterbar .af-filterbar__end { column-gap: 8px; }
     .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
     .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
     .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
@@ -887,7 +889,7 @@ CATALOG_JS = r"""
         + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}${view.guide ? "" : mcSwitchMarkup("data-mc-downloaded", f.status === "downloaded", "Downloaded")}</span>`
         + `</div>`
         + `<div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
-        + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button><span class="mc-refresh" data-mc-part="refresh"></span></div></div>`
+        + `<span class="mc-filter-actions"><button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button><span class="mc-refresh" data-mc-part="refresh"></span></span></div></div>`
         + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
         + `</div>`
         + `<div data-mc-part="notice"></div>`
