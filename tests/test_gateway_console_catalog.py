@@ -142,7 +142,12 @@ vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const out = {};
 const view = () => vm.runInContext("mcStore.views.get('tab')", ctx);
-const chip = (group, value, disabled) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-facet]" ? { disabled: !!disabled, dataset: { afFacet: group, afValue: value } } : null) } });
+const chip = (group, value, disabled) => {
+  if (["provider", "cap"].includes(group)) return root.onchange({target: {dataset: {mcFilter: group}, value}});
+  // Status remains a supported deep-link filter, without duplicate UI controls.
+  if (group === "status") return vm.runInContext(`mcSetFilter(mcStore.views.get('tab'), {status:${JSON.stringify(value)}})`, ctx);
+  root.onclick({ target: { closest: (sel) => (sel === "[data-af-facet]" ? { disabled: !!disabled, dataset: { afFacet: group, afValue: value } } : null) } });
+};
 const scope = (mode) => root.onclick({ target: { closest: (sel) => (sel === "[data-af-scope]" ? { dataset: { afScope: mode } } : null) } });
 const snap = (name) => {
   const html = root.innerHTML;

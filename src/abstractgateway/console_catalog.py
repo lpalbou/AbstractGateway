@@ -20,8 +20,8 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
   (``state.downloadJobs``, fed by the SSE stream or polling in
   ``console_ui.py``) drawn by ``uiProgressMarkup`` -- the same component the
   guide's download cards use.
-- FILTERS: search, quantization (All / 4-bit / 8-bit / Other), provider,
-  capability, "Fits this computer", Downloaded / Not downloaded. Filters
+- FILTERS: source, search and quick switches on the first toolbar row; provider
+  and capability on the second. Asset type and quantization stay advanced. Filters
   hide, they never cap (ADR-0026): every matching model is drawn. Each card
   shows one primary build; its counted header chevron exposes all matching builds. The tab's
   filters live in the URL hash (``#catalog?quant=8bit&provider=mlx``).
@@ -71,7 +71,14 @@ CATALOG_CSS = r"""
     .mc-root:not(.mc-filters-open) .af-filterbar__facets { display: none; }
     .mc-root:not(.mc-filters-open) .af-filterbar__lead { border-bottom-color: var(--ui-border-1); border-radius: var(--radius-lg); }
     .mc-filter-actions { display: inline-flex; align-items: center; flex: none; gap: 4px; }
-    .mc-filterbar .af-filterbar__end { column-gap: 8px; }
+    .mc-filterbar .af-filterbar__end { column-gap: 8px; flex: none; margin-left: auto; }
+    .mc-quick-row { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
+    .mc-quick-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; flex: 1 1 auto; min-width: 0; }
+    .mc-filterbar label.mc-quick-filter { display: flex; align-items: center; gap: 8px; flex: 0 1 240px; min-width: 0; margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 500; text-transform: none; letter-spacing: normal; }
+    .mc-quick-filter > span { flex: 0 0 64px; }
+    .mc-quick-filter select { flex: 1 1 auto; width: auto; min-width: 0; font-size: var(--font-size-sm); }
+    @media (max-width: 767.98px) { .mc-quick-filters { flex-basis: 100%; } .mc-filterbar .af-filterbar__end { flex: 1 1 100%; } }
+
     .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
     .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
     .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
@@ -489,7 +496,7 @@ CATALOG_JS = r"""
       const f = Object.assign({}, view.filters, { [group]: value });
       return mcCountArts(mcVisible(f)) + mcExtras(view, f).length;
     }
-    function mcControlsMarkup(view) {
+    function mcFilterFacets(view) {
       const f = view.filters;
       const quantOn = mcQuantReported();
       const rows = mcRows().filter(r => mcKindMatches(r,f.kind));
@@ -504,12 +511,21 @@ CATALOG_JS = r"""
         { id: "kind", label: "Asset type", value: f.kind || "model", options: MC_ASSET_KINDS.map(([value,label]) => ({value,label,count:mcChipCount(view,"kind",value)})) },
         // No quant_class in the payload: the facet is shown, disabled, never guessed.
         { id: "quant", label: "Quantization", value: f.quant, disabled: !quantOn, options: quantOn ? options("quant", MC_QUANT_CHIPS) : MC_QUANT_CHIPS.map(([id, label]) => ({ value: id, label })) },
-        { id: "provider", label: "Provider", value: f.provider, options: options("provider", [["all", "All"]].concat(providers.map((p) => [p, mcProviderLabel(p)]))) },
-        { id: "cap", label: "Capability", value: f.cap, options: options("cap", [["all", "All"]].concat(caps)) },
-        { id: "status", label: "Status", value: f.status, options: options("status", MC_STATUS_CHIPS) },
+        { id: "provider", label: "Provider", value: f.provider, options: [["all", "All providers"]].concat(providers.map((p) => [p, mcProviderLabel(p)])).map(([value,label])=>({value,label})) },
+        { id: "cap", label: "Capability", value: f.cap, options: [["all", "All capabilities"]].concat(caps).map(([value,label])=>({value,label})) },
       ];
       // No "Every quant" switch on any tab (operator ruling, AbstractGateway #79).
-      return afFilterFacetsHtml(facets.filter(facet => facet.id !== "cap" || caps.length > 0), null);
+      return facets;
+    }
+    function mcControlsMarkup(facets) {
+      return afFilterFacetsHtml(facets.filter(f => f.id === "kind" || f.id === "quant"), null);
+    }
+    function mcQuickFiltersMarkup(view, facets) {
+      return facets.filter(f => f.id === "provider" || f.id === "cap").map(f => {
+        const options = f.options.map(o => `<option value="${esc(o.value)}"${o.value === f.value ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+        return `<label class="mc-quick-filter"><span>${esc(f.label)}</span>`
+          + `<select data-mc-filter="${esc(f.id)}" aria-label="${esc(f.label)}"${!mcData() || f.options.length < 2 ? " disabled" : ""}>${options}</select></label>`;
+      }).join("");
     }
     function mcCountMarkup(view, list, extras) {
       const kind = view.filters.kind || "model", total = mcRows().filter(r => mcKindMatches(r,kind)).length;
@@ -523,8 +539,6 @@ CATALOG_JS = r"""
       if (mcHfMode(f)) out.push(f.hf ? `Hugging Face: “${f.hf}”` : "Hugging Face");
       else if (f.q) out.push(`“${f.q}”`);
       if (f.quant !== "all" && mcQuantReported()) out.push((MC_QUANT_CHIPS.find((c) => c[0] === f.quant) || [f.quant, f.quant])[1]);
-      if (f.provider !== "all") out.push(mcProviderLabel(f.provider));
-      if (f.cap !== "all") out.push((MC_CAPS.find((c) => c[0] === f.cap) || [f.cap, f.cap])[1]);
       if (f.status !== "all" && (view.guide || f.status !== "downloaded")) out.push((MC_STATUS_CHIPS.find((c) => c[0] === f.status) || [f.status, f.status])[1]);
       return out.map((t) => `<span>${esc(t)}</span>`).join("");
     }
@@ -895,7 +909,7 @@ CATALOG_JS = r"""
     function mcShellMarkup(view) {
       const f = view.filters;
       return `<div class="mc-root${view.filtersOpen ? " mc-filters-open" : ""}" data-mc-view="${esc(view.key)}">`
-        // The kit's filter bar (docs/filter-bar.md in abstractuic): the first line, then the facet rows.
+        // The kit's filter bar: two primary rows, then optional advanced facets.
         + `<div class="af-filterbar af-filterbar--sticky mc-filterbar">`
         + `<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">`
         + `<div class="af-filterbar__scope" role="group" aria-label="Search in" data-mc-part="mode"></div>`
@@ -904,8 +918,8 @@ CATALOG_JS = r"""
         + `<button type="button" class="af-filterbar__submit mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
         + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}${view.guide ? "" : mcSwitchMarkup("data-mc-downloaded", f.status === "downloaded", "Downloaded")}</span>`
         + `</div>`
-        + `<div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
-        + `<span class="mc-filter-actions"><button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button><span class="mc-refresh" data-mc-part="refresh"></span></span></div></div>`
+        + `<div class="mc-quick-row"><div class="mc-quick-filters" data-mc-part="quick"></div><div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
+        + `<span class="mc-filter-actions"><button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button><span class="mc-refresh" data-mc-part="refresh"></span></span></div></div></div>`
         + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
         + `</div>`
         + `<div data-mc-part="notice"></div>`
@@ -925,12 +939,14 @@ CATALOG_JS = r"""
       const have = !!mcData();
       const list = have ? mcVisible(view.filters) : [];
       const extras = have ? mcExtras(view, view.filters) : [];
+      const facets = mcFilterFacets(view);
       const parts = {
+        quick: mcQuickFiltersMarkup(view, facets),
         refresh: mcRefreshMarkup(view),
         mode: mcModeMarkup(view),
         count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
-        controls: have ? mcControlsMarkup(view) : "",
+        controls: have ? mcControlsMarkup(facets) : "",
         notice: mcNoticeMarkup(view) + (!mcHfMode(view.filters) && mcStore.data && mcStore.error ? `<div class="ui-alert tone-warn" role="alert"><strong>Models could not be refreshed.</strong><details class="ui-details"><summary>Details</summary><pre class="ui-log">${esc(mcStore.error)}</pre></details></div>` : ""),
         message: view.message ? `<div class="ui-alert tone-${esc(view.message.tone)}" role="status">${esc(view.message.text)}</div>` : "",
         loading: have && mcHfMode(view.filters) && mcStore.hub.loading ? mcLoadingMarkup("Searching Hugging Face…") : "",
@@ -949,7 +965,8 @@ CATALOG_JS = r"""
       try {
         const a = document.activeElement;
         const q = (v) => String(v).replace(/"/g, "");
-        if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
+        if (a && el.contains(a) && a.dataset && a.dataset.mcFilter) focus = `[data-mc-filter="${q(a.dataset.mcFilter)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
         else if (a && el.contains(a) && a.dataset && a.dataset.afScope) focus = `[data-af-scope="${q(a.dataset.afScope)}"]`;
         else if (a && el.contains(a) && a.dataset && a.dataset.mcAction === "versions") versionFocus = a.dataset.mcVersionKey;
         else if (a && el.contains(a) && a.dataset && a.dataset.mcAction) actionFocus = { action:a.dataset.mcAction, provider:a.dataset.provider, artifact:a.dataset.artifact, library:a.dataset.mcLibrary };
@@ -1377,7 +1394,8 @@ CATALOG_JS = r"""
       };
       el.onchange = (event) => {
         const t = event && event.target;
-        if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
+        if (t && t.dataset && ["provider","cap"].includes(t.dataset.mcFilter)) mcSetFilter(view, {[t.dataset.mcFilter]: t.value || "all"});
+        else if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
         else if (t && t.dataset && t.dataset.mcDownloaded) mcSetLibrary(view, !!t.checked);
       };
       el.onkeydown = (event) => {

@@ -46,12 +46,6 @@ def _fixture() -> tuple[dict, dict, str]:
     return cat, installed, f"mlx/{covered['artifact']}"
 
 
-def _chip_n(html: str, group: str, value: str) -> int:
-    m = re.search(rf'data-af-facet="{group}" data-af-value="{value}"[^>]*><span class="af-chip__label">[^<]*</span><span class="af-filterbar__count" aria-hidden="true">(\d+)</span>', html)
-    assert m, (group, value)
-    return int(m.group(1))
-
-
 def test_not_in_the_catalog_rows_join_the_one_list_with_right_counts() -> None:
     cat, installed, covered_key = _fixture()
     n = len(cat["rows"])
@@ -66,13 +60,13 @@ def test_not_in_the_catalog_rows_join_the_one_list_with_right_counts() -> None:
     assert out["initial"]["count"] == [n, n, total + 2]
 
     assert out["downloaded"]["count"] == [downloaded and len({r["id"] for r in cat["rows"] if any(a["presence"]["status"] == "installed" for a in r["artifacts"])}), n, downloaded + 2]
-    assert _chip_n(out["downloadedHtml"], "status", "downloaded") == downloaded + 2
+    assert 'data-af-facet="status"' not in out["downloadedHtml"]
     assert out["downloadedHtml"].count('data-mc-extra-row="1"') == 2
     assert "Not in the catalog" not in out["notDownloadedHtml"] and out["notDownloadedHtml"].count('data-mc-extra-row="1"') == 0
-    assert _chip_n(out["notDownloadedHtml"], "status", "downloaded") == downloaded + 2  # counts stay right on every chip
+    assert 'data-af-facet="status"' not in out["notDownloadedHtml"]  # legacy links stay supported without duplicate controls
 
     assert out["ollamaHtml"].count('data-mc-extra-row="1"') == 1 and 'data-mc-art="ollama/my-own-model:7b"' in out["ollamaHtml"]
-    assert 'data-af-facet="provider" data-af-value="huggingface"' in out["html"]  # its provider gets a chip
+    assert 'data-mc-filter="provider"' in html and '<option value="huggingface"' in html  # extra providers remain selectable
     assert out["visionHtml"].count('data-mc-extra-row="1"') == 0
     # A search that only an extra row matches shows it, not the empty state.
     assert out["search"]["count"] == [0, n, 1] and 'data-mc-empty="1"' not in out["searchHtml"]
