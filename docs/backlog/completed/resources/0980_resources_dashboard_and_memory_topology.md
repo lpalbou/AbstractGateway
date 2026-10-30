@@ -94,3 +94,11 @@ ADR impact: none; ADR 0001/0002 boundaries and existing host authorization are p
 Original path: `planned/resources/0980_resources_dashboard_and_memory_topology.md`. Final path: `completed/resources/0980_resources_dashboard_and_memory_topology.md`. Other agents' changes and the running Gateway were left untouched.
 
 Additional topology receipt: `dfc72e6f` requires same-host Apple Silicon evidence for MPS; Intel/unknown MPS and remote hardware stay unknown. The post-hardening focused lane passed **37 tests**, including the 96-check browser lane and all new topology/sampler/host-state tests.
+
+## Local deployment receipt
+
+2026-10-30T03:18:44+00:00: operator follow-up, “if implemented, redeploy”, explicitly authorized deploying this completed work (the intake's no-deployment scope applied to implementation only). Served code `37ccd5f8` through the existing stack at <http://127.0.0.1:8080/console#models>. The live package resolves to this checkout; performed the existing authenticated graceful restart, without installing services or updating dependencies.
+
+Post-restart verification: HTTP 200 serves the dashboard and shared AbstractUIC header; health is healthy, model host is up and six workflow runners are non-degraded. Authenticated host state returns real CPU/storage/swap/disk/network/hardware observations. A live Chromium session verified unified-memory layout, the memory inspector, shared appearance dialog and clickable account menu, with no page exceptions or HTTP 5xx responses. Only read/inspection actions were used after restart. Deployment Runtime metadata is 0.15.3; the earlier 0.15.2 test-environment gate does not block the live instance.
+
+Evidence: [deployment section of the validation receipt](../../../../design/resources/integration-validation.json). Source and dependency configuration of other agents remained unchanged.

@@ -5,8 +5,9 @@ prototype remains a historical design reference; it is not the production shell.
 
 The implementation keeps AbstractUIC's theme chooser and the reserved top-right
 docs assistant, About, appearance and clickable account/status widgets. All new
-content uses the existing kit tokens, tooltips and modal binding. The operator's
-running gateway was not restarted, reconfigured or deployed.
+content uses the existing kit tokens, tooltips and modal binding. The implementation was subsequently redeployed to the operator's existing local
+gateway on 2026-10-30 through its graceful restart endpoint. No dependency or
+service configuration was changed.
 
 ## Memory layouts
 
@@ -80,3 +81,14 @@ installations or version gates were changed for this work.
 Work records: [0980 dashboard](../../docs/backlog/completed/resources/0980_resources_dashboard_and_memory_topology.md),
 [0981 sampling](../../docs/backlog/completed/resources/0981_host_cpu_storage_and_swap_metrics.md),
 [0982 proposed telemetry](../../docs/backlog/proposed/0982_resources_retained_history_and_serving_metrics.md).
+
+## Live deployment
+
+The operator explicitly requested redeployment after implementation. Code `37ccd5f8`
+is live at <http://127.0.0.1:8080/console#models>. Health and the model host are
+healthy; authenticated live CPU/storage/swap/I/O observations render correctly.
+A live browser verified the unified-memory layout, inspector, shared appearance
+dialog and account menu, with no JavaScript exceptions or server errors.
+The deployed environment has Runtime 0.15.3; the earlier development-test version
+gate does not apply to this instance. See the deployment section of the
+[validation receipt](integration-validation.json).
