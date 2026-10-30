@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 66
+- Completed: 67
 - Deprecated: 4
 - Recurrent: 0
 
@@ -191,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 1005 Accounts action containment (completed 2026-10-30, unreleased) | `planned/1005_accounts_action_layout_containment.md` | [completed/1005_accounts_action_layout_containment.md](completed/1005_accounts_action_layout_containment.md) | Eight accessible actions remain inside rows; remaining-width text columns and responsive cards. | `04a3f981`; 121 Accounts browser assertions, 19 focused tests and healthy live dark/light/touch redeploy; [evidence](../../design/accounts-layout-1005/REVIEW.md) records the unrelated stale catalogue assertion. |
 | 1004 Primary provider and capability filters (completed 2026-10-30, unreleased) | `planned/1004_models_primary_provider_and_capability_filters.md` | [completed/1004_models_primary_provider_and_capability_filters.md](completed/1004_models_primary_provider_and_capability_filters.md) | Two primary toolbar rows; visible Provider/Capability; no duplicate Status facet. | `2dd60d51` / `a6529057`; 51 focused tests, 286 browser assertions and healthy live redeploy; [evidence](../../design/model-filters-1004/REVIEW.md). |
 | 1003 Single-line model headers (completed 2026-10-30, unreleased) | `planned/1003_single_line_model_headers.md` | [completed/1003_single_line_model_headers.md](completed/1003_single_line_model_headers.md) | One header row; recommendation beside the build; narrow internal scroll. | `046f49fe`; 51 checks, 264 browser assertions and healthy live redeploy; [evidence](../../design/model-headers-1003/REVIEW.md). |
 | 1002 Local catalogue overview (completed 2026-10-30, unreleased) | `planned/1002_catalogue_overview_and_local_browsing.md` | [completed/1002_catalogue_overview_and_local_browsing.md](completed/1002_catalogue_overview_and_local_browsing.md) | One local read, explicit online discovery, readable primary-build cards and counted comparison controls. | `5c766ce3`; 51 tests, 262 browser assertions and healthy live dark/light/mobile/touch redeploy; [evidence](../../design/catalogue-overview-1002/REVIEW.md). |
@@ -327,4 +328,4 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 
 2026-10-30: [1004 Primary provider and capability filters](completed/1004_models_primary_provider_and_capability_filters.md), operator request for two-row controls and no duplicate Status facet.
 
-2026-10-30: [1005 Accounts action containment](planned/1005_accounts_action_layout_containment.md), operator screenshot of action buttons escaping their rows.
+2026-10-30: [1005 Accounts action containment](completed/1005_accounts_action_layout_containment.md), operator screenshot of action buttons escaping their rows.
