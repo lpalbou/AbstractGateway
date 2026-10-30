@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 52
 - Completed: 59
 - Deprecated: 4
@@ -303,3 +303,7 @@ When a planned item is completed:
    by code evidence.
 
 Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the repeated catalog-work and blank-screen gating defects. Residual startup contention and diagnostic native crash signals are proposed as 0990 and 0989; no further work was inferred as committed.
+
+2026-10-30 operator catalogue follow-up:
+
+- [0998 Clear recommendation badge and one library control](planned/0998_model_recommendation_badge_and_single_library_toggle.md)
