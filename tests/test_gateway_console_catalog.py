@@ -286,6 +286,13 @@ if (__SCRIPT__ === "capabilities") {
   out.voice = vm.runInContext(`mcCapabilityMarkup({capabilities:{speech_synthesis:true}})`, ctx);
   out.empty = vm.runInContext(`mcCapabilityMarkup({capabilities:{}})`, ctx);
 }
+if (__SCRIPT__ === "sameFiles") {
+  out.precisions = vm.runInContext(`[
+    mcSameFiles({provider:"lmstudio",artifact:"model@4bit"},{provider:"lmstudio",artifact:"model@8bit"}),
+    mcSameFiles({provider:"lmstudio",artifact:"model@q4_k_m"},{provider:"lmstudio",artifact:"model@q8_0"}),
+    mcSameFiles({provider:"lmstudio",artifact:"model@4bit"},{provider:"lmstudio",artifact:"model"})
+  ]`, ctx);
+}
 console.log(JSON.stringify(out));
 """
 
@@ -308,6 +315,10 @@ def test_capability_badges_explain_practical_use_and_input_output() -> None:
     assert 'aria-hidden="true" data-af-tip' not in out["html"]
     assert 'aria-label="Speech generation"' in out["voice"]
     assert out["empty"] == ""
+
+
+def test_explicit_local_precisions_do_not_hide_one_another() -> None:
+    assert _run(_catalog(1), "sameFiles")["precisions"] == [False, False, True]
 
 
 def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None, installed: dict | None = EMPTY_INSTALLED) -> dict:

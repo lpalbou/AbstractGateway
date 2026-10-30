@@ -71,6 +71,7 @@ try {
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
   const statusInline=async()=>root.locator('.mc-art__chips:has(.mc-installed):has(.mc-fit)').evaluateAll(groups=>groups.length>0&&groups.every(e=>{const r=e.getBoundingClientRect(),fit=e.querySelector('.mc-fit').getBoundingClientRect(),icons=[...e.querySelectorAll('.mc-installed,.mc-loaded')].map(x=>x.getBoundingClientRect());return icons.every(i=>Math.abs((i.top+i.height/2)-(fit.top+fit.height/2))<1&&i.right<=fit.left+1)&&fit.right<=r.right+1;}));
   check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side on desktop`);
+  check(await root.locator('.mc-badge--recommended').first().innerText()==='Recommended'&&await root.locator('.mc-badge--recommended svg').count()>0,`${theme}: visible recommendation uses a star and clear wording`);
   const fits=root.getByRole('switch',{name:'Fits this computer',exact:true});
   check(await fits.isChecked(), `${theme}: Fits this computer is enabled by default`);
   const signalOrder=await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const caps=h.querySelector('.mc-caps'),params=h.querySelector('.mc-card__meta');return caps.nextElementSibling===params&&params.nextElementSibling?.classList.contains('mc-versions');}));
@@ -84,7 +85,7 @@ try {
   const mine=root.getByRole('switch',{name:'Downloaded only',exact:true});
   check(!(await mine.isChecked()), `${theme}: quick downloaded filter starts off in Browse`);
   await root.getByText('Downloaded only',{exact:true}).click();
-  check(await mine.isChecked()&&await root.getByRole('button',{name:'Downloaded',exact:true}).getAttribute('aria-pressed')==='true', `${theme}: quick toggle and Downloaded tab are synchronized`);
+  check(await mine.isChecked()&&await root.getByRole('button',{name:'Downloaded',exact:true}).count()===0&&await root.getByRole('button',{name:'Browse',exact:true}).count()===0, `${theme}: Downloaded only is the sole library mode control`);
   check(await root.locator('.mc-installed').count()===await root.locator('.mc-art').count()&&!await fits.isChecked(), `${theme}: quick Downloaded mode shows local inventory across all fits`);
   await page.reload();await root.locator('.mc-card').first().waitFor();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   check(await mine.isChecked()&&page.url().includes('status=downloaded'), `${theme}: quick Downloaded mode survives reload`);
@@ -183,7 +184,7 @@ try {
   await info.press('Enter');
   check(await root.locator('.mc-art__details:visible').count()===0,`${theme}: details close again`);
   check(!writes.length,`${theme}: browsing and details issue no mutations`);
-  await root.getByRole('button',{name:'Downloaded',exact:true}).click();
+  await root.getByText('Downloaded only',{exact:true}).click();
   check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to expose all local inventory`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: downloaded library includes every precision`);
   check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to show all local inventory`);
@@ -200,7 +201,7 @@ try {
   check(writes.filter(w=>w.path.endsWith('/models/delete-download')).every(w=>w.body.dry_run===true),`${theme}: delete icon only asks for a plan`);
   await root.getByRole('button',{name:'Keep',exact:true}).click();
   check(writes.filter(w=>w.path.endsWith('/models/delete-download')).length===1,`${theme}: Keep sends no delete`);
-  await root.getByRole('button',{name:'Browse',exact:true}).click();
+  await root.getByText('Downloaded only',{exact:true}).click();
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: Browse restores prior filters`);
   await root.getByRole('button',{name:'Download',exact:true}).first().click();
   await root.getByRole('button',{name:'Cancel download',exact:true}).waitFor();

@@ -8,7 +8,7 @@ in a node VM (the harness of ``test_gateway_console_catalog``) and pins:
   catalog" in the SAME list, with All / Downloaded, never Not downloaded, a
   capability or Hugging Face mode;
 - a model the catalog does know is never listed twice;
-- the chip counts and the "N of M models · K artifacts" line include them;
+- the facet counts include extra artifacts; the summary reports catalog models only;
 - the same trash icon, confirmation and engine-native delete route;
 - the condensed card: header on one line (title, facts, tags, badges inside the
   header), one row per artifact (engine · id · quant · size · status chips ·
@@ -108,7 +108,7 @@ def test_the_condensed_card_and_row() -> None:
     card = html.split('data-mc-model="model-3"')[1].split("</article>")[0]
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
-    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Starter<" in head
+    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Recommended<" in head
     assert "4B" in head and "apache-2.0" in card
     assert "ui-mark" not in card
     rows = card.split('<li class="mc-art')[1:]

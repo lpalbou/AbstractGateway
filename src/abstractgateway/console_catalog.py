@@ -14,7 +14,7 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
   lives in the info help. Build rows show provider, precision, publisher, size
   and fit, with standard download/default/delete/detail icon actions. Full ids
   and technical metadata are on demand, with exact-id copying. The recommended
-  build is first. Browse and Downloaded are quick library views; advanced
+  build is first. Downloaded only is the quick library control; advanced
   kit filters start collapsed. Downloaded includes every precision.
 - ONE DOWNLOAD RENDERER. A running download is N's job
   (``state.downloadJobs``, fed by the SSE stream or polling in
@@ -68,9 +68,6 @@ CATALOG_CSS = r"""
     .mc-seam strong { font-weight: 650; }
     /* A library grid: one model per card, concise build identity, actions at the edge. */
     .mc-library-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .mc-library { display: flex; gap: 6px; }
-    .mc-library .ui-btn { min-height: 36px; font-size: var(--font-size-sm); color: var(--text-secondary); }
-    .mc-library .ui-btn[aria-pressed="true"] { background: var(--ui-surface-2); color: var(--text-primary); box-shadow: inset 0 -2px var(--accent); }
     .mc-host { margin-left: auto; font-size: var(--font-size-xs); }
     .mc-root:not(.mc-filters-open) .af-filterbar__facets { display: none; }
     .mc-root:not(.mc-filters-open) .af-filterbar__lead { border-bottom-color: var(--ui-border-1); border-radius: var(--radius-lg); }
@@ -104,6 +101,8 @@ CATALOG_CSS = r"""
     .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-cap:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
+    .mc-badge--recommended { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--accent); color: var(--text-primary); background: var(--ui-surface-1); font-weight: 650; }
+    .mc-badge--recommended svg { width: 12px; height: 12px; fill: none; stroke: var(--warning); stroke-width: 1.8; }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
     .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px max-content auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
@@ -387,7 +386,7 @@ CATALOG_JS = r"""
       const aa = mcNorm(a.artifact); const ra = mcNorm(r.artifact);
       if (rp === "ollama") return ap === "ollama" && mcOllamaFull(aa) === mcOllamaFull(ra);
       if (MC_HF_FAMILY.has(rp)) return MC_HF_FAMILY.has(ap) && (aa === ra || mcRepoOf(aa) === ra);
-      if (rp === "lmstudio") return ap === "lmstudio" && (aa === ra || aa.split("@")[0] === ra.split("@")[0]);
+      if (rp === "lmstudio") return ap === "lmstudio" && (aa === ra || ((!aa.includes("@") || !ra.includes("@")) && aa.split("@")[0] === ra.split("@")[0]));
       return ap === rp && aa === ra;
     }
     function mcInstalledRows() {
@@ -500,7 +499,7 @@ CATALOG_JS = r"""
       if (f.quant !== "all" && mcQuantReported()) out.push((MC_QUANT_CHIPS.find((c) => c[0] === f.quant) || [f.quant, f.quant])[1]);
       if (f.provider !== "all") out.push(mcProviderLabel(f.provider));
       if (f.cap !== "all") out.push((MC_CAPS.find((c) => c[0] === f.cap) || [f.cap, f.cap])[1]);
-      if (f.status !== "all") out.push((MC_STATUS_CHIPS.find((c) => c[0] === f.status) || [f.status, f.status])[1]);
+      if (f.status !== "all" && (view.guide || f.status !== "downloaded")) out.push((MC_STATUS_CHIPS.find((c) => c[0] === f.status) || [f.status, f.status])[1]);
       return out.map((t) => `<span>${esc(t)}</span>`).join("");
     }
     // Hugging Face mode: the Hub answered only in part (offline, rate limited).
@@ -773,7 +772,7 @@ CATALOG_JS = r"""
       const active = mcParams(row.params_active);
       const parameterTip = params ? `${params} total parameters${active ? ` · ${active} active parameters` : ""}` : "Parameter count not reported";
       const badges = [];
-      if (row.starter) badges.push(`<span class="mc-badge" data-af-tip="Part of the recommended starter set for this computer">Starter</span>`);
+      if (row.starter) badges.push(`<span class="mc-badge mc-badge--recommended" tabindex="0" ${mcTooltipAttrs({title:"Recommended for this computer",description:"Selected for this computer’s hardware and available engines. Check its fit status before loading."})}>${ICONS.star}Recommended</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
         + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${badges.join("")}</div>`
@@ -870,11 +869,6 @@ CATALOG_JS = r"""
       return afFilterScopeButtonsHtml([{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging Face" }], hf ? "hf" : "catalog");
     }
     function mcLoadingMarkup(label) { return `<div class="mc-loading" role="status" aria-live="polite"><span class="mc-loading__wheel" aria-hidden="true"></span><span>${esc(label)}</span></div>`; }
-    function mcLibraryMarkup(view) {
-      if (view.guide) return "";
-      const mine = view.filters.status === "downloaded";
-      return `<button type="button" class="ui-btn is-quiet" data-mc-action="library" data-mc-library="browse" aria-pressed="${!mine}">Browse</button><button type="button" class="ui-btn is-quiet" data-mc-action="library" data-mc-library="downloaded" aria-pressed="${mine}">Downloaded</button>`;
-    }
     function mcHostSummary(view) {
       const profile = mcStore.data && mcStore.data.host_profile || {};
       const facts = [];
@@ -888,7 +882,7 @@ CATALOG_JS = r"""
     function mcShellMarkup(view) {
       const f = view.filters;
       return `<div class="mc-root${view.filtersOpen ? " mc-filters-open" : ""}" data-mc-view="${esc(view.key)}">`
-        + `<div class="mc-library-line"><div class="mc-library" role="group" aria-label="Model library" data-mc-part="library"></div><div class="mc-host" data-mc-part="host"></div></div>`
+        + `<div class="mc-library-line"><div class="mc-host" data-mc-part="host"></div></div>`
         // The kit's filter bar (docs/filter-bar.md in abstractuic): the first line, then the facet rows.
         + `<div class="af-filterbar af-filterbar--sticky mc-filterbar">`
         + `<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">`
@@ -921,7 +915,6 @@ CATALOG_JS = r"""
       const extras = have ? mcExtras(view, view.filters) : [];
       const parts = {
         host: mcHostSummary(view),
-        library: mcLibraryMarkup(view),
         mode: mcModeMarkup(view),
         count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
@@ -1340,7 +1333,6 @@ CATALOG_JS = r"""
         view.details.has(key) ? view.details.delete(key) : view.details.add(key);
         mcRenderView(view); return;
       }
-      if (action === "library") { mcSetLibrary(view, b.dataset.mcLibrary === "downloaded"); return; }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
       if (action === "llama-update") { mcLlamaUpdateRun(); return; }
