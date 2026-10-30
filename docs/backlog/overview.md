@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 24
 - Proposed: 50
 - Completed: 47
 - Deprecated: 4
@@ -120,6 +120,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
+| [0984 Make the model catalog default to 4-bit, show loading and collapse versions](planned/0984_catalog_loading_and_version_disclosure.md) | P1. Operator-requested console correction; scoped code/browser validation and redeployment. |
+| [0985 Update wizard provider cards and use official company marks](planned/0985_wizard_shared_provider_cards_and_official_marks.md) | P1. Operator-requested console correction; scoped code/browser validation and redeployment. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
