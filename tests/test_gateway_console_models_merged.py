@@ -57,7 +57,7 @@ def test_not_in_the_catalog_rows_join_the_one_list_with_right_counts() -> None:
     n = len(cat["rows"])
     total = sum(len(r["artifacts"]) for r in cat["rows"])
     downloaded = sum(1 for r in cat["rows"] for a in r["artifacts"] if a["presence"]["status"] == "installed")
-    out = _run(cat, "merged", installed=installed)
+    out = _run(cat, "merged", "#catalog?quant=all", installed=installed)
 
     html = out["html"]
     assert html.count('data-mc-extra-row="1"') == 2 and "Not in the catalog</h4>" in html
@@ -81,7 +81,7 @@ def test_not_in_the_catalog_rows_join_the_one_list_with_right_counts() -> None:
 
 def test_an_extra_row_has_the_same_trash_confirmation_and_delete_route() -> None:
     cat, installed, _ = _fixture()
-    out = _run(cat, "merged", installed=installed)
+    out = _run(cat, "merged", "#catalog?quant=all", installed=installed)
     row = out["html"].split('data-mc-art="ollama/my-own-model:7b"')[1].split("</li>")[0]
     assert 'data-mc-action="delete-ask"' in row and re.search(r'aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)"', row) and 'title="Delete"' not in row and 'data-icon="trash"' in row
     assert ">Downloaded<" in row and "q4_k_m" in row and "Use as default" not in row
@@ -98,13 +98,13 @@ def test_an_extra_row_has_the_same_trash_confirmation_and_delete_route() -> None
 
 def test_an_unlisted_installed_answer_is_said_not_hidden() -> None:
     cat, _, _ = _fixture()
-    out = _run(cat, "merged", installed=None)
+    out = _run(cat, "merged", "#catalog?quant=all", installed=None)
     assert 'data-mc-installed-error="1"' in out["downloadedHtml"] and "connection refused" in out["downloadedHtml"]
 
 
 def test_the_condensed_card_and_row() -> None:
     cat, installed, _ = _fixture()
-    html = _run(cat, "merged", installed=installed)["html"]
+    html = _run(cat, "merged", "#catalog?quant=all", installed=installed)["html"]
     card = html.split('data-mc-model="model-3"')[1].split("</article>")[0]
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
@@ -144,7 +144,7 @@ def test_a_text_model_outside_the_catalog_can_be_the_default() -> None:
     tts = {**EXTRA_HF, "artifact": "Serveurperso/Qwen3-TTS-GGUF", "kind": "model", "tasks": ["text_to_speech"]}
     embed = {**EXTRA_HF, "artifact": "Qwen/Qwen3-Embedding-0.6B-GGUF", "kind": "embedding", "tasks": ["text_embedding"]}
     installed["rows"] += [text, tts, embed]
-    html = _run(cat, "merged", installed=installed)["html"]
+    html = _run(cat, "merged", "#catalog?quant=all", installed=installed)["html"]
 
     def row(artifact: str) -> str:
         m = re.search(rf'<li class="mc-art is-extra"[^>]*data-mc-art="huggingface/{re.escape(artifact)}"[^>]*>(.*?)</li>', html, re.S)

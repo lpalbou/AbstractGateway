@@ -1,0 +1,92 @@
+import {createRequire} from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
+const [HTML,PW,SHOTS,FIXTURE]=process.argv.slice(2);
+const require=createRequire(path.join(PW,'/'));
+const {chromium}=require('playwright-core');
+const html=fs.readFileSync(HTML,'utf8'),catalog=JSON.parse(fs.readFileSync(FIXTURE,'utf8'));
+let checks=0;const failures=[];
+const check=(v,m)=>{checks++;if(!v)failures.push(m);};
+const browser=await chromium.launch();
+try {
+ for(const theme of ['dark','light']){
+  const context=await browser.newContext({viewport:{width:1600,height:1100}});
+  await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],reject=false;
+  const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/*',async route=>{
+   const req=route.request(),url=new URL(req.url()),p=url.pathname;
+   if(url.hostname!=='catalog.test'){failures.push('External request: '+url.origin);return route.abort();}
+   if(p==='/console')return route.fulfill({contentType:'text/html',body:html});
+   let data={ok:true,items:[]};
+   if(req.method()==='POST')writes.push(p);
+   if(p.endsWith('/me'))data={principal:{admin:true,user_id:'admin',tenant_id:'default',roles:['admin']},auth:{user_auth_enabled:true}};
+   if(p.endsWith('/host/first-run'))data={completed:true,needs_setup:false};
+   if(p.endsWith('/models/catalog')){
+    if(hold)await new Promise(r=>waiters.push(r));
+    if(reject)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Catalog unavailable"}'});
+    data=catalog;
+   }
+   if(p.endsWith('/models/installed'))data={schema:'models_installed_v1',rows:[],errors:{}};
+   if(p.endsWith('/discovery/providers'))data={items:[...['anthropic','openai','openrouter','portkey'].map(name=>({name,display_name:({anthropic:'Anthropic',openai:'OpenAI',openrouter:'OpenRouter',portkey:'Portkey'})[name],local_provider:false})),{name:'openai-compatible',local_provider:true}]};
+   if(p.endsWith('/config/provider-endpoint-profiles'))data={profiles:[]};
+   return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
+  });
+  await page.goto('http://catalog.test/console#catalog');
+  const root=page.locator('#catalog-cards-root');
+  await root.locator('.mc-loading__wheel').waitFor();
+  check(await root.getByRole('status').filter({hasText:'Loading the model catalog'}).isVisible(),`${theme}: delayed initial fetch has spinner and accessible status`);
+  await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-loading-${theme}.png`)});
+  release();await root.locator('.mc-card').first().waitFor();
+  check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
+  check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===15,`${theme}: all matching models, five versions each`);
+  await root.locator('[data-af-facet="quant"][data-af-value="all"]').click();
+  check(page.url().endsWith('#catalog?quant=all'),`${theme}: All is explicit in the URL`);
+  check(await root.locator('.mc-art').count()===15,`${theme}: All precision starts with five versions per card`);
+  const first=root.locator('article[data-mc-model="model-0"]');
+  await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).press('Enter');
+  check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
+  check(await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
+  check(await root.locator('.mc-art').count()===28,`${theme}: expansion belongs to one card`);
+  check((await root.locator('[data-mc-part="count"]').innerText()).includes('54 matching versions'),`${theme}: count includes reachable collapsed versions`);
+  await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-expanded-${theme}.png`)});
+  await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).click();
+  check(await first.locator('.mc-art').count()===5,`${theme}: collapse returns to five`);
+  hold=true;await root.getByRole('button',{name:'Check again',exact:true}).click();
+  await root.locator('[data-mc-part="loading"] .mc-loading__wheel').waitFor();
+  check(await root.locator('.mc-art').count()===15,`${theme}: refresh keeps the current results and shows a spinner`);
+  release();await root.getByRole('button',{name:'Check again',exact:true}).waitFor();
+  await page.reload();await root.locator('.mc-card').first().waitFor();
+  check(await root.locator('[data-af-value="all"][data-af-facet="quant"]').getAttribute('aria-pressed')==='true',`${theme}: All link survives reload`);
+  reject=true;await page.reload();
+  await root.getByRole('alert').filter({hasText:'The model catalog did not load'}).waitFor();
+  check(await root.locator('.mc-loading__wheel').count()===0,`${theme}: failed load stops the spinner and reports an error`);
+  reject=false;await root.getByRole('button',{name:'Check again',exact:true}).click();
+  await root.locator('.mc-card').first().waitFor();
+  check(await root.locator('.mc-card').count()===3,`${theme}: retry recovers from an initial failure`);
+  await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').click();
+  await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-collapsed-${theme}.png`)});
+  await page.locator('#open-setup').click();
+  await page.locator('[data-first-run-step="cloud"]').first().click();
+  const cloud=page.locator('#first-run-cloud-body');
+  await cloud.locator('[data-cloud-provider="ovh"]').waitFor();
+  check(await cloud.locator('[data-cloud-provider]').count()===6,`${theme}: wizard native providers, OVH and generic endpoint`);
+  for(const id of ['anthropic','openai','openrouter','portkey','ovh'])check(await cloud.locator(`[data-brand="${id}"] svg`).isVisible(),`${theme}: ${id} official artwork`);
+  check((await cloud.locator('[data-cloud-provider="ovh"]').innerText()).includes('oai.endpoints.kepler.ai.cloud.ovh.net/v1'),`${theme}: OVH preset URL`);
+  const generic=cloud.locator('[data-cloud-provider="openai-compatible"]');
+  check(await generic.getByLabel('Name',{exact:true}).isVisible()&&await generic.getByLabel('Base URL',{exact:true}).isVisible(),`${theme}: other compatible services accept a name and URL`);
+  await page.screenshot({animations:"disabled",path:path.join(SHOTS,`wizard-providers-${theme}.png`)});
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#first-run-next').focus();
+  await page.waitForFunction(()=>getComputedStyle(document.querySelector('.shell_sidebar')).visibility==='hidden');
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),`${theme}: mobile no page overflow`);
+  check(await cloud.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: mobile provider cards fit`);
+  await page.screenshot({animations:"disabled",path:path.join(SHOTS,`wizard-providers-mobile-${theme}.png`)});
+  check(!writes.length,`${theme}: observation sent no mutations`);
+  check(!errors.length,`${theme}: no page errors: ${errors.join('; ')}`);
+  await context.close();
+ }
+}finally{await browser.close();}
+const report={checks,failures};fs.writeFileSync(path.join(SHOTS,'catalog-provider-validation.json'),JSON.stringify(report,null,2));
+console.log(JSON.stringify(report));if(failures.length)process.exitCode=1;

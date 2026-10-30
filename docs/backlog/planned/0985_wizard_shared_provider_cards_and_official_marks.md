@@ -24,7 +24,7 @@ the gateway islands from the committed kit. Reuse existing OVH/generic endpoint
 flows and check-before-save behavior. No provider credentials written during QA;
 no new provider runtime or API adapter. ADR impact: none; existing shared kit and
 endpoint-profile contracts are reused. Kit changes are referenced here rather
-than duplicating the existing 0073 cloud-provider implementation item.
+than duplicating the committed AbstractUIC cloud-card work (PR #46).
 
 ## Acceptance criteria
 

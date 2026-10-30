@@ -29,6 +29,7 @@ import pytest
 from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_catalog import CATALOG_CSS, CATALOG_JS
 from abstractgateway.console_ui import CONSOLE_UI_JS
 
@@ -135,6 +136,8 @@ const ctx = vm.createContext({
     return {};
   },
 });
+vm.runInContext(__ISLANDS__, ctx);
+ctx.window.AfConsoleIslands = ctx.AfConsoleIslands;
 vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const out = {};
@@ -177,6 +180,7 @@ if (__SCRIPT__ === "filters") {
   root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "clear" } } : null) } }); snap("cleared");
   out.parsed = vm.runInContext(`mcParseHash("#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1")`, ctx);
   out.roundtrip = vm.runInContext(`mcHashFor(mcParseHash("#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"))`, ctx);
+  chip("quant", "all");
   // Download -> N's POST, the job goes to the ONE feed; a live job renders.
   const first = FIXTURE.rows[1].artifacts[0];
   root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: "download", provider: first.provider, artifact: first.artifact } } : null) } });
@@ -185,6 +189,13 @@ if (__SCRIPT__ === "filters") {
   out.tracked = tracked.length;
   ctx.state.downloadJobs.set(`${first.provider}/${first.artifact}`, { job: "dl-live", provider: first.provider, artifact: first.artifact, status: "running", state: "downloading", bytes_done: 370, bytes_total: 1000, bytes_per_second: 100, eta_s: 6 });
   vm.runInContext("mcOnDownloads()", ctx); snap("live");
+}
+if (__SCRIPT__ === "versions") {
+  const toggle = () => root.onclick({ target: { closest: sel => sel === "[data-mc-action]" ? {disabled:false,dataset:{mcAction:"versions",mcVersionKey:"catalog:model-0"}} : null } });
+  out.collapsedHtml=root.innerHTML;
+  toggle(); snap("expanded"); out.expandedHtml=root.innerHTML;
+  vm.runInContext("mcRender()",ctx); snap("refreshed");
+  toggle(); snap("collapsed");
 }
 if (__SCRIPT__ === "hash") {
   snap("fromhash");
@@ -266,7 +277,7 @@ def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub
     node = require_node()
     source = js if js is not None else CONSOLE_UI_JS + CATALOG_JS
     harness = (
-        _HARNESS.replace("__SOURCE__", json.dumps(source))
+        _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS)).replace("__SOURCE__", json.dumps(source))
         .replace("__FIXTURE__", json.dumps(fixture))
         .replace("__HUB__", json.dumps(hub))
         .replace("__INSTALLED__", json.dumps(installed))
@@ -287,11 +298,12 @@ def check_filters(out: dict, cat: dict) -> None:
     total_arts = sum(len(r["artifacts"]) for r in cat["rows"])
     # One card per model, EVERY model (no cap).
     assert out["initial"]["cards"] == n
-    assert out["initial"]["arts"] == total_arts
-    assert out["initial"]["count"] == [n, n, total_arts]
+    m4, a4 = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
+    assert out["initial"]["arts"] == a4
+    assert out["initial"]["count"] == [m4, n, a4]
     assert out["initial"]["hash"] == "#catalog"
     assert out["initial"]["notice"] is False
-    assert set(out["initial"]["boldQuant"]) == {"4-bit", "8-bit", "16-bit"}
+    assert set(out["initial"]["boldQuant"]) == {"4-bit"}
     # 8-bit: only quant_class 8bit rows, count and link follow.
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "8bit")
     assert set(out["quant8"]["classes"]) == {"8bit"}
@@ -302,15 +314,15 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["quant8_mlx"]["count"] == [m, n, a]
     assert out["quant8_mlx"]["hash"] == "#catalog?quant=8bit&provider=mlx"
     m, a = _expected(cat, lambda r, x: x["fit"]["verdict"] in ("fits", "tight"))
-    assert out["fits"]["count"] == [m, n, a] and out["fits"]["hash"] == "#catalog?fits=1"
+    assert out["fits"]["count"] == [m, n, a] and out["fits"]["hash"] == "#catalog?quant=all&fits=1"
     m, a = _expected(cat, lambda r, x: x["presence"]["status"] == "installed")
     assert out["downloaded"]["count"] == [m, n, a] and m > 0
     m, a = _expected(cat, lambda r, x: bool(r["capabilities"].get("vision")))
-    assert out["vision"]["count"] == [m, n, a] and out["vision"]["hash"] == "#catalog?cap=vision"
+    assert out["vision"]["count"] == [m, n, a] and out["vision"]["hash"] == "#catalog?quant=all&cap=vision"
     assert out["search"]["count"] == [1, n, 1] and out["search"]["providers"] == ["lmstudio"]
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
-    assert out["cleared"]["count"] == [n, n, total_arts] and out["cleared"]["hash"] == "#catalog"
+    assert out["cleared"]["count"] == [m4, n, a4] and out["cleared"]["hash"] == "#catalog"
     assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1"
     first = cat["rows"][1]["artifacts"][0]
@@ -414,30 +426,30 @@ def check_hf(out: dict, hub: dict) -> None:
     # The Hub answer is drawn as the SAME cards and rows, every one of them.
     assert out["initial"]["cards"] == n and out["initial"]["arts"] == arts
     assert out["initial"]["count"] == [n, n, arts]
-    assert out["initial"]["hash"] == "#catalog?hf=smol%20lm"
+    assert out["initial"]["hash"] == "#catalog?quant=all&hf=smol%20lm"
     assert 'aria-pressed="true">Hugging Face</button>' in out["html"]
     assert "Hugging Face</span>" in out["html"]  # the card badge
     # quant_class "unknown" reads "Not stated", never a guessed class.
     assert set(out["initial"]["boldQuant"]) == {"8-bit", "Not stated"}
     assert 'data-mc-action="download"' in out["html"]
-    assert out["backToCatalog"]["hash"] == "#catalog" and out["backToCatalog"]["cards"] == 80
+    assert out["backToCatalog"]["hash"] == "#catalog?quant=all" and out["backToCatalog"]["cards"] == 80
     assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true&extended=true"
-    assert out["second"]["hash"] == "#catalog?hf=qwen%20coder"
+    assert out["second"]["hash"] == "#catalog?quant=all&hf=qwen%20coder"
 
 
 def test_hugging_face_search_renders_cards_and_keeps_the_query_in_the_link() -> None:
     hub = _hub(6)
-    check_hf(_run(_catalog(80), "hf", "#catalog?hf=smol%20lm", hub=hub), hub)
+    check_hf(_run(_catalog(80), "hf", "#catalog?quant=all&hf=smol%20lm", hub=hub), hub)
 
 
 def test_hugging_face_empty_and_unreachable_are_plain() -> None:
     empty = {"schema": "model_catalog_v1", "rows": [], "hub": {"enabled": True, "ok": True, "errors": []}}
-    out = _run(_catalog(10), "hash", "#catalog?hf=zzz", hub=empty)
+    out = _run(_catalog(10), "hash", "#catalog?quant=all&hf=zzz", hub=empty)
     assert out["fromhash"]["cards"] == 0 and out["fromhash"]["hfEmpty"] and not out["fromhash"]["hfError"]
-    down = _run(_catalog(10), "hash", "#catalog?hf=zzz", hub=None)
+    down = _run(_catalog(10), "hash", "#catalog?quant=all&hf=zzz", hub=None)
     assert down["fromhash"]["cards"] == 0 and down["fromhash"]["hfError"] and not down["fromhash"]["hfEmpty"]
     partial = dict(_hub(2), hub={"enabled": True, "ok": False, "errors": ["rate limited by the Hugging Face API (429)"]})
-    part = _run(_catalog(10), "hash", "#catalog?hf=zzz", hub=partial)
+    part = _run(_catalog(10), "hash", "#catalog?quant=all&hf=zzz", hub=partial)
     assert part["fromhash"]["cards"] == 2 and part["fromhash"]["hubNotice"]
 
 
@@ -476,7 +488,7 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
     """Backlog 0864 (front item 4): the count says how many Hugging Face results are shown and
     whether more exist; "Show more results" appends the next page; the last page has no button."""
     hub = {"__pages": [_hub_page(0, 4, page=1, more=True), _hub_page(4, 4, page=2, more=True), _hub_page(8, 2, page=3, more=False)]}
-    out = _run(_catalog(10), "hfmore", "#catalog?hf=smol%20lm", hub=hub)
+    out = _run(_catalog(10), "hfmore", "#catalog?quant=all&hf=smol%20lm", hub=hub)
     assert out["initial"]["cards"] == 4
     assert 'data-mc-hub-count="4">Showing 4 Hugging Face results; more are available.' in out["html1"]
     assert 'data-mc-action="hub-more"' in out["html1"]
@@ -492,9 +504,9 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
 
 def test_a_handle_hugging_face_does_not_have_is_said() -> None:
     hub = _hub_page(0, 2, page=1, more=False, handle="nobody/Smol-LM", found=False)
-    out = _run(_catalog(10), "hash", "#catalog?hf=nobody%2FSmol-LM", hub=hub)
+    out = _run(_catalog(10), "hash", "#catalog?quant=all&hf=nobody%2FSmol-LM", hub=hub)
     assert out["fromhash"]["cards"] == 2
-    html = _run(_catalog(10), "hfmore", "#catalog?hf=nobody%2FSmol-LM", hub=hub)["html1"]
+    html = _run(_catalog(10), "hfmore", "#catalog?quant=all&hf=nobody%2FSmol-LM", hub=hub)["html1"]
     assert "Hugging Face has no repo named “nobody/Smol-LM”; these models match its name." in html
 
 
@@ -504,14 +516,14 @@ def test_catalog_search_shows_hugging_face_results_beside_the_catalog() -> None:
     cat = _catalog(10)
     hub = _hub_page(0, 3, page=1, more=True)
     hub["rows"].insert(0, dict(cat["rows"][0], source="curated"))  # a curated row also in the answer: drawn once
-    out = _run(cat, "beside", "#catalog?q=org-1", hub=hub)
+    out = _run(cat, "beside", "#catalog?q=org-1&quant=all", hub=hub)
     assert out["hubCalls"] == ["/api/gateway/models/catalog?q=org-1&hub=true&extended=true"]
     assert '<h4 class="mc-hub-beside__title">From Hugging Face</h4>' in out["html"]
     assert 'data-mc-hub-beside="3"' in out["html"]
     assert out["html"].count('data-mc-model="hf:') == 3
     assert 'data-mc-hub-count="3">Showing 3 Hugging Face results; more are available.' in out["html"]
     assert out["hubCalls2"] == out["hubCalls"]  # the mode switch asked nothing new
-    assert out["hf"]["hash"] == "#catalog?hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
+    assert out["hf"]["hash"] == "#catalog?quant=all&hf=org-1" and 'data-mc-hub-beside' not in out["hfHtml"]
 
 
 def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
@@ -525,14 +537,14 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
     out = _run(cat, "allquants", "")
     assert out["calls"] and set(out["calls"]) == {"/api/gateway/models/catalog?hub=true&extended=true"}
     total = sum(len(r["artifacts"]) for r in cat["rows"])
-    assert out["all"]["arts"] == total and out["all"]["hash"] == "#catalog"
+    assert out["all"]["arts"] == total and out["all"]["hash"] == "#catalog?quant=all"
     m, a = _expected(cat, lambda r, x: x["quant_class"] == "4bit")
-    assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog?quant=4bit"
+    assert out["q4"]["arts"] == a and out["q4"]["hash"] == "#catalog"
     # The 4-bit chip's count is the full set's (the extended quants included).
     assert re.search(r'data-af-facet="quant" data-af-value="4bit"[^>]*><span class="af-chip__label">4-bit</span><span class="af-filterbar__count" aria-hidden="true">' + str(a) + "<", out["html"]), out["html"][:2000]
     assert "data-mc-every" not in out["html"] and "Every quant" not in out["html"]
     linked = _run(cat, "hash", "#catalog?every=1")  # an old link: the parameter is ignored
-    assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == total
+    assert linked["fromhash"]["hash"] == "#catalog" and linked["fromhash"]["arts"] == a
 
 
 def test_a_hugging_face_search_lists_every_quant() -> None:
@@ -540,7 +552,7 @@ def test_a_hugging_face_search_lists_every_quant() -> None:
     period". The Hugging Face tab always asks `extended=true`."""
     cat = _catalog(10)
     hub = _hub_page(0, 3, page=1, more=False)
-    out = _run(cat, "hf", "#catalog?hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
+    out = _run(cat, "hf", "#catalog?quant=all&hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
     assert out["hubCalls"][0] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"
 
 
@@ -567,7 +579,7 @@ def test_needs_gpu_limit_shows_its_badge_and_command_and_counts_as_fitting() -> 
     sysctl command is on the card, and the fits filter keeps it (core's
     FITS_FILTER_VERDICTS), so the 128 GiB recommendation is not hidden."""
     cat = _gpu_limit_catalog()
-    out = _run(cat, "gpulimit")
+    out = _run(cat, "gpulimit", "#catalog?quant=all")
     html = out["html"]
     assert "Needs GPU limit" in html
     assert html.count('data-mc-gpu-limit="1"') == 1
@@ -604,7 +616,7 @@ def test_a_gguf_this_llamacpp_cannot_load_greys_download_and_use_as_default() ->
         {"provider": "huggingface", "artifact": "XHToken/Spark-X2.6-4B-GGUF", "kind": "model", "tasks": ["text_generation"],
          "loadable": False, "unloadable_reason": reason},
     ]}
-    html = _run(cat, "unloadable", installed=installed)["html"]
+    html = _run(cat, "unloadable", "#catalog?quant=all", installed=installed)["html"]
     card = html[html.index('data-mc-model="model-1"'):]
     greyed = f'<button type="button" class="ui-btn is-ghost" data-mc-unloadable="1" disabled title="{reason.replace(chr(39), "&#39;")}">'
     assert greyed + "Download</button>" in card
@@ -627,3 +639,26 @@ def test_an_unloadable_gguf_a_newer_llamacpp_loads_offers_the_update() -> None:
     assert 'data-mc-action="llama-update"' in html and "Update llama.cpp" in html
     assert '/api/gateway/engines/llamacpp/install' in html
     assert "mcLlamaUpdateMarkup(a, unloadable, admin) ||" in html, "the greyed button stays only without an update"
+
+
+def test_five_versions_are_a_disclosure_and_never_a_data_cap() -> None:
+    cat = _catalog(2)
+    for row in cat["rows"]:
+        row["artifacts"] = [_art(0, j) for j in range(12)]
+    out = _run(cat, "versions", "#catalog?quant=all")
+    assert out["initial"]["cards"] == 2 and out["initial"]["arts"] == 10
+    assert out["initial"]["count"] == [2, 2, 24]
+    assert 'Show 7 more versions' in out["collapsedHtml"]
+    assert 'aria-expanded="false"' in out["collapsedHtml"]
+    assert out["expanded"]["arts"] == 17 and out["refreshed"]["arts"] == 17
+    assert 'aria-expanded="true"' in out["expandedHtml"] and 'Show fewer' in out["expandedHtml"]
+    assert out["collapsed"]["arts"] == 10
+
+
+def test_default_four_bit_and_explicit_all_round_trip() -> None:
+    cat = _catalog(6)
+    default = _run(cat, "hash", "#catalog")
+    explicit = _run(cat, "hash", "#catalog?quant=all")
+    assert set(default["initial"]["classes"]) == {"4bit"}
+    assert set(explicit["initial"]["classes"]) == {"4bit", "8bit", "16bit"}
+    assert explicit["initial"]["hash"] == "#catalog?quant=all"

@@ -91,6 +91,8 @@ const kitLib = islandsCtx.AfConsoleIslands;
 const cloudMounts = [];
 const kitIslands = {
   cloudProviders: kitLib.cloudProviders,
+  filterBarFacetsHtml: kitLib.filterBarFacetsHtml,
+  filterBarScopeButtonsHtml: kitLib.filterBarScopeButtonsHtml,
   brandMarks: kitLib.brandMarks,
   mountCloudProviderCards(el, props) {
     const rec = { id: el.id, props, updates: 0, unmounted: 0 };
@@ -383,8 +385,8 @@ if (scenario.name === "claim") {
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
-    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "mlx-community/Qwen3.5-9B-8bit", "8-bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
-    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16"]) if (cat.includes(gone)) fail("the guide presets Fits this computer; " + gone + " is too large and must be hidden: " + cat);
+    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
+    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16", "mlx-community/Qwen3.5-9B-8bit"]) if (cat.includes(gone)) fail("the guide defaults to 4-bit and presets Fits this computer; unexpected version " + gone);
     if (cat.includes("<table")) fail("the catalog is cards, not a table");
     if (cat.includes("does not report quant_class")) fail("a catalog WITH quant_class must not show the missing-field notice");
     // "Use as default" on the downloaded text model PUTs the text route with
@@ -777,7 +779,7 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
 
     harness = (
         _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
-        .replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts).replace("    initResourcesDashboard();", "    /* Resources wiring has its own real-browser suite. */")))
         .replace("__SCENARIO__", json.dumps(scenario))
         .replace("__CLASSES__", json.dumps(classes))
     )

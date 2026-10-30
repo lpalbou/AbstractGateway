@@ -22,7 +22,8 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
   guide's download cards use.
 - FILTERS: search, quantization (All / 4-bit / 8-bit / Other), provider,
   capability, "Fits this computer", Downloaded / Not downloaded. Filters
-  hide, they never cap (ADR-0026): every matching model is drawn. The tab's
+  hide, they never cap (ADR-0026): every matching model is drawn. Each card
+  starts with five matching versions; Show more exposes the rest. The tab's
   filters live in the URL hash (``#catalog?quant=8bit&provider=mlx``).
 - HUGGING FACE SEARCH: a "Catalog / Hugging Face" switch next to the search
   box. In Hugging Face mode Enter asks the same catalog route with
@@ -36,326 +37,6 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 
 from __future__ import annotations
 
-# The kit's af-filterbar block (abstractuic ui-kit/src/theme.css, backlog 0074), VERBATIM.
-# The console vendors a RELEASED kit (console_islands.py); until a kit release carries
-# this block in ISLANDS_CSS the page serves this copy, spliced before CATALOG_CSS.
-# tests/test_gateway_console_filter_bar.py pins it: equal to the kit checkout's block
-# when that checkout has one, and present exactly while the vendored kit lacks it (the
-# test goes red the day a re-sync brings it, so this copy is deleted then).
-KIT_FILTER_BAR_CSS = r"""
-/* af-filterbar:begin
- * FILTER BAR (ui-kit after 0.9.8, operator design finding 2026-10-29): ONE compact, aligned bar
- * (src/af_filter_bar.tsx; markup from src/af_filter_bar_core.ts; contract in
- * docs/filter-bar.md). A first line: the optional scope switch, the search field with its
- * on/off filters beside it (one line, they never wrap apart), the end slot (count,
- * actions). Then one row per facet: the label in a FIXED column, the chips in the second
- * column where they wrap (never under the label). Chips are the kit chip at one size, the
- * count muted small text, the accent hue when pressed. `--sticky` keeps the first line at
- * the top of the scroller while the facet rows scroll away. Consoles that vendor an older
- * kit copy this block verbatim until their vendored kit carries it. */
-.af-filterbar {
-  --af-filterbar-label-w: 7.5rem;
-  --af-filterbar-chip-h: 28px;
-  --af-filterbar-pad-x: 16px;
-  --af-filterbar-top: 0px;
-  display: grid;
-  min-width: 0;
-}
-/* The two parts become items of the host's layout, so the first line sticks to the
- * scroller rather than to this wrapper. */
-.af-filterbar--sticky {
-  display: contents;
-}
-.af-filterbar__lead,
-.af-filterbar__facets {
-  min-width: 0;
-  border: 1px solid var(--ui-border-1);
-  /* Opaque (the card tone laid over the page tone): content scrolls under the sticky line. */
-  background-color: var(--bg-primary);
-  background-image: linear-gradient(var(--bg-card, var(--bg-secondary)), var(--bg-card, var(--bg-secondary)));
-}
-.af-filterbar__lead {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 14px;
-  padding: 12px var(--af-filterbar-pad-x);
-  border-bottom-color: transparent;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-.af-filterbar__lead:has(+ .af-filterbar__facets:empty) {
-  border-bottom-color: var(--ui-border-1);
-  border-radius: var(--radius-lg);
-}
-.af-filterbar--sticky > .af-filterbar__lead {
-  position: sticky;
-  top: var(--af-filterbar-top);
-  z-index: 6;
-}
-.af-filterbar--stuck > .af-filterbar__lead {
-  border-bottom-color: var(--ui-border-1);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  box-shadow: 0 10px 22px -16px rgba(0, 0, 0, 0.6);
-}
-/* Scope switch ("Catalog | Hugging Face"): a segmented pill, chip height. */
-.af-filterbar__scope {
-  display: inline-flex;
-  flex: none;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--ui-border-2);
-  border-radius: 999px;
-  background: var(--ui-surface-1);
-}
-.af-filterbar__scope-btn {
-  display: inline-flex;
-  align-items: center;
-  height: var(--af-filterbar-chip-h);
-  min-height: var(--af-filterbar-chip-h);
-  margin: 0;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  box-shadow: none;
-  cursor: pointer;
-}
-.af-filterbar__scope-btn:hover:not([aria-pressed="true"]) {
-  background: var(--ui-surface-2);
-  color: var(--text-primary);
-}
-.af-filterbar__scope-btn[aria-pressed="true"] {
-  background: var(--accent-subtle);
-  box-shadow: inset 0 0 0 1px var(--accent-border);
-  color: var(--text-primary);
-}
-/* The search field and its on/off filters: ONE line. */
-.af-filterbar__line {
-  display: flex;
-  flex: 1 1 26rem;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 10px 14px;
-  min-width: 0;
-}
-.af-filterbar__search {
-  flex: 1 1 auto;
-  box-sizing: border-box;
-  width: auto;
-  min-width: 4.5rem;
-  height: 36px;
-  min-height: 36px;
-  margin: 0;
-  padding: 0 12px;
-  border: 1px solid var(--ui-border-1);
-  border-radius: var(--radius-md);
-  background: var(--ui-surface-3);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-md);
-}
-.af-filterbar__search:focus {
-  outline: none;
-  border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
-}
-.af-filterbar__submit {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  height: 36px;
-  min-height: 36px;
-  margin: 0;
-  padding: 0 14px;
-  border: 1px solid var(--ui-border-2);
-  border-radius: var(--radius-md);
-  background: var(--ui-surface-2);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  white-space: nowrap;
-  box-shadow: none;
-  cursor: pointer;
-}
-.af-filterbar__submit:hover {
-  border-color: var(--accent-border);
-}
-.af-filterbar__submit[hidden] {
-  display: none;
-}
-.af-filterbar__toggles {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px 14px;
-}
-.af-filterbar__toggles .af-switch,
-.af-filterbar__trailing .af-switch {
-  white-space: nowrap;
-}
-.af-filterbar__end {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px 12px;
-  margin-left: auto;
-  min-width: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-.af-filterbar__end:empty {
-  display: none;
-}
-.af-filterbar__scope-btn:focus-visible,
-.af-filterbar__submit:focus-visible {
-  outline: 2px solid var(--accent-border);
-  outline-offset: 2px;
-}
-/* One row per facet: label in the fixed column, chips wrap in the second. */
-.af-filterbar__facets {
-  display: grid;
-  gap: 8px;
-  padding: 0 var(--af-filterbar-pad-x) 14px;
-  border-top: 0;
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-.af-filterbar__facets::before {
-  content: "";
-  height: 1px;
-  margin-bottom: 4px;
-  background: var(--ui-border-1);
-}
-.af-filterbar__facets:empty {
-  display: none;
-}
-.af-filterbar__facet {
-  display: grid;
-  grid-template-columns: var(--af-filterbar-label-w) minmax(0, 1fr);
-  align-items: start;
-  column-gap: 12px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.af-filterbar__label {
-  grid-column: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  line-height: var(--af-filterbar-chip-h);
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.af-filterbar__chips {
-  grid-column: 2;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.af-filterbar__chip {
-  box-sizing: border-box;
-  height: var(--af-filterbar-chip-h);
-  min-height: var(--af-filterbar-chip-h);
-  margin: 0;
-  padding: 0 11px;
-  gap: 6px;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  line-height: 1;
-  box-shadow: none;
-}
-.af-filterbar__chip[aria-pressed="true"] {
-  --af-chip-hue: var(--accent);
-}
-.af-filterbar__chip--zero:not([aria-pressed="true"]) {
-  --af-chip-hue: var(--text-muted);
-  border-style: dashed;
-}
-.af-filterbar__count {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.af-filterbar__chip[aria-pressed="true"] .af-filterbar__count {
-  color: var(--text-secondary);
-}
-/* A control that belongs to the facet (e.g. "Every quant"), after a divider. */
-.af-filterbar__trailing {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--af-filterbar-chip-h);
-  margin-left: 4px;
-  padding-left: 12px;
-  border-left: 1px solid var(--ui-border-1);
-}
-@media (pointer: coarse) {
-  /* Pill geometry stays; the hit area grows invisibly (the kit chip rule, for the scope). */
-  .af-filterbar__scope-btn {
-    position: relative;
-  }
-  .af-filterbar__scope-btn::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: max(100%, var(--tap-min));
-    height: max(100%, var(--tap-min));
-    transform: translate(-50%, -50%);
-  }
-  .af-filterbar__search {
-    min-height: var(--tap-min);
-    font-size: var(--font-size-input);
-  }
-  .af-filterbar__submit {
-    min-height: var(--tap-min);
-  }
-  .af-filterbar__chips {
-    gap: 8px;
-  }
-  .af-filterbar__facets {
-    gap: 10px;
-  }
-}
-@media (max-width: 479.98px) {
-  .af-filterbar {
-    --af-filterbar-pad-x: 12px;
-  }
-  .af-filterbar__lead {
-    gap: 8px 10px;
-  }
-  .af-filterbar__line {
-    gap: 8px 10px;
-  }
-  .af-filterbar__facet {
-    column-gap: 8px;
-  }
-}
-/* Phones: the keyboard's search key submits (enterkeyhint="search"), so the field keeps
- * the room beside its filters. */
-@media (max-width: 479.98px) and (pointer: coarse) {
-  .af-filterbar__submit {
-    display: none;
-  }
-}
-/* af-filterbar:end */
-"""
-
 CATALOG_CSS = r"""
     /* ================= Model catalog as cards ================= */
     #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 18px; min-width: 0; }
@@ -364,7 +45,7 @@ CATALOG_CSS = r"""
     .mc-host b { color: var(--text-primary); font-weight: 600; }
     .mc-host__facts { margin-right: auto; min-width: 0; }
     /* The filter bar is the kit's AfFilterBar (abstractuic ui-kit backlog 0074, the
-       af-filterbar block in KIT_FILTER_BAR_CSS): the search field and "Fits this
+       af-filterbar block in the shared kit): the search field and "Fits this
        computer" on the first line, one row per facet with the label in a fixed column.
        Its first line (scope, search, fits, the filters in words, the count) stays under
        the tab header while the cards scroll; the facet rows scroll away, so a 1024 x 768
@@ -461,6 +142,12 @@ CATALOG_CSS = r"""
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
     .mc-empty strong { color: var(--text-primary); font-weight: 650; }
+    .mc-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: var(--text-secondary); font-size: var(--font-size-sm); }
+    .mc-loading__wheel { width: 18px; height: 18px; flex: none; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 999px; animation: mc-loading-spin .8s linear infinite; }
+    @keyframes mc-loading-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .mc-loading__wheel { animation: none; } }
+    .mc-versions { display: flex; justify-content: center; padding: 8px; border-top: 1px solid var(--ui-border-1); }
+    .mc-versions .ui-btn { min-height: 36px; font-size: var(--font-size-sm); }
 """
 
 CATALOG_JS = r"""
@@ -502,7 +189,8 @@ CATALOG_JS = r"""
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
     // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
     const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
-    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
+    const MC_VERSION_PREVIEW = 5;
+    function mcDefaultFilters() { return { q: "", quant: "4bit", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
@@ -515,7 +203,7 @@ CATALOG_JS = r"""
         let key = ""; let value = "";
         try { key = decodeURIComponent(part.slice(0, eq)); value = decodeURIComponent(part.slice(eq + 1).replace(/\+/g, " ")); } catch { continue; }
         if (key === "q") f.q = value;
-        else if (key === "quant" && ["4bit", "8bit", "other"].includes(value)) f.quant = value;
+        else if (key === "quant" && ["all", "4bit", "8bit", "other"].includes(value)) f.quant = value;
         else if (key === "provider" && value) f.provider = value;
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
         else if (key === "status" && ["downloaded", "not_downloaded"].includes(value)) f.status = value;
@@ -527,7 +215,7 @@ CATALOG_JS = r"""
     function mcHashFor(f) {
       const parts = [];
       if (f.q) parts.push(`q=${encodeURIComponent(f.q)}`);
-      if (f.quant !== "all") parts.push(`quant=${encodeURIComponent(f.quant)}`);
+      if (f.quant !== "4bit") parts.push(`quant=${encodeURIComponent(f.quant)}`);
       if (f.provider !== "all") parts.push(`provider=${encodeURIComponent(f.provider)}`);
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
@@ -730,42 +418,14 @@ CATALOG_JS = r"""
       return bits.length ? `<span class="mc-host__facts">This computer: ${bits.join(" · ")}</span>` : "";
     }
     // ---- The filter bar: abstractuic's AfFilterBar (ui-kit backlog 0074) ----
-    // The chip, facet-row and scope markup of the kit's ui-kit/src/af_filter_bar_core.ts,
-    // ported VERBATIM (same names, same output): the console vendors a RELEASED kit, and
-    // the release that carries the islands' filterBarFacetsHtml / filterBarScopeButtonsHtml
-    // replaces this port (and KIT_FILTER_BAR_CSS). tests/test_gateway_console_filter_bar.py
-    // compares the port's output with the kit's own functions.
-    const AF_FILTER_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-    function afFilterEsc(value) { return String(value ?? "").replace(/[&<>"']/g, (c) => AF_FILTER_ESC[c]); }
-    function afFilterHasCount(count) { return typeof count === "number" && Number.isFinite(count); }
-    function afFilterChipClass(option) {
-      return ["af-chip", "af-chip--neutral", "af-chip--button", "af-filterbar__chip", option.count === 0 ? "af-filterbar__chip--zero" : ""].filter(Boolean).join(" ");
+    // Render through the vendored kit; no copied filter markup or CSS.
+    function mcFilterKit() {
+      const lib = typeof window !== "undefined" && window.AfConsoleIslands;
+      if (!lib || typeof lib.filterBarFacetsHtml !== "function" || typeof lib.filterBarScopeButtonsHtml !== "function") throw new Error("The shared UI kit filter bar did not load. Reload the console.");
+      return lib;
     }
-    function afFilterChipName(option) { return afFilterHasCount(option.count) ? `${option.label}, ${option.count}` : option.label; }
-    function afFilterChipHtml(facet, option) {
-      const pressed = option.value === facet.value && !facet.disabled;
-      const disabled = Boolean(facet.disabled || option.disabled);
-      return `<button type="button" class="${afFilterChipClass(option)}" data-af-facet="${afFilterEsc(facet.id)}" data-af-value="${afFilterEsc(option.value)}"`
-        + ` aria-pressed="${pressed ? "true" : "false"}" aria-label="${afFilterEsc(afFilterChipName(option))}"`
-        + (option.title ? ` title="${afFilterEsc(option.title)}"` : "")
-        + (disabled ? ` disabled=""` : "")
-        + `><span class="af-chip__label">${afFilterEsc(option.label)}</span>`
-        + (afFilterHasCount(option.count) ? `<span class="af-filterbar__count" aria-hidden="true">${afFilterEsc(option.count)}</span>` : "")
-        + `</button>`;
-    }
-    function afFilterFacetClass(facet) { return facet.disabled ? "af-filterbar__facet af-filterbar__facet--disabled" : "af-filterbar__facet"; }
-    function afFilterFacetHtml(facet, trailingHtml) {
-      return `<div class="${afFilterFacetClass(facet)}" role="group" aria-label="${afFilterEsc(facet.label)}" data-af-facet-row="${afFilterEsc(facet.id)}">`
-        + `<span class="af-filterbar__label" aria-hidden="true">${afFilterEsc(facet.label)}</span>`
-        + `<div class="af-filterbar__chips">`
-        + facet.options.map((option) => afFilterChipHtml(facet, option)).join("")
-        + (trailingHtml ? `<span class="af-filterbar__trailing">${trailingHtml}</span>` : "")
-        + `</div></div>`;
-    }
-    function afFilterFacetsHtml(facets, trailing) { return facets.map((facet) => afFilterFacetHtml(facet, trailing ? trailing[facet.id] : undefined)).join(""); }
-    function afFilterScopeButtonsHtml(options, value) {
-      return options.map((option) => `<button type="button" class="af-filterbar__scope-btn" data-af-scope="${afFilterEsc(option.value)}" aria-pressed="${option.value === value ? "true" : "false"}">${afFilterEsc(option.label)}</button>`).join("");
-    }
+    function afFilterFacetsHtml(facets, trailing) { return mcFilterKit().filterBarFacetsHtml(facets, trailing); }
+    function afFilterScopeButtonsHtml(options, value) { return mcFilterKit().filterBarScopeButtonsHtml(options, value); }
     // The kit's native switch (af-switch--native: a checkbox with role="switch"), small.
     function mcSwitchMarkup(dataAttr, on, label, attrs) {
       return `<label class="af-switch af-switch--native af-switch--sm"${attrs || ""}><input type="checkbox" role="switch" class="af-switch__input" ${dataAttr}="1"${on ? " checked" : ""}>`
@@ -800,7 +460,7 @@ CATALOG_JS = r"""
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
       const arts = mcCountArts(list) + (extras || []).length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> ${arts === 1 ? "artifact" : "artifacts"} shown`;
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> matching ${arts === 1 ? "version" : "versions"}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -1054,8 +714,12 @@ CATALOG_JS = r"""
         + `</section>`;
     }
     // One line of facts per model: name · organisation · parameters · licence, the capability tags and badges inline.
-    function mcCardMarkup(item) {
+    function mcCardMarkup(item, view) {
       const row = item.row;
+      const versionKey = `${row.source || "catalog"}:${row.id}`;
+      const expanded = !!view && view.expanded.has(versionKey);
+      const arts = expanded ? item.arts : item.arts.slice(0, MC_VERSION_PREVIEW);
+      const versionsId = `mc-versions-${encodeURIComponent(view ? view.key : "catalog")}-${encodeURIComponent(versionKey)}`;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
       const meta = [row.vendor, params ? `${params} params${active ? ` (${active} active)` : ""}` : "", row.license].filter(Boolean);
@@ -1069,7 +733,8 @@ CATALOG_JS = r"""
         + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
         + badges.join("")
         + `</header>`
-        + `<ul class="mc-arts">${item.arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1)).join("")}</ul>`
+        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1)).join("")}</ul>`
+        + (item.arts.length > MC_VERSION_PREVIEW ? `<div class="mc-versions"><button type="button" class="ui-btn is-quiet" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}">${expanded ? "Show fewer" : `Show ${item.arts.length - MC_VERSION_PREVIEW} more ${item.arts.length - MC_VERSION_PREVIEW === 1 ? "version" : "versions"}`}</button></div>` : "")
         + `</article>`;
     }
     function mcListMarkup(view, list, extras) {
@@ -1083,7 +748,7 @@ CATALOG_JS = r"""
             + `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(hub.error)}</pre></details>`
             + `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-mc-action="hf-search">Search again</button></div></div>`;
         }
-        if (!mcData()) return `<div class="ui-empty" data-mc-hf="loading">Searching Hugging Face for “${esc(q)}”...</div>`;
+        if (!mcData()) return `<div data-mc-hf="loading">${mcLoadingMarkup(`Searching Hugging Face for “${q}”…`)}</div>`;
         if (!mcRows().length) {
           return `<div class="ui-empty mc-empty" data-mc-empty="hf"><strong>Hugging Face has no model matching “${esc(q)}”.</strong><span>Try another name, or fewer words.</span></div>`;
         }
@@ -1091,14 +756,14 @@ CATALOG_JS = r"""
       if (mcStore.error && !mcStore.data) {
         return `<div class="ui-alert tone-err" role="alert"><strong>The model catalog did not load.</strong><span>${esc(mcStore.error)}</span></div>`;
       }
-      if (!mcStore.data) return `<div class="ui-empty">Loading the model catalog...</div>`;
+      if (!mcStore.data) return mcLoadingMarkup("Loading the model catalog…");
       if (!list.length && extras.length) return mcExtrasMarkup(view, extras);
       if (!list.length) {
         return `<div class="ui-empty mc-empty" data-mc-empty="1"><strong>No model matches these filters.</strong>`
           + `<span>${esc(mcRows().length ? "Change or clear the filters to see the rest of the catalog." : "This gateway's catalog is empty.")}</span>`
           + (mcRows().length ? `<button type="button" class="ui-btn is-ghost" data-mc-action="clear">Clear filters</button>` : "") + `</div>` + mcExtrasMarkup(view, extras);
       }
-      return list.map(mcCardMarkup).join("") + mcExtrasMarkup(view, extras)
+      return list.map(item => mcCardMarkup(item, view)).join("") + mcExtrasMarkup(view, extras)
         + (mcHfMode(view.filters) ? mcHubMoreMarkup(mcData()) : mcHubBesideMarkup(view));
     }
     // ---- Hugging Face pages (AbstractCore's `hub.search`) ----
@@ -1130,7 +795,7 @@ CATALOG_JS = r"""
       const hub = mcStore.hub;
       if (q.length < MC_HUB_BESIDE_MIN || hub.q !== q) return "";
       const title = `<h4 class="mc-hub-beside__title">From Hugging Face</h4>`;
-      if (hub.loading) return `<section class="mc-hub-beside" data-mc-hub-beside="loading">${title}<div class="ui-empty">Searching Hugging Face for “${esc(q)}”...</div></section>`;
+      if (hub.loading) return `<section class="mc-hub-beside" data-mc-hub-beside="loading">${title}${mcLoadingMarkup(`Searching Hugging Face for “${q}”…`)}</section>`;
       if (hub.error && !hub.data) {
         return `<section class="mc-hub-beside" data-mc-hub-beside="error">${title}<div class="ui-alert tone-warn" role="alert"><strong>Hugging Face could not be searched right now.</strong>`
           + `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(hub.error)}</pre></details></div></section>`;
@@ -1145,7 +810,7 @@ CATALOG_JS = r"""
         if (arts.length) items.push({ row, arts });
       }
       return `<section class="mc-hub-beside" data-mc-hub-beside="${esc(items.length)}">${title}`
-        + items.map(mcCardMarkup).join("")
+        + items.map(item => mcCardMarkup(item, view)).join("")
         + (items.length || !mcHubRowCount(hub.data) ? "" : `<div class="ui-empty">No Hugging Face result matches these filters.</div>`)
         + mcHubMoreMarkup(hub.data) + `</section>`;
     }
@@ -1154,6 +819,7 @@ CATALOG_JS = r"""
       const hf = mcHfMode(view.filters);
       return afFilterScopeButtonsHtml([{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging Face" }], hf ? "hf" : "catalog");
     }
+    function mcLoadingMarkup(label) { return `<div class="mc-loading" role="status" aria-live="polite"><span class="mc-loading__wheel" aria-hidden="true"></span><span>${esc(label)}</span></div>`; }
     function mcShellMarkup(view) {
       const f = view.filters;
       return `<div class="mc-root" data-mc-view="${esc(view.key)}">`
@@ -1172,6 +838,7 @@ CATALOG_JS = r"""
         + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
         + `</div>`
         + `<div data-mc-part="notice"></div>`
+        + `<div data-mc-part="loading"></div>`
         + `<div data-mc-part="message"></div>`
         + `<div class="mc-list" data-mc-part="list"></div>`
         + `</div>`;
@@ -1196,6 +863,7 @@ CATALOG_JS = r"""
         controls: have ? mcControlsMarkup(view) : "",
         notice: mcNoticeMarkup(view),
         message: view.message ? `<div class="ui-alert tone-${esc(view.message.tone)}" role="status">${esc(view.message.text)}</div>` : "",
+        loading: have && (mcHfMode(view.filters) ? mcStore.hub.loading || mcStore.hub.loadingMore : mcStore.loading) ? mcLoadingMarkup("Refreshing models…") : "",
         list: mcListMarkup(view, list, extras),
       };
       if (!mcPart(view, "list")) {
@@ -1206,11 +874,13 @@ CATALOG_JS = r"""
       // Later paints keep the search box and the fits switch (focus, caret)
       // and redraw the rest; a focused chip, scope button or switch keeps the focus.
       let focus = null;
+      let versionFocus = null;
       try {
         const a = document.activeElement;
         const q = (v) => String(v).replace(/"/g, "");
         if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
         else if (a && el.contains(a) && a.dataset && a.dataset.afScope) focus = `[data-af-scope="${q(a.dataset.afScope)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.mcAction === "versions") versionFocus = a.dataset.mcVersionKey;
       } catch { focus = null; }
       for (const name of Object.keys(parts)) {
         const p = mcPart(view, name);
@@ -1229,6 +899,7 @@ CATALOG_JS = r"""
         const again = el.querySelector(focus);
         if (again && typeof again.focus === "function") again.focus();
       }
+      if (versionFocus !== null) Array.from(el.querySelectorAll('[data-mc-action="versions"]')).find(b => b.dataset.mcVersionKey === versionFocus)?.focus();
     }
     function mcRender() { for (const view of mcStore.views.values()) mcRenderView(view); }
     // `af-filterbar--stuck` once the facet rows have scrolled under the sticky
@@ -1524,6 +1195,11 @@ CATALOG_JS = r"""
       mcRender();
     }
     function mcAction(view, action, b) {
+      if (action === "versions") {
+        const key = b.dataset.mcVersionKey;
+        if (view.expanded.has(key)) view.expanded.delete(key); else view.expanded.add(key);
+        mcRenderView(view); return;
+      }
       if (action === "hub-more") { mcHubMore(); return; }
       if (action === "refresh") { view.message = null; mcStore.extraNotice = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
       if (action === "clear") {
@@ -1555,7 +1231,7 @@ CATALOG_JS = r"""
       if (!el) return;
       const o = opts || {};
       const known = mcStore.views.get(key);
-      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), syncHash: !!o.syncHash, guide: !!o.guide, message: null };
+      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), expanded: new Set(), syncHash: !!o.syncHash, guide: !!o.guide, message: null };
       if (o.filters) view.filters = Object.assign(mcDefaultFilters(), o.filters);
       mcStore.views.set(key, view);
       el.onclick = (event) => {

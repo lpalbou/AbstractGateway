@@ -23,6 +23,7 @@ import tempfile
 import pytest
 from node_requirement import require_node
 
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_catalog import CATALOG_JS
 from abstractgateway.console_ui import CONSOLE_UI_JS
 from test_gateway_console_catalog import _catalog
@@ -73,6 +74,8 @@ const ctx = vm.createContext({
     return {};
   },
 });
+vm.runInContext(__ISLANDS__, ctx);
+ctx.window.AfConsoleIslands = ctx.AfConsoleIslands;
 vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const click = (action, a) => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: action, provider: a.provider, artifact: a.artifact } } : null) } });
@@ -83,7 +86,7 @@ const row = (a) => {
 };
 const deletes = () => calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => c.body);
 const out = {};
-vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false })`, Object.assign(ctx, { ROOT: root }));
+vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false, filters: {quant: "all"} })`, Object.assign(ctx, { ROOT: root }));
 await settle();
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
@@ -115,7 +118,7 @@ console.log(JSON.stringify(out));
 def _run(fixture: dict, target: dict, lms: dict, admin: bool = True, js: str | None = None, stale: bool = False) -> dict:
     node = require_node()
     harness = (
-        _HARNESS.replace("__SOURCE__", json.dumps(js if js is not None else CONSOLE_UI_JS + CATALOG_JS))
+        _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS)).replace("__SOURCE__", json.dumps(js if js is not None else CONSOLE_UI_JS + CATALOG_JS))
         .replace("__FIXTURE__", json.dumps(fixture))
         .replace("__TARGET__", json.dumps(target))
         .replace("__LMS__", json.dumps(lms))

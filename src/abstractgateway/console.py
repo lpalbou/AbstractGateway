@@ -151,7 +151,7 @@ def _strip_html_comments(page: str) -> str:
 @functools.lru_cache(maxsize=1)
 def _console_owned_sources() -> Tuple[str, str, str, str]:
     """(template, theme CSS, UI CSS, UI JS) without their source comments."""
-    from .console_catalog import CATALOG_CSS, CATALOG_JS, KIT_FILTER_BAR_CSS
+    from .console_catalog import CATALOG_CSS, CATALOG_JS
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_mailboxes import MAILBOXES_CSS, MAILBOXES_JS
@@ -164,7 +164,7 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE.replace("<!--__RESOURCES_DASHBOARD__-->", RESOURCES_HTML).replace("<!--__RESOURCES_MODAL__-->", RESOURCES_MODAL_HTML)),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + KIT_FILTER_BAR_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS + RESOURCES_CSS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS + RESOURCES_CSS),
         _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS + RESOURCES_JS),
     )
 
@@ -15361,7 +15361,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; to use a cloud account instead, the next step takes its API key." },
-      cloud: { title: "Cloud providers", hint: "OpenAI, Anthropic, OpenRouter...", lede: "Use models from a cloud account: paste its API key, check it, then save it. The key stays on this gateway and is never shown again; billing is the provider's, per use. The same cards are on the Providers tab." },
+      cloud: { title: "Cloud providers", hint: "Cloud accounts and compatible endpoints", lede: "Connect a cloud account with its API key, or add an OpenAI-compatible endpoint. These connections are also available on the Providers page." },
       model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
