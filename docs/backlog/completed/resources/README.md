@@ -1,8 +1,8 @@
 # Resources dashboard track
 
-Status: planned. Created: 2026-10-30.
+Status: completed (0980/0981); 0982 remains proposed. Created: 2026-10-30. Completed: 2026-10-30.
 
-Implement the accepted Resources design inside the existing console. Preserve the
+Implemented the accepted Resources design inside the existing console. Preserved the
 AbstractUIC theme chooser, doc assistant, About, and clickable account/status menu
 in the reserved top-right cluster. Treat unified RAM and dedicated VRAM differently.
 
@@ -18,3 +18,5 @@ Core/Runtime memory ownership; ADR 0002 preserves inference process isolation.
 No new theme/header system, automatic eviction, machine services, or deployment.
 The original [prototype](../../../../design/resources/PROPOSAL.md) is a design
 reference; its simulated measurements must never enter the production page.
+
+Implementation: `ee918dc9`. Final validation: 124 passed; 96 browser checks; two baseline Runtime-gated failures recorded in the completion reports.

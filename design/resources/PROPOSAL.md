@@ -2,6 +2,11 @@
 
 Design proposal · 2026-10-30 · implementation-ready direction, simulated preview.
 
+**Implemented:** see [the actual console integration](IMPLEMENTATION.md), including
+unified RAM and separate VRAM, and the preserved shared AbstractUIC header/themes.
+The text and standalone preview below record the original proposal; their local
+chrome and simulated data are not used by the implemented console.
+
 Open [index.html](index.html) directly in a browser. It has no dependencies or network calls. A local preview is also available while the preview server is running:
 
 ```sh

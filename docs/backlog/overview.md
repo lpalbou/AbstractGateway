@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 24
+- Planned: 22
 - Proposed: 50
-- Completed: 44
+- Completed: 46
 - Deprecated: 4
 - Recurrent: 0
 
@@ -113,15 +113,13 @@ relevant.
 
 ## Planned Items
 
-Resources track (operator, 2026-10-30): [0980/0981](planned/resources/README.md) implement the graphical dashboard inside the shared AbstractUIC shell, handle unified RAM versus dedicated VRAM, and add isolated host probes. Retained history/serving metrics remain [proposed as 0982](proposed/0982_resources_retained_history_and_serving_metrics.md). Counts above were reconciled against lifecycle files (excluding topic README indexes); legacy filename hygiene is outside this change.
+Resources track (operator, completed 2026-10-30): [0980/0981](completed/resources/README.md) implement the graphical dashboard inside the shared AbstractUIC shell, handle unified RAM versus dedicated VRAM, and add isolated host probes. Implementation receipts: `ee918dc9`, `dfc72e6f`; 124 tests and 96 browser checks pass; two pre-existing Runtime-gated failures are recorded in the reports. Retained history/serving metrics remain [proposed as 0982](proposed/0982_resources_retained_history_and_serving_metrics.md). Counts above were reconciled against lifecycle files (excluding topic README indexes); legacy filename hygiene is outside this change.
 
 Priority P1: user-scoped MCP credentials and access (0936), requested after the shared RAGnarok demo.
 Priority P1: push every registered device (0940) — the phone-first rule leaves a watch away from its iPhone without alerts (operator, 2026-10-26); review by Fable + an adversarial architect before code.
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0980 Resources dashboard](planned/resources/0980_resources_dashboard_and_memory_topology.md) | P1. Shared header/themes preserved; topology-aware capacity, real local history, info/inspectors, existing operations and responsive browser validation. |
-| [0981 Host system metrics](planned/resources/0981_host_cpu_storage_and_swap_metrics.md) | P2. Isolated cached CPU/storage/swap/rate samples added to host state; warm-up, reset and failures explicit. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -191,6 +189,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Resources dashboard (0980, completed 2026-10-30, unreleased) | `planned/resources/0980_resources_dashboard_and_memory_topology.md` | [completed/resources/0980_resources_dashboard_and_memory_topology.md](completed/resources/0980_resources_dashboard_and_memory_topology.md) | Shared kit chrome/themes preserved; unified/VRAM capacity, real local history and existing operations. | `ee918dc9`, `dfc72e6f`; 124-test gate + 37-test topology lane; 96 browser checks; two baseline Runtime-gated failures recorded. |
+| Host system observations (0981, completed 2026-10-30, unreleased) | `planned/resources/0981_host_cpu_storage_and_swap_metrics.md` | [completed/resources/0981_host_cpu_storage_and_swap_metrics.md](completed/resources/0981_host_cpu_storage_and_swap_metrics.md) | Independently cached CPU, storage, swap and transfer rates; honest warm-up/reset/failure states. | `ee918dc9`; sampler math/concurrency tests and additive host-state regression. |
 | Model host: providers, the model pool and /v1 in a supervised child (ADR 0002 stage 1; completed 2026-10-29, Unreleased) | (filed completed) | [completed/0967_model_host_child_process_isolation_stage_1.md](completed/0967_model_host_child_process_isolation_stage_1.md) | `--model-host process` (Linux default): a crash in the child costs the requests in flight, never the gateway; restarts with backoff and a limit; memory ceiling; incident file per crash | kill -9 e2e (fails in 0.06 s, health 200, back in 0.6 s, next run completes); hop +0.1 ms p50; unit tests |
 | Fresh-Linux fixes: apps follow the release matrix, network status auth, llama.cpp card (completed 2026-10-28, 0.17.2) | (filed completed) | [completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md](completed/0961_fresh_linux_fixes_app_matrix_and_auth_status.md) | Install installs the release's app pins (newer offered, never auto-installed); `network status` reports loopback user auth; the llama.cpp card names the Linux CUDA build | 4 tests red without the fixes, green with them |
 | Console islands resynced from ui-kit 0.9.4 (completed 2026-10-28, 0.17.1) | (filed completed) | [completed/0956_console_islands_resync_ui_kit_0_9_4.md](completed/0956_console_islands_resync_ui_kit_0_9_4.md) | The console vendors the released kit (AbstractUIC 0.8.2): the voice picker lists each Qwen3-TTS voice once (the kit's Create-a-voice, approval-card and duration polish ride in the bundle, not yet rendered by the console) | islands/theme drift pins 8 passed against tag `v0.8.2`; old module mutation-checked red |
