@@ -192,6 +192,7 @@ CATALOG_JS = r"""
     const MC_QUANT_LABEL = { "2bit": "2-bit", "3bit": "3-bit", "4bit": "4-bit", "5bit": "5-bit", "6bit": "6-bit", "8bit": "8-bit", "16bit": "16-bit", full: "Full precision", unknown: "Not stated" };
     const MC_QUANT_CHIPS = [["all", "All"], ["4bit", "4-bit"], ["8bit", "8-bit"], ["other", "Other"]];
     const MC_STATUS_CHIPS = [["all", "All"], ["downloaded", "Downloaded"], ["not_downloaded", "Not downloaded"]];
+    const MC_ASSET_KINDS = [["model", "Models"], ["adapter", "Adapters"], ["component", "Components"], ["unknown", "Unclassified"], ["all", "All assets"]];
     const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
     // Catalog mode asks Hugging Face for the same words once typing pauses (AbstractCore caches 24 h).
     const MC_HUB_BESIDE_MIN = 3;
@@ -218,19 +219,22 @@ CATALOG_JS = r"""
     // The console's catalog: every quant of the rows' own repos, with exact sizes (cached 24 h).
     const MC_CATALOG_PATH = "/api/gateway/models/catalog?hub=true&extended=true";
     const MC_VERSION_PREVIEW = 3;
-    function mcDefaultFilters() { return { q: "", quant: "4bit", provider: "all", cap: "all", status: "all", fits: true, hf: null }; }
+    function mcDefaultFilters() { return { q: "", kind: "model", quant: "4bit", provider: "all", cap: "all", status: "all", fits: true, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
       const f = mcDefaultFilters();
       const m = /^#catalog(?:\?(.*))?$/.exec(String(hash || ""));
       if (!m || !m[1]) return f;
+      const given = new Set();
       for (const part of m[1].split("&")) {
         const eq = part.indexOf("=");
         if (eq < 1) continue;
         let key = ""; let value = "";
         try { key = decodeURIComponent(part.slice(0, eq)); value = decodeURIComponent(part.slice(eq + 1).replace(/\+/g, " ")); } catch { continue; }
+        given.add(key);
         if (key === "q") f.q = value;
+        else if (key === "kind" && MC_ASSET_KINDS.some(([id]) => id === value)) f.kind = value;
         else if (key === "quant" && ["all", "4bit", "8bit", "other"].includes(value)) f.quant = value;
         else if (key === "provider" && value) f.provider = value;
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
@@ -238,11 +242,13 @@ CATALOG_JS = r"""
         else if (key === "fits") f.fits = value === "1" || value === "true";
         else if (key === "hf") f.hf = value;
       }
+      if (f.kind !== "model") { if (!given.has("quant")) f.quant = "all"; if (!given.has("fits")) f.fits = false; }
       return f;
     }
     function mcHashFor(f) {
       const parts = [];
       if (f.q) parts.push(`q=${encodeURIComponent(f.q)}`);
+      if (f.kind && f.kind !== "model") parts.push(`kind=${encodeURIComponent(f.kind)}`);
       if (f.quant !== "4bit") parts.push(`quant=${encodeURIComponent(f.quant)}`);
       if (f.provider !== "all") parts.push(`provider=${encodeURIComponent(f.provider)}`);
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
@@ -348,6 +354,12 @@ CATALOG_JS = r"""
       const hay = [row.display_name, row.id, row.vendor, row.family, row.asset_kind, (row.tags || []).join(" "), a.artifact].map((x) => String(x || "").toLowerCase()).join(" ");
       return tokens.every((t) => hay.includes(t));
     }
+    function mcKindOf(row) { return row.asset_kind || "model"; }
+    function mcKindMatches(row, kind) { return kind === "all" || mcKindOf(row) === (kind || "model"); }
+    function mcKindFilters(view, kind) {
+      if (kind === (view.filters.kind || "model")) return {...view.filters};
+      return Object.assign({}, view.filters, kind === "model" ? (view.modelFilters || {quant:"4bit",fits:true,cap:"all"}) : {quant:"all",fits:false,cap:"all"}, {kind});
+    }
     function mcArtMatches(row, a, f, quantOn, tokens) {
       if (quantOn && f.quant !== "all" && mcQuantBucket(a) !== f.quant) return false;
       if (f.provider !== "all" && a.provider !== f.provider) return false;
@@ -367,6 +379,7 @@ CATALOG_JS = r"""
       const tokens = mcHfMode(f) ? [] : mcTokens(f.q);
       const out = [];
       for (const row of mcRows()) {
+        if (!mcKindMatches(row, f.kind)) continue;
         if (f.cap !== "all" && !mcRowCaps(row).includes(f.cap)) continue;
         const arts = mcOrdered(row).filter((a) => mcArtMatches(row, a, f, quantOn, tokens));
         if (arts.length) out.push({ row, arts });
@@ -423,6 +436,8 @@ CATALOG_JS = r"""
       if (f.quant !== "all" && f.quant !== "other" && mcQuantReported()) return [];
       const tokens = mcTokens(f.q);
       return mcInstalledRows().filter((r) => {
+        const kind = r.kind === "embedding" ? "model" : r.kind === "encoder" ? "component" : r.kind || "unknown";
+        if (f.kind !== "all" && kind !== (f.kind || "model")) return false;
         if (mcStore.deleted.has(mcKey(r))) return false;
         if (f.provider !== "all" && r.provider !== f.provider) return false;
         if (tokens.length) {
@@ -469,13 +484,14 @@ CATALOG_JS = r"""
     }
     // A chip's count = the artifacts the view would show with that chip on.
     function mcChipCount(view, group, value) {
+      if (group === "kind") { const f = mcKindFilters(view, value); return mcVisible(f).length + mcExtras(view, f).length; }
       const f = Object.assign({}, view.filters, { [group]: value });
       return mcCountArts(mcVisible(f)) + mcExtras(view, f).length;
     }
     function mcControlsMarkup(view) {
       const f = view.filters;
       const quantOn = mcQuantReported();
-      const rows = mcRows();
+      const rows = mcRows().filter(r => mcKindMatches(r,f.kind));
       const providers = [];
       for (const r of rows) for (const a of mcArts(r)) if (a.provider && !providers.includes(a.provider)) providers.push(a.provider);
       for (const r of mcExtras(view, Object.assign({}, f, { provider: "all" }))) if (!providers.includes(r.provider)) providers.push(r.provider);
@@ -484,6 +500,7 @@ CATALOG_JS = r"""
       // A chip's count = the artifacts the view would show with it on ("All" carries none).
       const options = (group, pairs) => pairs.map(([id, label]) => ({ value: id, label, count: id === "all" ? null : mcChipCount(view, group, id) }));
       const facets = [
+        { id: "kind", label: "Asset type", value: f.kind || "model", options: MC_ASSET_KINDS.map(([value,label]) => ({value,label,count:mcChipCount(view,"kind",value)})) },
         // No quant_class in the payload: the facet is shown, disabled, never guessed.
         { id: "quant", label: "Quantization", value: f.quant, disabled: !quantOn, options: quantOn ? options("quant", MC_QUANT_CHIPS) : MC_QUANT_CHIPS.map(([id, label]) => ({ value: id, label })) },
         { id: "provider", label: "Provider", value: f.provider, options: options("provider", [["all", "All"]].concat(providers.map((p) => [p, mcProviderLabel(p)]))) },
@@ -491,12 +508,12 @@ CATALOG_JS = r"""
         { id: "status", label: "Status", value: f.status, options: options("status", MC_STATUS_CHIPS) },
       ];
       // No "Every quant" switch on any tab (operator ruling, AbstractGateway #79).
-      return afFilterFacetsHtml(facets, null);
+      return afFilterFacetsHtml(facets.filter(facet => facet.id !== "cap" || caps.length > 0), null);
     }
     function mcCountMarkup(view, list, extras) {
-      const total = mcRows().length;
-      const assets = mcRows().some(r => r.asset_kind && r.asset_kind !== "model");
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, assets ? "asset" : "model", assets ? "assets" : "models"))}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
+      const kind = view.filters.kind || "model", total = mcRows().filter(r => mcKindMatches(r,kind)).length;
+      const words = ({model:["model","models"],adapter:["adapter","adapters"],component:["component","components"],unknown:["unclassified asset","unclassified assets"],all:["asset","assets"]})[kind];
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, words[0], words[1]))}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -535,9 +552,16 @@ CATALOG_JS = r"""
       const inv = a.inventory;
       if (inv && (inv.complete !== true || a.asset_kind && a.asset_kind !== "model")) {
         const kind = a.asset_kind || inv.kind;
+        const adapter = inv.adapter || {};
+        const adapterFacts = kind === "adapter" ? [
+          ...(adapter.type && adapter.type !== "unknown" ? [{label:"Adapter type",value:adapter.type === "lora" ? "LoRA" : adapter.type === "controlnet" ? "ControlNet" : adapter.peft_type || adapter.type}] : []),
+          ...(adapter.base_models && adapter.base_models.length ? [{label:"Declared base",value:adapter.base_models.join(", ")}] : []),
+          ...(adapter.tasks && adapter.tasks.length ? [{label:"Task",value:adapter.tasks.map(t=>t.replaceAll("_"," ")).join(", ")}] : [])] : [];
         const description = inv.complete !== true ? "Local files are cached, but a complete checkpoint has not been verified." : kind === "adapter" ? "Requires a compatible base model. Its cache size does not describe the full pipeline’s memory needs." : kind === "component" ? "Used inside a larger pipeline. Its cache size does not describe the full pipeline’s memory needs." : "Its role and runtime requirements could not be identified from the available local metadata.";
         return {title:inv.complete !== true ? "Cached files" : kind === "adapter" ? "Base model required" : kind === "component" ? "Pipeline component" : "Unclassified asset",description,
-          facts:[...(uiNum(inv.bytes) ? [{label:"Cache size",value:uiBytes(inv.bytes)}] : []),...(uiNum(inv.files) ? [{label:"Cached files",value:String(inv.files)}] : []),...(inv.incomplete_files ? [{label:"Pending files",value:String(inv.incomplete_files),tone:"warning"}] : []),...(inv.missing_shards ? [{label:"Missing shards",value:String(inv.missing_shards),tone:"warning"}] : [])]};
+          ...(kind === "adapter" && adapter.trigger_words && adapter.trigger_words.length ? {sections:[{label:"Trigger words",items:adapter.trigger_words}]} : {}),
+          ...(kind === "adapter" ? {note:"Base names are declarations from local metadata, not a verified engine compatibility check."} : {}),
+          facts:[...adapterFacts,...(uiNum(inv.bytes) ? [{label:"Cache size",value:uiBytes(inv.bytes)}] : []),...(uiNum(inv.files) ? [{label:"Cached files",value:String(inv.files)}] : []),...(inv.incomplete_files ? [{label:"Pending files",value:String(inv.incomplete_files),tone:"warning"}] : []),...(inv.missing_shards ? [{label:"Missing shards",value:String(inv.missing_shards),tone:"warning"}] : [])]};
       }
       const f = a.fit || {}, verdict = String(f.verdict || "unknown");
       const title = a.supported_on_host === false ? "Unsupported engine" : ({fits:"Fits this computer",tight:"Tight memory fit",needs_gpu_limit:"GPU limit change needed",partial_offload:"Partial GPU offload",too_large:"Exceeds the memory budget"})[verdict] || "Fit not known";
@@ -734,7 +758,7 @@ CATALOG_JS = r"""
     function mcArtMarkup(row, a, alone, view) {
       const job = mcJob(a), installed = mcHasLocalFiles(a), presence = a.presence || {};
       const verdict = String((a.fit || {}).verdict || "unknown");
-      const [fLabel, fTone] = a.inventory && a.inventory.complete !== true ? [a.inventory.incomplete_files || a.inventory.missing_shards ? "Partial" : "Cache", "muted"] : a.asset_kind === "adapter" ? ["Base model", "muted"] : a.asset_kind === "component" ? ["Pipeline", "muted"] : a.asset_kind === "unknown" ? ["Unrated", "muted"] : a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
+      const [fLabel, fTone] = a.inventory && a.inventory.complete !== true ? [a.inventory.incomplete_files || a.inventory.missing_shards ? "Partial" : "Cache", "muted"] : a.asset_kind === "adapter" ? ["Needs base", "muted"] : a.asset_kind === "component" ? ["Pipeline", "muted"] : a.asset_kind === "unknown" ? ["Unrated", "muted"] : a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
       const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
       const cachedBytes = a.inventory && uiNum(a.inventory.bytes) ? a.inventory.bytes : null;
       const exact = cachedBytes !== null || ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
@@ -1195,6 +1219,10 @@ CATALOG_JS = r"""
       }
     }
     function mcSetFilter(view, patch) {
+      if (patch.kind && patch.kind !== view.filters.kind) {
+        if ((view.filters.kind || "model") === "model") view.modelFilters = {quant:view.filters.quant,fits:view.filters.fits,cap:view.filters.cap};
+        view.filters = mcKindFilters(view, patch.kind);
+      }
       view.filters = Object.assign({}, view.filters, patch);
       mcWriteHash(view);
       mcRenderView(view);

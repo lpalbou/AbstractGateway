@@ -27,9 +27,9 @@ import pytest
 
 pytestmark = pytest.mark.basic
 
-EXTRA_OLLAMA = {"provider": "ollama", "artifact": "my-own-model:7b", "quant": "q4_k_m", "size_bytes": 4_000_000_000, "loaded": False,
+EXTRA_OLLAMA = {"kind":"model", "provider": "ollama", "artifact": "my-own-model:7b", "quant": "q4_k_m", "size_bytes": 4_000_000_000, "loaded": False,
                 "location": "/Users/x/.ollama", "catalog_id": None, "deletable": True, "delete_blockers": []}
-EXTRA_HF = {"provider": "huggingface", "artifact": "someone/uncatalogued", "quant": None, "size_bytes": None, "loaded": None,
+EXTRA_HF = {"kind":"model", "provider": "huggingface", "artifact": "someone/uncatalogued", "quant": None, "size_bytes": None, "loaded": None,
             "location": None, "catalog_id": None, "deletable": True, "delete_blockers": []}
 
 

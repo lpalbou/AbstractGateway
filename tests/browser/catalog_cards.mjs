@@ -232,15 +232,24 @@ try {
   current.rows.push(...structuredClone(assets));
   await page.setViewportSize({width:1600,height:1100});await root.getByRole('button',{name:'Refresh models',exact:true}).click();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   const downloaded=root.getByRole('switch',{name:'Downloaded',exact:true});if(!await downloaded.isChecked())await downloaded.press('Space');
+  check(await root.locator('article:is([data-mc-kind="adapter"],[data-mc-kind="component"],[data-mc-kind="unknown"])').count()===0&&(await root.locator('[data-mc-part="count"]').innerText()).includes('models'),`${theme}: Downloaded remains full models by default`);
+  await root.getByRole('button',{name:'Filters',exact:true}).click();
+  await root.locator('[data-af-facet="kind"][data-af-value="adapter"]').click();
+  check(await root.locator('article[data-mc-kind="adapter"]').count()===1&&await root.locator('article[data-mc-kind="model"]').count()===0&&!await fits.isChecked()&&page.url().includes('kind=adapter'),`${theme}: advanced adapter filter excludes models and clears irrelevant fit/precision constraints`);
+  const adapterFit=root.locator('article[data-mc-kind="adapter"] .mc-fit');await adapterFit.hover();await page.locator('.af-tooltip:visible').waitFor();check((await page.locator('.af-tooltip:visible').innerText()).includes('Org/Base-8B')&&(await page.locator('.af-tooltip:visible').innerText()).includes('portrait style'),`${theme}: adapter tooltip explains declared base and trigger words`);await page.mouse.move(1,1);await page.keyboard.press('Escape');
+  await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-adapters-${theme}.png`)});
+  await root.locator('[data-af-facet="kind"][data-af-value="all"]').click();
   check((await root.locator('[data-mc-part="count"]').innerText()).includes('assets'),`${theme}: mixed catalogue counts assets accurately`);
   for(const name of ['style','encoder','opaque','partial','metadata']){
    const card=root.locator('article[data-mc-model="installed:huggingface:assets/'+name+'"]');
    check(await card.count()===1&&await card.getByRole('button',{name:'Delete',exact:true}).count()===1&&await card.getByRole('button',{name:'Use as default text model',exact:true}).count()===0&&await card.locator('[data-mc-action="download"]').count()===0,`${theme}: ${name} is a managed card without a false chat/default/download action`);
   }
-  const adapter=root.locator('article[data-mc-model="installed:huggingface:assets/style"]');check(await adapter.locator('.mc-cap').count()===0&&(await adapter.innerText()).includes('Base model'),`${theme}: adapter requires its base and does not inherit chat badges`);
+  const adapter=root.locator('article[data-mc-model="installed:huggingface:assets/style"]');check(await adapter.locator('.mc-cap').count()===0&&(await adapter.innerText()).includes('Needs base'),`${theme}: adapter requires its base and does not inherit chat badges`);
   const partial=root.locator('article[data-mc-model="installed:huggingface:assets/partial"]');await partial.locator('.mc-fit').scrollIntoViewIfNeeded();await page.mouse.move(1,1);await partial.locator('.mc-fit').hover();await page.locator('.af-tooltip:visible').waitFor();check((await page.locator('.af-tooltip:visible').innerText()).includes('Missing shards')&&(await partial.innerText()).includes('Partial'),`${theme}: partial cache has an evidence-based completion explanation`);await page.mouse.move(1,1);await page.keyboard.press('Escape');
   check(await root.locator('article[data-mc-model="installed:huggingface:assets/chat"]').getByRole('button',{name:'Use as default text model',exact:true}).count()===1,`${theme}: complete text checkpoint keeps its default operation`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-discovered-assets-${theme}.png`)});
+  await root.locator('[data-af-facet="kind"][data-af-value="model"]').click();
+  check(await root.locator('article:is([data-mc-kind="adapter"],[data-mc-kind="component"],[data-mc-kind="unknown"])').count()===0,`${theme}: returning to Models hides all supporting assets`);
   await downloaded.press('Space');
   await page.locator('#open-setup').click();
   await page.locator('[data-first-run-step="cloud"]').first().click();

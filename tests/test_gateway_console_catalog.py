@@ -170,6 +170,14 @@ const snap = (name) => {
 vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: true, filters: mcParseHash(location.hash) })`, Object.assign(ctx, { ROOT: root }));
 await settle();
 snap("initial");
+if (__SCRIPT__ === "asset-types") {
+  chip("kind","adapter"); snap("adapters"); out.adapterHtml=root.innerHTML;
+  chip("kind","component"); snap("components");
+  chip("kind","unknown"); snap("unknown");
+  chip("kind","all"); snap("allAssets");
+  chip("kind","model"); snap("modelsAgain");
+  root.onclick({target:{closest:sel=>sel==="[data-mc-action]"?{disabled:false,dataset:{mcAction:"clear"}}:null}});snap("cleared");
+}
 if (__SCRIPT__ === "filters") {
   chip("quant", "8bit"); snap("quant8");
   chip("provider", "mlx"); snap("quant8_mlx");
@@ -372,7 +380,7 @@ def check_filters(out: dict, cat: dict) -> None:
     assert out["search"]["hash"].startswith("#catalog?q=org-7%2F%20lmstudio")
     assert out["nomatch"]["empty"] is True and out["nomatch"]["count"] == [0, n, 0]
     assert out["cleared"]["count"] == [m4, n, a4] and out["cleared"]["hash"] == "#catalog"
-    assert out["parsed"] == {"q": "qwen 3", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
+    assert out["parsed"] == {"q": "qwen 3", "kind": "model", "quant": "8bit", "provider": "mlx", "cap": "vision", "status": "downloaded", "fits": True, "hf": None}
     assert out["roundtrip"] == "#catalog?q=qwen%203&quant=8bit&provider=mlx&cap=vision&status=downloaded"
     first = cat["rows"][1]["artifacts"][0]
     assert out["post"] == [{"provider": first["provider"], "artifact": first["artifact"], "expected_bytes": first["download_bytes"]}]
