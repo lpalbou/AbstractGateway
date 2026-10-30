@@ -3,12 +3,14 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: catalog, ux, seat-framework
 > Work-item id: abstractgateway-1003
 > Owner: framework
-> Thread: unavailable (Agora connection refused)
+> Thread: local
 > Hub refs: none
 
 ## Current code reality and scope
@@ -30,5 +32,20 @@ alignment, no page overflow, model actions and keyboard controls. Focused gates
 and visible dark/light/mobile review. Scoped commit, authorized healthy local
 restart and live validation. Core and unrelated changes remain untouched.
 
-- [ ] Implement and validate the one-line header.
-- [ ] Commit, redeploy and retain evidence.
+- [x] Implement and validate the one-line header.
+- [x] Commit, redeploy and retain evidence.
+
+## Completion report
+
+Gateway `046f49fe` puts all header content on one line. Recommended moves beside
+the primary build and remains once per card through expansion/download redraws.
+Desktop names remain readable; narrow headers pan internally without page
+horizontal overflow. Fixed capability slots, header hover/focus, disclosure and
+local-only catalogue requests are preserved.
+
+51 focused tests, 264 Chromium assertions and live dark/light/390px/320px/touch
+checks pass. Header elements share one row at every verified width; the first six
+desktop header heights are 45px. Full recommended name fits, model operations and
+keyboard disclosure work, no page errors or model-management writes. Healthy
+authorized local restart verified. [Review and captures](../../../design/model-headers-1003/REVIEW.md).
+No Core changes, new ADR boundary, publication, persistence or required follow-up.

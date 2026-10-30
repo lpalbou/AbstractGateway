@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 64
+- Completed: 65
 - Deprecated: 4
 - Recurrent: 0
 
@@ -191,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 1003 Single-line model headers (completed 2026-10-30, unreleased) | `planned/1003_single_line_model_headers.md` | [completed/1003_single_line_model_headers.md](completed/1003_single_line_model_headers.md) | One header row; recommendation beside the build; narrow internal scroll. | `046f49fe`; 51 checks, 264 browser assertions and healthy live redeploy; [evidence](../../design/model-headers-1003/REVIEW.md). |
 | 1002 Local catalogue overview (completed 2026-10-30, unreleased) | `planned/1002_catalogue_overview_and_local_browsing.md` | [completed/1002_catalogue_overview_and_local_browsing.md](completed/1002_catalogue_overview_and_local_browsing.md) | One local read, explicit online discovery, readable primary-build cards and counted comparison controls. | `5c766ce3`; 51 tests, 262 browser assertions and healthy live dark/light/mobile/touch redeploy; [evidence](../../design/catalogue-overview-1002/REVIEW.md). |
 | 1001 Full models by default (completed 2026-10-30, unreleased) | `planned/1001_models_only_with_advanced_asset_filter.md` | [completed/1001_models_only_with_advanced_asset_filter.md](completed/1001_models_only_with_advanced_asset_filter.md) | Supporting assets in advanced type filters; coherent Downloaded scope, URLs/counts and declared adapter metadata. | `72079bc2` / `5abd3123`; 38 checks, 248 browser assertions and healthy live dark/light/mobile/touch redeploy; [evidence](../../design/model-types-1001/REVIEW.md). |
 | 1000 Discovered catalogue cards (completed 2026-10-30, unreleased) | `planned/1000_render_discovered_catalog_assets.md` | [completed/1000_render_discovered_catalog_assets.md](completed/1000_render_discovered_catalog_assets.md) | Typed cached assets, honest completeness/fit/default actions, no live uncatalogued inventory. | `9021af01`; 35 unit checks, 240 browser assertions; healthy live dark/light/mobile/touch redeploy; [evidence](../../design/catalog-assets-1000/REVIEW.md). |
@@ -321,4 +322,4 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 
 2026-10-30: [1002 Catalogue overview and local browsing](completed/1002_catalogue_overview_and_local_browsing.md), operator UX correction to eager enrichment and uneven cards.
 
-2026-10-30: [1003 Single-line model headers](planned/1003_single_line_model_headers.md), operator follow-up to 1002.
+2026-10-30: [1003 Single-line model headers](completed/1003_single_line_model_headers.md), operator follow-up to 1002.
