@@ -12,7 +12,7 @@ try {
  for(const theme of ['dark','light']){
   const context=await browser.newContext({viewport:{width:1600,height:1100}});
   await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
-  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],holdInstalled=true,installedWaiters=[],catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],holdInstalled=true,installedWaiters=[],rejectInstalled=true,catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
   const current=structuredClone(catalog);
   const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
   page.on('pageerror',e=>errors.push(e.message));
@@ -34,7 +34,7 @@ try {
    if(p.endsWith('/models/delete-download')){const a=req.postDataJSON();data={status:a.dry_run?'planned':'deleted',freed_bytes:1000};if(!a.dry_run)for(const r of current.rows)for(const art of r.artifacts)if(art.provider===a.provider&&art.artifact===a.artifact)art.presence.status='absent';}
    if(p.endsWith('/config/capability-defaults/output/text')&&req.method()==='PUT'){defaultRoute=req.postDataJSON();data={ok:true};}
    if(p.endsWith('/config/capability-defaults'))data={routes:defaultRoute?[{key:'output.text',...defaultRoute}]:[]};
-   if(p.endsWith('/models/installed')){if(holdInstalled)await new Promise(r=>installedWaiters.push(r));data={schema:'models_installed_v1',rows:[],errors:{}};}
+   if(p.endsWith('/models/installed')){if(holdInstalled)await new Promise(r=>installedWaiters.push(r));if(rejectInstalled)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Inventory unavailable"}'});data={schema:'models_installed_v1',rows:[],errors:{}};}
    if(p.endsWith('/discovery/providers'))data={items:[...['anthropic','openai','openrouter','portkey'].map(name=>({name,display_name:({anthropic:'Anthropic',openai:'OpenAI',openrouter:'OpenRouter',portkey:'Portkey'})[name],local_provider:false})),{name:'openai-compatible',local_provider:true}]};
    if(p.endsWith('/config/provider-endpoint-profiles'))data={profiles:[]};
    return route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
@@ -50,6 +50,9 @@ try {
   check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
   check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
   holdInstalled=false;installedWaiters.splice(0).forEach(r=>r());
+  await root.locator('[data-mc-installed-error]').waitFor();
+  check(await root.locator('article[data-mc-model]').count()===3,`${theme}: failed installed discovery reports its error without hiding catalog cards`);
+  rejectInstalled=false;await root.getByRole('button',{name:'Refresh models',exact:true}).click();
   await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   check(!(await root.locator('.af-filterbar__facets').isVisible()),`${theme}: advanced filters are closed initially`);
   check(await root.locator('.mc-art__action button').evaluateAll(bs=>bs.every(b=>b.querySelector('svg')&&b.textContent.trim()==='')),`${theme}: build actions are named icon controls without repeated button text`);
