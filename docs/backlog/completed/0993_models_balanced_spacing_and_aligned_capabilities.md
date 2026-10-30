@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, seat-framework
 > Work-item id: abstractgateway-0993
@@ -28,5 +30,14 @@ alignment across different title/parameter lengths, expansion/focus and operatio
 Focused regression checks; scoped commit and authorized local redeploy. Preserve
 prior 0992 history and append screenshots/evidence at completion.
 
-- [ ] Implement and validate spacing/alignment.
-- [ ] Commit, redeploy and verify live.
+- [x] Implement and validate spacing/alignment.
+- [x] Commit, redeploy and verify live.
+
+## Completion report
+
+Implemented `af7a33a4`; live cards measure 195px (45px header/44px rows), two
+columns at 1600px. Capability icons align at the right before the chevron.
+42 focused tests + 7 follow-up browser/merged checks pass; 140 browser assertions.
+Healthy graceful redeploy, live dark/light/mobile and controls verified without
+management writes or page errors. No ADR impact or new residual work.
+[Evidence](../../../design/balanced-models-0993/REVIEW.md).
