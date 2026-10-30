@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-30",
+  "work_item": "abstractgateway-0983",
+  "implementation_commit": "08f963ff",
+  "focused_tests": 18,
+  "browser": {
+    "checks": 122,
+    "failures": []
+  },
+  "live": {
+    "title": "Memory",
+    "cards": 2,
+    "words": 44,
+    "legacyHidden": true,
+    "mode": "Unified memory",
+    "errors": [],
+    "hoverTooltip": true,
+    "tooltipEscapeKeepsModal": true,
+    "keyboardTooltip": true,
+    "focusPreserved": true,
+    "escapeClosed": true,
+    "health": "healthy"
+  },
+  "fixture_screenshots": "/tmp/memory-inspector-0983",
+  "live_screenshot": "memory-inspector-live.png"
+}

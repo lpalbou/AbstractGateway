@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 50
-- Completed: 46
+- Completed: 47
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,7 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0983 Simplify memory inspector](planned/0983_simplify_memory_inspector.md) | P1. Replace legacy modal prose/repeated counters with compact topology-aware cards, info icons, responsive live updates and redeployment. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -190,6 +189,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Memory inspector clarity (0983, completed 2026-10-30, unreleased) | `planned/0983_simplify_memory_inspector.md` | [completed/resources/0983_simplify_memory_inspector.md](completed/resources/0983_simplify_memory_inspector.md) | Two compact memory cards, three allocation figures and kit info details; topology and measurement scope preserved. | `08f963ff`; 18 focused tests, 122 browser checks, live graceful restart and browser verification (44 visible words). |
 | Resources dashboard (0980, completed 2026-10-30, unreleased) | `planned/resources/0980_resources_dashboard_and_memory_topology.md` | [completed/resources/0980_resources_dashboard_and_memory_topology.md](completed/resources/0980_resources_dashboard_and_memory_topology.md) | Shared kit chrome/themes preserved; unified/VRAM capacity, real local history and existing operations. | `ee918dc9`, `dfc72e6f`; 124-test gate + 37-test topology lane; 96 browser checks; two baseline Runtime-gated failures recorded. |
 | Host system observations (0981, completed 2026-10-30, unreleased) | `planned/resources/0981_host_cpu_storage_and_swap_metrics.md` | [completed/resources/0981_host_cpu_storage_and_swap_metrics.md](completed/resources/0981_host_cpu_storage_and_swap_metrics.md) | Independently cached CPU, storage, swap and transfer rates; honest warm-up/reset/failure states. | `ee918dc9`; sampler math/concurrency tests and additive host-state regression. |
 | Model host: providers, the model pool and /v1 in a supervised child (ADR 0002 stage 1; completed 2026-10-29, Unreleased) | (filed completed) | [completed/0967_model_host_child_process_isolation_stage_1.md](completed/0967_model_host_child_process_isolation_stage_1.md) | `--model-host process` (Linux default): a crash in the child costs the requests in flight, never the gateway; restarts with backoff and a limit; memory ceiling; incident file per crash | kill -9 e2e (fails in 0.06 s, health 200, back in 0.6 s, next run completes); hop +0.1 ms p50; unit tests |

@@ -80,6 +80,17 @@ try {
     check(await memory.locator('.res-mem-pool').count()===2&&await memory.locator('.res-mem-facts > div').count()===3,`${theme}: two primary cards and three allocation figures`);
     check((await page.locator('#res-mem-weights-value').innerText()).startsWith('~')&&await page.locator('#res-mem-cache-value').innerText()==='0 B',`${theme}: estimates and reported zero stay explicit`);
     if(SHOTS)await page.screenshot({path:path.join(SHOTS,`memory-inspector-desktop-${theme}.png`),animations:'disabled'});
+    await page.getByRole('button',{name:'About available RAM',exact:true}).hover();
+    await page.locator('.af-tooltip:visible').waitFor();
+    check((await page.locator('.af-tooltip:visible').innerText()).includes('Available system RAM'),`${theme}: memory info opens on hover`);
+    await page.keyboard.press('Escape');
+    check(await page.locator('#resources-inspector-backdrop').isVisible(),`${theme}: tooltip Escape keeps memory dialog open`);
+    await page.mouse.move(5,5);
+    await page.getByRole('button',{name:'About memory layout',exact:true}).focus();
+    await page.keyboard.press('Tab');
+    await page.locator('.af-tooltip:visible').waitFor();
+    check((await page.locator('.af-tooltip:visible').innerText()).includes('Available system RAM'),`${theme}: memory info opens on keyboard navigation`);
+    await page.keyboard.press('Escape');
     await page.getByRole('button',{name:'About model weights',exact:true}).focus();
     delete current.models[0].est_weights_bytes;
     await page.waitForFunction(()=>document.getElementById('res-mem-weights-value').textContent==='—');
