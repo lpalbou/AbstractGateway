@@ -70,9 +70,11 @@ try {
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
   const compact=await root.locator('.mc-card').first().evaluate(el=>({height:el.getBoundingClientRect().height,header:el.querySelector('header').getBoundingClientRect().height,rows:[...el.querySelectorAll('.mc-art')].map(r=>r.getBoundingClientRect().height),columns:getComputedStyle(el.parentElement).gridTemplateColumns.split(' ').length}));
-  check(compact.height<=175&&compact.header<=42&&compact.rows.every(h=>h<=40),`${theme}: compact card fits three single-line versions (${JSON.stringify(compact)})`);
-  check(compact.columns>=3,`${theme}: desktop fits at least three compact model columns`);
-  check(await root.locator('.mc-card__title-wrap .mc-caps svg').count()>0&&await root.locator('.mc-tags').count()===0,`${theme}: capability icons sit beside each model title without a separate text line`);
+  check(compact.height>=190&&compact.height<=225&&compact.header>=44&&compact.header<=54&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: balanced card has breathing room around three single-line versions (${JSON.stringify(compact)})`);
+  check(compact.columns===2,`${theme}: desktop uses two comfortable model columns`);
+  check(await root.locator('.mc-card__head > .mc-caps svg').count()>0&&await root.locator('.mc-tags').count()===0,`${theme}: capability icons sit in the header without a separate text line`);
+  const alignment=await root.locator('.mc-card').evaluateAll(cards=>cards.map(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('.mc-caps').getBoundingClientRect(),t=e.querySelector('.mc-card__title').getBoundingClientRect();return {right:a.right-b.right,afterTitle:b.left>=t.right};}));
+  check(alignment.every(a=>a.afterTitle)&&Math.max(...alignment.map(a=>a.right))-Math.min(...alignment.map(a=>a.right))<1,`${theme}: capability groups align at the right edge independently of title/parameter lengths`);
   check(await root.locator('.mc-art__action [data-mc-action="details"]').count()===0,`${theme}: no redundant info action beside each version`);
   check(await root.locator('.mc-build-inspect').first().getAttribute('data-af-tip')===null,`${theme}: build identity has no repetitive hover tooltip`);
   await root.locator('.mc-caps .mc-cap').first().hover();

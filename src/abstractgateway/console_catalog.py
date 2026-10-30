@@ -77,29 +77,29 @@ CATALOG_CSS = r"""
     .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
     .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
     .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
-    .mc-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); align-items: start; min-width: 0; }
+    .mc-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); align-items: start; min-width: 0; }
     .mc-hub-beside, .mc-hub-more, .mc-extra, .mc-list > .ui-empty, .mc-list > .ui-alert { grid-column: 1 / -1; }
-    .mc-hub-beside { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); min-width: 0; }
+    .mc-hub-beside { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); min-width: 0; }
     .mc-hub-beside__title { grid-column: 1 / -1; margin: 4px 0; font-size: var(--font-size-sm); font-weight: 600; color: var(--text-secondary); }
     .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
-    .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 0 8px 2px; }
+    .mc-card { container: mc-card / inline-size; display: grid; gap: 8px; min-width: 0; padding: 0 12px 8px; }
     .mc-card.is-starter { border-color: var(--accent-border); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; margin: 0 -8px; padding: 5px 10px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; margin: 0 -12px; padding: 8px 12px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
     .mc-card__head.is-expandable { cursor: pointer; transition: background-color .15s ease; }
     .mc-card__head.is-expandable:hover, .mc-card__head.is-expandable:focus-within { background: color-mix(in srgb, var(--text-primary) 7%, var(--ui-surface-2)); }
     .mc-card__head.is-expandable:hover .mc-versions, .mc-card__head.is-expandable:focus-within .mc-versions { color: var(--accent); }
     @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
     .mc-card__title-wrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
-    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-base); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
+    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
     .mc-card__meta { flex: none; font-size: var(--font-size-xs); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
-    .mc-caps { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--text-secondary); }
+    .mc-caps { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex: none; color: var(--text-secondary); }
     .mc-cap { display: inline-flex; }
-    .mc-cap svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-caps:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; min-height: 36px; padding: 2px 2px; min-width: 0; gap: 0 6px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
+    .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
     .mc-art.is-primary { background: var(--ui-surface-1); }
     .mc-art__id { grid-area: id; min-width: 0; }
@@ -120,7 +120,7 @@ CATALOG_CSS = r"""
     .mc-loaded { min-height: 24px; padding: 2px; background: none; border: 0; }
     .mc-art__action { grid-area: action; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
     .mc-icon-wrap { display: inline-flex; }
-    .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
+    .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
     .mc-icon-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-art__action .mc-icon-action:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); border-color: var(--ui-border-1); }
     .mc-art__action .mc-icon-action.is-primary { color: var(--accent); background: var(--accent-subtle); }
@@ -148,7 +148,7 @@ CATALOG_CSS = r"""
     .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
     @container mc-card (max-width: 360px) { .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; } .mc-art__chips { justify-content: flex-start; } .mc-art__size { text-align: left; } }
     @media (pointer: coarse) { .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { min-width: 44px; min-height: 44px; height: 44px; } }
-    @media (max-width: 479.98px) { .mc-card { padding: 0 8px 2px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
+    @media (max-width: 479.98px) { .mc-card { padding: 0 12px 8px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
     /* Downloaded models no catalog entry knows: plain rows under a small heading. */
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
@@ -157,7 +157,7 @@ CATALOG_CSS = r"""
     .mc-loading__wheel { width: 18px; height: 18px; flex: none; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 999px; animation: mc-loading-spin .8s linear infinite; }
     @keyframes mc-loading-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .mc-loading__wheel { animation: none; } }
-    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; min-height: 26px; padding: 0; margin-left: auto; color: var(--text-secondary); }
+    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 28px; min-height: 28px; padding: 0; margin-left: 0; color: var(--text-secondary); }
     .mc-versions svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; transition: transform .15s; }
     .mc-versions[aria-expanded="true"] svg { transform: rotate(180deg); }
     @media (pointer: coarse) { .mc-card__head .mc-versions { min-width: 44px; min-height: 44px; } }
@@ -733,8 +733,9 @@ CATALOG_JS = r"""
       if (row.starter) badges.push(`<span class="mc-badge" data-af-tip="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${mcCapabilityMarkup(row)}</div>`
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4></div>`
         + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
+        + mcCapabilityMarkup(row)
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")
         + badges.join("")
         + `</header>`

@@ -119,9 +119,9 @@ def test_the_condensed_card_and_row() -> None:
         assert 'aria-label="Build details"' in r
         assert ' hidden>' in r  # technical prose starts collapsed
     assert sum('aria-label="Recommended for this computer"' in r for r in rows) == 1
-    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr))' in CATALOG_CSS
-    assert 'min-height: 36px' in CATALOG_CSS
-    assert 'width: 28px; height: 28px' in CATALOG_CSS
+    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr))' in CATALOG_CSS
+    assert 'min-height: 44px' in CATALOG_CSS
+    assert 'width: 32px; height: 32px' in CATALOG_CSS
 
 
 def test_the_page_has_no_second_list() -> None:
