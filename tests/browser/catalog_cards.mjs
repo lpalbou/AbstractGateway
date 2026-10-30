@@ -64,6 +64,9 @@ try {
   check(await root.locator('[data-af-facet-row]').evaluateAll(es=>es.map(e=>e.dataset.afFacetRow).sort().join(',')==='kind,quant'),`${theme}: advanced filters contain only asset type and quantization, without a duplicate Status row`);
   const toolbarRows=await root.locator('.af-filterbar__lead').evaluate(el=>{const search=el.querySelector('[data-mc-search]').getBoundingClientRect(),provider=el.querySelector('[data-mc-filter="provider"]').getBoundingClientRect(),cap=el.querySelector('[data-mc-filter="cap"]').getBoundingClientRect(),end=el.querySelector('.af-filterbar__end').getBoundingClientRect();return {twoRows:provider.top>search.bottom,aligned:Math.abs(provider.top-cap.top)<1&&Math.abs(provider.top+provider.height/2-end.top-end.height/2)<1};});
   check(toolbarRows.twoRows&&toolbarRows.aligned,`${theme}: desktop primary toolbar has two aligned rows`);
+  await page.setViewportSize({width:1024,height:900});
+  check(await root.locator('.mc-quick-row').evaluate(el=>{const p=el.querySelector('[data-mc-filter="provider"]').getBoundingClientRect(),c=el.querySelector('[data-mc-filter="cap"]').getBoundingClientRect(),e=el.querySelector('.af-filterbar__end').getBoundingClientRect();return Math.abs(p.top-c.top)<1&&Math.abs(p.top+p.height/2-e.top-e.height/2)<1;}),`${theme}: primary selectors and actions share the second row on a 1024px desktop`);
+  await page.setViewportSize({width:1600,height:1100});
   const localRequests=catalogRequests;
   await providerFilter.focus();await providerFilter.selectOption('mlx');
   check(page.url().includes('provider=mlx')&&await providerFilter.evaluate(e=>document.activeElement===e),`${theme}: provider selection updates the shareable URL and retains focus`);

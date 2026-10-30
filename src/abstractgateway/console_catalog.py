@@ -44,15 +44,11 @@ CATALOG_CSS = r"""
     .mc-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .mc-host b { color: var(--text-primary); font-weight: 600; }
     .mc-host__facts { margin-right: auto; min-width: 0; }
-    /* The filter bar is the kit's AfFilterBar (abstractuic ui-kit backlog 0074, the
-       af-filterbar block in the shared kit): the search field and "Fits this
-       computer" on the first line, one row per facet with the label in a fixed column.
-       Its first line (scope, search, fits, the filters in words, the count) stays under
-       the tab header while the cards scroll; the facet rows scroll away, so a 1024 x 768
-       window keeps its cards. Sticky honours the scroller's padding: inside the
-       console's scrolling <main> (padding-top 20px) the line lifts by that much to sit
-       flush under the header; the guide's scroller has no padding. The console only
-       places the bar: */
+    /* Shared AfFilterBar shell: two sticky primary rows, followed by optional
+       advanced facets. Search, source and quick switches lead; provider/capability
+       selectors sit below with the summary and actions. Advanced facets scroll away
+       while the primary rows remain visible. Honour the console scroller's 20px
+       top padding; the first-run scroller has no padding. */
     .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
     /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
     @media (min-width: 768px) { .mc-filterbar .af-filterbar__line { flex-grow: .875; } }
@@ -73,11 +69,11 @@ CATALOG_CSS = r"""
     .mc-filter-actions { display: inline-flex; align-items: center; flex: none; gap: 4px; }
     .mc-filterbar .af-filterbar__end { column-gap: 8px; flex: none; margin-left: auto; }
     .mc-quick-row { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
-    .mc-quick-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; flex: 1 1 auto; min-width: 0; }
+    .mc-quick-filters { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px 20px; flex: 1 1 auto; min-width: 0; }
     .mc-filterbar label.mc-quick-filter { display: flex; align-items: center; gap: 8px; flex: 0 1 240px; min-width: 0; margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 500; text-transform: none; letter-spacing: normal; }
     .mc-quick-filter > span { flex: 0 0 64px; }
     .mc-quick-filter select { flex: 1 1 auto; width: auto; min-width: 0; font-size: var(--font-size-sm); }
-    @media (max-width: 767.98px) { .mc-quick-filters { flex-basis: 100%; } .mc-filterbar .af-filterbar__end { flex: 1 1 100%; } }
+    @media (max-width: 767.98px) { .mc-quick-filters { flex-basis: 100%; flex-wrap: wrap; } .mc-filterbar .af-filterbar__end { flex: 1 1 100%; } }
 
     .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
     .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
