@@ -21,10 +21,10 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 20
-- Proposed: 48
-- Completed: 34
-- Deprecated: 3
+- Planned: 24
+- Proposed: 50
+- Completed: 44
+- Deprecated: 4
 - Recurrent: 0
 
 <!-- 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
@@ -113,11 +113,15 @@ relevant.
 
 ## Planned Items
 
+Resources track (operator, 2026-10-30): [0980/0981](planned/resources/README.md) implement the graphical dashboard inside the shared AbstractUIC shell, handle unified RAM versus dedicated VRAM, and add isolated host probes. Retained history/serving metrics remain [proposed as 0982](proposed/0982_resources_retained_history_and_serving_metrics.md). Counts above were reconciled against lifecycle files (excluding topic README indexes); legacy filename hygiene is outside this change.
+
 Priority P1: user-scoped MCP credentials and access (0936), requested after the shared RAGnarok demo.
 Priority P1: push every registered device (0940) — the phone-first rule leaves a watch away from its iPhone without alerts (operator, 2026-10-26); review by Fable + an adversarial architect before code.
 
 | Item | Acceptance summary |
 | --- | --- |
+| [0980 Resources dashboard](planned/resources/0980_resources_dashboard_and_memory_topology.md) | P1. Shared header/themes preserved; topology-aware capacity, real local history, info/inspectors, existing operations and responsive browser validation. |
+| [0981 Host system metrics](planned/resources/0981_host_cpu_storage_and_swap_metrics.md) | P2. Isolated cached CPU/storage/swap/rate samples added to host state; warm-up, reset and failures explicit. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -146,6 +150,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
 | [0939_sessions_index_with_exact_counts.md](proposed/0939_sessions_index_with_exact_counts.md) | A sessions index (one row per conversation with exact turn and tool-call counts, kept as runs end) so no client groups capped run pages; the iPhone's "1+" and the watch's undercount go away. Promote when the gateway seat picks the aggregate's home. |
 | [0938_ai_identity_presentation_avatar_voice_image.md](proposed/0938_ai_identity_presentation_avatar_voice_image.md) | One presentation record per AI (avatar design, voice, optional image) held by the runtime and served by the gateway, so every client shows and speaks the same identity. Promote when the runtime and gateway seats agree on the record's home and the two routes. |
 | [0937_session_titles_written_by_the_model.md](proposed/0937_session_titles_written_by_the_model.md) | A session title written by the model after its first answer, into the existing `title` tag; clients change nothing. Promote when the operator asks or assistant 0006 needs it. |
