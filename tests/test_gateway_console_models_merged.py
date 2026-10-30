@@ -109,11 +109,11 @@ def test_the_condensed_card_and_row() -> None:
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
     assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Recommended<" in head
-    assert 'class="mc-versions-slot" aria-hidden="true"' in head  # no disclosure: reserve its column
+    assert 'class="mc-version-count" aria-hidden="true">3</span>' in head and 'aria-expanded="false"' in head
     assert "4B" in head and "apache-2.0" in card
     assert "ui-mark" not in card
     rows = card.split('<li class="mc-art')[1:]
-    assert len(rows) == 3
+    assert len(rows) == 1
     for r in rows:
         for c in ['mc-art__id','mc-art__size','mc-art__chips','mc-art__action','mc-art__details']:
             assert f'class="{c}"' in r

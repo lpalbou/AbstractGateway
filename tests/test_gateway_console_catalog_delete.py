@@ -53,8 +53,8 @@ const ctx = vm.createContext({
   api: async (path, opts) => {
     const body = (opts && opts.body) ? JSON.parse(opts.body) : null;
     calls.push({ path, body });
-    // The console's catalog asks every quant (operator ruling 2026-10-29: no "Every quant" switch).
-    if (path === "/api/gateway/models/catalog?hub=true&extended=true") return JSON.parse(JSON.stringify(FIXTURE));
+    // Catalogue reads local facts; every build remains inspectable via disclosure.
+    if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
     if (path === "/api/gateway/models/installed") return { schema: "models_installed_v1", rows: [], errors: {} };
     if (path === "/api/gateway/models/delete-download") {
       if (body.provider === "lmstudio") {
@@ -94,6 +94,8 @@ const deletes = () => calls.filter((c) => c.path === "/api/gateway/models/delete
 const out = {};
 vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false, filters: {quant: "all"} })`, Object.assign(ctx, { ROOT: root }));
 await settle();
+// Per-build deletion controls are inspected through the real disclosure handler.
+for(const r of FIXTURE.rows) if(r.artifacts.length>1) root.onclick({target:{closest:sel=>sel==="[data-mc-action]"?{disabled:false,dataset:{mcAction:"versions",mcVersionKey:`catalog:${r.id}`}}:null}});
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
 out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete"[^>]*><svg data-icon="trash"><\/svg><\/button>/g) || []).length;

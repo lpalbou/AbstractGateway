@@ -13,7 +13,7 @@ try {
  for(const theme of ['dark','light']){
   const context=await browser.newContext({viewport:{width:1600,height:1100}});
   await context.addInitScript(t=>localStorage.setItem('abstractgateway_ui_settings_v1',JSON.stringify({theme:t})),theme);
-  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],baseHold=true,baseWaiters=[],holdInstalled=true,installedWaiters=[],rejectInstalled=true,catalogRequests=0,reject=false,admin=true,defaultRoute=null,downloadCount=0;
+  const page=await context.newPage(),errors=[],writes=[];let hold=true,waiters=[],holdInstalled=true,installedWaiters=[],rejectInstalled=true,catalogRequests=0,hubRequests=[],reject=false,admin=true,defaultRoute=null,downloadCount=0;
   const current=structuredClone(catalog);
   const release=()=>{hold=false;waiters.splice(0).forEach(r=>r());};
   page.on('pageerror',e=>errors.push(e.message));
@@ -26,12 +26,8 @@ try {
    if(p.endsWith('/me'))data={principal:{admin,user_id:'admin',tenant_id:'default',roles:[admin?'admin':'user']},auth:{user_auth_enabled:true}};
    if(p.endsWith('/host/first-run'))data={completed:true,needs_setup:false};
    if(p.endsWith('/models/catalog')){
-    if(!url.search){
-     if(baseHold)await new Promise(r=>baseWaiters.push(r));
-     const preview=structuredClone(current);for(const r of preview.rows)r.artifacts=r.artifacts.filter(a=>a.quant_class==='4bit').slice(0,3);
-     return route.fulfill({status:reject?503:200,contentType:'application/json',body:JSON.stringify(reject?{detail:'Catalog unavailable'}:preview)});
-    }
     catalogRequests++;
+    if(url.search)hubRequests.push(url.search);
     if(hold)await new Promise(r=>waiters.push(r));
     if(reject)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"Catalog unavailable"}'});
     data=current;
@@ -52,14 +48,10 @@ try {
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-loading-${theme}.png`)});
   await page.evaluate(()=>{mcLoad();mcLoad();});
   check(catalogRequests===1,`${theme}: repeated loads coalesce into one catalog request`);
-  baseHold=false;baseWaiters.splice(0).forEach(r=>r());
-  await root.locator('.mc-card').first().waitFor();
-  check(hold&&await root.locator('[data-mc-part="count"]').innerText().then(t=>t.includes('so far')),`${theme}: curated cards paint before full enrichment with explicitly provisional counts`);
-  check(await root.getByRole('status').filter({hasText:'Loading more versions'}).isVisible(),`${theme}: enrichment remains visible while curated cards are usable`);
-  check(await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>!h.classList.contains('is-expandable')&&getComputedStyle(h).cursor!=='pointer')),`${theme}: headers without hidden versions do not imply clickability`);
   release();await root.locator('[data-mc-part="count"]').filter({hasText:/^3 of 3 models$/}).waitFor();
-  check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
-  check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
+  check(await root.locator('[data-mc-part="loading"] .mc-loading__wheel').count()===0,`${theme}: local catalogue is complete without version enrichment or a second loading step`);
+  check(holdInstalled&&await root.locator('.mc-art').count()===3,`${theme}: primary cards paint while optional installed discovery is pending`);
+  check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: counted chevrons expose every catalogue-known build`);
   holdInstalled=false;installedWaiters.splice(0).forEach(r=>r());
   await root.locator('[data-mc-installed-error]').waitFor();
   check(await root.locator('article[data-mc-model]').count()===3,`${theme}: failed installed discovery reports its error without hiding catalog cards`);
@@ -69,7 +61,7 @@ try {
   check(await root.locator('.mc-art__action button').evaluateAll(bs=>bs.every(b=>b.querySelector('svg')&&b.textContent.trim()==='')),`${theme}: build actions are named icon controls without repeated button text`);
   check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
-  check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
+  check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===3,`${theme}: every matching model has one primary build`);
   check(await root.locator('.af-filterbar__end').evaluate(e=>e.querySelector('[data-mc-action="filters"]').nextElementSibling?.matches('[data-mc-part="refresh"]'))&&await root.locator('.mc-library-line').count()===0,`${theme}: refresh follows Filters and no separate host row remains`);
   const matrixAligned=async()=>root.locator('article .mc-caps').evaluateAll(groups=>{const rows=groups.map(g=>[...g.children].map(e=>({key:e.dataset.mcSlot,x:e.getBoundingClientRect().left-g.getBoundingClientRect().left})));return rows.every(r=>r.length===9&&r.every((c,i)=>c.key===rows[0][i].key&&Math.abs(c.x-rows[0][i].x)<1));});
   check(await matrixAligned(),`${theme}: every capability reserves the same matrix column across cards`);
@@ -105,11 +97,14 @@ try {
   await page.keyboard.press('Escape');await fitAnchor.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await fitTip.waitFor();
   check(!!await fitAnchor.getAttribute('aria-describedby'), `${theme}: structured fit tooltip is keyboard-accessible and describes its anchor`);await page.keyboard.press('Escape');
   const compact=await root.locator('.mc-card').first().evaluate(el=>({height:el.getBoundingClientRect().height,header:el.querySelector('header').getBoundingClientRect().height,rows:[...el.querySelectorAll('.mc-art')].map(r=>r.getBoundingClientRect().height),columns:getComputedStyle(el.parentElement).gridTemplateColumns.split(' ').length}));
-  check(compact.height>=190&&compact.height<=225&&compact.header>=44&&compact.header<=54&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: balanced card has breathing room around three single-line versions (${JSON.stringify(compact)})`);
+  check(compact.height>=110&&compact.height<=165&&compact.header>=65&&compact.header<=95&&compact.rows.every(h=>h>=44&&h<=48),`${theme}: compact overview has a readable name, signals and one primary build (${JSON.stringify(compact)})`);
   check(compact.columns===2,`${theme}: desktop uses two comfortable model columns`);
+  check(await root.locator('.mc-card__title').first().innerText()==='Qwen3.8 Flash-Next'&&await root.locator('.mc-card__title').first().evaluate(e=>getComputedStyle(e).whiteSpace==='normal'&&e.scrollWidth<=e.clientWidth+1),`${theme}: recommended model name is visible in full`);
+  check(await root.locator('.mc-card__title-wrap').first().evaluate(e=>e.scrollWidth<=e.clientWidth+1),`${theme}: full name and Recommended badge fit without overlap`);
+
   check(await root.locator('.mc-card__head > .mc-caps svg').count()>0&&await root.locator('.mc-tags').count()===0,`${theme}: capability icons sit in the header without a separate text line`);
-  const alignment=await root.locator('.mc-card').evaluateAll(cards=>cards.map(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('.mc-caps').getBoundingClientRect(),t=e.querySelector('.mc-card__title').getBoundingClientRect();return {right:a.right-b.right,afterTitle:b.left>=t.right};}));
-  check(alignment.every(a=>a.afterTitle)&&Math.max(...alignment.map(a=>a.right))-Math.min(...alignment.map(a=>a.right))<1,`${theme}: capability groups align at the right edge independently of title/parameter lengths`);
+  const alignment=await root.locator('.mc-card').evaluateAll(cards=>cards.map(e=>{const a=e.getBoundingClientRect(),b=e.querySelector('.mc-caps').getBoundingClientRect(),t=e.querySelector('.mc-card__title').getBoundingClientRect();return {right:a.right-b.right,afterTitle:b.top>=t.bottom};}));
+  check(alignment.every(a=>a.afterTitle)&&Math.max(...alignment.map(a=>a.right))-Math.min(...alignment.map(a=>a.right))<1,`${theme}: capability groups align at the right edge on a second row independently of title/parameter lengths`);
   check(await root.locator('.mc-art__action [data-mc-action="details"]').count()===0,`${theme}: no redundant info action beside each version`);
   check(await root.locator('.mc-build-inspect').first().getAttribute('data-af-tip')===null,`${theme}: build identity has no repetitive hover tooltip`);
   await root.locator('.mc-caps .mc-cap').first().hover();
@@ -135,7 +130,7 @@ try {
   await root.getByRole('button',{name:'Filters',exact:true}).click();
   await root.locator('[data-af-facet="quant"][data-af-value="all"]').click();
   check(page.url().endsWith('#catalog?quant=all&fits=0'),`${theme}: All is explicit in the URL`);
-  check(await root.locator('.mc-art').count()===9,`${theme}: All precision starts with three versions per card`);
+  check(await root.locator('.mc-art').count()===3,`${theme}: All precision keeps one primary build per card`);
   const first=root.locator('article[data-mc-model="model-0"]');
   await page.mouse.move(1,1);
   const header=first.locator('header.mc-card__head');
@@ -147,21 +142,21 @@ try {
   await header.locator('.mc-card__title').click();
   check(await first.locator('.mc-art').count()===18,`${theme}: clicking the header title expands once`);
   await header.locator('.mc-card__meta').click();
-  check(await first.locator('.mc-art').count()===3,`${theme}: clicking the header metadata collapses once`);
+  check(await first.locator('.mc-art').count()===1,`${theme}: clicking the header metadata collapses once`);
   await page.mouse.move(1,1);await page.waitForTimeout(180);
-  await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).focus();await page.waitForTimeout(180);
+  await first.getByRole('button',{name:'Show all versions of Qwen3.8 Flash-Next',exact:true}).focus();await page.waitForTimeout(180);
   check(await header.evaluate((e,base)=>getComputedStyle(e).backgroundColor!==base,headerBase),`${theme}: keyboard focus also highlights the header`);
-  await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).press('Enter');
+  await first.getByRole('button',{name:'Show all versions of Qwen3.8 Flash-Next',exact:true}).press('Enter');
   check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
-  check(await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
-  check(await root.locator('.mc-art').count()===24,`${theme}: expansion belongs to one card`);
+  check(await first.getByRole('button',{name:'Show fewer versions of Qwen3.8 Flash-Next',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);
+  check(await root.locator('.mc-art').count()===20,`${theme}: expansion belongs to one card`);
   check((await root.locator('[data-mc-part="count"]').innerText())==='3 of 3 models',`${theme}: summary shows models only and stays stable when versions expand`);
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`catalog-expanded-${theme}.png`)});
-  await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).click();
-  check(await first.locator('.mc-art').count()===3,`${theme}: collapse returns to three`);
+  await first.getByRole('button',{name:'Show fewer versions of Qwen3.8 Flash-Next',exact:true}).click();
+  check(await first.locator('.mc-art').count()===1,`${theme}: collapse returns to the primary build`);
   hold=true;await root.getByRole('button',{name:'Refresh models',exact:true}).click();
-  await root.locator('[data-mc-part="loading"] .mc-loading__wheel').waitFor();
-  check(await root.locator('.mc-art').count()===9,`${theme}: refresh keeps the current results and shows a spinner`);
+  await root.getByRole('button',{name:'Refreshing models',exact:true}).waitFor();
+  check(await root.locator('.mc-art').count()===3&&await root.locator('[data-mc-part="loading"] .mc-loading__wheel').count()===0,`${theme}: refresh keeps the current cards without a page-level loading step`);
   release();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   await page.reload();await root.locator('.mc-card').first().waitFor();
   check(await root.locator('[data-af-value="all"][data-af-facet="quant"]').getAttribute('aria-pressed')==='true',`${theme}: All link survives reload`);
@@ -251,6 +246,24 @@ try {
   await root.locator('[data-af-facet="kind"][data-af-value="model"]').click();
   check(await root.locator('article:is([data-mc-kind="adapter"],[data-mc-kind="component"],[data-mc-kind="unknown"])').count()===0,`${theme}: returning to Models hides all supporting assets`);
   await downloaded.press('Space');
+  check(hubRequests.length===0,`${theme}: catalogue entry, filtering, Downloaded, reload and refresh never request Hub enrichment`);
+  const localSearch=root.getByRole('searchbox',{name:'Search the model catalog',exact:true});await localSearch.fill('Qwen');
+  check(hubRequests.length===0&&await root.locator('[data-mc-hub-beside]').count()===0,`${theme}: typing filters only the local catalogue`);
+  const localBefore=await page.evaluate(()=>({...mcStore.views.get('tab').filters,q:'Qwen'}));await root.locator('[data-af-scope="hf"]').click();await root.getByRole('searchbox',{name:'Search Hugging Face',exact:true}).waitFor();
+  await page.waitForFunction(()=>!mcStore.hub.loading&&mcStore.hub.q==='Qwen');
+  check(hubRequests.length===1&&hubRequests[0].includes('hub=true')&&hubRequests[0].includes('extended=true'),`${theme}: choosing Hugging Face explicitly requests all upstream versions`);
+  check(!await fits.isChecked()&&await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: online search starts with every precision and no guessed-fit exclusion`);
+  await root.locator('[data-af-scope="catalog"]').click();
+  check(await localSearch.inputValue()==='Qwen'&&await page.evaluate(before=>JSON.stringify(mcStore.views.get('tab').filters)===JSON.stringify(before),localBefore),`${theme}: return to Catalogue restores the local query and filters`);
+  await localSearch.fill('');await page.waitForFunction(()=>mcStore.views.get('tab').filters.q==='');
+  if(!await mine.isChecked())await mine.press('Space');
+  const removal=root.locator('article[data-mc-model="model-1"]');await removal.getByRole('button',{name:'Delete',exact:true}).click();
+  const confirmation=removal.locator('[data-mc-del-confirm]');await confirmation.waitFor();
+  check(!writes.some(w=>w.path.endsWith('/models/delete-download')&&!w.body.dry_run),`${theme}: opening deletion has sent only a dry-run`);
+  await page.waitForTimeout(450);await confirmation.getByRole('button',{name:'Delete',exact:true}).click();
+  await removal.waitFor({state:'hidden'});
+  check((await root.locator('[data-mc-part="message"]').innerText()).includes('Download deleted.')&&writes.filter(w=>w.path.endsWith('/models/delete-download')&&!w.body.dry_run).length===1,`${theme}: deliberate mock deletion removes the card and leaves visible success feedback`);
+  await mine.press('Space');
   await page.locator('#open-setup').click();
   await page.locator('[data-first-run-step="cloud"]').first().click();
   const cloud=page.locator('#first-run-cloud-body');
@@ -272,7 +285,7 @@ try {
   check(await root.getByRole('button',{name:'Download',exact:true}).first().isDisabled(),`${theme}: reader download action is disabled`);
   check(await root.getByRole('button',{name:'Delete',exact:true}).first().isDisabled(),`${theme}: reader delete action is disabled`);
   check(await root.getByRole('button',{name:'Build details',exact:true}).first().isEnabled(),`${theme}: reader can still inspect model details`);
-  check(writes.every(w=>w.path.endsWith('/models/download')||w.path.endsWith('/models/delete-download')&&w.body.dry_run||w.path.endsWith('/config/capability-defaults/output/text')),`${theme}: only intended fixture operations were sent`);
+  check(writes.every(w=>w.path.endsWith('/models/download')||w.path.endsWith('/models/delete-download')&&(w.body.dry_run||w.body.provider===current.rows[1].artifacts[0].provider&&w.body.artifact===current.rows[1].artifacts[0].artifact)||w.path.endsWith('/config/capability-defaults/output/text')),`${theme}: only intended fixture operations were sent`);
   check(!errors.length,`${theme}: no page errors: ${errors.join('; ')}`);
   await context.close();
  }
