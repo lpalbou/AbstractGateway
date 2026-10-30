@@ -38,6 +38,6 @@ exceptions or management writes occurred during live verification. Management
 writes were exercised only against fixtures; no live models were downloaded,
 deleted or made default for testing.
 
-Verdict: delivered. Full catalog fetch latency remains separately tracked in
-[0986](../../docs/backlog/proposed/0986_catalog_fetch_latency.md). Other modality
+Verdict: delivered. Full catalog fetch latency was separately tracked and subsequently addressed in
+[0986](../../docs/backlog/completed/0986_catalog_fetch_latency.md). Other modality
 routing contracts are unchanged; the star explicitly selects the text default.

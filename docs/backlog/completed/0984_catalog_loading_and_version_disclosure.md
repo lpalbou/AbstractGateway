@@ -82,7 +82,7 @@ Residual: this reduces rendering work, while the unchanged full extended catalog
 fetch can still take a long time. The first live load succeeded; later cold/fresh
 reads exceeded a 12s HTTP probe and 30s browser waits. Spinner was visible and
 health stayed healthy. Performance diagnosis/progressive retrieval is preserved
-as [proposed 0986](../proposed/0986_catalog_fetch_latency.md), not claimed solved
+as [0986 (subsequently completed)](0986_catalog_fetch_latency.md), not claimed solved
 by the display filter. No further backend changes are hidden in this delivery.
 
 Original path: `planned/0984_catalog_loading_and_version_disclosure.md`.

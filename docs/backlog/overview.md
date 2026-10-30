@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 24
-- Proposed: 50
-- Completed: 50
+- Planned: 22
+- Proposed: 52
+- Completed: 52
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,8 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0986 Catalog loading](planned/0986_catalog_fetch_latency.md) | P1. Eliminate repeated library scans and unblock rendering from installed inventory; measured redeploy. |
-| [0988 Compact disclosure](planned/0988_models_three_versions_header_chevron.md) | P1. Three versions with a header-right chevron; full reachability and accessibility. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -150,6 +148,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
+| [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
 | [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
 | [0939_sessions_index_with_exact_counts.md](proposed/0939_sessions_index_with_exact_counts.md) | A sessions index (one row per conversation with exact turn and tool-call counts, kept as runs end) so no client groups capped run pages; the iPhone's "1+" and the watch's undercount go away. Promote when the gateway seat picks the aggregate's home. |
 | [0938_ai_identity_presentation_avatar_voice_image.md](proposed/0938_ai_identity_presentation_avatar_voice_image.md) | One presentation record per AI (avatar design, voice, optional image) held by the runtime and served by the gateway, so every client shows and speaks the same identity. Promote when the runtime and gateway seats agree on the record's home and the two routes. |
@@ -191,6 +191,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0986 Catalog loading (completed 2026-10-30, unreleased) | `proposed/0986_catalog_fetch_latency.md`, then planned | [completed/0986_catalog_fetch_latency.md](completed/0986_catalog_fetch_latency.md) | Request-scoped Core work sharing, identical HTTP read sharing, progressive curated first paint, explicit enrichment/error states. | 106 Core + 30 endpoint/concurrency + 81 console tests; 234 browser checks; warm live cards 4.279s / full 4.484s; [evidence](../../design/catalog-loading-0986-0988/REVIEW.md). |
+| 0988 Three-version cards (completed 2026-10-30, unreleased) | `planned/0988_models_three_versions_header_chevron.md` | [completed/0988_models_three_versions_header_chevron.md](completed/0988_models_three_versions_header_chevron.md) | Three rows with accessible header-right chevron; no footer button or result cap. | `ce0c2e12`; same console/browser gate and live disclosure verification. |
 | 0987 Models library (completed 2026-10-30, unreleased) | `planned/0987_models_library_visual_redesign.md` | [completed/0987_models_library_visual_redesign.md](completed/0987_models_library_visual_redesign.md) | Compact responsive grid, icon actions, explicit default-text star, Downloaded library and on-demand details/filters. | `e0da0fdc`; 81-test gate, final 43-test focused gate, 222 browser checks and healthy live redeploy; [evidence](../../design/models-library-0987/REVIEW.md). |
 | 0984 (completed 2026-10-30, unreleased) | `planned/0984_catalog_loading_and_version_disclosure.md` | [completed/0984_catalog_loading_and_version_disclosure.md](completed/0984_catalog_loading_and_version_disclosure.md) | 4-bit by default, five-version disclosure, visible loading and explicit All links; fetch latency follow-up in 0986. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
 | 0985 (completed 2026-10-30, unreleased) | `planned/0985_wizard_shared_provider_cards_and_official_marks.md` | [completed/0985_wizard_shared_provider_cards_and_official_marks.md](completed/0985_wizard_shared_provider_cards_and_official_marks.md) | Official shared company marks; kit 0.9.10 OVH/generic cards integrated; interim filter copies removed. | `334a2e6a`; kit `3b99aa4`/`8a25c33`; 86 targeted tests, 174 browser checks and live redeploy. |
@@ -293,4 +295,4 @@ When a planned item is completed:
 6. Review follow-up signals and create proposed/planned work only when justified
    by code evidence.
 
-Catalog performance follow-up: [0986](planned/0986_catalog_fetch_latency.md) records observed full-fetch latency after the 0984 presentation improvement; promoted for the operator-requested loading fix.
+Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the repeated catalog-work and blank-screen gating defects. Residual startup contention and diagnostic native crash signals are proposed as 0990 and 0989; no further work was inferred as committed.
