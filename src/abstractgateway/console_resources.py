@@ -116,14 +116,17 @@ RESOURCES_JS = r"""
       // Explicit provider evidence takes precedence, including integrated CUDA.
       const declared = d.memory_topology || mem.memory_topology;
       const flag = typeof d.unified_memory === "boolean" ? d.unified_memory : mem.unified_memory;
+      const hardware = data && data.system && data.system.hardware || {};
+      const owner = data && data.host || mem.host || {};
+      const appleSilicon = hardware.platform === "darwin" && ["arm64", "aarch64"].includes(hardware.machine) && !!owner.host_name && hardware.host_name === owner.host_name;
       const topology = typeof flag === "boolean" ? (flag ? "unified" : "dedicated")
         : declared ? (declared === "unified" ? "unified" : declared === "dedicated" || declared === "discrete" ? "dedicated" : "unknown")
-        : backend === "metal" || backend === "mps" ? "unified" : backend === "cuda" ? "gpu" : "unknown";
+        : backend === "metal" || backend === "mps" && appleSilicon ? "unified" : backend === "cuda" ? "gpu" : "unknown";
       const total = resourceNumber(d.total_bytes), free = resourceNumber(d.free_bytes);
       let device;
       if (topology !== "unified" && total !== null && free !== null && free <= total) {
         // CUDA total/free are DEVICE-WIDE; never substitute process-held bytes.
-        device = { used: total - free, ceiling: total, free, label: "GPU VRAM", scope: "Device-wide", note: "Separate from system RAM; the reported GPU device only." };
+        device = { used: total - free, ceiling: total, free, label: topology === "unknown" ? "GPU memory" : "GPU VRAM", scope: "Device-wide", note: topology === "unknown" ? "Physical topology unreported; independently measured device counter." : "Separate from system RAM; the reported GPU device only." };
       } else if (topology === "unified") {
         const heap = deviceMeterView(d);
         device = { used: heap.used, ceiling: heap.ceiling, free: null, label: "Accelerator heap", scope: heap.scope, note: "Overlaps unified RAM · memory-mapped GGUF weights may be absent" };
@@ -190,7 +193,7 @@ RESOURCES_JS = r"""
       cards.forEach(c => { const el = $("res-cards").querySelector(`[data-res-card="${c[0]}"]`); el.querySelector(".res-card-value span").textContent = c[2]; el.querySelector(".res-card-value small").textContent = c[3]; const foot = el.querySelectorAll(".res-card-foot span"); foot[0].textContent = c[4]; foot[1].textContent = c[5]; });
       $("res-host-name").textContent = host.host_name || host.host_id || "Host resources";
       $("res-topology").textContent = view.title;
-      $("res-topology").dataset.afTip = view.topology === "gpu" ? "CUDA device memory is displayed separately. Physical topology was not explicitly reported; integrated devices can override this through unified_memory." : "Based on reported memory topology or the Metal/MPS backend; no inference from operating-system name alone.";
+      $("res-topology").dataset.afTip = view.topology === "gpu" ? "CUDA device memory is displayed separately. Physical topology was not explicitly reported; integrated devices can override this through unified_memory." : "Based on explicit memory topology, the MLX Metal backend, or MPS with same-host Apple Silicon evidence. Operating-system name alone does not establish unified memory.";
       $("res-topology").tabIndex = 0;
       $("res-freshness").textContent = error ? "Snapshot unavailable · retry with refresh" : "Received " + new Date(sample.at).toLocaleTimeString() + " · refreshes every 5s";
       $("res-freshness").dataset.afTip = error || "Browser receipt time. Host snapshot: " + (sample.sourceAt === null ? "timestamp not reported" : new Date(sample.sourceAt).toLocaleString()) + ". History uses browser receipt time; source clocks may differ.";

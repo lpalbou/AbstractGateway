@@ -9,7 +9,10 @@ from __future__ import annotations
 import importlib
 import math
 import os
+import platform
 import shutil
+import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -102,7 +105,7 @@ class SystemSampler:
                         "scope": "all host disks" if kind == "disk_io" else "all host interfaces (includes loopback)",
                         **({"reason": reason} if reason else {})}
 
-            result = {"ts": time.time(), "cpu": _probe(cpu), "storage": _probe(storage),
+            result = {"ts": time.time(), "hardware": _probe(lambda: {"platform": sys.platform, "machine": platform.machine(), "host_name": socket.gethostname()}), "cpu": _probe(cpu), "storage": _probe(storage),
                       "swap": _probe(swap), "disk_io": _probe(lambda: transfers("disk_io")),
                       "network": _probe(lambda: transfers("network"))}
             self._at, self._value, self._volume = now, result, volume
