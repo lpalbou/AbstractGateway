@@ -69,6 +69,10 @@ try {
   check(await root.locator('[data-mc-action="download"] svg').count()>0,`${theme}: download controls use standard icons`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: default 4-bit`);
   check(await root.locator('.mc-card').count()===3&&await root.locator('.mc-art').count()===9,`${theme}: all matching models, three versions each`);
+  check(await root.locator('.af-filterbar__end').evaluate(e=>e.querySelector('[data-mc-action="filters"]').nextElementSibling?.matches('[data-mc-part="refresh"]'))&&await root.locator('.mc-library-line').count()===0,`${theme}: refresh follows Filters and no separate host row remains`);
+  const matrixAligned=async()=>root.locator('article .mc-caps').evaluateAll(groups=>{const rows=groups.map(g=>[...g.children].map(e=>({key:e.dataset.mcSlot,x:e.getBoundingClientRect().left-g.getBoundingClientRect().left})));return rows.every(r=>r.length===9&&r.every((c,i)=>c.key===rows[0][i].key&&Math.abs(c.x-rows[0][i].x)<1));});
+  check(await matrixAligned(),`${theme}: every capability reserves the same matrix column across cards`);
+  check(await root.locator('.mc-cap-slot[aria-hidden="true"]').evaluateAll(es=>es.every(e=>!e.querySelector('svg')&&!e.hasAttribute('tabindex')&&!e.hasAttribute('data-af-tip'))),`${theme}: absent capabilities have blank slots without claims, hovers or focus stops`);
   const statusInline=async()=>root.locator('.mc-art__chips:has(.mc-installed):has(.mc-fit)').evaluateAll(groups=>groups.length>0&&groups.every(e=>{const r=e.getBoundingClientRect(),fit=e.querySelector('.mc-fit').getBoundingClientRect(),icons=[...e.querySelectorAll('.mc-installed,.mc-loaded')].map(x=>x.getBoundingClientRect());return icons.every(i=>Math.abs((i.top+i.height/2)-(fit.top+fit.height/2))<1&&i.right<=fit.left+1)&&fit.right<=r.right+1;}));
   check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side on desktop`);
   check(await root.locator('.mc-badge--recommended').first().innerText()==='Recommended'&&await root.locator('.mc-badge--recommended svg').count()>0,`${theme}: visible recommendation uses a star and clear wording`);
@@ -82,14 +86,14 @@ try {
   check(new Set(['vision','thinking','tools'].map(k=>signals[k].color)).size===3&&signals.vision.background!=='rgba(0, 0, 0, 0)', `${theme}: vision, thinking and tools use distinct themed accents and soft discs`);
   check(await root.locator('.mc-brand [data-brand="qwen"] svg image').count()===1&&await root.locator('.mc-brand [data-brand="meta"] svg image').count()===1, `${theme}: official manufacturer artwork renders beside titles without remote images`);
   check((await root.locator('article .mc-card__meta').nth(1).innerText()).trim()==='31B'&&(await root.locator('article .mc-card__meta').nth(1).getAttribute('data-af-tip')).includes('3.3B active'), `${theme}: total parameter count stays compact while active count is available on hover`);
-  const mine=root.getByRole('switch',{name:'Downloaded only',exact:true});
+  const mine=root.getByRole('switch',{name:'Downloaded',exact:true});
   check(!(await mine.isChecked()), `${theme}: quick downloaded filter starts off in Browse`);
-  await root.getByText('Downloaded only',{exact:true}).click();
-  check(await mine.isChecked()&&await root.getByRole('button',{name:'Downloaded',exact:true}).count()===0&&await root.getByRole('button',{name:'Browse',exact:true}).count()===0, `${theme}: Downloaded only is the sole library mode control`);
+  await root.getByRole('switch',{name:'Downloaded',exact:true}).press('Space');
+  check(await mine.isChecked()&&await root.getByRole('button',{name:'Downloaded',exact:true}).count()===0&&await root.getByRole('button',{name:'Browse',exact:true}).count()===0, `${theme}: Downloaded is the sole library mode control`);
   check(await root.locator('.mc-installed').count()===await root.locator('.mc-art').count()&&!await fits.isChecked(), `${theme}: quick Downloaded mode shows local inventory across all fits`);
   await page.reload();await root.locator('.mc-card').first().waitFor();await root.getByRole('button',{name:'Refresh models',exact:true}).waitFor();
   check(await mine.isChecked()&&page.url().includes('status=downloaded'), `${theme}: quick Downloaded mode survives reload`);
-  await root.getByText('Downloaded only',{exact:true}).click();
+  await root.getByRole('switch',{name:'Downloaded',exact:true}).press('Space');
   check(!await mine.isChecked()&&await fits.isChecked()&&await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true', `${theme}: turning quick Downloaded off restores the Browse defaults`);
   const fitAnchor=root.locator('.mc-fit').first();await fitAnchor.hover();
   const fitTip=page.locator('.af-tooltip[data-structured="true"]:visible');await fitTip.waitFor();
@@ -184,7 +188,7 @@ try {
   await info.press('Enter');
   check(await root.locator('.mc-art__details:visible').count()===0,`${theme}: details close again`);
   check(!writes.length,`${theme}: browsing and details issue no mutations`);
-  await root.getByText('Downloaded only',{exact:true}).click();
+  await root.getByRole('switch',{name:'Downloaded',exact:true}).press('Space');
   check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to expose all local inventory`);
   check(await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: downloaded library includes every precision`);
   check(!(await fits.isChecked()), `${theme}: Downloaded clears fit to show all local inventory`);
@@ -201,7 +205,7 @@ try {
   check(writes.filter(w=>w.path.endsWith('/models/delete-download')).every(w=>w.body.dry_run===true),`${theme}: delete icon only asks for a plan`);
   await root.getByRole('button',{name:'Keep',exact:true}).click();
   check(writes.filter(w=>w.path.endsWith('/models/delete-download')).length===1,`${theme}: Keep sends no delete`);
-  await root.getByText('Downloaded only',{exact:true}).click();
+  await root.getByRole('switch',{name:'Downloaded',exact:true}).press('Space');
   check(await root.locator('[data-af-facet="quant"][data-af-value="4bit"]').getAttribute('aria-pressed')==='true',`${theme}: Browse restores prior filters`);
   await root.getByRole('button',{name:'Download',exact:true}).first().click();
   await root.getByRole('button',{name:'Cancel download',exact:true}).waitFor();
@@ -217,6 +221,7 @@ try {
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-mobile-${theme}.png`)});
   await page.setViewportSize({width:320,height:844});
   check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: narrow mobile catalog fits`);
+  check(await matrixAligned(),`${theme}: capability columns remain fixed at 320px`);
   check(await statusInline(),`${theme}: downloaded folder and fit status stay side by side at 320px`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-narrow-${theme}.png`)});
   await root.locator('.mc-fit').first().hover();await fitTip.waitFor();

@@ -386,7 +386,7 @@ if (scenario.name === "claim") {
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
-    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
+    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "Recommended", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
     for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16", "mlx-community/Qwen3.5-9B-8bit"]) if (cat.includes(gone)) fail("the guide defaults to 4-bit and presets Fits this computer; unexpected version " + gone);
     if (cat.includes("<table")) fail("the catalog is cards, not a table");
     if (cat.includes("does not report quant_class")) fail("a catalog WITH quant_class must not show the missing-field notice");

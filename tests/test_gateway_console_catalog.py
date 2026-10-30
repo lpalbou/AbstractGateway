@@ -314,7 +314,8 @@ def test_capability_badges_explain_practical_use_and_input_output() -> None:
     assert out["html"].count('data-af-tip-content=') == 8
     assert 'aria-hidden="true" data-af-tip' not in out["html"]
     assert 'aria-label="Speech generation"' in out["voice"]
-    assert out["empty"] == ""
+    assert out["empty"].count('data-mc-slot=') == 9
+    assert 'role="img"' not in out["empty"] and 'tabindex=' not in out["empty"]
 
 
 def test_explicit_local_precisions_do_not_hide_one_another() -> None:

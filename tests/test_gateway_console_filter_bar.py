@@ -50,7 +50,7 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert lead.startswith('<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">'), where
     assert '<div class="af-filterbar__scope" role="group" aria-label="Search in"' in lead, where
     assert 'class="af-filterbar__scope-btn" data-af-scope="catalog"' in lead and 'data-af-scope="hf"' in lead, where
-    # The shared first-line element holds Fits and, on Models, Downloaded only.
+    # The shared first-line element holds Fits and, on Models, Downloaded.
     line = re.search(r'<div class="af-filterbar__line">(.*?)</div>', lead, flags=re.S).group(1)
     assert line.startswith('<input type="search" class="af-filterbar__search" data-mc-search="1"'), (where, line)
     assert '<span class="af-filterbar__toggles"><label class="af-switch af-switch--native af-switch--sm">' in line, (where, line)

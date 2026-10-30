@@ -477,11 +477,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .topbar-resources__k { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__v { color: var(--text-primary, var(--text)); }
 	    .topbar-resources__short { display: none; }
+	    .topbar-resources__machine { max-width: 140px; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary, var(--text)); }
 	    .topbar-resources__sep { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__bar { position: relative; width: 4px; height: 14px; border-radius: 999px; background: var(--bg-tertiary, var(--line)); overflow: hidden; }
 	    .topbar-resources__fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--info); }
 	    @media (max-width: 767.98px) {
 	      .topbar-resources { gap: 4px; padding: 3px 8px; }
+	      .topbar-resources__machine { max-width: 76px; }
 	      .topbar-resources__long { display: none; }
 	      .topbar-resources__short { display: inline; }
 	    }
@@ -2189,6 +2191,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	         with the real values; a click opens Resources. Gateway-owned, so it
 	         shows with the island and with the static fallback alike. -->
 	    <button id="topbar-resources" class="topbar-resources hidden" type="button" aria-label="Host resources. Open Resources." data-af-tip="Reading host resources…">
+	      <span class="topbar-resources__machine" id="topbar-res-machine">Host</span><span class="topbar-resources__sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-mem-bar"></span></span><span class="topbar-resources__k">Mem</span> <span class="topbar-resources__v topbar-resources__long" id="topbar-res-mem">—</span><span class="topbar-resources__v topbar-resources__short" id="topbar-res-mem-short">—</span></span>
 	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-gpu-bar"></span></span><span class="topbar-resources__k">GPU</span> <span class="topbar-resources__v" id="topbar-res-gpu">—</span></span>

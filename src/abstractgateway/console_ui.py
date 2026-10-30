@@ -3988,7 +3988,7 @@ CONSOLE_UI_JS = r"""
     function topbarResourcesView(data, error) {
       if (!data || typeof data !== "object") {
         const why = error ? `Host resources unavailable: ${error}` : "Reading host resources…";
-        return { mem: "—", memShort: "—", memFrac: null, gpu: "—", gpuFrac: null, models: "—", tip: `${why}\nClick to open Resources.`, label: `${why}. Open Resources.` };
+        return { machine: "Host", mem: "—", memShort: "—", memFrac: null, gpu: "—", gpuFrac: null, models: "—", tip: `${why}\nClick to open Resources.`, label: `${why}. Open Resources.` };
       }
       const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
       const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
@@ -3997,6 +3997,8 @@ CONSOLE_UI_JS = r"""
       const pct = num(ram.percent) !== null ? num(ram.percent) : (used !== null && total ? (used / total) * 100 : null);
       const gpuBlock = (data.gpu && typeof data.gpu === "object") ? data.gpu : {};
       const gpuPct = gpuBlock.supported === true ? num(gpuBlock.utilization_gpu_pct) : null;
+      const machines = [...new Set((Array.isArray(gpuBlock.gpus) ? gpuBlock.gpus : []).map(g => String(g && g.name || "").trim()).filter(Boolean))];
+      const machine = machines.join(" / ") || String((data.host || {}).host_name || "Host");
       const totals = (data.totals && typeof data.totals === "object") ? data.totals : {};
       const loaded = num(totals.models_resident);
       const memText = used !== null && total !== null ? `${_fmtBytes(used)} / ${_fmtBytes(total)} (${_fmtPct(pct)})` : (pct !== null ? _fmtPct(pct) : "—");
@@ -4013,9 +4015,11 @@ CONSOLE_UI_JS = r"""
       const kv = view.items.filter((i) => i.key === "model_caches" || i.key === "session_caches");
       lines.push(`KV caches: ${kv.length ? kv.map((i) => `${_fmtBytes(i.bytes)} ${i.key === "model_caches" ? "for models" : "in sessions"}`).join(" · ") : "unknown"}`);
       lines.push(`GPU load: ${gpuPct === null ? (gpuBlock.supported === true ? "unknown" : "not measured on this host") : `${_fmtPct(gpuPct)}${gpuBlock.source ? ` (via ${gpuBlock.source})` : ""}`}`);
+      lines.push(`Machine: ${machine}`);
       if (error) lines.push(`Last refresh failed: ${error}`);
       lines.push("Click to open Resources.");
       return {
+        machine,
         mem: memText,
         memShort: pct === null ? "—" : _fmtPct(pct),
         memFrac: pct === null ? null : Math.min(1, pct / 100),
@@ -4023,7 +4027,7 @@ CONSOLE_UI_JS = r"""
         gpuFrac: gpuPct === null ? null : Math.min(1, gpuPct / 100),
         models: modelsText,
         tip: lines.join("\n"),
-        label: `Memory ${memText}, GPU ${gpuPct === null ? "unknown" : _fmtPct(gpuPct)} busy, ${modelsText} loaded. Open Resources.`,
+        label: `Memory ${memText}, GPU ${gpuPct === null ? "unknown" : _fmtPct(gpuPct)} busy, ${modelsText} loaded. Machine: ${machine}. Open Resources.`,
       };
     }
     function renderTopbarResources(data, error) {
@@ -4032,6 +4036,7 @@ CONSOLE_UI_JS = r"""
       btn.classList.toggle("hidden", !state.principal);
       const v = topbarResourcesView(data, error);
       const set = (id, text) => { const el = $(id); if (!el) throw new Error(`AbstractGateway console: #${id} is missing from the top-bar widget.`); el.textContent = text; };
+      set("topbar-res-machine", v.machine);
       set("topbar-res-mem", v.mem);
       set("topbar-res-mem-short", v.memShort);
       set("topbar-res-gpu", v.gpu);
