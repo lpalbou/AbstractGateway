@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: catalog, ux
 > Work-item id: abstractgateway-1004
@@ -30,5 +32,22 @@ Downloaded/asset type/reset and local-only requests. Existing model-operation
 and theme gates. Scoped commit, healthy authorized local redeploy and saved
 live dark/light/mobile evidence; Core and unrelated changes untouched.
 
-- [ ] Implement and verify the filter layout.
-- [ ] Commit, redeploy and retain completion evidence.
+- [x] Implement and verify the filter layout.
+- [x] Commit, redeploy and retain completion evidence.
+
+## Completion report
+
+Gateway `2dd60d51` / `a6529057` exposes Provider and Capability as themed selectors
+on the second primary row. Model summary/Filters/refresh sit alongside them.
+The duplicate advanced Status row is removed; advanced contains asset type and
+quantization. Selected primary values are visible directly in their controls,
+round-trip through the URL and retain keyboard focus. Downloaded resets them for
+the library and restores them on exit. Legacy status links remain supported.
+
+51 focused tests and 286 Chromium assertions pass. Live dark/light checks verify
+two aligned rows at 1600px and 1024px, both selectors, reload and Downloaded
+restoration. 390px/320px and touch checks pass without page overflow. One-line
+headers and local-only catalogue reads are preserved, with no page errors,
+model-management writes or Hub requests. Healthy idle restart and new served
+markup verified. [Review and captures](../../../design/model-filters-1004/REVIEW.md).
+No Core changes, new ADR boundary, publication, persistence or required follow-up.
