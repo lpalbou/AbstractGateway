@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, seat-framework
 > Work-item id: abstractgateway-0995
@@ -36,5 +38,23 @@ round trips and operations; shared-kit guards and generator drift checks.
 Scoped commits and authorized local redeploy with saved visual evidence.
 No new ADR: shared primitive ownership and existing fit authority preserved.
 
-- [ ] Implement and validate content/layout and quick filter.
-- [ ] Commit, redeploy, verify live and retain evidence.
+- [x] Implement and validate content/layout and quick filter.
+- [x] Commit, redeploy, verify live and retain evidence.
+
+## Completion report
+
+Implemented `15a26edc`, adopting shared UIC `3833355` (0077). Fit, host and
+residency tooltips now have concise titles, aligned facts and relevant actions.
+Installed models suppress stale download warnings; raw estimator diagnostics
+remain in expandable build details. Downloaded only is beside Fits, sharing tab,
+inventory, restore and URL behavior. Guide retains its single switch.
+
+182 catalog and 122 Resources browser assertions pass. Focused pytest: 53 passed
+with one selective-export fixture failure, corrected and verified in a passing
+34-check follow-up gate. Shared tooltip/filter/theme/build guards pass. Healthy
+graceful redeploy and live dark/light/320px interaction, reload and keyboard
+checks pass; no page errors or model-management writes. Real reported installed
+model tooltip is now about 166px tall with four facts and no stale disk warning.
+[Review and screenshots](../../../design/model-tooltips-0995/REVIEW.md),
+[validation](../../../design/model-tooltips-0995/validation.json).
+No new residual work or ADR impact; no registry publication. Agora unavailable.
