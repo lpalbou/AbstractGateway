@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: catalog, ux, performance, seat-framework
 > Work-item id: abstractgateway-1002
@@ -44,5 +46,36 @@ existing model operations and filters. Direct visible UX review in both themes,
 live request/latency verification; no live model mutations or Core checkout
 changes. No new ADR boundary; existing Core/Runtime catalogue ownership applies.
 
-- [ ] Implement and verify the corrected flow and layout.
-- [ ] Commit, redeploy and retain completion/UX evidence.
+- [x] Implement and verify the corrected flow and layout.
+- [x] Commit, redeploy and retain completion/UX evidence.
+
+## Completion report
+
+Gateway `5c766ce3` replaces eager local-preview/Hub-enrichment loading with one
+local catalogue request and concurrent optional local inventory discovery.
+Typing/Downloaded/filtering/disclosure stay local. Online search, paging and
+upstream quantizations remain available by explicitly selecting Hugging Face;
+source changes restore the local query/filters. This intentionally supersedes
+the earlier eager-quant policy in response to the operator's UX correction.
+
+Cards now show one primary build, full readable model names, a separate aligned
+capability/parameter strip and counted header disclosure for all matching builds.
+Ready/default builds take priority, expanded comparisons retain ordering, and
+deleting a visible build leaves feedback when it disappears. Shared chrome,
+themes, advanced assets and confirmation paths are preserved.
+
+51 focused tests and 262 Chromium assertions passed. Healthy authorized graceful
+local redeploy verified in dark/light/390px/320px/touch and keyboard flows.
+Latest live first-card times were 1.561s and 2.040s, one initial catalogue read;
+only explicit refresh adds another local read. No Hub query, page errors or live
+model-management writes. All 88 default and 71 downloaded overview cards have
+one build; the first six heights are uniformly 141px in both views. Full model
+names, fixed capability columns, no-match recovery and explicit expansion pass.
+[Review, captures and limits](../../../design/catalogue-overview-1002/REVIEW.md),
+[direct UX review](../../../design/catalogue-overview-1002/UX_REVIEW.md),
+[live validation](../../../design/catalogue-overview-1002/validation.json).
+
+No Core/deployment-worktree changes, new ADR boundary, publication, persistence
+or residual required work. Expanded comparisons intentionally grow; subjective
+aesthetic acceptance remains the operator's. Prior work/history retained.
+Agora unavailable (connection refused); local records carry the receipts.
