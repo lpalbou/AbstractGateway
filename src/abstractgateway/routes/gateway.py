@@ -27785,23 +27785,27 @@ async def models_catalog_get(
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
+    from ..catalog_reads import catalog_read
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
     paging: Dict[str, Any] = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
     if extended:
         paging["extended"] = True
-    return await _core_host_call(
+    key = ("catalog", q or "", engine or "", fits, hub, tuple(sorted(tag or [])), hub_page, hub_page_size, extended)
+    return await catalog_read(key, lambda: _core_host_call(
         core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
         **paging,
-    )
+    ))
 
 
 @router.get("/models/installed")
 async def models_installed_get(provider: Optional[str] = Query(None, description="Only this engine/provider.")) -> Any:
     """Every model the local engines hold on this host, with sizes (contract D)."""
     from ..core_config import core_installed_models
+    from ..catalog_reads import catalog_read
 
-    return await _core_host_call(core_installed_models, (provider or "").strip() or None)
+    provider = (provider or "").strip() or None
+    return await catalog_read(("installed", provider), lambda: _core_host_call(core_installed_models, provider))
 
 
 @router.post("/models/delete")
