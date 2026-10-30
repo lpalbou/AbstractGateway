@@ -39,8 +39,8 @@ from __future__ import annotations
 
 CATALOG_CSS = r"""
     /* ================= Model catalog as cards ================= */
-    #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 18px; min-width: 0; }
-    .mc-root { display: grid; gap: 18px; min-width: 0; }
+    #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 10px; min-width: 0; }
+    .mc-root { display: grid; gap: 10px; min-width: 0; }
     .mc-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .mc-host b { color: var(--text-primary); font-weight: 600; }
     .mc-host__facts { margin-right: auto; min-width: 0; }
@@ -56,8 +56,8 @@ CATALOG_CSS = r"""
     .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
     /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
     .mc-filterbar label.af-switch { text-transform: none; letter-spacing: normal; }
-    /* Sticky mode: the bar's two parts are items of .mc-root (gap 18px); they read as one surface. */
-    .mc-filterbar > .af-filterbar__facets { margin-top: -18px; }
+    /* Sticky mode: the bar's two parts are items of .mc-root (gap 10px); they read as one surface. */
+    .mc-filterbar > .af-filterbar__facets { margin-top: -10px; }
     .mc-count { color: var(--text-secondary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .mc-count b { color: var(--text-primary); font-weight: 650; }
     .mc-active { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: 4px 10px; min-width: min-content; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
@@ -77,34 +77,35 @@ CATALOG_CSS = r"""
     .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
     .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
     .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
-    .mc-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); align-items: start; min-width: 0; }
+    .mc-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); align-items: start; min-width: 0; }
     .mc-hub-beside, .mc-hub-more, .mc-extra, .mc-list > .ui-empty, .mc-list > .ui-alert { grid-column: 1 / -1; }
-    .mc-hub-beside { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); min-width: 0; }
+    .mc-hub-beside { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); min-width: 0; }
     .mc-hub-beside__title { grid-column: 1 / -1; margin: 4px 0; font-size: var(--font-size-sm); font-weight: 600; color: var(--text-secondary); }
     .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
-    .mc-card { container: mc-card / inline-size; display: grid; gap: 14px; min-width: 0; padding: 18px 18px 6px; }
+    .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 0 8px 2px; }
     .mc-card.is-starter { border-color: var(--accent-border); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; margin: -18px -18px 0; padding: 12px 18px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; margin: 0 -8px; padding: 5px 10px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
     .mc-card__head.is-expandable { cursor: pointer; transition: background-color .15s ease; }
     .mc-card__head.is-expandable:hover, .mc-card__head.is-expandable:focus-within { background: color-mix(in srgb, var(--text-primary) 7%, var(--ui-surface-2)); }
     .mc-card__head.is-expandable:hover .mc-versions, .mc-card__head.is-expandable:focus-within .mc-versions { color: var(--accent); }
-    @media (max-width: 479.98px) { .mc-card__head { margin: -14px -12px 0; padding: 12px; } }
     @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
-    .mc-card__title { margin: 0; flex: 1 1 auto; min-width: 0; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
-    .mc-card__meta { font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-card__title-wrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-base); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
+    .mc-card__meta { flex: none; font-size: var(--font-size-xs); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
-    .mc-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; width: 100%; }
-    .mc-tag { color: var(--text-secondary); font-size: var(--font-size-xs); }
-    .mc-tag + .mc-tag::before { content: "\00B7"; margin-right: 5px; color: var(--text-muted); }
+    .mc-caps { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--text-secondary); }
+    .mc-cap { display: inline-flex; }
+    .mc-cap svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-caps:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
-    .mc-arts { display: grid; margin: 0 -8px; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; min-height: 58px; padding: 6px 8px; min-width: 0; gap: 2px 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 64px 56px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
+    .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
+    .mc-art { display: grid; align-items: center; min-height: 36px; padding: 2px 2px; min-width: 0; gap: 0 6px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
     .mc-art.is-primary { background: var(--ui-surface-1); }
     .mc-art__id { grid-area: id; min-width: 0; }
-    .mc-build-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
+    .mc-build-name { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px; min-width: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
     .mc-build-name strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mc-build-publisher { display: block; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; }
+    .mc-build-publisher { display: inline; max-width: 104px; flex: 0 2 auto; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 0; }
     .mc-prov { font-size: var(--font-size-xs); font-weight: 650; color: var(--text-secondary); white-space: nowrap; }
     .mc-rec { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--accent); }
     .mc-art__size { grid-area: size; font-size: var(--font-size-sm); color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -119,8 +120,8 @@ CATALOG_CSS = r"""
     .mc-loaded { min-height: 24px; padding: 2px; background: none; border: 0; }
     .mc-art__action { grid-area: action; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
     .mc-icon-wrap { display: inline-flex; }
-    .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 36px; min-height: 36px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
-    .mc-icon-action svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
+    .mc-icon-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-art__action .mc-icon-action:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); border-color: var(--ui-border-1); }
     .mc-art__action .mc-icon-action.is-primary { color: var(--accent); background: var(--accent-subtle); }
     .mc-art__action .mc-icon-action.is-current { color: var(--accent); }
@@ -128,6 +129,9 @@ CATALOG_CSS = r"""
     .mc-icon-action[aria-busy="true"] svg { animation: mc-del-busy 1s ease-in-out infinite alternate; }
     .mc-icon-action:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
     @keyframes mc-del-busy { from { opacity: 1; } to { opacity: .3; } }
+    .mc-build-inspect { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-width: 0; min-height: 28px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+    .mc-build-inspect:hover .mc-build-name strong, .mc-build-inspect[aria-expanded="true"] .mc-build-name strong { text-decoration: underline; text-underline-offset: 3px; }
+    .mc-build-inspect:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
     .mc-art__details { grid-area: details; margin-top: 8px; padding: 12px; border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); background: var(--ui-surface-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
     .mc-art__details[hidden] { display: none; }
     .mc-art__details p { margin: 8px 0 0; line-height: 1.5; }
@@ -144,7 +148,7 @@ CATALOG_CSS = r"""
     .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
     @container mc-card (max-width: 360px) { .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; } .mc-art__chips { justify-content: flex-start; } .mc-art__size { text-align: left; } }
     @media (pointer: coarse) { .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { min-width: 44px; min-height: 44px; height: 44px; } }
-    @media (max-width: 479.98px) { .mc-card { padding: 14px 12px 4px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
+    @media (max-width: 479.98px) { .mc-card { padding: 0 8px 2px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
     /* Downloaded models no catalog entry knows: plain rows under a small heading. */
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
@@ -153,7 +157,7 @@ CATALOG_CSS = r"""
     .mc-loading__wheel { width: 18px; height: 18px; flex: none; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 999px; animation: mc-loading-spin .8s linear infinite; }
     @keyframes mc-loading-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) { .mc-loading__wheel { animation: none; } }
-    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; margin-left: auto; color: var(--text-secondary); }
+    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 26px; height: 26px; min-height: 26px; padding: 0; margin-left: auto; color: var(--text-secondary); }
     .mc-versions svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; transition: transform .15s; }
     .mc-versions[aria-expanded="true"] svg { transform: rotate(180deg); }
     @media (pointer: coarse) { .mc-card__head .mc-versions { min-width: 44px; min-height: 44px; } }
@@ -554,18 +558,25 @@ CATALOG_JS = r"""
     function mcIconButton(action, icon, label, tip, attrs, disabled, extra) {
       return `<span class="mc-icon-wrap" data-af-tip="${esc(tip || label)}"><button type="button" class="ui-btn mc-icon-action${extra || ""}"${action ? ` data-mc-action="${esc(action)}"` : ""} ${attrs || ""} aria-label="${esc(label)}" data-af-tip="${esc(tip || label)}"${disabled ? " disabled" : ""}>${ICONS[icon]}</button></span>`;
     }
+    const MC_CAP_ICON = { text:"text", thinking:"brain", tools:"tool", vision:"eye", audio:"waveform", embedding:"embedding", voice:"mic", image:"image", video:"video" };
+    function mcCapabilityMarkup(row) {
+      const caps = mcRowCaps(row);
+      if (!caps.length) return "";
+      const labels = caps.map(c => (MC_CAPS.find(x => x[0] === c) || [c,c])[1]);
+      return `<span class="mc-caps" role="img" aria-label="${esc(labels.join(", "))}" tabindex="0" data-af-tip="${esc(labels.join(" · "))}">${caps.map((c,i) => `<span class="mc-cap" aria-hidden="true" data-af-tip="${esc(labels[i])}">${ICONS[MC_CAP_ICON[c]]}</span>`).join("")}</span>`;
+    }
     function mcBuildIdentity(a, extra) {
       const id = String(a.artifact || "");
       const publisher = id.includes("/") ? id.split("/")[0] : extra ? mcProviderLabel(a.provider) : "";
       const provider = ({huggingface:"HF"})[a.provider] || mcProviderLabel(a.provider);
       const quant = extra ? id.split("/").pop() : a.quant ? (MC_QUANT_LABEL[a.quant] || String(a.quant)) : (MC_QUANT_LABEL[a.quant_class] || "Unspecified");
-      return `<div class="mc-build-name"><span class="mc-prov" data-af-tip="${esc(mcProviderLabel(a.provider))}">${esc(provider)}</span><strong>${esc(quant)}</strong>${a.recommended ? '<span class="mc-rec" role="img" aria-label="Recommended for this computer" data-af-tip="Recommended for this computer"></span>' : ""}</div>${publisher ? `<span class="mc-build-publisher">${esc(publisher)}</span>` : ""}`;
+      return `<span class="mc-build-name"><span class="mc-prov"${a.provider === "huggingface" ? ' data-af-tip="Hugging Face"' : ""}>${esc(provider)}</span><strong>${esc(quant)}</strong>${a.recommended ? '<span class="mc-rec" role="img" aria-label="Recommended for this computer" data-af-tip="Recommended for this computer"></span>' : ""}</span>${publisher ? `<span class="mc-build-publisher">${esc(publisher)}</span>` : ""}`;
     }
     function mcBuildDetails(a, text, view) {
       const open = !!view && view.details.has(mcKey(a));
       const id = `mc-build-${encodeURIComponent(view ? view.key : "model")}-${encodeURIComponent(mcKey(a))}`;
-      return { button: mcIconButton("details", "info", "Build details", "Build details · " + a.artifact, `data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}" aria-expanded="${open}" aria-controls="${esc(id)}"`),
-        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID · ${esc(a.artifact)}" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p></div>` };
+      return { attrs: `data-mc-action="details" aria-label="Build details" data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}" aria-expanded="${open}" aria-controls="${esc(id)}"`,
+        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p></div>` };
     }
     function mcDefaultMarkup(provider, artifact, attrs, admin) {
       const cur = mcCurrentDefault();
@@ -672,20 +683,18 @@ CATALOG_JS = r"""
     }
     function mcArtMarkup(row, a, alone, view) {
       const job = mcJob(a), installed = mcInstalled(a), presence = a.presence || {};
-      const gone = mcStore.deleted.has(mcKey(a));
-      const [wLabel] = installed ? MC_WEIGHTS.installed : gone ? MC_WEIGHTS.absent : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
       const verdict = String((a.fit || {}).verdict || "unknown");
       const [fLabel, fTone] = a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
       const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
       const exact = ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
       const size = uiNum(a.download_bytes) ? `${exact ? "" : "~"}${uiBytes(a.download_bytes)}` : "—";
-      const text = [wLabel, !uiNum(a.download_bytes) ? "Download size not reported" : `${exact ? "Download size" : "Estimated size"}: ${uiBytes(a.download_bytes)}`, `Fit: ${fLabel}. ${mcFitTitle(a.fit)}`, row.license ? "License: " + row.license : "", presence.location, presence.evidence].filter(Boolean).join(" · ");
+      const text = [row.license ? "License: " + row.license : "", presence.location, presence.evidence].filter(Boolean).join(" · ");
       const details = mcBuildDetails(a, text, view);
       return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
-        + `<div class="mc-art__id">${mcBuildIdentity(a)}</div>`
+        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button></div>`
         + `<div class="mc-art__size" data-af-tip="${exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
         + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" data-af-tip="${esc(mcFitTitle(a.fit))}" aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
-        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}${details.button}</div>`
+        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
         + details.body + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div></li>`;
     }
     function mcExtraArtMarkup(r, view) {
@@ -694,9 +703,9 @@ CATALOG_JS = r"""
       const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "—";
       const details = mcBuildDetails(r, `Downloaded · ${r.quant || "Quantization not reported"} · ${r.location || "Location not reported"}`, view);
       return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
-        + `<div class="mc-art__id">${mcBuildIdentity(r, true)}</div><div class="mc-art__size">${esc(size)}</div>`
+        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(r, true)}</button></div><div class="mc-art__size">${esc(size)}</div>`
         + `<div class="mc-art__chips"><span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>${mcLoadedBadge(r)}</div>`
-        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || mcIconButton("", "star", "Use as default text model", mcUnloadable(r), 'data-mc-unloadable="1"', true)) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}${details.button}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || mcIconButton("", "star", "Use as default text model", mcUnloadable(r), 'data-mc-unloadable="1"', true)) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + details.body + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div></li>`;
     }
     function mcExtrasMarkup(view, extras) {
@@ -710,7 +719,7 @@ CATALOG_JS = r"""
         + (extras.length ? `<ul class="mc-arts">${extras.map(r => mcExtraArtMarkup(r, view)).join("")}</ul>` : "")
         + `</section>`;
     }
-    // One line of facts per model: name · organisation · parameters · licence, the capability tags and badges inline.
+    // One compact header: model, accessible capability glyphs, parameters and disclosure.
     function mcCardMarkup(item, view) {
       const row = item.row;
       const versionKey = `${row.source || "catalog"}:${row.id}`;
@@ -719,16 +728,14 @@ CATALOG_JS = r"""
       const versionsId = `mc-versions-${encodeURIComponent(view ? view.key : "catalog")}-${encodeURIComponent(versionKey)}`;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
-      const meta = [row.vendor, params ? `${params}${active ? ` / ${active} active` : ""}` : ""].filter(Boolean);
-      const caps = mcRowCaps(row).map((c) => (MC_CAPS.find((x) => x[0] === c) || [c, c])[1]);
+      const meta = [params ? `${params}${active ? ` / ${active} active` : ""}` : ""].filter(Boolean);
       const badges = [];
-      if (row.starter) badges.push(`<span class="mc-badge" title="Part of the recommended starter set for this computer">Starter</span>`);
+      if (row.starter) badges.push(`<span class="mc-badge" data-af-tip="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><h4 class="mc-card__title" data-af-tip="${esc(row.license ? "License: " + row.license : "License not reported")}">${esc(row.display_name || row.id)}</h4>`
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${mcCapabilityMarkup(row)}</div>`
         + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")
-        + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
         + badges.join("")
         + `</header>`
         + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1, view)).join("")}</ul>`

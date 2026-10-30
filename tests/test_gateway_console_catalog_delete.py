@@ -46,7 +46,7 @@ const ctx = vm.createContext({
   state: { principal: { admin: __ADMIN__ }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
-  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter','text','brain','tool','eye','waveform','embedding','mic','image','video'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   downloadJobKey: (p, a) => `${p || ""}/${a || ""}`,
   servedModelId: (p, a) => a,
   trackDownloadJob: () => {},

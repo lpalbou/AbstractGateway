@@ -3971,6 +3971,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 18v-6"></path><path d="m9.5 14.5 2.5-2.5 2.5 2.5"></path>'),
 	      pencil: svgIcon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
 	      eye: svgIcon('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle>'),
+	      text: svgIcon('<path d="M4 6V4h16v2M12 4v16M8 20h8"></path>'),
+	      brain: svgIcon('<path d="M12 4a3 3 0 0 0-5-1 4 4 0 0 0-3 6 4 4 0 0 0 0 7 4 4 0 0 0 5 5 3 3 0 0 0 3-3V4Zm0 0a3 3 0 0 1 5-1 4 4 0 0 1 3 6 4 4 0 0 1 0 7 4 4 0 0 1-5 5 3 3 0 0 1-3-3M7 8l2 2M5 15l3-1M17 8l-2 2M19 15l-3-1"></path>'),
+	      tool: svgIcon('<path d="m14 7 3 3 4-4a6 6 0 0 1-8 7l-7 7a2 2 0 0 1-3-3l7-7a6 6 0 0 1 7-8l-3 5Z"></path>'),
+	      waveform: svgIcon('<path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"></path>'),
+	      embedding: svgIcon('<circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 0M6 7l5 10M18 7l-5 10"/>'),
+	      mic: svgIcon('<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>'),
+	      image: svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/>'),
+	      video: svgIcon('<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is

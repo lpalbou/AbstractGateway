@@ -108,8 +108,8 @@ def test_the_condensed_card_and_row() -> None:
     card = html.split('data-mc-model="model-3"')[1].split("</article>")[0]
     head = card.split("<header")[1].split("</header>")[0]
     # One header line: title, facts, tags and badges all inside the header.
-    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-tags"' in head and ">Starter<" in head
-    assert "4B" in head and "apache-2.0" in head
+    assert 'class="mc-card__title"' in head and 'class="mc-card__meta"' in head and 'class="mc-caps"' in head and ">Starter<" in head
+    assert "4B" in head and "apache-2.0" in card
     assert "ui-mark" not in card
     rows = card.split('<li class="mc-art')[1:]
     assert len(rows) == 3
@@ -119,9 +119,9 @@ def test_the_condensed_card_and_row() -> None:
         assert 'aria-label="Build details"' in r
         assert ' hidden>' in r  # technical prose starts collapsed
     assert sum('aria-label="Recommended for this computer"' in r for r in rows) == 1
-    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr))' in CATALOG_CSS
-    assert 'min-height: 58px' in CATALOG_CSS
-    assert 'width: 32px; height: 36px' in CATALOG_CSS
+    assert 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr))' in CATALOG_CSS
+    assert 'min-height: 36px' in CATALOG_CSS
+    assert 'width: 28px; height: 28px' in CATALOG_CSS
 
 
 def test_the_page_has_no_second_list() -> None:
