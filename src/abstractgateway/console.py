@@ -159,12 +159,13 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
+    from .console_resources import RESOURCES_HTML, RESOURCES_MODAL_HTML, RESOURCES_CSS, RESOURCES_JS
 
     return (
-        _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
+        _strip_html_comments(_CONSOLE_HTML_TEMPLATE.replace("<!--__RESOURCES_DASHBOARD__-->", RESOURCES_HTML).replace("<!--__RESOURCES_MODAL__-->", RESOURCES_MODAL_HTML)),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + KIT_FILTER_BAR_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + KIT_FILTER_BAR_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS + RESOURCES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS + RESOURCES_JS),
     )
 
 
@@ -2761,6 +2762,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	            </section>
 	            <section id="models-host-section" class="session-only">
+                <!--__RESOURCES_DASHBOARD__-->
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▦</span><span>Memory &amp; GPU</span></h2>
@@ -3775,6 +3777,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
   </div>
+  <!--__RESOURCES_MODAL__-->
   <div id="confirm-backdrop" class="modal-backdrop hidden" role="presentation">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Confirm</h2>
@@ -12365,6 +12368,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Quiet (poll) repaints skip the datalist rebuild — replacing the
 	      // <option>s every 5s flicks an open suggestion popup shut.
 	      renderModelsLoadForm({ rebuildOptions: !quiet });
+          renderResourcesDashboard(data);
 	    }
 	    async function loadHostState({ quiet = false, widgetOnly = false } = {}) {
 	      if (!state.principal) return;
@@ -12410,6 +12414,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const breakdown = $("models-breakdown"); if (breakdown) { breakdown.textContent = ""; breakdown.classList.add("hidden"); }
 	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
+            renderResourcesDashboard(null, String(e.message || e));
 	      } finally {
 	        state.hostStateInflight = Math.max(0, (state.hostStateInflight || 1) - 1);
 	      }
@@ -12733,6 +12738,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
+              resetResourcesDashboard();
 		        document.body.classList.remove("signed-in");
 		        $("page-title").textContent = "AbstractGateway Console";
 		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";

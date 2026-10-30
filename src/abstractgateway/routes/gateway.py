@@ -29796,6 +29796,15 @@ def _host_state_payload() -> Dict[str, Any]:
     # the memory snapshot carries one; absent means this runtime predates it.
     host_block = memory.get("host") if isinstance(memory, dict) and isinstance(memory.get("host"), dict) else None
 
+    # Additive system observations share a bounded sampler, on this worker.
+    # Individual probes degrade in-band; model/memory truth remains Runtime's.
+    from ..host_system_metrics import get_host_system_metrics
+
+    try:
+        system = get_host_system_metrics(gateway_data_dir_from_env())
+    except Exception as exc:
+        system = {"supported": False, "reason": f"System metrics unavailable: {exc}"}
+
     return {
         "ok": True,
         "ts": time.time(),
@@ -29803,6 +29812,7 @@ def _host_state_payload() -> Dict[str, Any]:
         # Install facts: which data dir and why, the
         # auth posture, the login service, the first-run wizard state.
         "gateway": _gateway_install_block_cached(),
+        "system": system,
         "memory": memory,
         "gpu": gpu,
         "models": models,
