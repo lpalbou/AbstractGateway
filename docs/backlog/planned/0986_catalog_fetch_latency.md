@@ -3,8 +3,8 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: proposed
-> Priority: P2
+> Status: planned
+> Priority: P1
 > Labels: catalog, performance, seat-framework
 > Work-item id: abstractgateway-0986
 > Owner: framework
@@ -45,3 +45,17 @@ unrelated inventory. Measure cold/warm p50/p95; repeated refreshes must not crea
 unbounded duplicate work. Preserve full reachability, filters, downloads and
 explicit failure/retry behavior. Architecture changes require owner review/ADR
 assessment before implementation. Related: completed 0984/0985.
+
+## Authorized implementation — 2026-10-30
+
+The operator reports a stuck loading screen and requests investigation/fix.
+Measured live catalog >20s and installed discovery 10.818s. Repeated runtime
+stack samples locate catalog CPU time in `llamacpp_knows_architecture`: each
+GGUF artifact rescans the entire installed library for sentinels and names.
+The library bytes are cached but membership results are not. Fix this in
+AbstractCore, preserving library-change invalidation and unknown semantics;
+apply the isolated commit to the clean deployment checkout. Decouple catalog
+rendering from installed discovery in the console and coalesce repeated loads.
+Prove delayed inventory cannot hide catalog data, preserve errors/retry and
+all versions, measure live latency before/after, and gracefully redeploy.
+ADR impact: none; fixes within existing owners/contracts. Agora unavailable.
