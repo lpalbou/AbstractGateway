@@ -21,7 +21,7 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 52
 - Completed: 64
 - Deprecated: 4
@@ -320,3 +320,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1001 Models only with advanced asset filters](completed/1001_models_only_with_advanced_asset_filter.md), operator correction to the model/adapter distinction.
 
 2026-10-30: [1002 Catalogue overview and local browsing](completed/1002_catalogue_overview_and_local_browsing.md), operator UX correction to eager enrichment and uneven cards.
+
+2026-10-30: [1003 Single-line model headers](planned/1003_single_line_model_headers.md), operator follow-up to 1002.
