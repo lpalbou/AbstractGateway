@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, accessibility, seat-framework
 > Work-item id: abstractgateway-0996
@@ -31,5 +33,20 @@ hover/focus/ARIA/Escape, theme, card size and narrow placement checks. Scoped
 commits and authorized graceful local redeploy, then verify actual badge hovers
 and retain evidence. Other agent's console-tui work is excluded.
 
-- [ ] Implement meaningful explanations for every advertised badge.
-- [ ] Validate, commit, redeploy and record completion.
+- [x] Implement meaningful explanations for every advertised badge.
+- [x] Validate, commit, redeploy and record completion.
+
+## Completion report
+
+`c332731e` replaces label-only hovers with useful shared structured explanations
+for every capability. Descriptions explain practical use, distinguish input and
+output, mention reasoning latency and app-controlled tool permissions, and adapt
+to prompted tool support. Each badge has focus/ARIA; no redundant group hover.
+
+34 tests and 208 browser assertions passed. Actual local dark/light hover,
+keyboard, theme, card geometry and 320px placement checks passed after a healthy
+graceful redeploy, with no page errors or model-management writes.
+[Review and captures](../../../design/model-capabilities-0996/REVIEW.md),
+[validation](../../../design/model-capabilities-0996/validation.json).
+No new ADR impact or residual work. Other agent's changes excluded; Agora
+unavailable. Registry publication outside scope.

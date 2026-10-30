@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 57
+- Completed: 58
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,7 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0996 Explain capability badges](planned/0996_explain_model_capability_badges.md) | P1. Useful, themed and keyboard-accessible explanations of every model capability. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -192,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0996 Explain capability badges (completed 2026-10-30, unreleased) | `planned/0996_explain_model_capability_badges.md` | [completed/0996_explain_model_capability_badges.md](completed/0996_explain_model_capability_badges.md) | Useful explanations for all nine capabilities, native/prompted tools and individual keyboard access. | `c332731e`; 34 tests, 208 browser assertions and healthy live dark/light/mobile redeploy; [evidence](../../design/model-capabilities-0996/REVIEW.md). |
 | 0995 Tooltip clarity and quick downloaded filter (completed 2026-10-30, unreleased) | `planned/0995_readable_tooltip_content_and_quick_downloaded_toggle.md` | [completed/0995_readable_tooltip_content_and_quick_downloaded_toggle.md](completed/0995_readable_tooltip_content_and_quick_downloaded_toggle.md) | Shared structured, relevant fit/host/residency tooltips; synchronized Downloaded only switch. | Gateway `15a26edc`, kit `3833355`; 182 catalog and 122 Resources browser assertions, shared guards and healthy live dark/light/mobile redeploy; [evidence](../../design/model-tooltips-0995/REVIEW.md). |
 | 0994 Model signals and brands (completed 2026-10-30, unreleased) | `planned/0994_models_header_order_fit_default_and_brand_marks.md` | [completed/0994_models_header_order_fit_default_and_brand_marks.md](completed/0994_models_header_order_fit_default_and_brand_marks.md) | Exact icon/parameter/chevron order, coloured input vision, Fits on by default, shared manufacturer marks. | `9fd6038a`/`b3908d01`, kit `4d0347e`; 162 browser assertions, sync/kit guards and healthy live redeploy; [evidence](../../design/model-signals-0994/REVIEW.md). |
 | 0993 Balanced Models spacing (completed 2026-10-30, unreleased) | `planned/0993_models_balanced_spacing_and_aligned_capabilities.md` | [completed/0993_models_balanced_spacing_and_aligned_capabilities.md](completed/0993_models_balanced_spacing_and_aligned_capabilities.md) | 195px cards, 44px rows, two common desktop columns and right-aligned capability icons; updates 0992 density. | `af7a33a4`; 42 tests, 140 browser assertions and healthy live redeploy; [evidence](../../design/balanced-models-0993/REVIEW.md). |
