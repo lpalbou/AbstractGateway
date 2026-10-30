@@ -74,7 +74,7 @@ try {
   const signalOrder=await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>{const caps=h.querySelector('.mc-caps'),params=h.querySelector('.mc-card__meta');return caps.nextElementSibling===params&&params.nextElementSibling?.classList.contains('mc-versions');}));
   check(signalOrder, `${theme}: header order is capabilities, total parameters, chevron`);
   const vision=root.locator('.mc-cap[data-mc-cap="vision"]').first();
-  check(await vision.getAttribute('data-af-tip')==='Vision input (images)'&&await vision.locator('svg').count()===1, `${theme}: native vision input has a labelled eye icon`);
+  check(await vision.getAttribute('aria-label')==='Image input'&&(await vision.getAttribute('data-af-tip')).includes('Understands images')&&await vision.locator('svg').count()===1, `${theme}: native vision input has an explained eye icon`);
   const signals=await root.locator('.mc-card').first().locator('.mc-cap').evaluateAll(es=>Object.fromEntries(es.map(e=>[e.dataset.mcCap,{color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor}])));
   check(new Set(['vision','thinking','tools'].map(k=>signals[k].color)).size===3&&signals.vision.background!=='rgba(0, 0, 0, 0)', `${theme}: vision, thinking and tools use distinct themed accents and soft discs`);
   check(await root.locator('.mc-brand [data-brand="qwen"] svg image').count()===1&&await root.locator('.mc-brand [data-brand="meta"] svg image').count()===1, `${theme}: official manufacturer artwork renders beside titles without remote images`);
@@ -108,7 +108,18 @@ try {
   const tooltip=page.locator('.af-tooltip[role="tooltip"]:visible');await tooltip.waitFor();
   const tooltipTheme=await tooltip.evaluate(el=>{const probe=document.createElement('span');probe.style.cssText='position:absolute;visibility:hidden;background:var(--bg-secondary);color:var(--text-primary)';document.body.append(probe);const a=getComputedStyle(el),b=getComputedStyle(probe),r={background:a.backgroundColor,expectedBackground:b.backgroundColor,text:a.color,expectedText:b.color,border:a.borderTopWidth,label:el.textContent};probe.remove();return r;});
   check(tooltipTheme.background===tooltipTheme.expectedBackground&&tooltipTheme.text===tooltipTheme.expectedText&&parseFloat(tooltipTheme.border)>0,`${theme}: tooltip uses the actual active theme surface, text and border (${JSON.stringify(tooltipTheme)})`);
-  check(tooltipTheme.label===await root.locator('.mc-caps .mc-cap').first().getAttribute('data-af-tip'),`${theme}: capability tooltip explains the icon`);
+  check(await tooltip.locator('.af-tooltip__title').innerText()==='Text generation'&&(await tooltip.locator('.af-tooltip__description').innerText()).includes('chat, summaries and code'),`${theme}: capability tooltip explains practical use rather than repeating a label`);
+  const explanations={text:'chat, summaries and code',thinking:'may take longer',tools:'permission rules',vision:'screenshots, photos and diagrams'};
+  for(const [cap,meaning] of Object.entries(explanations)){
+   const badge=root.locator('.mc-cap[data-mc-cap="'+cap+'"]').first();
+   await page.mouse.move(1,1);await page.keyboard.press('Escape');await badge.hover();await tooltip.waitFor();
+   check((await tooltip.locator('.af-tooltip__description').innerText()).includes(meaning),`${theme}: ${cap} hover explains what the capability enables`);
+   await page.mouse.move(1,1);await page.keyboard.press('Escape');await badge.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await tooltip.waitFor();
+   check(!!await badge.getAttribute('aria-describedby')&&await badge.getAttribute('aria-hidden')===null&&(await tooltip.innerText()).includes(meaning),`${theme}: ${cap} explanation is available through keyboard focus and ARIA`);
+   if(cap==='thinking')await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-thinking-explained-${theme}.png`)});
+   await page.keyboard.press('Escape');check(await page.locator('.af-tooltip:visible').count()===0,`${theme}: ${cap} tooltip dismisses with Escape`);
+  }
+  check(await root.locator('.mc-caps[data-af-tip]').count()===0,`${theme}: icon group has no redundant list-of-names tooltip`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-capability-tooltip-${theme}.png`)});
   await page.mouse.move(1,1);
   await root.getByText('Fits this computer',{exact:true}).click();

@@ -276,11 +276,35 @@ if (__SCRIPT__ === "unloadable") {
 if (__SCRIPT__ === "unreported") {
   chip("quant", "8bit", true); snap("clicked");
 }
+if (__SCRIPT__ === "capabilities") {
+  out.help = vm.runInContext(`Object.fromEntries(MC_CAPS.map(([cap]) => [cap, mcCapabilityHelp(cap, {capabilities:{tools:"native"}})]))`, ctx);
+  out.prompted = vm.runInContext(`mcCapabilityHelp("tools", {capabilities:{tools:"prompted"}})`, ctx);
+  out.html = vm.runInContext(`mcCapabilityMarkup({capabilities:{text:true,thinking:true,tools:"native",vision:true,audio:true,embedding:true,image_generation:true,video_generation:true}})`, ctx);
+  out.voice = vm.runInContext(`mcCapabilityMarkup({capabilities:{speech_synthesis:true}})`, ctx);
+  out.empty = vm.runInContext(`mcCapabilityMarkup({capabilities:{}})`, ctx);
+}
 console.log(JSON.stringify(out));
 """
 
 
 EMPTY_INSTALLED = {"schema": "models_installed_v1", "rows": [], "errors": {}}
+
+
+def test_capability_badges_explain_practical_use_and_input_output() -> None:
+    out = _run(_catalog(1), "capabilities")
+    meanings = {"text": "chat, summaries and code", "thinking": "may take longer", "tools": "permission rules", "vision": "images attached", "audio": "Accepts audio", "embedding": "semantic search", "voice": "spoken audio", "image": "Creates images", "video": "Creates video clips"}
+    assert set(out["help"]) == set(meanings)
+    for cap, meaning in meanings.items():
+        assert meaning in out["help"][cap]["description"]
+        assert len(out["help"][cap]["description"].split()) <= 30
+    assert "prompt" in out["prompted"]["description"]
+    assert out["prompted"] != out["help"]["tools"]
+    assert 'role="group" aria-label="Model capabilities"' in out["html"]
+    assert out["html"].count('role="img" tabindex="0"') == 8
+    assert out["html"].count('data-af-tip-content=') == 8
+    assert 'aria-hidden="true" data-af-tip' not in out["html"]
+    assert 'aria-label="Speech generation"' in out["voice"]
+    assert out["empty"] == ""
 
 
 def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None, installed: dict | None = EMPTY_INSTALLED) -> dict:

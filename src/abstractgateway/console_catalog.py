@@ -102,7 +102,7 @@ CATALOG_CSS = r"""
     .mc-brand { display: inline-flex; flex: none; }
     .mc-card__meta:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-    .mc-caps:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+    .mc-cap:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
     .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
@@ -579,11 +579,28 @@ CATALOG_JS = r"""
       return `<span class="mc-icon-wrap" data-af-tip="${esc(tip || label)}"><button type="button" class="ui-btn mc-icon-action${extra || ""}"${action ? ` data-mc-action="${esc(action)}"` : ""} ${attrs || ""} aria-label="${esc(label)}" data-af-tip="${esc(tip || label)}"${disabled ? " disabled" : ""}>${ICONS[icon]}</button></span>`;
     }
     const MC_CAP_ICON = { text:"text", thinking:"brain", tools:"tool", vision:"eye", audio:"waveform", embedding:"embedding", voice:"mic", image:"image", video:"video" };
+    const MC_CAP_HELP = {
+      text: { title: "Text generation", description: "Produces text responses from prompts, such as chat, summaries and code." },
+      thinking: { title: "Thinking", description: "Can reason through a problem before giving its final answer. Useful for complex questions, but may take longer to respond." },
+      tools: { title: "Tool use", description: "Can request calls to tools supplied by the app, such as search or calculations. The app runs them under its permission rules." },
+      vision: { title: "Image input", description: "Understands images attached to a prompt, so you can ask about screenshots, photos and diagrams." },
+      audio: { title: "Audio input", description: "Accepts audio as part of a prompt. The kinds of audio it understands depend on the model." },
+      embedding: { title: "Embeddings", description: "Turns content into numerical vectors for semantic search, similarity matching and retrieval." },
+      voice: { title: "Speech generation", description: "Converts text into spoken audio for read-aloud responses and narration. Available voices and languages depend on the model." },
+      image: { title: "Image generation", description: "Creates images from a prompt. Editing and reference-image support depend on the model." },
+      video: { title: "Video generation", description: "Creates video clips from a prompt. Supported length and reference inputs depend on the model." }
+    };
+    function mcCapabilityHelp(cap, row) {
+      if (cap === "tools" && row.capabilities.tools === "prompted") return { title: "Tool use (prompted)", description: "Can request tools through instructions in its prompt. The app interprets those requests and runs tools under its permission rules." };
+      return MC_CAP_HELP[cap];
+    }
     function mcCapabilityMarkup(row) {
       const caps = mcRowCaps(row);
       if (!caps.length) return "";
-      const labels = caps.map(c => c === "vision" ? "Vision input (images)" : (MC_CAPS.find(x => x[0] === c) || [c,c])[1]);
-      return `<span class="mc-caps" role="img" aria-label="${esc(labels.join(", "))}" tabindex="0" data-af-tip="${esc(labels.join(" · "))}">${caps.map((c,i) => `<span class="mc-cap" data-mc-cap="${esc(c)}" aria-hidden="true" data-af-tip="${esc(labels[i])}">${ICONS[MC_CAP_ICON[c]]}</span>`).join("")}</span>`;
+      return `<span class="mc-caps" role="group" aria-label="Model capabilities">${caps.map(c => {
+        const help = mcCapabilityHelp(c, row);
+        return `<span class="mc-cap" data-mc-cap="${esc(c)}" role="img" tabindex="0" aria-label="${esc(help.title)}" ${mcTooltipAttrs(help)}>${ICONS[MC_CAP_ICON[c]]}</span>`;
+      }).join("")}</span>`;
     }
     function mcBuildIdentity(a, extra) {
       const id = String(a.artifact || "");
