@@ -1,0 +1,98 @@
+{
+  "gateway_commit": "a352234b",
+  "abstractuic_commit": "fe951fd",
+  "test_gate": {
+    "regression_passed": 88,
+    "regression_initial_failure": "theme source fingerprint needed regeneration after shared CSS correction",
+    "sync_rerun_passed": 8,
+    "catalog_browser": {
+      "checks": 138,
+      "failures": []
+    },
+    "resources_browser": {
+      "checks": 122,
+      "failures": []
+    }
+  },
+  "kit": {
+    "tooltip_checks": 42,
+    "css_balanced": true,
+    "theme_token_blocks": 21,
+    "polish_checks": 16,
+    "strict_contrast": "pass, 20 named themes"
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "dimensions": {
+          "card": 151,
+          "header": 37,
+          "rows": [
+            36,
+            36,
+            36
+          ],
+          "columns": 3
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "threeColumns": true,
+          "capabilitiesBesideTitle": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "mobileFits": true
+        },
+        "tooltip": {
+          "background": "rgb(22, 33, 62)",
+          "text": "rgb(238, 238, 238)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      },
+      {
+        "theme": "light",
+        "dimensions": {
+          "card": 151,
+          "header": 37,
+          "rows": [
+            36,
+            36,
+            36
+          ],
+          "columns": 3
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "threeColumns": true,
+          "capabilitiesBesideTitle": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "mobileFits": true
+        },
+        "tooltip": {
+          "background": "rgb(255, 255, 255)",
+          "text": "rgb(15, 23, 42)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      }
+    ],
+    "errors": [],
+    "managementWrites": []
+  }
+}

@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 53
+- Completed: 54
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,7 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0992 Dense model cards](planned/0992_compact_model_cards_and_shared_tooltips.md) | P1. Compact rows/header, capability icons and shared theme-respecting tooltips; preserve operations and reachability. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -192,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0992 Compact Models cards (completed 2026-10-30, unreleased) | `planned/0992_compact_model_cards_and_shared_tooltips.md` | [completed/0992_compact_model_cards_and_shared_tooltips.md](completed/0992_compact_model_cards_and_shared_tooltips.md) | 151px cards, inline capability icons and publisher, shared themed tooltips; repetitive info controls removed. | `a352234b`, kit `fe951fd`; 138 catalog + 122 Resources browser checks, sync/kit guards and healthy live redeploy; [evidence](../../design/compact-models-0992/REVIEW.md). |
 | 0991 Model header affordance (completed 2026-10-30, unreleased) | `planned/0991_model_card_header_affordance.md` | [completed/0991_model_card_header_affordance.md](completed/0991_model_card_header_affordance.md) | Distinct themed header band, subtle hover/focus highlight and full-header expansion through native chevron. | `549680a7`; 42 tests, 124 browser checks and healthy live redeploy; [evidence](../../design/model-header-0991/REVIEW.md). |
 | 0986 Catalog loading (completed 2026-10-30, unreleased) | `proposed/0986_catalog_fetch_latency.md`, then planned | [completed/0986_catalog_fetch_latency.md](completed/0986_catalog_fetch_latency.md) | Request-scoped Core work sharing, identical HTTP read sharing, progressive curated first paint, explicit enrichment/error states. | 106 Core + 30 endpoint/concurrency + 81 console tests; 234 browser checks; warm live cards 4.279s / full 4.484s; [evidence](../../design/catalog-loading-0986-0988/REVIEW.md). |
 | 0988 Three-version cards (completed 2026-10-30, unreleased) | `planned/0988_models_three_versions_header_chevron.md` | [completed/0988_models_three_versions_header_chevron.md](completed/0988_models_three_versions_header_chevron.md) | Three rows with accessible header-right chevron; no footer button or result cap. | `ce0c2e12`; same console/browser gate and live disclosure verification. |
