@@ -3,7 +3,9 @@
 > Package: abstractgateway
 > Type: improvement
 > Created: 2026-10-30
-> Status: planned
+> Status: completed
+> Completed: 2026-10-30
+> Release: unreleased (local deployment verified)
 > Priority: P1
 > Labels: ux, seat-framework
 > Work-item id: abstractgateway-0994
@@ -34,5 +36,21 @@ real-browser light/dark/mobile checks for exact order, vision semantics and
 colour, fit default/off persistence and manufacturer logos, then scoped commits
 and authorized local redeploy. Record explicit supported brands and fallback.
 
-- [ ] Implement shared marks and model signals/defaults.
-- [ ] Validate, commit, redeploy and save evidence.
+- [x] Implement shared marks and model signals/defaults.
+- [x] Validate, commit, redeploy and save evidence.
+
+## Completion report
+
+Implemented `9fd6038a` / `b3908d01`, adopting shared kit `4d0347e` (UIC 0076).
+Exact capability/total-parameter/chevron order; explicit coloured input vision,
+Fits on by default with durable off links, compact official brand marks left of
+model names, and readable narrow-card titles. No inferred capabilities or extra
+remote image requests. Downloaded/Browse filter behavior preserved.
+
+Final gates: 33 catalog/browser/sync and 7 narrow-header/merged checks pass;
+162 browser assertions; 492 shared brand checks plus tooltip/top-bar/theme guards.
+Healthy graceful redeploy and live dark/light/mobile/controls verified with no
+model-management writes or page errors. Note frontend persistence also verified.
+[Review, supported brands and limits](../../../design/model-signals-0994/REVIEW.md),
+[validation](../../../design/model-signals-0994/validation.json).
+No new residual work or ADR impact. Unknown vendors retain text fallback.

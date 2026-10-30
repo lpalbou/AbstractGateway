@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 23
+- Planned: 22
 - Proposed: 52
-- Completed: 55
+- Completed: 56
 - Deprecated: 4
 - Recurrent: 0
 
@@ -120,7 +120,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
-| [0994 Model signals and brands](planned/0994_models_header_order_fit_default_and_brand_marks.md) | P1. Capability/parameter/chevron order, coloured input-vision signals, Fits on by default and shared manufacturer marks. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
@@ -192,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0994 Model signals and brands (completed 2026-10-30, unreleased) | `planned/0994_models_header_order_fit_default_and_brand_marks.md` | [completed/0994_models_header_order_fit_default_and_brand_marks.md](completed/0994_models_header_order_fit_default_and_brand_marks.md) | Exact icon/parameter/chevron order, coloured input vision, Fits on by default, shared manufacturer marks. | `9fd6038a`/`b3908d01`, kit `4d0347e`; 162 browser assertions, sync/kit guards and healthy live redeploy; [evidence](../../design/model-signals-0994/REVIEW.md). |
 | 0993 Balanced Models spacing (completed 2026-10-30, unreleased) | `planned/0993_models_balanced_spacing_and_aligned_capabilities.md` | [completed/0993_models_balanced_spacing_and_aligned_capabilities.md](completed/0993_models_balanced_spacing_and_aligned_capabilities.md) | 195px cards, 44px rows, two common desktop columns and right-aligned capability icons; updates 0992 density. | `af7a33a4`; 42 tests, 140 browser assertions and healthy live redeploy; [evidence](../../design/balanced-models-0993/REVIEW.md). |
 | 0992 Compact Models cards (completed 2026-10-30, unreleased) | `planned/0992_compact_model_cards_and_shared_tooltips.md` | [completed/0992_compact_model_cards_and_shared_tooltips.md](completed/0992_compact_model_cards_and_shared_tooltips.md) | 151px cards, inline capability icons and publisher, shared themed tooltips; repetitive info controls removed. | `a352234b`, kit `fe951fd`; 138 catalog + 122 Resources browser checks, sync/kit guards and healthy live redeploy; [evidence](../../design/compact-models-0992/REVIEW.md). |
 | 0991 Model header affordance (completed 2026-10-30, unreleased) | `planned/0991_model_card_header_affordance.md` | [completed/0991_model_card_header_affordance.md](completed/0991_model_card_header_affordance.md) | Distinct themed header band, subtle hover/focus highlight and full-header expansion through native chevron. | `549680a7`; 42 tests, 124 browser checks and healthy live redeploy; [evidence](../../design/model-header-0991/REVIEW.md). |
