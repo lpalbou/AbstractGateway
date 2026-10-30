@@ -8,6 +8,7 @@
 // Prints one JSON line: {"failures": [...], "checks": N}.
 import { createRequire } from "node:module";
 import path from "node:path";
+import fs from "node:fs";
 
 const [BASE, ADMIN, PW, LONG_ID] = process.argv.slice(2);
 const require = createRequire(path.join(PW, "/"));
@@ -28,6 +29,7 @@ async function open(browser, width, height, { touch = false, showArchived = fals
   await page.goto(`${BASE}/console`);
   await page.waitForSelector("#login-form");
   await page.fill("#login-user", "admin");
+  await page.click("#login-method-switch");
   await page.fill("#login-token", ADMIN);
   await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 20000 });
@@ -47,12 +49,15 @@ const LAYOUT = () => {
   const cards = getComputedStyle(table.querySelector("thead")).display === "none";
   let over = -1e9;
   let multiLine = 0;
+  let minTarget = Infinity, hiddenActions = 0;
   for (const td of table.querySelectorAll("td.accounts-actions")) {
     const cell = td.getBoundingClientRect();
     const tops = new Set();
     for (const b of td.querySelectorAll(".accounts-actions__buttons > button")) {
       const r = b.getBoundingClientRect();
-      over = Math.max(over, r.right - tr.right, r.right - cell.right);
+      over = Math.max(over, r.right - tr.right, r.right - cell.right, tr.left - r.left, cell.left - r.left, cell.top - r.top, r.bottom - cell.bottom);
+      minTarget = Math.min(minTarget, r.width, r.height);
+      if (!b.getClientRects().length || getComputedStyle(b).visibility !== "visible") hiddenActions++;
       tops.add(Math.round(r.top));
     }
     if (tops.size > 1) multiLine += 1;
@@ -63,16 +68,17 @@ const LAYOUT = () => {
     if ((ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1) scrollers.push(el.id || el.className);
   }
   const wrap = table.closest(".users-table-wrap").getBoundingClientRect();
-  return { sw: de.scrollWidth, iw: innerWidth, cards, over: Math.round(over), scrollers, tableOverWrap: Math.round(tr.right - wrap.right), wrapScroll: (() => { const el = table.closest(".users-table-wrap"); return el.scrollWidth - el.clientWidth; })(), multiLine, cols: Array.from(table.querySelectorAll("thead th")).map((t) => t.textContent.trim()) };
+  return { sw: de.scrollWidth, iw: innerWidth, cards, over: Math.round(over), scrollers, tableOverWrap: Math.round(tr.right - wrap.right), wrapScroll: (() => { const el = table.closest(".users-table-wrap"); return el.scrollWidth - el.clientWidth; })(), multiLine, minTarget, hiddenActions, aliceActions: table.querySelectorAll('tr[data-user="alice"] .accounts-actions__buttons > button').length, cols: Array.from(table.querySelectorAll("thead th")).map((t) => t.textContent.trim()) };
 };
 
 const browser = await chromium.launch({ headless: true });
 try {
   // ---------------------------------------------------------------- widths (A1)
-  // Table from ~900 px up (actions on one line), cards below.
-  for (const [w, h, expectCards] of [[880, 900, true], [920, 900, false], [1024, 800, false], [1100, 800, false], [1280, 900, false], [1440, 900, false], [1680, 1000, false], [2000, 1000, false], [2560, 1200, false]]) {
+  // Table when its text columns and all eight actions fit; cards otherwise.
+  for (const [w, h, expectCards] of [[880, 900, true], [920, 900, false], [1024, 800, true], [1100, 800, false], [1280, 900, false], [1440, 900, false], [1680, 1000, false], [2000, 1000, false], [2560, 1200, false]]) {
     const { ctx, page } = await open(browser, w, h, { showArchived: true });
     const m = await page.evaluate(LAYOUT);
+    check(m.aliceActions === 8 && m.hiddenActions === 0 && m.minTarget >= 44, `${w}: all eight member actions remain visible with 44px targets`, m);
     check(m.sw <= m.iw, `${w}: the page does not scroll sideways`, m);
     check(m.scrollers.length === 0 && m.wrapScroll <= 1, `${w}: no inner horizontal scroller holds the table`, m);
     check(m.over <= 0.5 && m.tableOverWrap <= 0.5, `${w}: the Actions cell's right edge stays inside the table`, m);
@@ -81,10 +87,11 @@ try {
     check(JSON.stringify(m.cols) === JSON.stringify(["Name", "Email", "Runtime", "Active", "Actions"]), `${w}: columns Name · Email · Runtime · Active · Actions`, m.cols);
     await ctx.close();
   }
-  for (const [w, h] of [[834, 1194], [390, 844]]) {
+  for (const [w, h] of [[834, 1194], [390, 844], [320, 844]]) {
     const { ctx, page } = await open(browser, w, h, { touch: true });
     const m = await page.evaluate(LAYOUT);
     const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); return { display: getComputedStyle(tr).display, btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).filter((b) => b.getClientRects().length).map((b) => b.getBoundingClientRect().height)) }; });
+    check(m.aliceActions === 8 && m.hiddenActions === 0 && m.minTarget >= 44 && m.over <= 0.5, `${w}: touch keeps every action inside its cell`, m);
     check(m.cards && m.sw <= m.iw && row.display === "grid" && row.btnH >= 44, `${w}: flat card rows, 44 px actions, no sideways scroll`, { m, row });
     await ctx.close();
   }
@@ -104,11 +111,11 @@ try {
     check(Object.values(rows).every((r) => r.disabled === 0), "no disabled button in any account row", rows);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
     check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
-    check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Preferences · Rotate · Archive", rows.alice);
-    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspaces alice's agents may use", "Default workflows of alice", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
+    check(JSON.stringify(rows.alice.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "password", "rotate", "archive"]), "user: Email · OpenAI API · Logs · Workspace · Preferences · Password · Rotate · Archive", rows.alice);
+    check(JSON.stringify(rows.alice.tips) === JSON.stringify(["Email address and mailbox of alice", "OpenAI API access for alice", "Activity log of alice", "Workspaces alice's agents may use", "Default workflows of alice", "Set or change alice's password", "Rotate alice's sign-in token", "Archive alice (kept, hidden)"]), "user: explicit tooltip sentences (R9.2)", rows.alice.tips);
     check(JSON.stringify(rows.castor.vis) === JSON.stringify(["email", "logs", "workspace", "preferences", "manage", "archive"]), "entity: Email · Logs · Workspace · Preferences · Manage · Archive (no token)", rows.castor);
     check(rows.castor.tips[4] === "Manage castor (mind, voice, prompt…)", "entity Manage sentence", rows.castor.tips);
-    check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "rotate"]), "own row: no Archive", rows.admin);
+    check(JSON.stringify(rows.admin.vis) === JSON.stringify(["email", "openai_api", "logs", "workspace", "preferences", "password", "rotate"]), "own row: no Archive", rows.admin);
     check(Object.values(rows).every((r) => r.icons && r.menus === 0 && r.size.every((x) => x >= 44)), "icon buttons only: no label, no '⋯' menu, 44 px targets", rows);
     check(!(await page.textContent("#users-table")).includes("⋯"), "no '⋯' anywhere in the table");
     check(rows.alice.email === "alice@fastmail.com · not connected" && rows.bob.email === "No address", "ONE Email column: 'address · state' / 'No address'", [rows.alice.email, rows.bob.email]);
@@ -217,6 +224,7 @@ try {
     let otherMailbox = { state: "receive_only", address: "alice@fastmail.com", provider: "imap", reason: REASON };
     await page.goto(`${BASE}/console`);
     await page.fill("#login-user", "admin");
+    await page.click("#login-method-switch");
     await page.fill("#login-token", ADMIN);
     await page.click("#login-button");
     await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 20000 });
@@ -267,4 +275,6 @@ try {
 } finally {
   await browser.close();
 }
-console.log(JSON.stringify({ failures, checks }));
+const report = { failures, checks };
+if (process.env.ABSTRACTGATEWAY_TEST_REPORT) fs.writeFileSync(process.env.ABSTRACTGATEWAY_TEST_REPORT, JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report));
