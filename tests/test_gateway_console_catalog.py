@@ -212,6 +212,16 @@ if (__SCRIPT__ === "hf") {
   snap("second");
   out.hubCalls2 = calls.filter((c) => (c.path.startsWith("/api/gateway/models/catalog?") && c.path !== "/api/gateway/models/catalog?hub=true&extended=true")).map((c) => c.path);
 }
+if (__SCRIPT__ === "fitTooltip") {
+  out.tips=FIXTURE.rows[0].artifacts.map(a=>vm.runInContext(`mcFitTooltip(${JSON.stringify(a)})`,ctx));
+  out.html=root.innerHTML;
+}
+if (__SCRIPT__ === "quickLibrary") {
+  vm.runInContext('mcSetFilter(mcStore.views.get("tab"), {quant:"8bit", provider:"mlx", q:""})',ctx);
+  const before=JSON.parse(JSON.stringify(view().filters));
+  root.onchange({target:{dataset:{mcDownloaded:"1"},checked:true}});out.on=JSON.parse(JSON.stringify(view().filters));
+  root.onchange({target:{dataset:{mcDownloaded:"1"},checked:false}});out.off=JSON.parse(JSON.stringify(view().filters));out.before=before;
+}
 if (__SCRIPT__ === "host") {
   out.host = vm.runInContext("mcHostMarkup()", ctx);
 }
@@ -678,3 +688,29 @@ def test_fits_is_default_and_explicit_off_survives_links() -> None:
     assert on["initial"]["count"] == [models, 6, arts]
     assert off["initial"]["count"][2] == 18
     assert off["fromhash"]["hash"] == "#catalog?quant=all&fits=0"
+
+
+def test_fit_hover_uses_current_fields_and_keeps_raw_notes_out() -> None:
+    cat = _catalog(1)
+    a = cat["rows"][0]["artifacts"][0]
+    a["fit"] = {"verdict":"tight", "need_bytes":112e9,"usable_bytes":113e9,"free_now_bytes":59.3e9,"fits_now":False,"disk_ok":True,"max_context":67834,"confidence":"rough","notes":["unrecognised quantization 'oq4e'","not enough disk: stale download warning","already installed"]}
+    b = cat["rows"][0]["artifacts"][1]
+    b["fit"] = dict(a["fit"],disk_ok=False)
+    b["presence"] = {"status":"absent"}
+    cat["rows"][0]["artifacts"][2]["fit"] = {"verdict":"unknown"}
+    out = _run(cat, "fitTooltip", "#catalog?quant=all&fits=0")
+    installed, absent, unknown = out["tips"]
+    assert installed["title"] == "Tight memory fit"
+    assert installed["description"] == "Free more memory before loading."
+    assert [f["label"] for f in installed["facts"]] == ["Memory needed","Model budget","Available now","Max. context"]
+    assert installed["sections"] == []
+    assert "disk" not in json.dumps(installed) and "oq4e" not in json.dumps(installed)
+    assert absent["sections"][0]["label"] == "Before downloading"
+    assert unknown["title"] == "Fit not known" and unknown["facts"] == []
+    assert "Raw estimate notes" in out["html"] and "oq4e" in out["html"]
+
+
+def test_quick_downloaded_control_reuses_library_and_restores_filters() -> None:
+    out = _run(_catalog(4), "quickLibrary")
+    assert out["on"]["status"] == "downloaded" and out["on"]["quant"] == "all" and out["on"]["fits"] is False
+    assert out["off"] == out["before"]

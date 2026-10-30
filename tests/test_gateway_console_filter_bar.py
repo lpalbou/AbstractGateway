@@ -50,12 +50,13 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert lead.startswith('<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">'), where
     assert '<div class="af-filterbar__scope" role="group" aria-label="Search in"' in lead, where
     assert 'class="af-filterbar__scope-btn" data-af-scope="catalog"' in lead and 'data-af-scope="hf"' in lead, where
-    # The search field and "Fits this computer" share the ONE first-line element; it holds no other toggle.
+    # The shared first-line element holds Fits and, on Models, Downloaded only.
     line = re.search(r'<div class="af-filterbar__line">(.*?)</div>', lead, flags=re.S).group(1)
     assert line.startswith('<input type="search" class="af-filterbar__search" data-mc-search="1"'), (where, line)
     assert '<span class="af-filterbar__toggles"><label class="af-switch af-switch--native af-switch--sm">' in line, (where, line)
     assert 'data-mc-fits="1"' in line and "Fits this computer" in line, (where, line)
-    assert line.count('role="switch"') == 1 and lead.count('role="switch"') == 1, (where, lead)
+    toggle_count = 1 if where == "setup guide" else 2
+    assert line.count('role="switch"') == toggle_count and lead.count('role="switch"') == toggle_count, (where, lead)
     # One row per facet: label first, in its own element (the fixed column), then the chips column.
     facets = html[html.index('<div class="af-filterbar__facets"') :]
     assert re.findall(r'data-af-facet-row="(\w+)"', facets) == ["quant", "provider", "cap", "status"], where
@@ -68,7 +69,7 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert re.search(r'<span class="af-chip__label">[^<]+</span><span class="af-filterbar__count" aria-hidden="true">\d+</span>', facets), where
     # No "Every quant" switch on any tab (operator ruling, AbstractGateway #79): one toggle in all.
     assert "data-mc-every" not in html and "af-filterbar__trailing" not in html, where
-    assert html.count('role="switch"') == 1, where
+    assert html.count('role="switch"') == toggle_count, where
     classes = {c for attr in re.findall(r'class="([^"]*)"', html) for c in attr.split()}
     assert not classes & set(LEGACY), (where, classes & set(LEGACY))
 

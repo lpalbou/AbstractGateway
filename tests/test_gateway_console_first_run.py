@@ -94,6 +94,7 @@ const kitIslands = {
   filterBarFacetsHtml: kitLib.filterBarFacetsHtml,
   filterBarScopeButtonsHtml: kitLib.filterBarScopeButtonsHtml,
   brandMarks: kitLib.brandMarks,
+  tooltipAttributes: kitLib.tooltipAttributes,
   mountCloudProviderCards(el, props) {
     const rec = { id: el.id, props, updates: 0, unmounted: 0 };
     cloudMounts.push(rec);

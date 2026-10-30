@@ -305,7 +305,7 @@ CATALOG_JS = r"""
       if (String(f.verdict || "") !== "needs_gpu_limit" || typeof gl.command !== "string" || !gl.command) return "";
       const gib = uiNum(gl.required_mb) ? ` ${Math.round(Number(gl.required_mb) / 1024)} GiB` : " more memory";
       return `<div class="mc-note" data-mc-gpu-limit="1">It fits once macOS lets the GPU use${esc(gib)}: run `
-        + `<code class="mc-id" tabindex="0" role="button" title="Click to copy" data-mc-copy="${esc(gl.command)}">${esc(gl.command)}</code>`
+        + `<code class="mc-id" tabindex="0" role="button" data-af-tip="Copy GPU limit command" data-mc-copy="${esc(gl.command)}">${esc(gl.command)}</code>`
         + ` in a terminal (asks for your password; lasts until the Mac restarts), then load it.</div>`;
     }
     // quant_class is AbstractCore's. A payload where ANY artifact
@@ -449,6 +449,11 @@ CATALOG_JS = r"""
       if (!lib || typeof lib.filterBarFacetsHtml !== "function" || typeof lib.filterBarScopeButtonsHtml !== "function") throw new Error("The shared UI kit filter bar did not load. Reload the console.");
       return lib;
     }
+    function mcTooltipAttrs(content) {
+      const lib = mcFilterKit();
+      if (typeof lib.tooltipAttributes !== "function") throw new Error("The shared structured tooltip kit did not load. Reload the console.");
+      return Object.entries(lib.tooltipAttributes(content)).map(([key,value]) => `${key}="${esc(value)}"`).join(" ");
+    }
     function afFilterFacetsHtml(facets, trailing) { return mcFilterKit().filterBarFacetsHtml(facets, trailing); }
     function afFilterScopeButtonsHtml(options, value) { return mcFilterKit().filterBarScopeButtonsHtml(options, value); }
     // The kit's native switch (af-switch--native: a checkbox with role="switch"), small.
@@ -519,18 +524,21 @@ CATALOG_JS = r"""
       return `<div class="ui-alert tone-warn mc-seam" role="alert" data-mc-notice="quant_class"><strong>This gateway's catalog does not report quant_class yet.</strong>`
         + `<span>The 4-bit / 8-bit filter needs it, so it is off. Every model and every artifact is still listed below. Updating AbstractCore on the gateway host turns the filter on.</span></div>`;
     }
-    function mcFitTitle(fit) {
-      const f = fit || {};
-      const lines = [];
-      // The verdict compares the need with `usable_bytes` (the ceiling minus
-      // what is kept free for the system), so that is the number said here.
-      if (uiNum(f.need_bytes) && uiNum(f.usable_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)} of the ${uiBytes(f.usable_bytes)} this computer can give a model`);
-      else if (uiNum(f.need_bytes) && uiNum(f.ceiling_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)}; this computer lets a model use at most ${uiBytes(f.ceiling_bytes)}, minus what the system keeps free`);
-      if (uiNum(f.free_now_bytes)) lines.push(`Free right now: ${uiBytes(f.free_now_bytes)}`);
-      if (f.disk_ok === false) lines.push("Not enough free disk space for the download");
-      if (uiNum(f.max_context)) lines.push(`Longest context that fits: ${Number(f.max_context).toLocaleString()} tokens`);
-      for (const note of Array.isArray(f.notes) ? f.notes : []) lines.push(String(note));
-      return lines.join("\n");
+    // Fit fields are the authority; raw estimator notes belong in explicit build details.
+    function mcFitTooltip(a) {
+      const f = a.fit || {}, verdict = String(f.verdict || "unknown");
+      const title = a.supported_on_host === false ? "Unsupported engine" : ({fits:"Fits this computer",tight:"Tight memory fit",needs_gpu_limit:"GPU limit change needed",partial_offload:"Partial GPU offload",too_large:"Exceeds the memory budget"})[verdict] || "Fit not known";
+      let description = ({fits:"Within this computer's model-memory budget.",tight:"Little memory headroom remains.",needs_gpu_limit:"Increase the GPU memory limit before loading.",partial_offload:"Some layers use system RAM, which is slower.",too_large:"Choose a smaller build or lower precision."})[verdict] || "Not enough data for a reliable fit estimate.";
+      if (["fits","tight"].includes(verdict) && f.fits_now === false) description = "Free more memory before loading.";
+      if (a.supported_on_host === false) description = "This build's engine does not run on this host.";
+      const facts = [];
+      if (uiNum(f.need_bytes)) facts.push({label:"Memory needed",value:uiBytes(f.need_bytes)});
+      if (uiNum(f.usable_bytes)) facts.push({label:"Model budget",value:uiBytes(f.usable_bytes)});
+      else if (uiNum(f.ceiling_bytes)) facts.push({label:"Memory limit",value:uiBytes(f.ceiling_bytes)});
+      if (uiNum(f.free_now_bytes)) facts.push({label:"Available now",value:uiBytes(f.free_now_bytes),...(f.fits_now === false ? {tone:"warning"} : {})});
+      if (uiNum(f.max_context)) facts.push({label:"Max. context",value:Number(f.max_context).toLocaleString()+" tokens"});
+      const sections = !mcInstalled(a) && f.disk_ok === false ? [{label:"Before downloading",items:["Free disk space for this download."]}] : [];
+      return {title,description,facts,sections,...(f.confidence && f.confidence !== "exact" ? {note:"Memory and context are estimates. See build details."} : {})};
     }
     function mcCurrentDefault() {
       const text = (state.defaults || []).find((r) => r && r.key === "output.text") || null;
@@ -587,8 +595,10 @@ CATALOG_JS = r"""
     function mcBuildDetails(a, text, view) {
       const open = !!view && view.details.has(mcKey(a));
       const id = `mc-build-${encodeURIComponent(view ? view.key : "model")}-${encodeURIComponent(mcKey(a))}`;
+      const notes = [...new Set((Array.isArray((a.fit || {}).notes) ? a.fit.notes : []).map(String).filter(Boolean))];
+      const diagnostics = notes.length ? `<details class="ui-details mc-estimate-notes"><summary>Raw estimate notes</summary><ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></details>` : "";
       return { attrs: `data-mc-action="details" aria-label="Build details" data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}" aria-expanded="${open}" aria-controls="${esc(id)}"`,
-        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p></div>` };
+        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p>${diagnostics}</div>` };
     }
     function mcDefaultMarkup(provider, artifact, attrs, admin) {
       const cur = mcCurrentDefault();
@@ -623,7 +633,7 @@ CATALOG_JS = r"""
         return mcIconButton("", "download", "Download unavailable", why, "", true);
       }
       const label = job && job.status === "failed" ? "Retry download" : "Download";
-            return mcIconButton("download", label === "Download" ? "download" : "retry", label, admin ? label + " · " + a.artifact : "Only an admin can download models", attrs, !admin, a.recommended ? " is-primary" : "");
+            return mcIconButton("download", label === "Download" ? "download" : "retry", label, admin ? label : "Only an admin can download models", attrs, !admin, a.recommended ? " is-primary" : "");
     }
     // Delete (a trash-bin icon button, tooltip "Delete"; the row already
     // names the model) on every downloaded row. The first click asks the
@@ -633,7 +643,7 @@ CATALOG_JS = r"""
       const cur = mcStore.del.get(mcKey(a));
       if (cur && cur.phase === "confirm") return "";
       if (cur && ["checking", "deleting"].includes(cur.phase)) return mcIconButton("", "trash", cur.phase === "checking" ? "Checking" : "Deleting", "Checking or deleting downloaded files", 'aria-busy="true"', true, " mc-del");
-      return mcIconButton("delete-ask", "trash", "Delete", admin ? `Delete ${a.artifact || "this model"} from this computer (files only)` : "Only an admin can delete downloaded models", attrs, !admin, " mc-del");
+      return mcIconButton("delete-ask", "trash", "Delete", admin ? "Delete downloaded files; asks for confirmation" : "Only an admin can delete downloaded models", attrs, !admin, " mc-del");
     }
     function mcDeleteConfirmMarkup(a) {
       const cur = mcStore.del.get(mcKey(a));
@@ -687,11 +697,9 @@ CATALOG_JS = r"""
       const m = mcResidentRow(a);
       if (!m) return "";
       const kept = m.locked === true;
-      const held = Array.isArray(m.held_by) && m.held_by.length ? ` Held by ${m.held_by.join("; ")}.` : "";
-      const title = (kept ? "Kept loaded: never evicted to make room for another model." : "Loaded in memory now.")
-        + held + ` Open Resources to ${kept ? "release it or unload it" : "keep it loaded or unload it"}.`;
-      const icon = kept ? `<span class="button-icon" aria-hidden="true">${ICONS.lock}</span>` : "";
-      return `<button type="button" class="mc-loaded" data-mc-open-resources="1" data-af-tip="${esc(title)}" aria-label="${esc(title)}">${kept ? ICONS.lock : ICONS.gear}</button>`;
+      const held = Array.isArray(m.held_by) ? m.held_by.map(String).filter(Boolean) : [];
+      const content = {title:kept ? "Kept loaded" : "Loaded in memory",description:kept ? "Protected from automatic eviction." : "Available for inference now.",sections:held.length ? [{label:"Held by",items:held}] : [],note:"Open Resources to manage residency."};
+      return `<button type="button" class="mc-loaded" data-mc-open-resources="1" ${mcTooltipAttrs(content)} aria-label="${kept ? "Kept loaded" : "Loaded"}. Open Resources">${kept ? ICONS.lock : ICONS.gear}</button>`;
     }
     function mcArtMarkup(row, a, alone, view) {
       const job = mcJob(a), installed = mcInstalled(a), presence = a.presence || {};
@@ -705,7 +713,7 @@ CATALOG_JS = r"""
       return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
         + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button></div>`
         + `<div class="mc-art__size" data-af-tip="${exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" data-af-tip="${esc(mcFitTitle(a.fit))}" aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
+        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" ${mcTooltipAttrs(mcFitTooltip(a))} aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
         + details.body + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div></li>`;
     }
@@ -853,8 +861,11 @@ CATALOG_JS = r"""
     }
     function mcHostSummary(view) {
       const profile = mcStore.data && mcStore.data.host_profile || {};
-      const facts = mcHostMarkup().replace(/<[^>]*>/g, "");
-      return `<span class="mc-host__facts" data-af-tip="${esc(facts)}">${esc(profile.gpu_name || profile.accelerator || "Host")}</span>`
+      const facts = [];
+      if (uiNum(profile.ram_bytes)) facts.push({label:profile.unified_memory ? "Unified memory" : "RAM",value:uiBytes(profile.ram_bytes)});
+      if (!profile.unified_memory && uiNum(profile.vram_bytes)) facts.push({label:"VRAM",value:uiBytes(profile.vram_bytes)});
+      if (uiNum(profile.ceiling_bytes)) facts.push({label:"Model memory limit",value:uiBytes(profile.ceiling_bytes)});
+      return `<span class="mc-host__facts" ${mcTooltipAttrs({title:"Host memory",facts})}>${esc(profile.gpu_name || profile.accelerator || "Host")}</span>`
         + mcIconButton("refresh", "refresh", mcStore.loading ? "Refreshing models" : "Refresh models", "Refresh the host model inventory", mcStore.loading ? 'aria-busy="true"' : "", mcStore.loading)
         + (view.guide ? '<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in Models</button>' : "");
     }
@@ -869,7 +880,7 @@ CATALOG_JS = r"""
         + `<div class="af-filterbar__line">`
         + `<input type="search" class="af-filterbar__search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false" enterkeyhint="search">`
         + `<button type="button" class="af-filterbar__submit mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
-        + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}</span>`
+        + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}${view.guide ? "" : mcSwitchMarkup("data-mc-downloaded", f.status === "downloaded", "Downloaded only")}</span>`
         + `</div>`
         + `<div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
         + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button></div></div>`
@@ -928,6 +939,8 @@ CATALOG_JS = r"""
       }
       const box = el.querySelector("[data-mc-fits]");
       if (box) box.checked = !!view.filters.fits;
+      const downloaded = el.querySelector("[data-mc-downloaded]");
+      if (downloaded) downloaded.checked = view.filters.status === "downloaded";
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
       const want = hf ? view.filters.hf : view.filters.q;
@@ -1149,6 +1162,15 @@ CATALOG_JS = r"""
       }
       mcSetFilter(view, { hf: null });
     }
+    function mcSetLibrary(view, mine) {
+      if (mine) {
+        if (view.filters.status !== "downloaded") view.browseFilters = {...view.filters};
+        mcSetFilter(view,{quant:"all",provider:"all",cap:"all",fits:false,status:"downloaded",hf:null});
+      } else {
+        view.filters = view.browseFilters ? {...view.browseFilters} : mcDefaultFilters();
+        mcWriteHash(view); mcRenderView(view);
+      }
+    }
     function mcSetFilter(view, patch) {
       view.filters = Object.assign({}, view.filters, patch);
       mcWriteHash(view);
@@ -1302,16 +1324,7 @@ CATALOG_JS = r"""
         view.details.has(key) ? view.details.delete(key) : view.details.add(key);
         mcRenderView(view); return;
       }
-      if (action === "library") {
-        if (b.dataset.mcLibrary === "downloaded") {
-          if (view.filters.status !== "downloaded") view.browseFilters = {...view.filters};
-          mcSetFilter(view,{quant:"all",provider:"all",cap:"all",fits:false,status:"downloaded",hf:null});
-        } else {
-          view.filters = view.browseFilters ? {...view.browseFilters} : mcDefaultFilters();
-          mcWriteHash(view); mcRenderView(view);
-        }
-        return;
-      }
+      if (action === "library") { mcSetLibrary(view, b.dataset.mcLibrary === "downloaded"); return; }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
       if (action === "llama-update") { mcLlamaUpdateRun(); return; }
@@ -1361,6 +1374,7 @@ CATALOG_JS = r"""
       el.onchange = (event) => {
         const t = event && event.target;
         if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
+        else if (t && t.dataset && t.dataset.mcDownloaded) mcSetLibrary(view, !!t.checked);
       };
       el.onkeydown = (event) => {
         const t = event && event.target;

@@ -82,7 +82,13 @@ const click = (action, a) => root.onclick({ target: { closest: (sel) => (sel ===
 const row = (a) => {
   const key = `${a.provider}/${a.artifact}`;
   const chunk = root.innerHTML.split('<li class="mc-art').find((c) => c.includes(`data-mc-art="${key}"`)) || "";
-  return chunk.split("</li>")[0];
+  // Build details can contain a native notes list: find the outer row's closing li.
+  let depth=1;
+  for (const m of chunk.matchAll(/<\/?li\b[^>]*>/g)) {
+    depth += m[0].startsWith('</') ? -1 : 1;
+    if (!depth) return chunk.slice(0,m.index);
+  }
+  return chunk;
 };
 const deletes = () => calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => c.body);
 const out = {};

@@ -28,6 +28,11 @@ def test_catalog_loading_versions_and_provider_cards(tmp_path):
         row["artifacts"] = [_art(i, j) for j in range(18)]
         for j, art in enumerate(row["artifacts"]):
             art["artifact"] += f"-variant-{j}"
+    catalog["rows"][0]["artifacts"][0]["fit"] = {
+        "verdict":"tight", "need_bytes":112e9,"usable_bytes":113e9,"free_now_bytes":59.3e9,
+        "fits_now":False,"disk_ok":True,"max_context":67834,"confidence":"rough",
+        "notes":["unrecognised quantization 'oq4e'","not enough disk: stale download warning","already installed"],
+    }
     catalog["rows"][1]["artifacts"][0]["presence"]["status"] = "installed"
     fixture = tmp_path / "catalog.json"
     fixture.write_text(json.dumps(catalog), encoding="utf-8")

@@ -62,9 +62,9 @@ def test_the_catalog_row_says_loaded_or_kept_and_opens_resources():
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert 'data-icon="gear"' in out["loaded"] and 'data-mc-open-resources="1"' in out["loaded"]
-    assert "Held by the runtime of account default/admin" in out["loaded"] and "Open Resources to keep it loaded" in out["loaded"]
+    assert "Held by" in out["loaded"] and "the runtime of account default/admin" in out["loaded"] and "Open Resources to manage residency" in out["loaded"]
     assert out["otherQuant"] == "", "another quant of the same repo is not the build in memory"
-    assert "Kept loaded:" in out["kept"] and 'data-icon="lock"' in out["kept"]
+    assert "Kept loaded" in out["kept"] and 'data-icon="lock"' in out["kept"]
     assert out["notResident"] == "" and out["otherProvider"] == ""
     assert "tab-button-models" in out["clicks"], "the badge opens the Resources page"
-    assert "Kept loaded:" in out["row"], "the catalog row carries the badge"
+    assert "Kept loaded" in out["row"], "the catalog row carries the badge"
