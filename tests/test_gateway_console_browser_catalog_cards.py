@@ -12,6 +12,7 @@ from abstractgateway.console import gateway_console_html
 from node_requirement import require_node
 from test_gateway_console_browser_state_toggles import _playwright_modules
 from test_gateway_console_catalog import _art, _catalog
+from test_gateway_console_discovered_assets import asset_rows
 
 pytestmark = pytest.mark.e2e
 
@@ -36,11 +37,13 @@ def test_catalog_loading_versions_and_provider_cards(tmp_path):
     catalog["rows"][1]["artifacts"][0]["presence"]["status"] = "installed"
     fixture = tmp_path / "catalog.json"
     fixture.write_text(json.dumps(catalog), encoding="utf-8")
+    assets = tmp_path / "assets.json"
+    assets.write_text(json.dumps(asset_rows()), encoding="utf-8")
     shots = Path(os.getenv("ABSTRACTGATEWAY_BROWSER_SHOTS", str(tmp_path / "shots")))
     shots.mkdir(parents=True, exist_ok=True)
     result = subprocess.run([
         require_node(), str(Path(__file__).parent / "browser" / "catalog_cards.mjs"),
-        str(html), str(_playwright_modules()), str(shots), str(fixture),
+        str(html), str(_playwright_modules()), str(shots), str(fixture), str(assets),
     ], capture_output=True, text=True, timeout=180)
     assert result.returncode == 0, (result.stdout[-4000:], result.stderr[-6000:])
     report = json.loads(result.stdout.strip().splitlines()[-1])

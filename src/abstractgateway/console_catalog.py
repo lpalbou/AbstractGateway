@@ -104,6 +104,7 @@ CATALOG_CSS = r"""
     .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-cap:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
+    .mc-badge--kind { color: var(--text-primary); background: var(--ui-surface-1); border: 1px solid var(--ui-border-2); }
     .mc-badge--recommended { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--accent); color: var(--text-primary); background: var(--ui-surface-1); font-weight: 650; }
     .mc-badge--recommended svg { width: 12px; height: 12px; fill: none; stroke: var(--warning); stroke-width: 1.8; }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
@@ -296,8 +297,10 @@ CATALOG_JS = r"""
     function mcJobDone(job) { return !!job && (job.state === "done" || job.status === "completed"); }
     function mcInstalled(a) {
       if (mcStore.deleted.has(mcKey(a))) return false;
+      if (a.inventory && a.inventory.complete !== true) return mcJobDone(mcJob(a));
       return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a));
     }
+    function mcHasLocalFiles(a) { return !mcStore.deleted.has(mcKey(a)) && (mcInstalled(a) || !!(a.inventory && a.inventory.present)); }
     function mcFits(a) { return a.supported_on_host !== false && MC_FITS_FILTER_VERDICTS.includes(String((a.fit || {}).verdict || "")); }
     // needs_gpu_limit: AbstractCore's gpu_limit_instruction, with the command
     // to copy. Nothing when the verdict or the command is absent.
@@ -319,6 +322,7 @@ CATALOG_JS = r"""
     }
     function mcQuantBucket(a) { return a.quant_class === "4bit" || a.quant_class === "8bit" ? a.quant_class : "other"; }
     function mcRowCaps(row) {
+      if (row.asset_kind && row.asset_kind !== "model") return [];
       const c = row.capabilities || {};
       const out = [];
       if (c.text === true) out.push("text");
@@ -341,15 +345,15 @@ CATALOG_JS = r"""
     function mcTokens(q) { return String(q || "").toLowerCase().split(/\s+/).filter(Boolean); }
     function mcSearchHit(row, a, tokens) {
       if (!tokens.length) return true;
-      const hay = [row.display_name, row.id, row.vendor, row.family, a.artifact].map((x) => String(x || "").toLowerCase()).join(" ");
+      const hay = [row.display_name, row.id, row.vendor, row.family, row.asset_kind, (row.tags || []).join(" "), a.artifact].map((x) => String(x || "").toLowerCase()).join(" ");
       return tokens.every((t) => hay.includes(t));
     }
     function mcArtMatches(row, a, f, quantOn, tokens) {
       if (quantOn && f.quant !== "all" && mcQuantBucket(a) !== f.quant) return false;
       if (f.provider !== "all" && a.provider !== f.provider) return false;
       if (f.fits && !mcFits(a)) return false;
-      if (f.status === "downloaded" && !mcInstalled(a)) return false;
-      if (f.status === "not_downloaded" && mcInstalled(a)) return false;
+      if (f.status === "downloaded" && !mcHasLocalFiles(a)) return false;
+      if (f.status === "not_downloaded" && mcHasLocalFiles(a)) return false;
       return mcSearchHit(row, a, tokens);
     }
     // The recommended artifact first; the rest in the catalog's own order.
@@ -401,7 +405,7 @@ CATALOG_JS = r"""
     function mcCovered(r) {
       for (const row of mcRowsOf(mcStore.data)) {
         for (const a of mcArts(row)) {
-          if ((((a.presence || {}).status === "installed") || mcStore.deleted.has(mcKey(a)) || mcJobDone(mcJob(a))) && mcSameFiles(a, r)) return true;
+          if ((mcHasLocalFiles(a) || mcStore.deleted.has(mcKey(a))) && mcSameFiles(a, r)) return true;
         }
       }
       return false;
@@ -491,7 +495,8 @@ CATALOG_JS = r"""
     }
     function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
+      const assets = mcRows().some(r => r.asset_kind && r.asset_kind !== "model");
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, assets ? "asset" : "model", assets ? "assets" : "models"))}${!mcHfMode(view.filters) && mcStore.partial ? " so far" : ""}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -527,6 +532,13 @@ CATALOG_JS = r"""
     }
     // Fit fields are the authority; raw estimator notes belong in explicit build details.
     function mcFitTooltip(a) {
+      const inv = a.inventory;
+      if (inv && (inv.complete !== true || a.asset_kind && a.asset_kind !== "model")) {
+        const kind = a.asset_kind || inv.kind;
+        const description = inv.complete !== true ? "Local files are cached, but a complete checkpoint has not been verified." : kind === "adapter" ? "Requires a compatible base model. Its cache size does not describe the full pipeline’s memory needs." : kind === "component" ? "Used inside a larger pipeline. Its cache size does not describe the full pipeline’s memory needs." : "Its role and runtime requirements could not be identified from the available local metadata.";
+        return {title:inv.complete !== true ? "Cached files" : kind === "adapter" ? "Base model required" : kind === "component" ? "Pipeline component" : "Unclassified asset",description,
+          facts:[...(uiNum(inv.bytes) ? [{label:"Cache size",value:uiBytes(inv.bytes)}] : []),...(uiNum(inv.files) ? [{label:"Cached files",value:String(inv.files)}] : []),...(inv.incomplete_files ? [{label:"Pending files",value:String(inv.incomplete_files),tone:"warning"}] : []),...(inv.missing_shards ? [{label:"Missing shards",value:String(inv.missing_shards),tone:"warning"}] : [])]};
+      }
       const f = a.fit || {}, verdict = String(f.verdict || "unknown");
       const title = a.supported_on_host === false ? "Unsupported engine" : ({fits:"Fits this computer",tight:"Tight memory fit",needs_gpu_limit:"GPU limit change needed",partial_offload:"Partial GPU offload",too_large:"Exceeds the memory budget"})[verdict] || "Fit not known";
       let description = ({fits:"Within this computer's model-memory budget.",tight:"Little memory headroom remains.",needs_gpu_limit:"Increase the GPU memory limit before loading.",partial_offload:"Some layers use system RAM, which is slower.",too_large:"Choose a smaller build or lower precision."})[verdict] || "Not enough data for a reliable fit estimate.";
@@ -545,7 +557,7 @@ CATALOG_JS = r"""
       const text = (state.defaults || []).find((r) => r && r.key === "output.text") || null;
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
-    function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    function mcCanBeDefault(row, art) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true && (!row.asset_kind || row.asset_kind === "model") && (!art || !art.inventory || art.inventory.complete === true); }
     // A GGUF this computer's llama.cpp cannot load (AbstractCore 0867/0868): the catalog
     // artifact says so from the Hub's architecture (`loadable: false`), a downloaded one from its
     // file (the installed row of GET /models/installed). The sentence, or "".
@@ -607,7 +619,7 @@ CATALOG_JS = r"""
       const id = String(a.artifact || "");
       const publisher = id.includes("/") ? id.split("/")[0] : extra ? mcProviderLabel(a.provider) : "";
       const provider = ({huggingface:"HF"})[a.provider] || mcProviderLabel(a.provider);
-      const quant = extra ? id.split("/").pop() : a.quant ? (MC_QUANT_LABEL[a.quant] || String(a.quant)) : (MC_QUANT_LABEL[a.quant_class] || "Unspecified");
+      const quant = extra ? id.split("/").pop() : a.inventory && !a.quant ? "Files" : a.quant ? (MC_QUANT_LABEL[a.quant] || String(a.quant)) : (MC_QUANT_LABEL[a.quant_class] || "Unspecified");
       return `<span class="mc-build-name"><span class="mc-prov"${a.provider === "huggingface" ? ' data-af-tip="Hugging Face"' : ""}>${esc(provider)}</span><strong>${esc(quant)}</strong>${a.recommended ? '<span class="mc-rec" role="img" aria-label="Recommended for this computer" data-af-tip="Recommended for this computer"></span>' : ""}</span>${publisher ? `<span class="mc-build-publisher">${esc(publisher)}</span>` : ""}`;
     }
     function mcBuildDetails(a, text, view) {
@@ -638,9 +650,9 @@ CATALOG_JS = r"""
       }
       if (mcStore.busy.has(key)) return mcIconButton("", "download", "Starting download", "Starting download", 'aria-busy="true"', true);
       const unloadable = mcUnloadable(a);
-      if (mcInstalled(a)) {
+      if (mcHasLocalFiles(a)) {
         const del = mcDeleteButton(a, attrs, admin);
-        if (!mcCanBeDefault(row)) return del;
+        if (!mcInstalled(a) || !mcCanBeDefault(row, a) || a.supported_on_host === false) return del;
         // Greyed with the reason: a default it cannot load would fail at the first call.
         if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || mcIconButton("", "star", "Use as default text model", unloadable, 'data-mc-unloadable="1"', true)) + del;
         return mcDefaultMarkup(a.provider, a.artifact, attrs, admin) + del;
@@ -720,18 +732,20 @@ CATALOG_JS = r"""
       return `<button type="button" class="mc-loaded" data-mc-open-resources="1" ${mcTooltipAttrs(content)} aria-label="${kept ? "Kept loaded" : "Loaded"}. Open Resources">${kept ? ICONS.lock : ICONS.gear}</button>`;
     }
     function mcArtMarkup(row, a, alone, view) {
-      const job = mcJob(a), installed = mcInstalled(a), presence = a.presence || {};
+      const job = mcJob(a), installed = mcHasLocalFiles(a), presence = a.presence || {};
       const verdict = String((a.fit || {}).verdict || "unknown");
-      const [fLabel, fTone] = a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
+      const [fLabel, fTone] = a.inventory && a.inventory.complete !== true ? [a.inventory.incomplete_files || a.inventory.missing_shards ? "Partial" : "Cache", "muted"] : a.asset_kind === "adapter" ? ["Base model", "muted"] : a.asset_kind === "component" ? ["Pipeline", "muted"] : a.asset_kind === "unknown" ? ["Unrated", "muted"] : a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
       const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
-      const exact = ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
-      const size = uiNum(a.download_bytes) ? `${exact ? "" : "~"}${uiBytes(a.download_bytes)}` : "—";
-      const text = [row.license ? "License: " + row.license : "", presence.location, presence.evidence].filter(Boolean).join(" · ");
+      const cachedBytes = a.inventory && uiNum(a.inventory.bytes) ? a.inventory.bytes : null;
+      const exact = cachedBytes !== null || ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
+      const bytes = cachedBytes !== null ? cachedBytes : a.download_bytes;
+      const size = uiNum(bytes) ? `${exact ? "" : "~"}${uiBytes(bytes)}` : "—";
+      const text = [row.license ? "License: " + row.license : "", ...(a.inventory ? ["Type: " + (a.asset_kind || a.inventory.kind || "unknown"), "Metadata: " + (a.inventory.tasks_source || "not reported"), Array.isArray(a.inventory.tasks) && a.inventory.tasks.length ? "Tasks: " + a.inventory.tasks.map(t => t.replaceAll("_", " ")).join(", ") : ""] : []), presence.location, presence.evidence].filter(Boolean).join(" · ");
       const details = mcBuildDetails(a, text, view);
       return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
         + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button></div>`
-        + `<div class="mc-art__size" data-af-tip="${exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" ${mcTooltipAttrs(mcFitTooltip(a))} aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
+        + `<div class="mc-art__size" data-af-tip="${a.inventory ? "Cache size on this host" : exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
+        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="${mcInstalled(a) ? "Downloaded" : "Cached files"}" >${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" ${mcTooltipAttrs(mcFitTooltip(a))} aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
         + details.body + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div></li>`;
     }
@@ -742,7 +756,7 @@ CATALOG_JS = r"""
       const details = mcBuildDetails(r, `Downloaded · ${r.quant || "Quantization not reported"} · ${r.location || "Location not reported"}`, view);
       return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
         + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(r, true)}</button></div><div class="mc-art__size">${esc(size)}</div>`
-        + `<div class="mc-art__chips"><span class="mc-installed" role="img" aria-label="Downloaded" data-af-tip="Downloaded">${ICONS.folder}</span>${mcLoadedBadge(r)}</div>`
+        + `<div class="mc-art__chips"><span class="mc-installed" role="img" aria-label="Downloaded">${ICONS.folder}</span>${mcLoadedBadge(r)}</div>`
         + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || mcIconButton("", "star", "Use as default text model", mcUnloadable(r), 'data-mc-unloadable="1"', true)) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
         + details.body + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div></li>`;
     }
@@ -775,9 +789,13 @@ CATALOG_JS = r"""
       const active = mcParams(row.params_active);
       const parameterTip = params ? `${params} total parameters${active ? ` · ${active} active parameters` : ""}` : "Parameter count not reported";
       const badges = [];
+      if (["adapter","component","unknown"].includes(row.asset_kind)) {
+        const kind = row.asset_kind, title = ({adapter:"Adapter",component:"Component",unknown:"Unclassified"})[kind];
+        badges.push(`<span class="mc-badge mc-badge--kind" tabindex="0" ${mcTooltipAttrs({title,description:kind === "adapter" ? "Modifies a compatible base model; use it with the matching pipeline." : kind === "component" ? "A supporting part of a larger pipeline, rather than a chat model." : "Cached locally. Its role has not been identified from the available metadata."})}>${title}</span>`);
+      }
       if (row.starter) badges.push(`<span class="mc-badge mc-badge--recommended" tabindex="0" ${mcTooltipAttrs({title:"Recommended for this computer",description:"Selected for this computer’s hardware and available engines. Check its fit status before loading."})}>${ICONS.star}Recommended</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
-      return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
+      return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}"${row.asset_kind ? ` data-mc-kind="${esc(row.asset_kind)}"` : ""}>`
         + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${badges.join("")}</div>`
         + mcCapabilityMarkup(row)
         + `<span class="mc-card__meta" tabindex="0" data-af-tip="${esc(parameterTip)}" aria-label="${esc(parameterTip)}">${esc(params || "—")}</span>`
