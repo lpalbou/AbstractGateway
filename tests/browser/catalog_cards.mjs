@@ -55,6 +55,7 @@ try {
   await root.locator('.mc-card').first().waitFor();
   check(hold&&await root.locator('[data-mc-part="count"]').innerText().then(t=>t.includes('so far')),`${theme}: curated cards paint before full enrichment with explicitly provisional counts`);
   check(await root.getByRole('status').filter({hasText:'Loading more versions'}).isVisible(),`${theme}: enrichment remains visible while curated cards are usable`);
+  check(await root.locator('article .mc-card__head').evaluateAll(hs=>hs.every(h=>!h.classList.contains('is-expandable')&&getComputedStyle(h).cursor!=='pointer')),`${theme}: headers without hidden versions do not imply clickability`);
   release();await root.locator('[data-mc-part="count"]').filter({hasText:'18 matching versions'}).waitFor();
   check(holdInstalled&&await root.locator('.mc-art').count()===9,`${theme}: catalog paints while installed discovery is still pending`);
   check(await root.locator('.mc-card__head > button.mc-versions').count()===3,`${theme}: disclosure is a chevron in each header`);
@@ -73,6 +74,20 @@ try {
   check(page.url().endsWith('#catalog?quant=all'),`${theme}: All is explicit in the URL`);
   check(await root.locator('.mc-art').count()===9,`${theme}: All precision starts with three versions per card`);
   const first=root.locator('article[data-mc-model="model-0"]');
+  await page.mouse.move(1,1);
+  const header=first.locator('header.mc-card__head');
+  const headerBase=await header.evaluate(e=>getComputedStyle(e).backgroundColor);
+  check(headerBase!==await first.evaluate(e=>getComputedStyle(e).backgroundColor),`${theme}: header has a distinct themed background`);
+  await header.hover();await page.waitForTimeout(180);
+  check(await header.evaluate((e,base)=>getComputedStyle(e).backgroundColor!==base&&getComputedStyle(e).cursor==='pointer',headerBase),`${theme}: expandable header highlights and shows a pointer on hover`);
+  await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-header-hover-${theme}.png`)});
+  await header.locator('.mc-card__title').click();
+  check(await first.locator('.mc-art').count()===18,`${theme}: clicking the header title expands once`);
+  await header.locator('.mc-card__meta').click();
+  check(await first.locator('.mc-art').count()===3,`${theme}: clicking the header metadata collapses once`);
+  await page.mouse.move(1,1);await page.waitForTimeout(180);
+  await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).focus();await page.waitForTimeout(180);
+  check(await header.evaluate((e,base)=>getComputedStyle(e).backgroundColor!==base,headerBase),`${theme}: keyboard focus also highlights the header`);
   await first.getByRole('button',{name:'Show all versions of Model 0',exact:true}).press('Enter');
   check(await first.locator('.mc-art').count()===18,`${theme}: keyboard expand exposes every matching version`);
   check(await first.getByRole('button',{name:'Show fewer versions of Model 0',exact:true}).evaluate(el=>el===document.activeElement),`${theme}: expansion retains keyboard focus`);

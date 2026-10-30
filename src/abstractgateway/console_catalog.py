@@ -84,7 +84,12 @@ CATALOG_CSS = r"""
     .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
     .mc-card { container: mc-card / inline-size; display: grid; gap: 14px; min-width: 0; padding: 18px 18px 6px; }
     .mc-card.is-starter { border-color: var(--accent-border); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; margin: -18px -18px 0; padding: 12px 18px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .mc-card__head.is-expandable { cursor: pointer; transition: background-color .15s ease; }
+    .mc-card__head.is-expandable:hover, .mc-card__head.is-expandable:focus-within { background: color-mix(in srgb, var(--text-primary) 7%, var(--ui-surface-2)); }
+    .mc-card__head.is-expandable:hover .mc-versions, .mc-card__head.is-expandable:focus-within .mc-versions { color: var(--accent); }
+    @media (max-width: 479.98px) { .mc-card__head { margin: -14px -12px 0; padding: 12px; } }
+    @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
     .mc-card__title { margin: 0; flex: 1 1 auto; min-width: 0; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
     .mc-card__meta { font-size: var(--font-size-sm); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
@@ -720,7 +725,7 @@ CATALOG_JS = r"""
       if (row.starter) badges.push(`<span class="mc-badge" title="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head"><h4 class="mc-card__title" data-af-tip="${esc(row.license ? "License: " + row.license : "License not reported")}">${esc(row.display_name || row.id)}</h4>`
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><h4 class="mc-card__title" data-af-tip="${esc(row.license ? "License: " + row.license : "License not reported")}">${esc(row.display_name || row.id)}</h4>`
         + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")
         + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
@@ -1307,6 +1312,13 @@ CATALOG_JS = r"""
         if (scope) { mcSetMode(view, scope.dataset.afScope); return; }
         const b = t.closest("[data-mc-action]");
         if (b && !b.disabled) { mcAction(view, b.dataset.mcAction, b); return; }
+        // Keep one native keyboard control; the whole header shares its
+        // pointer target. Handle direct button clicks above to avoid toggling twice.
+        const header = t.closest(".mc-card__head.is-expandable");
+        if (header) {
+          const toggle = header.querySelector('[data-mc-action="versions"]');
+          if (toggle && !toggle.disabled) { toggle.click(); return; }
+        }
         const copy = t.closest("[data-mc-copy]");
         if (copy) { uiCopy(copy.dataset.mcCopy); return; }
         if (t.closest("[data-mc-open-resources]")) $("tab-button-models").click();  // the Resources page
