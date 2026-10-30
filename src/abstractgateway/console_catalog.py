@@ -103,7 +103,7 @@ CATALOG_CSS = r"""
     .mc-card__meta:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
     .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
     .mc-caps:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
-    .mc-badge { border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
+    .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
     .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
     .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px 42px auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
@@ -152,6 +152,12 @@ CATALOG_CSS = r"""
     .mc-del-confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
     .mc-del-confirm__actions .ui-btn { min-height: 40px; }
     .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
+    @container mc-card (max-width: 440px) {
+      .mc-card__head { gap: 6px; }
+      .mc-card__title-wrap { flex-basis: 100%; }
+      .mc-caps { margin-left: auto; }
+      .mc-card__meta { width: 44px; }
+    }
     @container mc-card (max-width: 360px) { .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; } .mc-art__chips { justify-content: flex-start; } .mc-art__size { text-align: left; } }
     @media (pointer: coarse) { .mc-art__action .ui-btn.mc-icon-action, .mc-host .ui-btn.mc-icon-action { min-width: 44px; min-height: 44px; height: 44px; } }
     @media (max-width: 479.98px) { .mc-card { padding: 0 12px 8px; } .mc-library-line { gap: 6px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
@@ -746,8 +752,7 @@ CATALOG_JS = r"""
       if (row.starter) badges.push(`<span class="mc-badge" data-af-tip="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4></div>`
-        + badges.join("")
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${badges.join("")}</div>`
         + mcCapabilityMarkup(row)
         + `<span class="mc-card__meta" tabindex="0" data-af-tip="${esc(parameterTip)}" aria-label="${esc(parameterTip)}">${esc(params || "—")}</span>`
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show three versions" : `Show all ${item.arts.length} versions`)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : "")

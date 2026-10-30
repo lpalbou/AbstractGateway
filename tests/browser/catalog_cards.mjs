@@ -182,6 +182,7 @@ try {
   await page.setViewportSize({width:390,height:844});
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('.shell_sidebar')).visibility==='hidden');
   check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: mobile catalog fits`);
+  check(await root.locator('.mc-card__title').first().evaluate(el=>el.clientWidth>=el.scrollWidth), `${theme}: mobile header keeps the model name readable alongside badges and four capabilities`);
   await page.screenshot({animations:'disabled',path:path.join(SHOTS,`catalog-mobile-${theme}.png`)});
   await page.setViewportSize({width:320,height:844});
   check(await root.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${theme}: narrow mobile catalog fits`);
