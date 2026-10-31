@@ -241,6 +241,14 @@ def test_the_count_is_unknown_when_the_registry_is_not_reachable(monkeypatch) ->
 # ---------------------------------------------------------------------------
 
 _CARD_SCENARIO = r"""
+// The whole console initializes its Resources DOM too. These Apps tests use
+// the wizard's minimal elements; support that initialization without a layout engine.
+Element.prototype.querySelector = function (selector) { return new Element(selector); };
+Element.prototype.remove = function () {};
+Element.prototype.insertAdjacentHTML = function () {};
+document.querySelectorAll = () => [];
+document.addEventListener = () => {};
+context.ResizeObserver = context.MutationObserver = class { observe() {} };
 // R11.3: every gateway row carries its status badge (apps_manager.status_control).
 const badgeOf = (r) => r.status === "running" ? { label: "Running", tone: "ok", busy: false, action: "stop", enabled: true, tip: "Running — click to stop" }
       : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }

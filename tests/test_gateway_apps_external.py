@@ -27,6 +27,7 @@ _TOKEN = "apps-external-test-token-0123456789"
 # The real `<title>`s the five app servers send for `/` (read from the live
 # dev apps on 127.0.0.1:3001-3005 on 2026-09-24, untracked/missionHH/body_*.html).
 PAGES: Dict[str, str] = {
+    "assistant-web": "<!doctype html><title>AbstractAssistant</title>",
     "observer": "<!DOCTYPE html><html><head><title>AbstractObserver</title>"
     '<script>window.__ABSTRACT_UI_CONFIG__=Object.assign(window.__ABSTRACT_UI_CONFIG__||{}, {"gateway_url":"http://127.0.0.1:8080","entity_app_url":"http://127.0.0.1:3004"});</script></head></html>',
     "continuum": "<html><head><title>AbstractContinuum — continuous development console</title></head></html>",
@@ -49,10 +50,10 @@ def test_each_app_page_is_recognised_by_its_title_and_nothing_else_is() -> None:
 
 
 def test_one_port_table_is_the_stack_map_for_launch_probe_and_tray() -> None:
-    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005, "note": 3006}
+    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005, "note": 3006, "assistant-web": 3008}
     assert dict(am.STACK_PORTS) == expected
     assert {a.id: a.default_port for a in am.APPS} == expected
-    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow", "note"]  # stack order
+    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant-web"]  # stack order
     from abstractgateway.tray import apps as tray_apps
 
     assert {w[0]: w[4] for w in tray_apps.WEB_APPS} == expected
@@ -66,7 +67,7 @@ def test_the_port_table_matches_the_start_local_header_when_the_framework_checko
     import re
 
     header = script.read_text(encoding="utf-8").split("set -euo pipefail", 1)[0]
-    found = {m.group(1): int(m.group(2)) for m in re.finditer(r"^#\s+(observer|continuum|code/web|entity|flow)\s+(\d+)", header, re.M)}
+    found = {m.group(1): int(m.group(2)) for m in re.finditer(r"^#\s+(observer|continuum|code/web|entity|flow|note|assistant-web)\s+(\d+)", header, re.M)}
     found["code"] = found.pop("code/web")
     assert found == dict(am.STACK_PORTS)
 

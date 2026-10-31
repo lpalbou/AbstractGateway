@@ -1,10 +1,10 @@
 """Browser apps managed by the gateway: Node.js for the user, npm packages, processes.
 
-The six browser apps (Flow, Code, Observer, Continuum, Entity, Note) are npm
+The seven browser apps (Flow, Code, Observer, Continuum, Entity, Note, Assistant web) are npm
 packages whose `bin/cli.js` starts a small Node server. That server is not
 optional: it holds the app-origin gateway session (HttpOnly cookies, CSRF, the
 `/api/connection/gateway` sign-in endpoint, the same-origin `/api/*` proxy that
-SSE rides on), and four of the six bundles load their assets from absolute
+SSE rides on), and some bundles load their assets from absolute
 `/assets/` paths. So the gateway RUNS each app's own server as a child process
 (decision A in docs/apps.md) instead of serving `dist/` itself.
 
@@ -119,6 +119,7 @@ STACK_PORTS: Tuple[Tuple[str, int], ...] = (
     ("entity", 3004),
     ("flow", 3005),
     ("note", 3006),
+    ("assistant-web", 3008),
 )
 STACK_PORT: Dict[str, int] = dict(STACK_PORTS)
 # Older launcher defaults (root backlog 0859: scripts/lib/apps_common.sh ran
@@ -154,6 +155,7 @@ APPS: Tuple[AppSpec, ...] = (
     AppSpec("entity", "Entity", "@abstractframework/entity", "Create summoned entities, watch their memory graph, talk with them.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity"),
     AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Visual workflow editor.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow"),
     AppSpec("note", "Note", "@abstractframework/note", "Capture anything; see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote"),
+    AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant", "Talk with the Assistant in a browser, with shared conversations, voice and approvals.", STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant"),
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 
@@ -162,7 +164,7 @@ APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 # parser; Continuum since 0.3.1, Flow since its own parser). Flags beat the
 # environment and any settings file an app keeps (Continuum's
 # ~/.abstractcontinuum/settings.json), so the gateway passes flags.
-FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note"})
+FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note", "assistant-web"})
 # The last released version of an app that IGNORES those flags (it reads
 # PORT / HOST / <APP>_GATEWAY_URL only; an unknown flag is skipped, so it
 # would bind its own default port and host). Such an install, or one whose
