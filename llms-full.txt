@@ -6742,25 +6742,6 @@ Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
 `src/abstractgateway/trigger_connections.py` (lookup across accounts, rate limit),
 AbstractRuntime `triggers/webhook.py` (verification, event mapping).
 
-## Conversation read receipts (`/api/gateway/me/session-reads`)
-
-Read receipts are scoped to the signed-in account and runtime. `GET` returns `{items,
-next_after, more}` in sequence order; use `after` for replay and `limit` (1–1000, default 200)
-for pagination. Repeated `run_id` parameters filter up to 100 visible turns.
-
-`POST` accepts `{receipts: [{session_id, run_id, status}]}` (1–100 items), validates the entire
-batch, and returns its committed `items`. Status is `request`, `completed`, `failed` or
-`cancelled`. Only conversation turn roots in the caller's runtime are accepted; a terminal
-receipt must match the stored outcome (409 otherwise). Duplicate receipts return the original
-immutable event. Reading a request never acknowledges its later answer. Automation results
-continue to use their separate attention cursor.
-
-The append-only read ledger persists independently of execution ledgers and personal-event
-retention. An idempotent delivery projection emits `session.read` into the existing personal
-event stream. Clients refresh canonical receipts after this event and after reconnecting.
-Mark a revision only when the user consumes the loaded content, not when listing or replaying it.
-Clients must retain unread state on write failure; browser-local baselines are not read evidence.
-
 ## Your event stream (`/api/gateway/me/events`)
 
 One ordered stream per person, `user:<tenant>:<user>`, holding what happened **for you** that is
@@ -6780,7 +6761,6 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `type` | `data` | written when |
 |---|---|---|
 | `run.started` | `{run_id, session_id, origin}` | a run of a session (a person's run, an automation occurrence) is saved running; never a child run or an automation's controller |
-| `session.read` | `{sequence, session_id, run_id, status, at, event_id}` | a conversation revision was consumed; canonical receipt remains after event-stream pruning |
 | `run.finished` | `{run_id, session_id, origin, status}` | that run is saved `completed`, `failed` or `cancelled` |
 | `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
 | `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
