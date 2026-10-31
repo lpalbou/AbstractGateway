@@ -1091,6 +1091,60 @@ same basename, Gateway emits deterministic digest-suffixed aliases so the same
 public path string can round-trip through `/files/*`, artifact import/export,
 and Runtime file nodes.
 
+## Conversational updates, questions and corrections
+
+`POST /api/gateway/runs/start` accepts an optional strict JSON boolean `conversation`.
+`true` enables the actor's public updates and conversational questions before the first
+tick; absent or false preserves the existing presentation. It normalizes to
+`input_data._runtime.conversation: {enabled: true|false}` and inherits through supported
+agent/subworkflow composition. The equivalent input-data config must contain exactly
+`enabled` with a boolean value. `POST /entities/{name}/summon` accepts the same option for
+the ordinary Flow work-session lane.
+
+Render `/runs/{root}/view` messages with `kind: "public_update"` as actor-authored updates.
+They retain `id`, `text`, `run_id`, optional `session_id`, `iteration`, `source_call_ids`
+and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
+An actor's wording remains its statement, not independently verified evidence of completion.
+
+Conversational questions retain `waiting.prompt` and expose
+`waiting.details.question: {id, purpose: "conversation", importance, published_at, deadline, fallback}`.
+`importance: "essential"` has null deadline/fallback and waits indefinitely. A
+`clarification` carries its original absolute deadline and a safe fallback declared when
+the question was issued (120–300 seconds). Answer the actual run shown by the replay
+interaction, using its exact `question:<id>` wait key:
+
+```json
+{"command_id":"<new UUID>","run_id":"<question run>","type":"resume","payload":{"wait_key":"question:<id>","payload":{"response":"Inside, please."}}}
+```
+
+Empty responses and approval payloads answer HTTP 422. At or after the server cutoff,
+expiry wins even before the due scan runs. The continuation contains `timed_out`, `fallback`
+and `question: {id, outcome: "expired"}` with no human `response`. Late recognized replies
+are durably retained and do not answer another question. Pause suppresses continuation while
+preserving the original deadline; after explicit resume an overdue question resolves first.
+Cancellation does not apply a fallback. This uses the existing runner and Runtime's
+single-writer/process-local arbitration, not a new scheduling service. Legacy ASK_USER,
+EVENT deadlines and tool approvals retain their existing behavior. Time passing grants no
+approval or permission. These facts do not implicitly request afterflow notifications.
+
+During ordinary task work, submit `inject_guidance` with
+`payload: {guidance: "context and the correction", display_text: "the person's original words"}`.
+`display_text` is optional, nonblank and at most 65,536 characters; only explicit display text
+becomes public human history. The server stamps its authenticated speaker. Replay exposes
+`role: "user", kind: "guidance", guidance_status: "accepted"` from reserved host receipts.
+Operational guidance without display text remains outside public human history. Acceptance
+means durably queued; the actor's later response is the evidence it considered or adopted the
+correction. Already performed work is not undone. If only the public-receipt append fails,
+the accepted sidecar source is retained and retried before consumption; the host reports a
+repair warning rather than a false refusal. Entity driver visits use their canonical owned
+visit routes described in [entities.md](entities.md#live-conversation-during-a-visit).
+
+The runner copies the authoritative command envelope's `command_id` to the optional
+`client_message_id` on the public human receipt and replay message. Use that field to reconcile
+pending task speech. The `/commands` acknowledgment sequence belongs to the command inbox;
+it is not the guidance sidecar sequence in `<run_id>:guidance:<seq>`. Distinct commands with
+identical words remain distinct messages. Payload-claimed correlation ids are ignored.
+
 ## Durable commands (`POST /api/gateway/commands`)
 
 Commands are appended to a durable inbox and applied asynchronously by the runner.
@@ -1730,7 +1784,9 @@ inherits the home's grants. Omit `tool_policy` to retain legacy visit behavior.
 These choices apply only to this visit and cannot widen the home's grants.
 
 Use the visit's `/state`, `/tool-policy` and `/decision` routes to read progress,
-change choices between turns and answer the exact pending approval. End through
+change choices between turns and answer the exact pending approval. Optional conversational
+updates, live correction and question answers use the separate `/guidance` and `/answer`
+routes in [entities.md](entities.md#live-conversation-during-a-visit). End through
 `POST .../visit/{run_id}/close` with `{"closed_by":"pause"}`; pending approval
 is cancelled without executing its tools. Managed visits are bound to their
 authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`

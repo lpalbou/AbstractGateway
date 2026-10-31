@@ -36,10 +36,13 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     installed = version("abstractgateway")
     from abstractgateway.routes.core_endpoint import EndpointChange
+    from abstractgateway.routes.gateway import StartRunRequest
 except (ImportError, PackageNotFoundError) as exc:
     raise SystemExit(f"Install the matching Gateway checkout: {exc}") from None
 if "direct_enabled" not in EndpointChange.model_fields:
     raise SystemExit("This Gateway lacks the direct HTTP control; use its matching docs/skill.")
+if "conversation" not in StartRunRequest.model_fields:
+    raise SystemExit("This Gateway lacks conversational starts; use its matching docs/skill.")
 assert EndpointChange(direct_enabled=False).direct_enabled is False
 print(f"abstractgateway {installed}; direct endpoint control available")
 ```
@@ -107,6 +110,27 @@ console link. Starting it creates its data directory and auth state.
 | Browser apps, console, CLI and tray | `/console`, `abstractgateway`, `/apps/*`, `/host/*` |
 | Optional inference HTTP | Gateway `/v1`; direct Core listener controlled by `direct_enabled` |
 | Host/process diagnosis | `GET /api/health`, admin `/host/*`, admin `/core-endpoint` |
+
+## Follow a conversational task or entity visit
+
+Set strict JSON `conversation: true` when starting a task, summoning a Flow work session,
+or opening a canonical entity visit. Render only explicit `public_update` messages from
+the replay view (tasks/Flow) or `visit/{id}/state.public_updates` (driver visits); never
+promote reasoning or raw diary records into public speech.
+
+Use `inject_guidance` payload `{guidance: "context and correction", display_text: "original human words"}`
+for task/Flow corrections. Only explicit display text creates public human history. For driver
+visits use `POST /entities/{name}/visit/{id}/guidance` with `{text, display_text?}` instead;
+do not bypass the visit door with generic steering. `accepted` means queued, not adopted.
+
+For a question, use its actual run and exact `question:<id>` key with nonempty `response`.
+Tasks/Flow use the existing nested resume command; driver visits use canonical `/answer`
+with `{wait_key, response, target_run_id?}` (the actual child if present). Tool approvals
+remain on their existing routes; never send `approved` to question answers. Essential
+questions wait indefinitely; clarifications may expire after 120–300 seconds into a declared
+fallback with no human response. Paused work does not auto-continue. A late reply can be
+retained without answering a newer question. Check refreshed state rather than assuming
+HTTP acceptance means the actor used the words. API and entity docs give the full contract.
 
 Run starts write run/ledger/artifact/history state and may call remote paid
 providers or tools. Installs/downloads/configuration/host controls change shared

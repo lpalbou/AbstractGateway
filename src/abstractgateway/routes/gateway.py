@@ -2687,6 +2687,10 @@ class StartRunRequest(_SpeculationControlRequest):
         description="Agent interface id; required with flow_id '@default' (e.g. abstractcode.agent.v1). Ignored otherwise.",
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)
+    conversation: Optional[bool] = Field(
+        default=None, strict=True,
+        description="Opt in to public conversational updates; omitted preserves legacy behavior.",
+    )
     thinking: Optional[Union[bool, str]] = Field(
         default=None,
         description="Optional run-scoped reasoning/thinking control inherited by Flow LLM and Agent nodes when supported.",
@@ -4258,6 +4262,18 @@ def _principal_catalog_tenant(principal: GatewayPrincipal, svc: Any, explicit_te
 def _catalog_scope_requested(value: Any) -> bool:
     raw = str(value or "").strip().lower().replace("-", "_")
     return raw in {"catalog", "tenant", "tenant_catalog", "framework", "framework_catalog", "global"}
+
+
+def _apply_conversation_opt_in(input_data: Dict[str, Any], enabled: Optional[bool]) -> None:
+    runtime_ns = input_data.get("_runtime")
+    conversation = runtime_ns.get("conversation") if isinstance(runtime_ns, dict) else None
+    if enabled is None and conversation is not None:
+        if (not isinstance(conversation, dict) or set(conversation) != {"enabled"}
+                or not isinstance(conversation.get("enabled"), bool)):
+            raise HTTPException(status_code=422, detail="_runtime.conversation must be {enabled: boolean}")
+        enabled = conversation["enabled"]
+    if enabled is not None:
+        _ensure_input_runtime_namespace(input_data)["conversation"] = {"enabled": enabled}
 
 
 def _strip_client_workflow_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -9393,6 +9409,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+        _apply_conversation_opt_in(input_data, req.conversation)
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         if req.workspace is not None:
             # The one-off workspaces of this run (round 11); the body field and input_data.workspace are one.
@@ -31072,6 +31089,22 @@ def _check_automation_wait_answer(svc: Any, *, run_id: str, command_payload: Dic
         )
 
 
+def _check_conversation_wait_answer(svc: Any, *, run_id: str, command_payload: Dict[str, Any]) -> None:
+    """Reject malformed current-question replies before accepting a command."""
+    from abstractruntime.core.questions import question_of
+
+    run = svc.runner.run_store.load(run_id)
+    if run is None or question_of(run.waiting) is None:
+        return
+    key = command_payload.get("wait_key") or command_payload.get("waitKey")
+    answer = command_payload.get("payload")
+    if not isinstance(key, str) or not key.startswith("question:"):
+        raise HTTPException(status_code=422, detail="Answer this question with its exact wait_key.")
+    if (not isinstance(answer, dict) or "approved" in answer
+            or not isinstance(answer.get("response"), str) or not answer["response"].strip()):
+        raise HTTPException(status_code=422, detail="Please provide a non-empty response; this question is not an approval.")
+
+
 def _require_automation_controller(svc: Any, automation_id: str) -> Any:
     """The automation root run `automation_id` in this principal's store, or 404.
 
@@ -31158,13 +31191,23 @@ async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
             raise HTTPException(status_code=403, detail=_visit_rite_detail)
 
     if typ == "resume" and isinstance(req.payload, dict) and "payload" in req.payload:
+        _check_conversation_wait_answer(svc, run_id=str(req.run_id), command_payload=dict(req.payload))
         _check_automation_wait_answer(svc, run_id=str(req.run_id), command_payload=dict(req.payload))
 
+    command_payload = dict(req.payload or {})
+    if typ == "inject_guidance":
+        command_payload.pop("_public_speaker", None)
+        if command_payload.get("display_text") is not None:
+            shown = command_payload["display_text"]
+            if not isinstance(shown, str) or not shown.strip() or len(shown) > 65_536:
+                raise HTTPException(status_code=422, detail="display_text must contain 1–65536 characters of human input")
+            principal = current_gateway_principal() or local_admin_principal()
+            command_payload["_public_speaker"] = "person:" + principal.user_id
     record = CommandRecord(
         command_id=str(req.command_id),
         run_id=str(req.run_id),
         type=typ,
-        payload=dict(req.payload or {}),
+        payload=command_payload,
         ts=str(req.ts) if isinstance(req.ts, str) and req.ts else "",
         client_id=str(req.client_id) if isinstance(req.client_id, str) and req.client_id else None,
         seq=0,

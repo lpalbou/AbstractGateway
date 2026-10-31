@@ -2241,7 +2241,7 @@ class GatewayRunner:
             return
 
         if typ == "inject_guidance":
-            self._apply_inject_guidance(payload, run_id=run_id)
+            self._apply_inject_guidance(payload, run_id=run_id, client_message_id=str(rec.command_id))
             return
 
         if typ == "conclude":
@@ -2342,7 +2342,8 @@ class GatewayRunner:
         if fn not in self._automation_command_listeners:
             self._automation_command_listeners.append(fn)
 
-    def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
+    def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str,
+                               client_message_id: Optional[str] = None) -> None:
         """Steer a running agent through the DURABLE steer sidecar (H4, hooks plan).
 
         The gateway no longer writes run vars for steering: `Runtime.steer()`
@@ -2409,7 +2410,12 @@ class GatewayRunner:
                 continue
             found_injectable = True
             try:
-                runtime.steer(rid, guidance)
+                if rid == run_id and payload.get("display_text") is not None:
+                    runtime.steer(rid, guidance, display_text=payload["display_text"],
+                                  speaker=str(payload.get("_public_speaker") or "person:operator"),
+                                  client_message_id=client_message_id)
+                else:
+                    runtime.steer(rid, guidance)
                 applied += 1
             except PermissionError as e:
                 # Entity visit run: the H5 refusal is the correct outcome and

@@ -177,6 +177,59 @@ field (absent ≠ zero), and `/cognition` always serves the block (and
 warms the home). The gateway console renders the two ratio bars in the
 entity Overview panel from the same `/cognition` read.
 
+## Live conversation during a visit
+
+Open `POST /api/gateway/entities/{name}/visit/open` with a stable `session_id` and
+optional `conversation: true` (a strict JSON boolean) to enable public updates and
+conversational questions. The mode is fixed before the first tick; rejoining an existing
+managed session with a conflicting mode is refused (422). Existing tool policy remains
+separate; `ask_user` is an interaction primitive in this mode even when external tools are off.
+
+Read `GET /api/gateway/entities/{name}/visit/{run_id}/state`. In conversational mode it adds:
+
+- `public_updates`: up to 64 explicit, safe actor updates with `id`, `text`, `run_id`,
+  `session_id`, `iteration` and `source_call_ids`.
+- `public_messages`: up to 64 accepted human corrections with `role: "user"`,
+  `kind: "guidance"`, `id`, `text`, `run_id`, `session_id`, `speaker` and
+  `guidance_status: "accepted"`.
+- `public_updates_omitted`, `public_messages_omitted`, `conversation_runs_omitted`:
+  explicit counts when this bounded view omits entries or descendants; the full ledger remains.
+- `pending_question`: null or the actual question wait, including its child `run_id` when
+  applicable, `wait_key`, prompt, choices, `allow_free_text`, `until` and `details.question`.
+  When present it is also the `pending_wait`. All pending waits carry their actual `run_id`.
+
+This is a participant-facing projection over the owned visit and verified descendants,
+bounded to 32 runs. Clients must not read the entity home's raw ledger or diary to render it.
+Explicit public events still undergo server-side diary/thinking-fence screening; an event
+marker alone does not make private content public.
+
+While the entity is working in its current turn, send
+`POST .../visit/{run_id}/guidance` with `{text: "quoted context and correction",
+display_text: "the person's original words"}`. `display_text` is optional; this authenticated
+human visit route uses `text` when it is absent. Display words must be nonblank and at most
+65,536 characters. The server derives the participant identity; clients cannot choose it.
+The response `{accepted: true, seq, run_id}` means durably queued, not adopted. Idle,
+paused or currently waiting visits refuse live guidance (409); send the next turn or answer
+the actual wait instead. Accepted corrections are recalled and attributed before the next
+reasoning boundary, with no additional model call for empty queues. Old-turn corrections
+remain retained instead of silently becoming instructions for a new turn.
+
+Answer a conversational question through `POST .../visit/{run_id}/answer` with
+`{wait_key: "question:<id>", response: "the person's words", target_run_id?: "<actual child>"}`.
+An omitted target selects the actual pending question; an explicit target must be a verified
+descendant in the same owned visit. Empty text, extra approval fields and tool-approval waits
+are refused; this route does not approve tools. It returns `{accepted, run_id, target_run_id}`
+with the refreshed safe conversation projection. Paused visits refuse answering without
+continuation. Late recognized replies are retained under Runtime's question contract and
+cannot answer a newer question. Essential questions have no deadline; timed clarifications
+apply only their predeclared safe fallback. See [api.md](api.md#conversational-updates-questions-and-corrections).
+
+Tool approvals keep their existing `/decision` route and exact pending key; they never time
+out into approval. A managed visit's authenticated owner is checked before these routes;
+wrong-owner requests do not disclose it. Generic run steering remains refused for these
+driver-owned visits. A Flow summoned work session is a separate ordinary Gateway run: it
+uses `/runs/{root}/view` and standard commands, not the driver visit routes above.
+
 ## Summoning
 
 Summoning opens a work session *as* the entity:
