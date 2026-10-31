@@ -302,6 +302,9 @@ app.include_router(session_passwords_router, prefix="/api")
 from .routes.me_events import router as me_events_router  # noqa: E402
 
 app.include_router(me_events_router, prefix="/api")
+
+from .routes.session_reads import router as session_reads_router  # noqa: E402
+app.include_router(session_reads_router, prefix="/api")
 # The replay view of a run (framework backlog 0993, AbstractRuntime ADR-0009):
 # /gateway/runs/{run_id}/view and /gateway/runs/{run_id}/view/stream.
 from .routes.replay_view import router as replay_view_router  # noqa: E402
