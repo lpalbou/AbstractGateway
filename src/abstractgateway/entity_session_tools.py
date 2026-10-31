@@ -122,6 +122,64 @@ def _participant(run: Any) -> str:
     return speaker
 
 
+def _has_private_fence(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_has_private_fence(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_has_private_fence(item) for item in value)
+    return isinstance(value, str) and re.search(r"```\s*diary\b|<\s*diary\b|<\s*think\b", value, flags=re.I) is not None
+
+
+def _public_question_history(records_by_run: dict, runs: list, root_id: str) -> tuple[list, int]:
+    """Project existing ASK_USER interactions, never the home's generic messages."""
+    from abstractruntime.replay import replay
+
+    sources, keys, identities = set(), set(), set()
+    for rid, records in records_by_run.items():
+        for record in records:
+            if (record.get("effect") or {}).get("type") != "ask_user" or record.get("status") != "waiting":
+                continue
+            wait = (record.get("result") or {}).get("wait") or {}
+            key = wait.get("wait_key")
+            if not isinstance(key, str) or not key:
+                continue
+            sources.add((rid, record.get("step_id")))
+            keys.add((rid, key))
+            question = (wait.get("details") or {}).get("question") or {}
+            if question.get("id"):
+                identities.add((rid, question["id"]))
+    if not keys:
+        return [], 0
+    view = replay(records_by_run, {run.run_id: run for run in runs}, root_run_id=root_id).to_json()
+    history, withheld = [], 0
+    fields = ("id", "text", "run_id", "role", "kind", "source", "step_ids", "seqs", "order",
+              "wait_key", "question", "choices", "question_id", "reply_status", "reason")
+    sessions = {run.run_id: run.session_id for run in runs}
+    for message in view["messages"]:
+        kind, rid = message.get("kind"), message.get("run_id")
+        if kind == "question":
+            public = ((rid, message.get("wait_key")) in keys and message.get("source") == "wait"
+                      and any((rid, step) in sources for step in message.get("step_ids") or []))
+        elif kind == "answer":
+            public = (rid, message.get("wait_key")) in keys and message.get("source") == "resume"
+        elif kind == "question_outcome":
+            public = (rid, (message.get("question") or {}).get("id")) in identities
+        elif kind == "retained_reply":
+            public = (rid, message.get("question_id")) in identities and message.get("reply_status") == "retained"
+        else:
+            continue
+        if not public:
+            continue
+        row = {key: copy.deepcopy(message[key]) for key in fields if key in message}
+        row["session_id"] = sessions.get(rid)
+        row["published_at"] = (row.get("order") or [None])[0]
+        if _has_private_fence(row):
+            withheld += 1
+            continue
+        history.append(row)
+    return history[-64:], withheld + max(0, len(history) - 64)
+
+
 def public_conversation(host: Any, name: str, run_id: str) -> dict:
     """Safe explicit-public projection. Never return the home ledger/diary."""
     from abstractruntime.core.questions import question_of
@@ -139,12 +197,15 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
                 if child.run_id not in known:
                     runs.append(child)
                     known.add(child.run_id)
-    updates, guidance, pending = {}, {}, None
+    updates, guidance, pending, records_by_run = {}, {}, None, {}
     for owned in runs[:32]:
-        for record in er.ledger_store.list(owned.run_id):
+        records_by_run[owned.run_id] = er.ledger_store.list(owned.run_id)
+        for record in records_by_run[owned.run_id]:
             effect = record.get("effect") or {}
             envelope = effect.get("payload") or {}
             body = envelope.get("payload") or {}
+            published_at = record.get("ended_at") or record.get("started_at") or ""
+            order = [published_at, owned.run_id, record.get("seq") or 0]
             if (record.get("status") == "completed" and effect.get("type") == "emit_event"
                     and envelope.get("name") == "user_guidance" and isinstance(body, dict)
                     and record.get("node_id") == "__host_user_guidance__"
@@ -156,7 +217,8 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
                     and isinstance(body.get("text"), str)):
                 guidance[body["id"]] = {"id": body["id"], "text": body["text"], "role": "user", "kind": "guidance",
                                         "run_id": owned.run_id, "session_id": owned.session_id,
-                                        "speaker": body.get("speaker"), "guidance_status": "accepted"}
+                                        "speaker": body.get("speaker"), "guidance_status": "accepted",
+                                        "published_at": published_at, "order": order}
             if (record.get("status") != "completed" or effect.get("type") != "emit_event"
                     or envelope.get("name") != "public_update" or not isinstance(body, dict)
                     or body.get("run_id") != owned.run_id):
@@ -170,6 +232,7 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
             calls = body.get("source_call_ids")
             updates[identity] = {"id": identity, "text": text, "run_id": owned.run_id,
                                  "session_id": owned.session_id, "iteration": body.get("iteration"),
+                                 "published_at": published_at, "order": order,
                                  "source_call_ids": [v for v in calls if isinstance(v, str)] if isinstance(calls, list) else []}
         question = question_of(owned.waiting)
         if question is not None and pending is None:
@@ -177,10 +240,12 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
                        "prompt": owned.waiting.prompt, "choices": owned.waiting.choices,
                        "allow_free_text": owned.waiting.allow_free_text, "until": owned.waiting.until,
                        "details": {"question": copy.deepcopy(question)}}
-    rows = list(updates.values())
-    human = list(guidance.values())
+    rows = sorted(updates.values(), key=lambda row: row["order"])
+    human = sorted(guidance.values(), key=lambda row: row["order"])
+    questions, questions_omitted = _public_question_history(records_by_run, runs[:32], run_id)
     return {"public_updates": rows[-64:], "public_updates_omitted": max(0, len(rows) - 64),
             "public_messages": human[-64:], "public_messages_omitted": max(0, len(human) - 64),
+            "public_questions": questions, "public_questions_omitted": questions_omitted,
             "conversation_runs_omitted": max(0, len(runs) - 32), "pending_question": pending}
 
 

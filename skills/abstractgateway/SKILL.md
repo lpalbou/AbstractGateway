@@ -122,6 +122,10 @@ Use `inject_guidance` payload `{guidance: "context and correction", display_text
 for task/Flow corrections. Only explicit display text creates public human history. For driver
 visits use `POST /entities/{name}/visit/{id}/guidance` with `{text, display_text?}` instead;
 do not bypass the visit door with generic steering. `accepted` means queued, not adopted.
+Merge visit state `public_updates`, `public_messages` and `public_questions` by their canonical
+`order`; display a history omission notice when any `*_omitted` count is positive. Only this
+safe question projection restores past questions, actual answers and attributed timeout/late
+reply notices. Do not reconstruct it from home ledgers or convert a system fallback into user speech.
 
 For a question, use its actual run and exact `question:<id>` key with nonempty `response`.
 Tasks/Flow use the existing nested resume command; driver visits use canonical `/answer`

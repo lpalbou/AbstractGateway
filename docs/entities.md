@@ -192,8 +192,17 @@ Read `GET /api/gateway/entities/{name}/visit/{run_id}/state`. In conversational 
 - `public_messages`: up to 64 accepted human corrections with `role: "user"`,
   `kind: "guidance"`, `id`, `text`, `run_id`, `session_id`, `speaker` and
   `guidance_status: "accepted"`.
-- `public_updates_omitted`, `public_messages_omitted`, `conversation_runs_omitted`:
+- `public_questions`: up to 64 canonical ASK_USER interaction messages: assistant
+  `question`, user `answer`, system `question_outcome` for expiry, and user
+  `retained_reply` with `reply_status: "retained"` and its reason. Question/answer rows retain
+  their actual `wait_key`; `question_id` comes from the original wait when available.
+  Expiry retains `question.outcome: "expired"`; retained replies keep the original question id.
+  The server selects only known ASK_USER sources and trusted host outcomes, screens diary/thinking
+  fences, and never serves generic home messages or reasoning as question history.
+- `public_updates_omitted`, `public_messages_omitted`, `public_questions_omitted`, `conversation_runs_omitted`:
   explicit counts when this bounded view omits entries or descendants; the full ledger remains.
+  Question omissions include rows withheld by privacy-fence screening. Clients show a history
+  omission notice when any count is positive.
 - `pending_question`: null or the actual question wait, including its child `run_id` when
   applicable, `wait_key`, prompt, choices, `allow_free_text`, `until` and `details.question`.
   When present it is also the `pending_wait`. All pending waits carry their actual `run_id`.
@@ -202,6 +211,10 @@ This is a participant-facing projection over the owned visit and verified descen
 bounded to 32 runs. Clients must not read the entity home's raw ledger or diary to render it.
 Explicit public events still undergo server-side diary/thinking-fence screening; an event
 marker alone does not make private content public.
+All three public message arrays retain canonical `order: [timestamp, run_id, ledger_seq]`
+and `published_at` (the same timestamp, from the record's end or start time). They are
+chronologically ordered before the 64-entry cap. Clients merge the arrays by this order;
+grouping all human input before actor updates would change the history.
 
 While the entity is working in its current turn, send
 `POST .../visit/{run_id}/guidance` with `{text: "quoted context and correction",

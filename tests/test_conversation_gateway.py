@@ -92,3 +92,32 @@ def test_human_receipt_correlates_actual_command_id_not_command_sequence_or_clai
     assert [m["id"] for m in messages] == [f"{rid}:guidance:1", f"{rid}:guidance:2"]
     assert [m["client_message_id"] for m in messages] == ["human-71", "human-72"]
     assert [m["text"] for m in messages] == ["Same words.", "Same words."]
+
+
+def test_safe_question_history_bounds_and_private_fences_preserve_full_ledger():
+    from abstractgateway.entity_session_tools import _public_question_history
+
+    def ask(run, ctx):
+        number = run.vars.get("number", 0) + 1
+        run.vars["number"] = number
+        prompt = f"Question {number}?" if number != 35 else "```\n diary visibility=private\nPRIVATE_SENTINEL"
+        return StepPlan(node_id="ask", effect=Effect(type=EffectType.ASK_USER,
+            payload={"prompt": prompt, "question": {"importance": "essential"}}, result_key="answer"), next_node="next")
+
+    def next_node(run, ctx):
+        return StepPlan(node_id="next", **({"complete_output": {"ok": True}} if run.vars["number"] == 35 else {"next_node": "ask"}))
+
+    wf = WorkflowSpec(workflow_id="many-public-questions", entry_node="ask", nodes={"ask": ask, "next": next_node})
+    runtime = Runtime(run_store=InMemoryRunStore(), ledger_store=InMemoryLedgerStore())
+    rid = runtime.start(workflow=wf, vars={"diary": "PRIVATE_SENTINEL"}, session_id="public-session")
+    state = runtime.tick(workflow=wf, run_id=rid)
+    for number in range(1, 36):
+        answer = f"Answer {number}." if number != 34 else "<think>PRIVATE_SENTINEL</think>"
+        state = runtime.resume(workflow=wf, run_id=rid, wait_key=state.waiting.wait_key, payload={"response": answer})
+    records = runtime.get_ledger(rid)
+    history, omitted = _public_question_history({rid: records}, [state], rid)
+    assert len(history) == 64 and omitted == 6
+    assert "PRIVATE_SENTINEL" not in str(history) and "PRIVATE_SENTINEL" in str(records)
+    assert history[-1]["text"] == "Answer 35." and history[-1]["role"] == "user"
+    assert all(m["published_at"] == m["order"][0] and m["session_id"] == "public-session" for m in history)
+    assert [m["order"] for m in history] == sorted(m["order"] for m in history)

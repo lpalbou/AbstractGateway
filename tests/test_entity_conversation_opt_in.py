@@ -35,7 +35,7 @@ def test_owned_busy_guidance_reaches_next_actor_call_and_public_history(client, 
             if len(calls) == 1:
                 entered.set()
                 assert release.wait(10)
-                return SimpleNamespace(content="", tool_calls=[{"name": "read_memory", "arguments": {"tag": "missing"},
+                return SimpleNamespace(content='<public_update>{"text":"I will check the route.","source_call_ids":[]}</public_update>', tool_calls=[{"name": "read_memory", "arguments": {"tag": "missing"},
                                         "call_id": "memory-call"}], finish_reason="tool_calls", usage={})
             assert "I cannot use stairs." in str(kwargs.get("messages"))
             return SimpleNamespace(content="I will avoid stairs.", tool_calls=None, finish_reason="stop", usage={})
@@ -57,11 +57,16 @@ def test_owned_busy_guidance_reaches_next_actor_call_and_public_history(client, 
             state = client.get(path + "/state").json()
             assert state["public_messages"][-1]["text"] == "I cannot use stairs."
             assert state["public_messages"][-1]["guidance_status"] == "accepted"
+            assert state["public_messages"][-1]["order"][1] == opened.json()["run_id"]
+            assert state["public_messages"][-1]["published_at"] == state["public_messages"][-1]["order"][0]
         finally:
             release.set()
         completed = turn.result(timeout=15)
     assert completed.status_code == 200, completed.text
     assert "avoid stairs" in completed.json()["reply"]
+    restored = client.get(path + "/state").json()
+    assert restored["public_updates"][0]["text"] == "I will check the route."
+    assert restored["public_messages"][0]["order"] < restored["public_updates"][0]["order"]
     assert client.post(path + "/guidance", json={"text": "An idle message"}).status_code == 409
     assert client.post(path + "/end").status_code == 200
 
@@ -93,13 +98,20 @@ def test_entity_essential_question_uses_canonical_answer_and_rejects_skip_or_app
     pending = state["pending_question"]
     assert pending["details"]["question"]["importance"] == "essential"
     assert pending["until"] is None and len(calls) == 1
+    assert [m["kind"] for m in state["public_questions"]] == ["question"]
     assert client.post(path + "/answer", json={"wait_key": pending["wait_key"], "response": ""}).status_code == 422
     assert client.post(path + "/answer", json={"wait_key": pending["wait_key"], "approved": True}).status_code == 422
     result = client.post(path + "/answer", json={"wait_key": pending["wait_key"], "response": "Yes.",
                                                 "target_run_id": pending["run_id"]})
     assert result.status_code == 200, result.text
     assert len(calls) == 2
-    assert client.get(path + "/state").json()["pending_question"] is None
+    restored = client.get(path + "/state").json()
+    assert restored["pending_question"] is None
+    assert [(m["kind"], m["role"], m["text"]) for m in restored["public_questions"]] == [
+        ("question", "assistant", "Do you need step-free access?"), ("answer", "user", "Yes.")]
+    assert restored["public_questions"][1]["question_id"] == restored["public_questions"][0]["question"]["id"]
+    assert restored["public_questions_omitted"] == 0
+    assert restored["public_questions"] == client.get(path + "/state").json()["public_questions"]
     assert client.post(path + "/end").status_code == 200
 
 
@@ -166,4 +178,13 @@ def test_existing_visit_reaper_resolves_declared_clarification_without_human_res
     assert len(calls) == 2
     state = client.get(path + "/state").json()
     assert state["pending_question"] is None and state["turn_complete"] is True
+    outcome = next(m for m in state["public_questions"] if m["kind"] == "question_outcome")
+    assert outcome["role"] == "system" and outcome["question"]["outcome"] == "expired"
+    expired_question = next(m for m in state["public_questions"] if m["kind"] == "question")
+    late = client.post(path + "/answer", json={"wait_key": expired_question["wait_key"], "response": "Outside, actually."})
+    assert late.status_code == 200, late.text
+    retained = next(m for m in client.get(path + "/state").json()["public_questions"] if m["kind"] == "retained_reply")
+    assert retained["role"] == "user" and retained["text"] == "Outside, actually."
+    assert retained["question_id"] == expired_question["question"]["id"]
+    assert retained["reply_status"] == "retained" and len(calls) == 2
     assert client.post(path + "/end").status_code == 200
