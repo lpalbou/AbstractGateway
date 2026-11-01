@@ -29,7 +29,7 @@ be installed and started, but every `/api/gateway/note/` request answers 404 and
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 
 A card shows the app's illustration, its mark, name and status badge, its
-description (one whole sentence) and one row of launchers. Each launcher says
+description (two lines; the whole sentence on hover) and one row of launchers. Each launcher says
 where it opens: a globe for the web browser (**Open in browser**), a monitor for
 an app on the gateway's computer (**Open on this Mac**), `>_` for a terminal
 (**Open in Terminal**). On a card, a plain user sees one button for the state
@@ -78,7 +78,7 @@ it renders what the registry declares.
 | Field | What it is |
 |---|---|
 | `name` | The app's name (the card title, unless a family names the card). |
-| `description` | One short, complete sentence: what the app is for. The card shows it whole. |
+| `description` | One short, complete sentence: what the app is for. Every card gives it two lines (a longer sentence is cut, whole on hover), so the cards of a row line up. |
 | `mark` | The two letters of the card's mark tile. |
 | `illustration` | A file name under `src/abstractgateway/console_assets/apps/` (16:9 WebP, 768×432), or `None`. |
 | `family` | Optional. Apps of one family share ONE card; `APP_FAMILIES` in `apps_manager.py` gives the family's card title. |

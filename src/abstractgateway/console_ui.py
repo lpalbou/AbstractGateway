@@ -141,10 +141,32 @@ CONSOLE_UI_CSS = r"""
        A command is ONE mono line with an ellipsis + Copy, never wrapped. ---- */
     /* The illustration (16:9, registry `illustration`) bleeds to the card's
        edges; empty when no card of the grid has one. */
-    .ui-app-card__art { position: relative; margin: -18px -18px 14px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--accent-subtle); border-bottom: 1px solid var(--ui-border-1); }
-    .ui-app-card__art:empty { display: none; margin: 0; aspect-ratio: auto; border: 0; }
+    .ui-app-card__art { position: relative; margin: -18px -18px 12px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--accent-subtle); }
+    /* The picture fades into the card body (an overlay: the image is never edited). */
+    .ui-app-card__art::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 45%; background: linear-gradient(to bottom, transparent, var(--bg-card, var(--bg-secondary))); pointer-events: none; }
+    .ui-app-card__art:empty { display: none; margin: 0; aspect-ratio: auto; }
+    .ui-app-card__art:empty::after { display: none; }
     .ui-app-card__art > img { display: block; width: 100%; height: 100%; max-width: 100%; object-fit: cover; }
     .ui-app-card__artmark { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 750; font-size: 40px; letter-spacing: -.03em; color: var(--accent); opacity: .55; }
+    /* The mark on an illustrated card: a small chip on the picture's bottom-left corner. */
+    .ui-app-card__chip { position: absolute; left: 14px; bottom: 10px; z-index: 1; padding: 2px 8px; border-radius: var(--radius-md); font-size: var(--font-size-xs); font-weight: 750; letter-spacing: -.01em; line-height: 1.5; color: var(--accent); background: var(--accent-subtle); background: color-mix(in srgb, var(--bg-card, var(--bg-secondary)) 70%, transparent); border: 1px solid var(--accent-border, var(--ui-border-2)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+    /* Without an illustration: a smaller, lighter mark tile in the head. */
+    .ui-app-card .ui-card__head .ui-mark { flex-basis: 34px; width: 34px; height: 34px; font-size: 12px; opacity: .85; }
+    .ui-app-card .ui-card__titles { min-height: 34px; }
+    /* Exactly two lines of description on every card (the whole sentence in its title). */
+    .ui-app-card .ui-card__blurb { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; box-sizing: content-box; min-height: 2.9em; }
+    /* A quieter status badge: text and dot, a thin border, no fill. */
+    .ui-app-card .ui-card__status .ui-pill, .ui-app-member .ui-pill { background: transparent; border-color: var(--ui-border-1); font-weight: 550; }
+    .ui-app-card .ui-card__status .ui-pill.tone-ok, .ui-app-member .ui-pill.tone-ok { border-color: var(--success-border, var(--ui-border-1)); }
+    .ui-app-card { transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+    @media (hover: hover) {
+      .ui-app-card:hover { border-color: var(--ui-border-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .16); transform: translateY(-2px); }
+    }
+    @media (prefers-reduced-motion: reduce) { .ui-app-card, .ui-app-card:hover { transition: none; transform: none; } }
+    /* Node.js when it is ready: one quiet line under the toolbar, no card. */
+    .ui-runtime-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+    .ui-runtime-line__dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 999px; background: var(--success); }
+    .ui-runtime-line > code { max-width: 100%; font-size: var(--font-size-xs); }
     /* A launcher's badge: where it opens (globe: the web browser; monitor: an app on the computer). */
     .ui-btn.ui-app-launch { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
     .ui-app-launch__icon { display: inline-flex; }
@@ -185,6 +207,8 @@ CONSOLE_UI_CSS = r"""
       .ui-card-grid.is-aligned > .ui-card { display: grid; grid-row: span 5; grid-template-rows: subgrid; row-gap: 0; margin-bottom: 16px; }
       .ui-card-grid.is-aligned > .ui-card.ui-app-card { grid-row: span 6; grid-template-columns: minmax(0, 1fr); }
       .ui-card-grid.is-aligned > .ui-card > .ui-app-card__art:empty { display: block; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card > .ui-card__blurb { padding-top: 6px; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card > .ui-card__actions { padding-top: 12px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__blurb { padding-top: 10px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:not(:empty) { padding-top: 12px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:empty, .ui-card-grid.is-aligned > .ui-card > .ui-card__tech:empty { display: block; }
@@ -1863,14 +1887,25 @@ CONSOLE_UI_JS = r"""
         if (pre) pre.scrollTop = pre.scrollHeight;  // newest lines in view
       }
     }
-    // Node.js: its own row with its own Install (POST /apps/runtime/install),
-    // the same job bar as the apps, and the source it was found in.
+    // Node.js: a card ONLY when it needs the user — missing (its Install,
+    // POST /apps/runtime/install, the same job bar as the apps), installing,
+    // or a failed install (the reason, and Install again). Ready, it is one
+    // quiet line under the toolbar: version and where it was found (the path
+    // under Technical details).
     function appRuntimeMarkup(d) {
       const node = ((d && d.runtime) || {}).node || {};
       const admin = !!(state.principal && state.principal.admin);
       const job = appStore.jobs.get("__node__") || node.active_job || null;
       const busy = appStore.busy.has("__node__");
       const SOURCES = { system: "found on this computer", managed: "installed by the gateway", none: "" };
+      if (node.available && !appJobActive(job)) {
+        const facts = [`Node.js${node.version ? ` ${esc(node.version)}` : ""}`];
+        if (SOURCES[node.source]) facts.push(esc(SOURCES[node.source]));
+        return `<div class="ui-runtime-line" data-app-runtime="node" data-runtime-state="ready" role="status">`
+          + `<span class="ui-runtime-line__dot" aria-hidden="true"></span><span class="ui-runtime-line__text">${facts.join(" · ")}</span>`
+          + (node.path ? `<code class="ui-ellip ui-advanced" title="${esc(node.path)}">${esc(node.path)}</code>` : "")
+          + `</div>` + appNoticeMarkup("__node__");
+      }
       let pill;
       let body = "";
       let buttons = "";
@@ -1878,8 +1913,6 @@ CONSOLE_UI_JS = r"""
         pill = uiPill("Installing", "info tone-busy");
         body = uiProgressMarkup(appJobAsProgress(job), "Installing Node.js");
         if (admin) buttons += `<button type="button" class="ui-btn is-ghost" data-app-action="cancel" data-app="__node__"${busy ? " disabled" : ""}>${busy && appStore.pending.get("__node__") ? esc(appStore.pending.get("__node__")) : "Cancel"}</button>`;
-      } else if (node.available) {
-        pill = uiPill("Ready", "ok");
       } else {
         pill = uiPill("Not installed", "muted");
         body = `<p class="ui-card__note">Node.js will be installed for you: the gateway puts it in its own folder (about 56 MB, no password, no terminal) the first time you install an app, or now.</p>`
@@ -1894,7 +1927,7 @@ CONSOLE_UI_JS = r"""
       if (node.version) facts.push(`<li>Version <b>${esc(node.version)}</b></li>`);
       if (SOURCES[node.source]) facts.push(`<li>${esc(SOURCES[node.source])}</li>`);
       if (node.path) facts.push(`<li class="ui-advanced">Path <code class="ui-ellip" title="${esc(node.path)}">${esc(node.path)}</code></li>`);
-      return `<article class="ui-card ui-runtime-row${appJobActive(job) ? " is-busy" : ""}" data-app-runtime="node">`
+      return `<article class="ui-card ui-runtime-row${appJobActive(job) ? " is-busy" : ""}" data-app-runtime="node" data-runtime-state="${appJobActive(job) ? "installing" : "missing"}">`
         + `<div class="ui-runtime-row__main"><span class="ui-mark" aria-hidden="true">JS</span>`
         + `<div class="ui-runtime-row__text"><div class="ui-card__titles"><div class="ui-card__title">Node.js</div><span class="ui-card__status">${pill}</span></div>`
         + `<div class="ui-card__blurb">The engine the browser apps run on.</div>${facts.length ? `<ul class="ui-facts">${facts.join("")}</ul>` : ""}</div>`
@@ -2128,14 +2161,18 @@ CONSOLE_UI_JS = r"""
       }
       const all = Array.from(parts.values());
       const tint = all.some((p) => p.busy) ? " is-busy" : (all.some((p) => p.attention) ? " is-attention" : "");
+      // The mark: a small chip on the illustration's corner, the large mark
+      // in its place when the card has none but a neighbour has, a tile in
+      // the head only when no card of the grid has an illustration.
       const art = card.illustration_url
-        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async">`
+        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async"><span class="ui-app-card__chip" aria-hidden="true">${esc(card.mark || "")}</span>`
         : (withArt ? `<span class="ui-app-card__artmark" aria-hidden="true">${esc(card.mark || "")}</span>` : "");
+      const desc = card.description || "";
       return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(card.family ? `family:${card.family}` : card.id)}"${card.family ? ` data-app-family="${esc(card.family)}"` : ""}>`
         + `<div class="ui-app-card__art">${art}</div>`
-        + `<div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`
+        + `<div class="ui-card__head">${art ? "" : `<span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`}`
         + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${head.badge}</span></div></div>`
-        + `<div class="ui-card__blurb">${esc(card.description || "")}</div>`
+        + `<div class="ui-card__blurb" title="${esc(desc)}">${esc(desc)}</div>`
         + `<div class="ui-card__body">${head.body}</div>`
         + `<div class="ui-card__actions">${row}</div>`
         + `<div class="ui-card__tech">${tech}</div>`

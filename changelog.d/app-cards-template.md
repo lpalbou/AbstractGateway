@@ -11,6 +11,10 @@
   Assistant installed on this computer (the web one first); the other keeps its own status badge and notes (another
   copy running, quit to run a new version) beside its own button, and each Install says what it installs.
 - **The Apps tab's error state shows the reason only**: the console no longer carries its own list of apps.
+- **Node.js on the Apps tab is a card only when it needs you** (missing, installing, a failed install); ready, it
+  is one quiet line ("Node.js 24.14.0 · found on this computer"). Every app card gives its description two lines
+  (the whole sentence on hover), its illustration fades into the card with the app's mark as a small chip on it,
+  and the status badge is quieter.
 
 ### Added
 

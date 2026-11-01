@@ -42,7 +42,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Cloud providers**: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, **More settings** for the base URL and allowed models), then custom OpenAI-compatible servers; then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your named API keys (New key, Reveal, Copy, Revoke); Authentication, who may reveal keys and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
+| Models | **Multimodal** | capability route defaults (text, every media modality and **Decisions**, `output.decision`), the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
 | System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically; manual allowed origins and *Trust proxies on other machines* are in the same card) ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
@@ -84,7 +84,10 @@ In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a
 provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
-one under **Providers**.
+one under **Providers**. The **Decisions** row (`output.decision`) offers the
+discovery catalog's decision models (AbstractCore's `decision` output modality,
+for example `mlx` / `jaredpalmer/kev-4b`); the setup guide's default-model step
+shows the same row ([api.md](./api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
@@ -688,7 +691,7 @@ list.
 
 - The card header is one line: the model's name, organisation, parameter count
   and licence, its capabilities (Text, Thinking, Tools, Vision, Audio,
-  Embedding, Voice, Image, Video) as small tags, and a **Starter** badge for the
+  Embedding, Voice, Image, Video, Decision) as small tags, and a **Starter** badge for the
   models of the recommended starter set.
 - The card body: one line per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
@@ -840,7 +843,8 @@ The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in [apps.md](./apps.md)). What a plain user sees on
 each card: the app's illustration, its mark, name and status badge (Not
 installed, Stopped, Running, Installing, Stopped unexpectedly, Keeps
-crashing), its description (one whole sentence), and one row of launchers.
+crashing), its description (two lines; the whole sentence on hover), and one
+row of launchers.
 Each launcher says where it opens: a globe for the web browser, a monitor for
 an app on the gateway's computer, `>_` for a terminal. An app family is one
 card: the **Assistant** card holds **Open in browser** (the web Assistant)
@@ -854,7 +858,11 @@ pictures come from the gateway's app registry ([apps.md](./apps.md#registering-a
 The button rows of the cards side by side are always at the same height. Above
 the cards, one line names where the apps open: this browser's own address
 plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
-address the browser used to reach the gateway.
+address the browser used to reach the gateway. Under it, Node.js (what the browser apps
+run on) is one quiet line when it is ready ("Node.js 24.14.0 · found on this
+computer", its path under **Technical details**); it becomes a card with
+**Install Node.js** only when it is missing, while it installs, or after a
+failed install.
 
 | The app is | The action row |
 |---|---|

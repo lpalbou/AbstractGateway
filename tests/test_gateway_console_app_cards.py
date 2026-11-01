@@ -278,7 +278,8 @@ def test_the_family_card_renders_two_launchers_with_their_badges() -> None:
     assert card.count('<article class="ui-card ui-app-card') == 1 and 'data-app-family="assistant"' in card
     assert 'data-app-card="family:assistant"' in card and 'data-app-card="assistant"' not in card
     assert '<div class="ui-card__title">Assistant</div>' in card
-    assert f'<div class="ui-card__blurb">{am.APP_BY_ID["assistant-web"].description}</div>' in card  # whole sentence, no one-line cut
+    sentence = am.APP_BY_ID["assistant-web"].description
+    assert f'<div class="ui-card__blurb" title="{sentence}">{sentence}</div>' in card  # clamped to two lines, the whole sentence in its title
     row = card[card.index('class="ui-card__actions"'):card.index('class="ui-card__tech"')]
     launchers = [b for b in _buttons(row) if 'data-app-launch="' in b]
     assert [re.search(r'data-app-launch="(\w+)"', b).group(1) for b in launchers] == ["browser", "desktop"]
@@ -363,3 +364,46 @@ def test_the_error_fallback_has_no_app_list_of_its_own() -> None:
     view = _slice_function(source, "appViewMarkup")
     assert "FIRST_RUN_APPS" not in source
     assert "This gateway cannot manage apps right now." in view
+
+
+def test_node_is_a_card_only_when_it_needs_the_user() -> None:
+    """Ready: one quiet line (version, where it was found), no card, no mark.
+    Missing, installing or after a failed install: the card with its action."""
+    source = _console_source()
+    functions = "\n".join(_slice_function(source, n) for n in ("appRuntimeMarkup", "appJobActive", "appJobAsProgress", "appNoticeMarkup"))
+    script = r"""
+const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const state = { principal: { admin: true } };
+const appStore = { jobs: new Map(), busy: new Set(), pending: new Map(), notices: new Map() };
+const APP_PENDING = { "runtime-install": "Starting..." };
+function uiPill(label, tone) { return `<span class="ui-pill tone-${tone}">${label}</span>`; }
+function uiProgressMarkup() { return "<progress></progress>"; }
+FUNCTIONS
+const out = {};
+out.ready = appRuntimeMarkup({ runtime: { node: { available: true, version: "24.14.0", source: "system", path: "/usr/local/bin/node" } } });
+out.missing = appRuntimeMarkup({ runtime: { node: { available: false, install_available: true } } });
+out.installing = appRuntimeMarkup({ runtime: { node: { available: false, active_job: { id: "j", state: "running", percent: 40 } } } });
+appStore.notices.set("__node__", { tone: "err", text: "Node.js did not install." });
+out.failed = appRuntimeMarkup({ runtime: { node: { available: false, install_available: true } } });
+console.log(JSON.stringify([out]));
+""".replace("FUNCTIONS", functions)
+    out = _node(script)[0]
+    ready = out["ready"]
+    assert "<article" not in ready and "ui-card" not in ready and "ui-mark" not in ready
+    assert 'data-runtime-state="ready"' in ready and "Node.js 24.14.0 · found on this computer" in ready
+    assert 'class="ui-ellip ui-advanced"' in ready  # the path: Technical details only
+    for key in ("missing", "installing", "failed"):
+        assert '<article class="ui-card ui-runtime-row' in out[key], key
+    assert 'data-app-action="runtime-install"' in out["missing"] and ">Install Node.js</button>" in out["missing"]
+    assert "<progress>" in out["installing"] and 'data-app-action="cancel"' in out["installing"]
+    assert "Node.js did not install." in out["failed"] and ">Install Node.js</button>" in out["failed"]  # the reason, and Install again
+
+
+def test_card_styles_clamp_the_description_and_fade_the_illustration() -> None:
+    from abstractgateway.console_ui import CONSOLE_UI_CSS
+
+    blurb = re.search(r"\.ui-app-card \.ui-card__blurb \{([^}]*)\}", CONSOLE_UI_CSS)
+    assert blurb and "-webkit-line-clamp: 2" in blurb.group(1) and "min-height: 2.9em" in blurb.group(1)
+    fade = re.search(r"\.ui-app-card__art::after \{([^}]*)\}", CONSOLE_UI_CSS)
+    assert fade and "linear-gradient(to bottom, transparent, var(--bg-card" in fade.group(1)
+    assert ".ui-card__blurb.is-oneline" not in CONSOLE_UI_CSS
