@@ -980,8 +980,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-chat-bubble { max-width: min(86%, 72ch); }
 	    .entity-chat-bubble .entity-kv-key { display: block; margin-bottom: 3px; }
 	    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-	    .entity-chat-composer { align-items: flex-end; }
-	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: var(--font-size-md); }
+	    .entity-chat-composer { align-items: stretch; }
 	    .model-picker { display: grid; gap: 8px; }
 	    .model-picker__head {
 	      display: flex;
@@ -3640,7 +3639,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <div id="entity-chat-transcript" class="entity-chat-transcript" aria-live="polite"></div>
             <div class="af-form__field entity-chat-composer">
               <label class="af-form__label" for="entity-chat-input">Message</label>
-              <div class="af-form__inline"><textarea id="entity-chat-input" rows="2" aria-describedby="entity-chat-input-help"></textarea><button id="entity-chat-send" class="secondary" type="button" disabled>Send</button></div>
+              <div id="entity-chat-composer-root"></div>
               <p id="entity-chat-input-help" class="af-form__help">Enter sends; Shift+Enter starts a new line. Open a visit first.</p>
             </div>
           </section>
@@ -5817,6 +5816,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // words to the WRONG entity under the right header.
 	      state.chatId = "";
 	      state.chatEntity = "";
+	      state.chatDraft = "";
+	      state.chatBusy = false;
 	      const t = $("entity-chat-transcript"); if (t) t.textContent = "";
 	      _entOut("entity-chat-status", "");
 	      chatUiState();
@@ -6853,6 +6854,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // session per home server-side; the console holds one chat_id at a time.
 	    state.chatId = "";
 	    state.chatEntity = "";
+	    state.chatDraft = "";
+	    state.chatBusy = false;
+	    let entityChatComposer = null;
+    function renderEntityChatComposer() {
+      const lib = islands.lib;
+      if (!lib) {
+        const root = $("entity-chat-composer-root");
+        if (root) root.textContent = "The message box is unavailable: the console's shared components did not load. Reload the page.";
+        return;
+      }
+      if (typeof lib.mountChatComposer !== "function") throw new Error("AbstractGateway console: the islands bundle has no mountChatComposer; refresh the shared composer bundle.");
+      const props = {
+        value: state.chatDraft,
+        onChange: (value) => { state.chatDraft = value; renderEntityChatComposer(); },
+        onSubmit: () => { void entityChatSend(); },
+        textareaId: "entity-chat-input",
+        ariaLabel: "Message",
+        ariaDescribedBy: "entity-chat-input-help",
+        placeholder: "Tell the entity…",
+        disabled: !state.chatId,
+        busy: !!state.chatBusy,
+      };
+      if (!entityChatComposer) entityChatComposer = lib.mountChatComposer($("entity-chat-composer-root"), props);
+      else entityChatComposer.update(props);
+    }
     function chatLine(who, text) {
       // The shared abstractuic dialogue look (pc-chat-item) — same classes
       // the sandbox speaks, so every conversation on the console matches.
@@ -6875,7 +6901,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const open = Boolean(state.chatId);
 	      $("entity-chat-open").classList.toggle("hidden", open);
 	      $("entity-chat-close").classList.toggle("hidden", !open);
-	      $("entity-chat-send").disabled = !open;
+	      renderEntityChatComposer();
 	    }
 	    async function entityChatOpen() {
 	      const name = state.manageName; if (!name) return;
@@ -6900,18 +6926,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function entityChatSend() {
-	      const text = ($("entity-chat-input").value || "").trim();
-	      if (!text || !state.chatId) return;
+	      const text = (state.chatDraft || "").trim();
+	      if (!text || !state.chatId || state.chatBusy) return;
 	      const name = state.chatEntity || state.manageName;
-	      $("entity-chat-send").disabled = true;
+	      const chatId = state.chatId;
+	      const manageToken = state.manageToken;
+	      const current = () => state.chatId === chatId && state.manageToken === manageToken;
+	      state.chatBusy = true;
+	      renderEntityChatComposer();
 	      chatLine("you", text);
-	      $("entity-chat-input").value = "";
 	      _entOut("entity-chat-status", "thinking…");
 	      try {
-	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/turn`, {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(chatId)}/turn`, {
 	          slow: true,  // a real LLM round trip, not a discovery probe
 	          method: "POST", body: JSON.stringify({ text }),
 	        });
+	        if (!current()) return;
+	        if ((state.chatDraft || "").trim() === text) state.chatDraft = "";
 	        chatLine(name, String(r.reply || ""));
 	        const bits = [];
 	        if (Array.isArray(r.tools_ran) && r.tools_ran.length) bits.push(`tools: ${r.tools_ran.join(", ")}`);
@@ -6919,9 +6950,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (Array.isArray(r.diary_entries) && r.diary_entries.length) bits.push(`${r.diary_entries.length} diary entr${r.diary_entries.length === 1 ? "y" : "ies"}`);
 	        _entOut("entity-chat-status", bits.join(" · ") || "");
 	      } catch (e) {
-	        _entOut("entity-chat-status", String(e.message || e));
+	        if (current()) _entOut("entity-chat-status", String(e.message || e));
 	      } finally {
-	        $("entity-chat-send").disabled = !state.chatId;
+	        if (current()) { state.chatBusy = false; renderEntityChatComposer(); }
 	      }
 	    }
 	    async function entityChatClose() {
@@ -6934,6 +6965,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
 	        state.chatId = "";
 	        state.chatEntity = "";
+	        state.chatBusy = false;  // a send still in flight belongs to the closed visit; its reply is dropped
 	      } catch (e) {
 	        // Clear only when the server says the session is already gone (a
 	        // 4xx not-open) — a FAILED close must keep the session marked open
@@ -6943,6 +6975,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (e.status && e.status >= 400 && e.status < 500) {
 	          state.chatId = "";
 	          state.chatEntity = "";
+	          state.chatBusy = false;
 	          _entOut("entity-chat-status", "session already closed server-side: " + String(e.message || e));
 	        } else {
 	          _entOut("entity-chat-status", "close FAILED — the visit is still open; retry: " + String(e.message || e));
@@ -17398,11 +17431,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	    }
 	    $("entity-chat-open").onclick = entityChatOpen;
-	    $("entity-chat-send").onclick = entityChatSend;
 	    $("entity-chat-close").onclick = entityChatClose;
-	    $("entity-chat-input").onkeydown = (ev) => {
-	      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); entityChatSend(); }
-	    };
 	    $("create-user").onclick = createUser;
 	    $("open-create-user").onclick = openUserCreate;
 	    $("create-user-cancel").onclick = closeUserCreate;

@@ -33,11 +33,12 @@ try {
   let sandboxRequests = 0;
   page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/api/gateway/sandbox/generate")) sandboxRequests += 1; });
 
+  // This suite verifies chat widgets, independently of the first-run sign-in UI.
+  const login = await page.request.post(`${BASE}/api/gateway/session/login`, {
+    headers: { Origin: BASE }, data: { user_id: "admin", token: ADMIN },
+  });
+  if (!login.ok()) throw new Error(`fixture sign-in failed: HTTP ${login.status()}`);
   await page.goto(`${BASE}/console`);
-  await page.waitForSelector("#login-form");
-  await page.fill("#login-user", "admin");
-  await page.fill("#login-token", ADMIN);
-  await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
   await page.evaluate(() => document.getElementById("tab-button-sandbox").click());
   await page.waitForTimeout(800);

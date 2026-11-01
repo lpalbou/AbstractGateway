@@ -4104,6 +4104,7 @@ CONSOLE_UI_JS = r"""
       islands.topbar = lib.mountTopBar(host, topBarIslandProps());
       islands.appearance = lib.mountAppearance($("af-appearance-root"), appearanceIslandProps());
       renderDocsAssistant();
+      renderEntityChatComposer();
       host.classList.remove("hidden");
       legacy.classList.add("hidden");
       applyAppearanceSettings();
