@@ -197,7 +197,7 @@ try {
   const cloud = (id) => `#cloud-providers-root [data-cloud-provider="${id}"]`;
   await page.waitForFunction(() => /Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="openai"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
   const openaiStatus = (await page.textContent(`${cloud("openai")} [data-cloud-status]`)).trim();
-  check(/^Connected · key [0-9a-f]{8}$/.test(openaiStatus), "OpenAI card: Connected + 8-char fingerprint", openaiStatus);
+  check(openaiStatus === "Connected", "OpenAI card: Connected (no fingerprint on the card)", openaiStatus);
   check((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim() === "Not connected", "Anthropic card: Not connected");
   check(await page.$(`${cloud("openrouter")} .af-brand-mark svg`) !== null, "OpenRouter card shows its official mark");
   check(await page.$(`${cloud("openai")} .af-brand-mark svg`) !== null, "OpenAI card shows its official mark");
@@ -226,8 +226,8 @@ try {
   const created = cloudPosts.filter((c) => c.path === "create");
   check(created.length === 1 && created[0].body.id === "anthropic-key" && created[0].body.create_only === true && created[0].body.provider_family === "anthropic", "save = one create_only POST with a fresh id", created);
   check(cloudPosts.findIndex((c) => c.path === "create") > cloudPosts.findIndex((c) => c.path === "discover-models" && c.body.api_key === FAKE_KEY), "the key was tested before it was stored", cloudPosts.map((c) => c.path));
-  await page.waitForFunction(() => /^Connected · key/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
-  check(/^Connected · key [0-9a-f]{8} · 48 models$/.test((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim()), "Anthropic card now Connected with a fingerprint and the models found", await page.textContent(`${cloud("anthropic")} [data-cloud-status]`));
+  await page.waitForFunction(() => /^Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check(/^Connected · 48 models$/.test((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim()), "Anthropic card now Connected with the models found", await page.textContent(`${cloud("anthropic")} [data-cloud-status]`));
   check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Edit", "Anthropic now offers Edit");
   // Edit OpenAI (connection "openai"): a new key REPLACES that connection's key in place (PUT).
   const openaiBefore = await page.evaluate(async () => (await (await fetch("/api/gateway/config/provider-endpoint-profiles", { credentials: "same-origin" })).json()).profiles.find((p) => p.id === "openai"));
