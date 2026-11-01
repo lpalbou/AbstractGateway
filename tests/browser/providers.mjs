@@ -197,7 +197,7 @@ try {
   const cloud = (id) => `#cloud-providers-root [data-cloud-provider="${id}"]`;
   await page.waitForFunction(() => /Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="openai"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
   const openaiStatus = (await page.textContent(`${cloud("openai")} [data-cloud-status]`)).trim();
-  check(openaiStatus === "Connected", "OpenAI card: Connected (no fingerprint on the card)", openaiStatus);
+  check(/^Connected( · (…|48 models))?$/.test(openaiStatus), "OpenAI card: Connected with its discovered count (no fingerprint on the card)", openaiStatus);
   check((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim() === "Not connected", "Anthropic card: Not connected");
   check(await page.$(`${cloud("openrouter")} .af-brand-mark svg`) !== null, "OpenRouter card shows its official mark");
   check(await page.$(`${cloud("openai")} .af-brand-mark svg`) !== null, "OpenAI card shows its official mark");
