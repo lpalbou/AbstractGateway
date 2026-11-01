@@ -10,8 +10,9 @@ can see what it is doing and act on it in one click:
   running · 1 model loaded`, `Paused · Paused — conversations wait until you
   resume`) and a **switch**: ON while conversations run, OFF pauses the
   gateway (the console keeps answering; work waits). Windows and Linux show
-  the same as two text lines, with **Pause / Resume** at the bottom (also
-  there on macOS, for the keyboard). See *Pause*.
+  the name (Linux with the logo beside it), the subtitle and a **☑ Running**
+  check row that is the same switch. There is no Pause row anywhere else:
+  the switch is the control. See *Pause*.
 - **Open Console** — the web console (`/console`), **already signed in**:
   the tray mints a one-time sign-in link locally (the same code as
   `abstractgateway claim`; see *Security*) so an expired browser session never
@@ -56,11 +57,12 @@ can see what it is doing and act on it in one click:
   About: the gateway's version, console address and data folder, the
   AbstractFramework project details and the versions of the framework
   packages this gateway runs (from `GET /api/gateway/about`).
-- **Pause / Resume, Restart…, Quit** — the gateway-wide controls, at the
-  bottom. Pause stops new steps from running to free the machine or to look
-  at what is going on (the console keeps answering; work queues until you
-  resume); while paused the header reads `… — Paused`. An update's state
-  (**Update to …**, **Restart to Finish Update…**) joins them while it applies.
+- **Restart…, Quit** — at the bottom. An update's state (**Update to …**,
+  **Restart to Finish Update…**) joins them while it applies. Pausing is the
+  header's switch (see above): it stops new steps from running to free the
+  machine or to look at what is going on (the console keeps answering; work
+  queues until you switch it back on); while paused the subtitle reads
+  `Paused — conversations wait until you resume`.
 
 The menu (macOS; `[…]` is a greyed information line, `▸` a submenu, `☑/☐` a
 check item, `●/○` a radio choice). It reads top to bottom in the order a
@@ -89,7 +91,6 @@ Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Addresses — c
 Settings ▸          ☑ Start at login | ☑ Warn when memory is almost full | ☐ Classic menu
 Help ▸              Documentation | Report a Problem… | Developer API Reference | Copy Console Link | Check for Updates… | About AbstractGateway…
 ────────
-⏸ Pause                                        (▶ Resume while paused)
 Restart…
 Quit AbstractGateway…                          (Force Quit AbstractGateway… while it does not answer)
 ```
@@ -107,8 +108,14 @@ running`, `Not responding · Can't reach it on this computer · retrying`,
 `Starting… · Usually a few seconds`). The switch is ON while conversations
 run and OFF while paused; it is greyed while the gateway is pausing,
 updating, starting or not answering, and absent while it cannot be reached.
-Windows and Linux (and macOS without AppKit) show the same as two text
-lines: `AbstractGateway 0.18.0 — Running` and the subtitle. Then the meters
+
+Windows and Linux menus cannot hold a control in a row (a Win32 menu row is
+text, an AppIndicator menu is exported over DBus and drawn by the panel:
+label, icon, check mark), so there the header is three rows: `AbstractGateway
+0.18.0` (Linux: with the logo beside it, a `GtkImageMenuItem`), the subtitle,
+and **☑ Running** — the switch as a check item: unticking pauses, ticking
+resumes, greyed while it cannot be told. macOS without a usable AppKit falls
+back to the same three rows, so the switch is never missing. Then the meters
 as percentages (the full figures and the GPU's name are under **Models ▸**).
 The product name is on the header and on Quit, nowhere else. An update changes the bottom
 section: `Checking for Updates…`, `Update to 0.19.0…`, `Updating…`, `Restart
@@ -466,8 +473,9 @@ applies to both.
 
 ## Pause
 
-**⏸ Pause** (the bottom section; on macOS also the header's switch, OFF =
-paused) is process-wide and **persists across restarts**: a laptop paused to get its GPU back does not silently
+**Pause** — the header's switch on macOS (OFF = paused), the **☑ Running**
+row on Windows and Linux (unticked = paused) — is process-wide and **persists
+across restarts**: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
 instead (see *Conversations*). While the gateway is paused:
 

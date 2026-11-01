@@ -55,6 +55,19 @@ def _switch_target_class():
     return _TARGET_CLASS
 
 
+def header_available() -> bool:
+    """Whether this process can draw the native header (AppKit with
+    `NSSwitch`, macOS 10.15+). Decided once at start: when it cannot, the
+    menu uses the text header and its `☑ Running` row instead, so the switch
+    is never missing."""
+    try:
+        import AppKit  # type: ignore[import-not-found]
+
+        return hasattr(AppKit, "NSSwitch") and hasattr(AppKit.NSTextField, "labelWithString_")
+    except Exception:
+        return False
+
+
 WIDTH = 300.0
 HEIGHT = 58.0
 LOGO_PT = 36.0

@@ -88,8 +88,9 @@ def test_the_top_level_reads_act_look_set_up_lifecycle() -> None:
     nodes = v2.build_menu(_inputs(snap=snap))
     labels = _labels(nodes)
     assert labels == [
-        "AbstractGateway 0.18.0 — Running",
+        "AbstractGateway 0.18.0",
         "1 conversation running · 1 needs you · 1 model loaded",
+        "Running",
         "Memory 32% · this gateway 10.9 GB · GPU 20%",
         "Open Console",
         "Open Assistant",
@@ -102,13 +103,15 @@ def test_the_top_level_reads_act_look_set_up_lifecycle() -> None:
         "Connect",
         "Settings",
         "Help",
-        "⏸ Pause",
         "Restart…",
         "Quit AbstractGateway…",
     ]
-    # The default (bold) item is the console door; the status lines are information.
+    # The default (bold) item is the console door; the header lines are information,
+    # the Running row is the switch (ticked = running; a click pauses).
     assert [n.label for n in nodes if n.default] == ["Open Console"]
-    assert all(not n.enabled and n.action is None for n in nodes[:3])
+    assert all(not n.enabled and n.action is None for n in nodes[:2])
+    assert nodes[2].checked is True and nodes[2].action == ("pause",) and nodes[2].enabled
+    assert not any(n.label in {"⏸ Pause", "▶ Resume"} for n in mm.iter_nodes(nodes))
     # Separators: status | doors | needs you | look | set up | lifecycle.
     assert sum(1 for n in nodes if n.separator) == 5
 
@@ -116,7 +119,7 @@ def test_the_top_level_reads_act_look_set_up_lifecycle() -> None:
 def test_the_product_name_appears_on_the_header_and_quit_only() -> None:
     nodes = v2.build_menu(_inputs(snap=_snap(runs=(RUNNING,))))
     named = [n.label for n in mm.iter_nodes(nodes) if "AbstractGateway" in n.label]
-    assert named == ["AbstractGateway 0.18.0 — Running", "About AbstractGateway…", "Quit AbstractGateway…"]
+    assert named == ["AbstractGateway 0.18.0", "About AbstractGateway…", "Quit AbstractGateway…"]
 
 
 def test_the_activity_line_is_always_there_and_says_what_the_machine_does() -> None:
@@ -168,7 +171,7 @@ def test_the_meters_line_is_percentages_and_models_leads_with_memory() -> None:
     assert "Show Activity Window…" not in no_tk and no_tk[-1] == "Open Resources in Console…"
     # A machine without meters has no meters line at all (no empty row).
     bare = v2.build_menu(_inputs(snap=_snap(mem_supported=False, mem_pct=None, mem_used=None, gpu_supported=False, gpu_pct=None, process_rss=None)))
-    assert _labels(bare)[2] == "Open Console"
+    assert _labels(bare)[3] == "Open Console"
 
 
 def test_automations_are_their_own_section_and_conversations_keep_only_conversations() -> None:
@@ -320,7 +323,7 @@ def test_updates_live_in_help_until_one_is_known_then_at_the_top() -> None:
     for phase, label in (("checking", "Checking for Updates…"), ("available", "Update to 0.19.0…"), ("updating", "Updating…"), ("installed", "Restart to Finish Update…")):
         nodes = v2.build_menu(_inputs(update_phase=phase, update_latest="0.19.0"))
         top = _labels(nodes)
-        assert label in top and top.index(label) == top.index("⏸ Pause") - 1, phase
+        assert label in top and top.index(label) == top.index("Restart…") - 1, phase
         assert not any("Update" in l for l in _labels(_sub(nodes, "Help")))
     # A failed check falls back to Help.
     failed = v2.build_menu(_inputs(update_phase="failed"))
@@ -328,13 +331,17 @@ def test_updates_live_in_help_until_one_is_known_then_at_the_top() -> None:
 
 
 def test_the_lifecycle_rows_follow_the_state() -> None:
-    paused = _labels(v2.build_menu(_inputs(snap=_snap(gateway_state="paused", paused=True))))
-    assert "▶ Resume" in paused and "⏸ Pause" not in paused
+    paused = v2.build_menu(_inputs(snap=_snap(gateway_state="paused", paused=True)))
+    running_row = next(n for n in paused if n.label == "Running")
+    assert running_row.checked is False and running_row.action == ("resume",) and running_row.enabled
+    assert _labels(paused)[1] == "Paused — conversations wait until you resume"
+    pausing = next(n for n in v2.build_menu(_inputs(snap=_snap(gateway_state="pausing", inflight_ticks=1))) if n.label == "Running")
+    assert pausing.checked is False and not pausing.enabled
     down = v2.build_menu(_inputs(snap=_snap(gateway_state="unreachable", reachable=False)))
     by = {n.label: n for n in down if not n.separator}
     assert "Force Quit AbstractGateway…" in by and "Quit AbstractGateway…" not in by
     assert by["Open Console"].enabled and not by["Restart…"].enabled and not by["Conversations"].enabled
-    assert by["⏸ Pause"].enabled is False
+    assert by["Running"].enabled is False and by["Running"].action is None
     no_restart = {n.label: n for n in v2.build_menu(_inputs(snap=_snap(can_restart=False)))}
     assert no_restart["Restart…"].enabled is False
 
@@ -370,7 +377,7 @@ def test_the_flat_degrade_keeps_every_row() -> None:
 
 def test_render_text_draws_the_redesign() -> None:
     text = mm.render_text(v2.build_menu(_inputs(snap=_snap(runs=(RUNNING, APPROVAL), models=(_loaded(),)))))
-    assert text.splitlines()[0] == "[AbstractGateway 0.18.0 — Running]"
+    assert text.splitlines()[0] == "[AbstractGateway 0.18.0]"
     assert "Open Console   (default)" in text and "Connect ▸" in text and "Quit AbstractGateway…" in text
 
 
@@ -399,7 +406,7 @@ def test_the_app_picks_the_menu_and_the_switch_is_remembered(tmp_path: Path) -> 
     app._info = lambda *a, **k: None  # type: ignore[method-assign]
     assert app.menu_style() == "v2"
     app._native_header = False
-    assert _labels(app.menu_nodes())[3] == "Open Console" and "Needs you (1)" in _labels(app.menu_nodes())
+    assert _labels(app.menu_nodes())[4] == "Open Console" and "Needs you (1)" in _labels(app.menu_nodes())
     # Settings ▸ Classic menu: the preference is written, the menu rebuilt, the classic shape shows…
     app.dispatch(("set_menu_style", "classic"))
     assert rebuilt == [1]
@@ -457,16 +464,20 @@ def test_the_native_header_carries_logo_name_subtitle_and_switch() -> None:
     assert head.view.switch_on is True and head.view.switch_enabled
     # ONE header row: the activity line is the subtitle, not a second row; the meters follow.
     assert _labels(nodes)[1] == "Memory 32% · this gateway 10.9 GB · GPU 20%"
-    # Text header (Windows, Linux): two information lines, no HeaderNode.
+    # Text header (Windows, Linux): the name row (a HeaderNode too — Linux puts the logo on it),
+    # the subtitle, and the Running toggle in place of the switch.
     text = v2.build_menu(_inputs(snap=snap), native_header=False)
-    assert not isinstance(text[0], v2.HeaderNode)
-    assert _labels(text)[:2] == ["AbstractGateway 0.18.0 — Running", "1 conversation running · 1 needs you · 1 model loaded"]
+    assert isinstance(text[0], v2.HeaderNode) and text[0].label == "AbstractGateway 0.18.0" and not text[0].enabled
+    assert _labels(text)[:3] == ["AbstractGateway 0.18.0", "1 conversation running · 1 needs you · 1 model loaded", "Running"]
+    assert text[2].checked is True and text[2].action == ("pause",)
+    # The native menu has no Running row and no Pause row: the switch is the control.
+    assert "Running" not in _labels(nodes)
 
 
 def test_the_header_switch_follows_the_pause_state() -> None:
     assert v2.header_view(_snap()).switch_on is True
     paused = v2.header_view(_snap(gateway_state="paused", paused=True))
-    assert paused.switch_on is False and paused.switch_enabled and paused.subtitle == "Paused · Paused — conversations wait until you resume"
+    assert paused.switch_on is False and paused.switch_enabled and paused.subtitle == "Paused — conversations wait until you resume"
     pausing = v2.header_view(_snap(gateway_state="pausing", inflight_ticks=1))
     assert pausing.switch_on is False and not pausing.switch_enabled
     down = v2.header_view(_snap(gateway_state="unreachable", reachable=False))

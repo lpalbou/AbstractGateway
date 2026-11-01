@@ -14,9 +14,11 @@ friendly, not organised, repetitive):
    saying what the gateway is doing (`2 conversations running · 1 model
    loaded`, `Paused — conversations wait until you resume`) and a switch —
    ON while conversations run, OFF while the gateway is paused. Windows and
-   Linux get the same as two text lines. The product name appears here and
-   on Quit (the platform convention), not on six rows. The meters follow as
-   one line of percentages.
+   Linux get the name (Linux with the logo beside it), the subtitle and a
+   `☑ Running` check row that is the same switch. Pause / Resume is nowhere
+   else: the switch is the control. The product name appears here and on
+   Quit (the platform convention), not on six rows. The meters follow as one
+   line of percentages.
 2. **Two doors, then what needs you.** *Open Console* (the default item) and
    *Open Assistant* (the desktop app, promoted from Apps ▸) sit alone at the
    top. Anything waiting for a person — an approval, a question — follows as
@@ -100,11 +102,19 @@ class HeaderNode(Node):
 
 
 def header_line(snap: Snapshot) -> str:
-    """`AbstractGateway 0.18.0 — Running`: the text header — the product name
-    ONCE, its version, its state (Windows, Linux, and macOS without AppKit)."""
+    """`AbstractGateway 0.18.0 — Running`: the header row's text — the product
+    name ONCE, its version, its state. On macOS it is what VoiceOver reads for
+    the native row; on Windows and Linux it is the row itself."""
     word = mm.STATE_WORDS.get(snap.gateway_state, snap.gateway_state.title())
     version = str(snap.version or "").strip()
     return f"{mm.APP_NAME} {version} — {word}" if version else f"{mm.APP_NAME} — {word}"
+
+
+def header_title(snap: Snapshot) -> str:
+    """`AbstractGateway 0.18.0`: the text header's first line on Windows and
+    Linux, where the state is on the subtitle and the *Running* toggle."""
+    version = str(snap.version or "").strip()
+    return f"{mm.APP_NAME} {version}" if version else mm.APP_NAME
 
 
 def _counts(snap: Snapshot) -> Dict[str, int]:
@@ -144,8 +154,8 @@ def header_view(snap: Snapshot, *, update_latest: Optional[str] = None) -> Heade
     reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
     word = mm.STATE_WORDS.get(st, st.title())
     activity = activity_line(snap, update_latest=update_latest)
-    if st == "running":
-        subtitle = activity
+    if st == "running" or activity.startswith(word):
+        subtitle = activity  # the classic detail already leads with the state word ("Paused — …")
     else:
         subtitle = f"{word} · {activity}" if activity else word
     if st in {"paused", "pausing"} or snap.paused:
@@ -173,15 +183,28 @@ def meters_line(snap: Snapshot) -> str:
     return " · ".join(parts)
 
 
+def toggle_row(view: HeaderView) -> Node:
+    """The switch as a check item, for menus that cannot hold a control
+    (Windows, Linux): `☑ Running` — unticking pauses the gateway, ticking
+    resumes it; greyed while it cannot be told."""
+    if view.switch_on is None:
+        return Node("Running", None, enabled=False, checked=False)
+    action = ("pause",) if view.switch_on else ("resume",)
+    return Node("Running", action, checked=bool(view.switch_on), enabled=bool(view.switch_enabled))
+
+
 def header_nodes(snap: Snapshot, *, native: bool, update_latest: Optional[str] = None) -> Tuple[Node, ...]:
-    """The first rows. Native (macOS): ONE `HeaderNode` carrying the view.
-    Text: the name/version/state line, then the activity line."""
+    """The first rows. Native (macOS): ONE `HeaderNode` — logo, name,
+    subtitle and the switch in one row. Text (Windows, Linux): a `HeaderNode`
+    whose label is the name and version (Linux draws the logo next to it),
+    the subtitle as an information line, and the `☑ Running` toggle."""
+    view = header_view(snap, update_latest=update_latest)
     if native:
-        return (HeaderNode(header_line(snap), None, enabled=False, view=header_view(snap, update_latest=update_latest)),)
-    out: List[Node] = [info(header_line(snap))]
-    activity = activity_line(snap, update_latest=update_latest)
-    if activity:
-        out.append(info(activity))
+        return (HeaderNode(header_line(snap), None, enabled=False, view=view),)
+    out: List[Node] = [HeaderNode(header_title(snap), None, enabled=False, view=view)]
+    if view.subtitle:
+        out.append(info(view.subtitle))
+    out.append(toggle_row(view))
     return tuple(out)
 
 
@@ -491,19 +514,15 @@ def update_node(inputs: MenuInputs, *, reachable: bool) -> Node:
 
 
 def lifecycle_nodes(inputs: MenuInputs, *, reachable: bool, update_at_top: bool) -> Tuple[Node, ...]:
-    """The last section: the update's state when one is known, Pause /
-    Resume (the keyboard-reachable twin of the header's switch), Restart…,
+    """The last section: the update's state when one is known, Restart…,
     Quit (the product name here, the platform convention: quitting stops the
-    gateway, not just the icon)."""
+    gateway, not just the icon). Pause / Resume is the header's switch (or
+    the `☑ Running` row under the text header), not a row here."""
     snap = inputs.snap
     st = snap.gateway_state
     out: List[Node] = []
     if update_at_top:
         out.append(update_node(inputs, reachable=reachable))
-    if snap.paused or st == "pausing":
-        out.append(Node("▶ Resume", ("resume",), enabled=reachable))
-    else:
-        out.append(Node("⏸ Pause", ("pause",), enabled=reachable))
     out.append(Node("Restart…", ("restart",), enabled=reachable and snap.can_restart))
     if st == "unreachable":
         out.append(Node(f"Force Quit {mm.APP_NAME}…", ("force_quit",)))
@@ -582,6 +601,7 @@ __all__ = [
     "conversations_items",
     "header_line",
     "header_nodes",
+    "header_title",
     "header_view",
     "help_section",
     "lifecycle_nodes",
@@ -589,5 +609,6 @@ __all__ = [
     "meters_line",
     "models_items",
     "settings_section",
+    "toggle_row",
     "top_level_labels",
 ]

@@ -109,6 +109,15 @@ def instance_title(text: str, instance: str) -> str:
     return (f"{APP_NAME} ({name})" + text[len(APP_NAME):])[:120]
 
 
+def _native_header_available() -> bool:
+    try:
+        from .header_mac import header_available
+
+        return bool(header_available())
+    except Exception:
+        return False
+
+
 def _with_new_menu_switch(nodes: tuple) -> tuple:
     """The classic menu plus Help ▸ *New menu* (before About): the way back
     to the redesign without editing prefs.json. Everything else is the
@@ -299,7 +308,7 @@ class TrayApp:
         # macOS draws the redesign's first row as a native view (logo · name ·
         # subtitle · switch, header_mac.py); the objects it builds live here
         # until the next menu rebuild (AppKit keeps only weak references).
-        self._native_header = sys.platform == "darwin"
+        self._native_header = sys.platform == "darwin" and _native_header_available()
         self._header_refs: tuple = ()
         self._icon: Any = None
         self._lock = threading.RLock()
@@ -363,7 +372,12 @@ class TrayApp:
         dialogs.set_mac_app_identity(APP_NAME)
         self._pick_mode(force=True)
         first = render_icon(self._master, state="starting", mode=self._mode)
-        icon_cls = self._darwin_icon_class(pystray) if sys.platform == "darwin" else pystray.Icon
+        if sys.platform == "darwin":
+            icon_cls = self._darwin_icon_class(pystray)
+        elif sys.platform.startswith("linux"):
+            icon_cls = self._linux_icon_class(pystray)
+        else:
+            icon_cls = pystray.Icon
         try:
             self._icon = icon_cls(
                 "abstractgateway",
@@ -480,6 +494,30 @@ class TrayApp:
                     base._assert_image(self)
 
         return RetinaIcon
+
+    def _linux_icon_class(self, pystray: Any) -> Any:
+        """The GTK / AppIndicator icon with the logo on the header row
+        (header_gtk.py). pystray's xorg backend has no menu: unchanged."""
+        base = pystray.Icon
+        if not hasattr(base, "_create_menu_item") or getattr(base, "HAS_MENU", True) is False:
+            return base
+
+        class LogoHeaderIcon(base):  # type: ignore[misc,valid-type]
+            def _create_menu_item(self, descriptor, *args, **kwargs):  # noqa: D401 - pystray internal
+                view = getattr(descriptor, "_ag_header", None)
+                if view is not None:
+                    try:
+                        from .header_gtk import header_menu_item
+                        from .logo import logo_png
+
+                        item = header_menu_item(descriptor.text, logo_png=logo_png())
+                        if item is not None:
+                            return item
+                    except Exception:
+                        logger.debug("tray: gtk header row not built", exc_info=True)
+                return base._create_menu_item(self, descriptor, *args, **kwargs)
+
+        return LogoHeaderIcon
 
     def _build_header_view(self, view: Any) -> Any:
         """The macOS header's NSView for a `menu_v2.HeaderView`, or None.
