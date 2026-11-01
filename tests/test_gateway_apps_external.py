@@ -409,7 +409,7 @@ def test_console_card_says_started_outside_only_under_technical_details() -> Non
     by untracked/missionHH/capture_apps.mjs (Playwright, dark 1440)."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
-    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(app) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
+    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appMemberParts(app, techOn, lead, shared) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
     plain, tech = card.split("if (techOn) {", 1)
     line = 'data-app-external="${esc(app.id)}">${esc(ext.detail'
     assert line in tech and line not in plain

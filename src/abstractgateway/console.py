@@ -3986,6 +3986,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      mic: svgIcon('<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>'),
 	      image: svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/>'),
 	      video: svgIcon('<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/>'),
+	      // The Apps card's launcher badges: in the web browser / an app on the computer.
+	      globe: svgIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"></path>'),
+	      monitor: svgIcon('<rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8M12 16v4"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
@@ -15420,13 +15423,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
-    const FIRST_RUN_APPS = [
-      { pkg: "@abstractframework/flow", name: "Flow", mark: "Fl", what: "Design workflows visually and run them on this gateway." },
-      { pkg: "@abstractframework/code", name: "Code", mark: "Co", what: "A coding assistant in your browser, with sessions that survive restarts." },
-      { pkg: "@abstractframework/observer", name: "Observer", mark: "Ob", what: "Watch runs live, replay them, and send commands to running work." },
-      { pkg: "@abstractframework/continuum", name: "Continuum", mark: "Cn", what: "Your backlog, inbox and long-running processes, driven by this gateway." },
-      { pkg: "@abstractframework/entity", name: "Entity", mark: "En", what: "Create entities, see their memory grow, and talk with them." },
-    ];
     const firstRun = { open: false, step: "welcome", checked: false, autoOpened: false, host: null, engines: null, enginesMissing: false, enginesError: "" };
     function firstRunHash() {
       try { return String((typeof location !== "undefined" && location && location.hash) || ""); } catch { return ""; }

@@ -23,7 +23,7 @@ can trust without importing local gateway packages.
 
 - Planned: 22
 - Proposed: 52
-- Completed: 67
+- Completed: 68
 - Deprecated: 4
 - Recurrent: 0
 
@@ -191,6 +191,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 1006 App cards: registration template, families, illustrations (completed 2026-11-01, uncommitted) | `planned/1006_app_cards_registration_template_and_families.md` | [completed/1006_app_cards_registration_template_and_families.md](completed/1006_app_cards_registration_template_and_families.md) | One registry template for every app card (description, mark, illustration, family); the Assistant is one card with browser and desktop launchers; illustrations served at `/console/assets/apps/`. | 11 new tests (mutation-checked), suite failures identical to HEAD, Chrome 1280/390 checks on a disposable gateway. |
 | 1005 Accounts action containment (completed 2026-10-30, unreleased) | `planned/1005_accounts_action_layout_containment.md` | [completed/1005_accounts_action_layout_containment.md](completed/1005_accounts_action_layout_containment.md) | Eight accessible actions remain inside rows; remaining-width text columns and responsive cards. | `04a3f981`; 121 Accounts browser assertions, 19 focused tests and healthy live dark/light/touch redeploy; [evidence](../../design/accounts-layout-1005/REVIEW.md) records the unrelated stale catalogue assertion. |
 | 1004 Primary provider and capability filters (completed 2026-10-30, unreleased) | `planned/1004_models_primary_provider_and_capability_filters.md` | [completed/1004_models_primary_provider_and_capability_filters.md](completed/1004_models_primary_provider_and_capability_filters.md) | Two primary toolbar rows; visible Provider/Capability; no duplicate Status facet. | `2dd60d51` / `a6529057`; 51 focused tests, 286 browser assertions and healthy live redeploy; [evidence](../../design/model-filters-1004/REVIEW.md). |
 | 1003 Single-line model headers (completed 2026-10-30, unreleased) | `planned/1003_single_line_model_headers.md` | [completed/1003_single_line_model_headers.md](completed/1003_single_line_model_headers.md) | One header row; recommendation beside the build; narrow internal scroll. | `046f49fe`; 51 checks, 264 browser assertions and healthy live redeploy; [evidence](../../design/model-headers-1003/REVIEW.md). |
@@ -329,3 +330,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1004 Primary provider and capability filters](completed/1004_models_primary_provider_and_capability_filters.md), operator request for two-row controls and no duplicate Status facet.
 
 2026-10-30: [1005 Accounts action containment](completed/1005_accounts_action_layout_containment.md), operator screenshot of action buttons escaping their rows.
+
+2026-11-01: [1006 App cards: registration template, families, illustrations](completed/1006_app_cards_registration_template_and_families.md), operator request to merge the two Assistant cards and make the card a template.

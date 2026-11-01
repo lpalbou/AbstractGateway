@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from .console import gateway_console_html
 
@@ -630,6 +630,24 @@ async def gateway_root() -> RedirectResponse:
 @app.get("/console", include_in_schema=False)
 async def gateway_console() -> HTMLResponse:
     return HTMLResponse(gateway_console_html())
+
+
+@app.get("/console/assets/apps/{name}", include_in_schema=False)
+async def gateway_console_app_illustration(name: str) -> Response:
+    """An Apps-card illustration (apps_manager.registered_illustrations):
+    read-only, public like the console page itself, and only for a file
+    name the app registry declares and the package carries; 404 otherwise.
+    The card's URL carries a version query, so the response is immutable."""
+    from .apps_manager import ILLUSTRATION_TYPES, registered_illustrations
+
+    path = registered_illustrations().get(name)
+    if path is None or not path.is_file():
+        return Response(status_code=404, content="Not found", media_type="text/plain")
+    return FileResponse(
+        path,
+        media_type=ILLUSTRATION_TYPES[path.suffix.lower()],
+        headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.get("/api/health")

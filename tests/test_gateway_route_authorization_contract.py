@@ -49,6 +49,7 @@ pytest.importorskip("yaml")
 PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/"),  # redirect to /console (no data)
     ("GET", "/console"),  # static operator HTML; every API call it makes is authenticated
+    ("GET", "/console/assets/apps/{name}"),  # Apps-card illustrations: registry-allowlisted package images
     ("GET", "/docs"),  # offline OpenAPI viewer (static HTML)
     ("GET", "/redoc"),  # offline OpenAPI viewer (static HTML)
     ("GET", "/openapi.json"),  # FastAPI schema (route shapes only, no data)

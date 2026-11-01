@@ -591,10 +591,12 @@ def test_console_card_pins() -> None:
     terminal install), and the desktop card's Open goes to /launch."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
-    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(app) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
-    assert 'b("install", "Install", "is-primary", what)' in card
+    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appMemberParts(app, techOn, lead, shared) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
+    # The card's identity launches with the primary button; a family's other member with a ghost one.
+    assert 'const main = lead ? "is-primary" : "is-ghost";' in card
+    assert 'const label = shared ? (desk ? "Install desktop app" : "Install browser app") : "Install";' in card and 'b("install", label, main, what)' in card
     assert "Install and open" not in CONSOLE_UI_JS and "Install for Terminal" not in CONSOLE_UI_JS
-    assert 'b("desktop-open", "Open", "is-primary"' in card and 'desk.launch_blocked === "other_computer"' in card
+    assert 'b("desktop-open", openDesk, main,' in card and 'desk.launch_blocked === "other_computer"' in card
     assert "appPartsMarkup(job)" in card
     # R10.5: another Assistant running is its own sentence; nothing disables Open for it.
     assert "desk.other_running.sentence" in card and "data-app-desktop-other" in card

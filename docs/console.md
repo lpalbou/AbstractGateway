@@ -838,10 +838,20 @@ rest of the console keeps working.
 
 The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in [apps.md](./apps.md)). What a plain user sees on
-each card: the app's mark, name and status badge (Not installed, Stopped,
-Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
-description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height. Above
+each card: the app's illustration, its mark, name and status badge (Not
+installed, Stopped, Running, Installing, Stopped unexpectedly, Keeps
+crashing), its description (one whole sentence), and one row of launchers.
+Each launcher says where it opens: a globe for the web browser, a monitor for
+an app on the gateway's computer, `>_` for a terminal. An app family is one
+card: the **Assistant** card holds **Open in browser** (the web Assistant)
+and **Open on this Mac** (the desktop Assistant). The card's status badge and
+primary button are those of the Assistant installed on this computer (the web
+one first); the other keeps its own status badge and notes beside its button,
+and on that card each Install says what it installs (**Install browser app**,
+**Install desktop app**). When the gateway cannot list its apps, the tab shows
+the reason only. The words and
+pictures come from the gateway's app registry ([apps.md](./apps.md#registering-an-app)).
+The button rows of the cards side by side are always at the same height. Above
 the cards, one line names where the apps open: this browser's own address
 plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
 address the browser used to reach the gateway.
@@ -851,8 +861,8 @@ address the browser used to reach the gateway.
 | not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
 | installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
 | an install failed | the reason, **Show details**, and **Install** again |
-| installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
-| installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
+| installed and running | **Open in browser** (a new tab at `/apps/<app>/`, already signed in) |
+| installed but stopped, or crashed | **Open in browser** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
 The status badge is the start/stop control (R11.3), one click as Install is:
 **Running** stops the app ("Running — click to stop"), **Stopped** (or a
@@ -868,7 +878,7 @@ an admin can start or stop apps"). There is no separate Stop or Start button,
 not even under **Technical details**. The words come from the gateway
 (`status_control` on each row, [apps.md](./apps.md#http-api)).
 
-Code has a terminal version too. Next to Code's Open: **Open in Terminal**
+Code has a terminal version too. Next to Code's **Open in browser**: **Open in Terminal**
 when the terminal version is installed and the browser is on the gateway
 machine (a new terminal window opens there, signed in). The plain view never
 installs the terminal version on its own: Code's Install installs both. When

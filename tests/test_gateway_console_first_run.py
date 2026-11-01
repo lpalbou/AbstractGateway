@@ -73,8 +73,11 @@ def test_wizard_dom_contract_is_present() -> None:
         assert f"function {fn}(" in html
     assert "/api/gateway/session/claim" in html
     assert "/api/gateway/host/first-run" in html
+    # The apps step renders the gateway's registry (overview cards[]): the page
+    # carries no app list of its own, not even for the error fallback.
+    assert "FIRST_RUN_APPS" not in html
     for pkg in ("flow", "code", "observer", "continuum", "entity"):
-        assert f"@abstractframework/{pkg}" in html
+        assert f"@abstractframework/{pkg}" not in html
 
 
 _HARNESS = r"""
@@ -223,7 +226,11 @@ async function fetch(path, options = {}) {
       : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
       : { label: "Not installed", tone: "muted", busy: false, action: null, enabled: false, tip: null };
     const row = (id, pkg, extra) => { const r = Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {}); r.status_control = badgeOf(r); return r; };
-    return res(200, { ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
+    // One card per row (apps_manager.app_cards for apps of no family).
+    const cardsOf = (rows) => rows.map((r) => ({ id: r.id, family: null, name: r.name, description: r.id + " in one sentence.", mark: r.id.slice(0, 2), illustration_url: null, members: [r.id],
+      launchers: [{ app: r.id, kind: r.kind === "desktop" ? "desktop" : "browser" }].concat((r.interfaces || []).filter((i) => i.kind === "tui").map(() => ({ app: r.id, kind: "terminal" }))) }));
+    const withCards = (body) => Object.assign(body, { cards: cardsOf(body.apps) });
+    return res(200, withCards({ ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
       console_tui: { kind: "tui", installed: false, install_available: false, install_method: "cargo", install_command: "cargo install abstractgateway-console", command: "abstractgateway-console --url http://127.0.0.1:18080" }, apps: [
       row("flow", "@abstractframework/flow", { install_available: true, install_blocked_reason: null, actions: ["install"] }),
       row("code", "@abstractframework/code", { installed: true, version: "0.4.2", running: true, status: "running", actions: ["open", "stop", "logs"], url: "http://127.0.0.1:3002/", interfaces: [{ kind: "web" }, { kind: "tui", installed: true, version: "0.5.0", launch_available: true, command: "abstractcode --gateway http://127.0.0.1:18080" }] }),
@@ -231,7 +238,7 @@ async function fetch(path, options = {}) {
       row("continuum", "@abstractframework/continuum"),
       row("entity", "@abstractframework/entity"),
       row("assistant", "abstractassistant", { kind: "desktop", name: "Assistant", installed: true, version: "0.5.0", status: "stopped", actions: ["open"], interfaces: [], desktop: { location: "/Applications/AbstractAssistant.app", launch_command: "open -a /Applications/AbstractAssistant.app", launch_available: true, launch_blocked: null } }),
-    ] });
+    ] }));
   }
   if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
@@ -422,8 +429,8 @@ if (scenario.name === "claim") {
   if (cards.length !== 6) fail("six app cards expected (five browser apps + the Assistant): " + cards.length);
   if (!cards[5].includes('data-app-card="assistant"')) fail("the Assistant comes after the five browser apps: " + cards[5]);
   for (const c of cards) {
-    const at = ["ui-card__head", "ui-card__blurb is-oneline", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
-    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be head / one line / body / action row / technical, in that order: " + c);
+    const at = ["ui-app-card__art", "ui-card__head", "ui-card__blurb", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
+    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be illustration / head / description / body / action row / technical, in that order: " + c);
     const row = c.slice(c.indexOf('class="ui-card__actions"'), c.indexOf('class="ui-card__tech"'));
     if ((row.match(/is-primary/g) || []).length !== 1) fail("one primary action per card: " + row);
   }

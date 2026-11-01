@@ -132,13 +132,29 @@ CONSOLE_UI_CSS = r"""
     .ui-log { margin: 8px 0 0; max-height: 240px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--text-secondary); background: var(--ui-surface-3); border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 10px 12px; }
     .ui-cmd { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ui-cmd code { min-width: 0; }
-    /* ---- App cards: icon + name + pill / one line / ONE action
-       row at the same level across the grid. `.is-aligned` makes every card
-       five subgrid rows (head, blurb, body, actions, tech) so each row's
+    /* ---- App cards: illustration / icon + name + pill / description /
+       ONE launcher row at the same level across the grid. `.is-aligned`
+       makes every app card six subgrid rows (art, head, blurb, body,
+       actions, tech; other cards five, without the art) so each row's
        tracks are shared: the action rows line up even when one card has a
        progress bar or a Technical-details line and its neighbour has none.
        A command is ONE mono line with an ellipsis + Copy, never wrapped. ---- */
-    .ui-card__blurb.is-oneline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* The illustration (16:9, registry `illustration`) bleeds to the card's
+       edges; empty when no card of the grid has one. */
+    .ui-app-card__art { position: relative; margin: -18px -18px 14px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--accent-subtle); border-bottom: 1px solid var(--ui-border-1); }
+    .ui-app-card__art:empty { display: none; margin: 0; aspect-ratio: auto; border: 0; }
+    .ui-app-card__art > img { display: block; width: 100%; height: 100%; max-width: 100%; object-fit: cover; }
+    .ui-app-card__artmark { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 750; font-size: 40px; letter-spacing: -.03em; color: var(--accent); opacity: .55; }
+    /* A launcher's badge: where it opens (globe: the web browser; monitor: an app on the computer). */
+    .ui-btn.ui-app-launch { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+    .ui-app-launch__icon { display: inline-flex; }
+    .ui-app-launch__icon svg { width: 16px; height: 16px; }
+    /* A family member's launcher with its own status badge and notes beside it. */
+    .ui-app-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+    .ui-app-member__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+    .ui-app-member__notes { flex: 1 1 100%; display: grid; gap: 6px; min-width: 0; }
+    /* A sentence from the gateway may hold a long path or address: it wraps inside the card. */
+    .ui-app-card .ui-card__note, .ui-app-card .ui-field-msg { overflow-wrap: anywhere; }
     .ui-card__body, .ui-card__tech { display: grid; gap: 10px; min-width: 0; align-content: start; }
     .ui-card__body:empty, .ui-card__tech:empty { display: none; }
     .ui-card__tech { gap: 8px; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
@@ -167,6 +183,8 @@ CONSOLE_UI_CSS = r"""
     @supports (grid-template-rows: subgrid) {
       .ui-card-grid.is-aligned { row-gap: 0; }
       .ui-card-grid.is-aligned > .ui-card { display: grid; grid-row: span 5; grid-template-rows: subgrid; row-gap: 0; margin-bottom: 16px; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card { grid-row: span 6; grid-template-columns: minmax(0, 1fr); }
+      .ui-card-grid.is-aligned > .ui-card > .ui-app-card__art:empty { display: block; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__blurb { padding-top: 10px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:not(:empty) { padding-top: 12px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:empty, .ui-card-grid.is-aligned > .ui-card > .ui-card__tech:empty { display: block; }
@@ -1632,17 +1650,18 @@ CONSOLE_UI_JS = r"""
     // details, log_tail). A row of kind "desktop" (the Assistant)
     // has no address: `desktop` {location, launch_command, install_command,
     // launch_available, launch_blocked_reason}; Open = POST /apps/{id}/launch.
-    const APP_COPY = {
-      // One line on the card (ellipsis + the whole sentence on hover).
-      flow: { mark: "Fl", blurb: "Design workflows visually and run them here." },
-      code: { mark: "Co", blurb: "A coding assistant whose sessions survive restarts." },
-      observer: { mark: "Ob", blurb: "Watch runs live, replay them, steer running work." },
-      continuum: { mark: "Cn", blurb: "Your backlog, inbox and long-running processes." },
-      entity: { mark: "En", blurb: "Create entities and talk with them as they learn." },
-      note: { mark: "No", blurb: "Capture anything; see how it connects and changes over time." },
-      "assistant-web": { mark: "Aw", blurb: "Chat or talk with the Assistant in your browser." },
-      assistant: { mark: "As", blurb: "A menu-bar assistant: chat or talk hands-free." },
-    };
+    // A card's words and picture (name, description, mark, illustration)
+    // come from the gateway's app registry (overview `cards[]`, docs/apps.md
+    // "Registering an app"): the console holds no per-app copy. A launcher's
+    // badge says WHERE it opens: in the web browser (globe), as an app on
+    // the gateway's computer (monitor), in a terminal (the `>_` glyph).
+    const APP_LAUNCH_ICON = { browser: "globe", desktop: "monitor" };
+    function appLaunchIcon(kind) {
+      const icon = APP_LAUNCH_ICON[kind];
+      if (!icon) return "";
+      if (!ICONS[icon]) throw new Error(`AbstractGateway console: ICONS.${icon} is missing (the apps launcher badge)`);
+      return `<span class="button-icon ui-app-launch__icon" data-app-launch-badge="${esc(kind)}" aria-hidden="true">${ICONS[icon]}</span>`;
+    }
     // An app that holds nothing yet on this gateway opens where its first
     // thing is made. Keyed by app id; `when` reads the row's
     // content_summary (apps_manager.content_summary): a count of exactly 0,
@@ -1684,10 +1703,11 @@ CONSOLE_UI_JS = r"""
       return `<div class="ui-cmdline"><code class="ui-ellip" title="${esc(cmd)}">${esc(cmd)}</code>`
         + `<button type="button" class="ui-btn is-quiet" data-app-action="tui-copy" data-cmd="${esc(cmd)}" aria-label="${esc(label || `Copy: ${cmd}`)}">Copy</button></div>`;
     }
-    // A card is icon + name + pill / one line / ONE action row, pinned at
-    // the same level across the grid (`.ui-card-grid.is-aligned`: five subgrid rows).
-    // The action row holds the primary action for the state and, right next
-    // to it, the terminal action. Stop, Show log, Update, versions, commands,
+    // A card is illustration / icon + name + pill / its description / ONE
+    // launcher row, pinned at the same level across the grid
+    // (`.ui-card-grid.is-aligned`: six subgrid rows). The launcher row holds
+    // the primary action for the state and, right next to it, the other
+    // launchers (the terminal, a family's desktop app). Stop, Show log, Update, versions, commands,
     // the address and the log panel exist only with "Technical details" ON
     // (not rendered at all otherwise; uiSetAdvanced re-renders the cards).
     // Result boxes are transient (APP_NOTICE_MS) unless they report an error.
@@ -1920,19 +1940,26 @@ CONSOLE_UI_JS = r"""
       return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge" data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
         + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${esc(sc.label)}</button>`;
     }
-    function appCardMarkup(app) {
-      const copy = APP_COPY[app.id] || { mark: String(app.name || app.id || "?").slice(0, 2), blurb: "" };
+    // One member of a card (an apps row), in parts: its status badge, its
+    // body (progress, a failure, notes), its launcher (the state's one
+    // action: Install, Cancel, Open...), Update, the terminal parts, the
+    // settings gear and its technical details. `lead`: the card's lead (its
+    // launcher is the card's primary button); any other member's launcher is
+    // a ghost button with its own badge and notes beside it. `shared`: the
+    // card has more than one member, so Install says what it installs.
+    function appMemberParts(app, techOn, lead, shared) {
       const admin = !!(state.principal && state.principal.admin);
-      const techOn = uiShowAdvanced();
       const job = appStore.jobs.get(app.id) || app.active_job || null;
       const actions = Array.isArray(app.actions) ? app.actions : [];
       const busy = appStore.busy.has(app.id);
       const name = app.name || app.id;
       const crashed = (app.status === "crashed" || app.status === "crash_loop");
+      const main = lead ? "is-primary" : "is-ghost";
       // The body: only what the user must see now (progress, a failure, a
       // result they just caused). Never a box that restates the pill.
       let body = appNoticeMarkup(app.id);
       const desk = app.kind === "desktop" ? (app.desktop || {}) : null;
+      const kind = desk ? "desktop" : "browser";
       if (appJobActive(job)) {
         body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name}`) + appPartsMarkup(job);
       } else if (job && job.state === "failed") {
@@ -1966,17 +1993,20 @@ CONSOLE_UI_JS = r"""
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;
-      const b = (action, text, cls, title, appPath) => {
+      // `launch`: a launcher kind ("browser" | "desktop") puts its badge on the button.
+      const b = (action, text, cls, title, appPath, launch) => {
         const mine = pend && pend.action === action;
         // The tooltip is the kit's (data-af-tip, bound once by islands bindTooltips), never a native title.
-        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${esc(mine ? pend.label : text)}</button>`;
+        return `<button type="button" class="ui-btn ${cls}${launch ? " ui-app-launch" : ""}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${launch ? ` data-app-launch="${esc(launch)}"` : ""}${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${launch ? appLaunchIcon(launch) : ""}${esc(mine ? pend.label : text)}</button>`;
       };
       const first = appFirstRun(app);
-      const off = (text, title) => `<button type="button" class="ui-btn is-primary" disabled title="${esc(title)}">${esc(text)}</button>`;
-      // The action row: ONE primary action for the state + the terminal one.
-      let primary = "";
+      const off = (text, title, launch) => `<button type="button" class="ui-btn ${main}${launch ? " ui-app-launch" : ""}"${launch ? ` data-app-launch="${esc(launch)}"` : ""} disabled title="${esc(title)}">${launch ? appLaunchIcon(launch) : ""}${esc(text)}</button>`;
+      // The launcher: ONE action for the state.
+      const openWeb = "Open in browser";
+      const openDesk = (desk && desk.open_label) || "Open";
+      let launch = "";
       if (appJobActive(job)) {
-        primary = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
+        launch = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
       } else if (!app.installed) {
         // ONE button, "Install". It
         // installs the browser app and, when the app has one for this
@@ -1984,23 +2014,24 @@ CONSOLE_UI_JS = r"""
         const withTui = Array.isArray(app.install_parts) && app.install_parts.includes("tui");
         const what = desk ? `Install the ${name} on the gateway's computer (into the gateway's own Python)`
           : `Install ${name}${withTui ? " for the browser and the terminal" : ""}${app.needs_node_install ? " (Node.js is installed for you first: about 56 MB, no password needed)" : ""}`;
-        primary = actions.includes("install") && admin
-          ? b("install", "Install", "is-primary", what)
-          : off("Install", app.install_blocked_reason || (admin ? "Installing is not available right now" : "Only an admin can install apps"));
+        const label = shared ? (desk ? "Install desktop app" : "Install browser app") : "Install";
+        launch = actions.includes("install") && admin
+          ? b("install", label, main, what)
+          : off(label, app.install_blocked_reason || (admin ? "Installing is not available right now" : "Only an admin can install apps"));
       } else if (desk) {
         // A desktop app: Open starts it on the gateway computer (or brings it
         // forward); from another computer there is no button (note above).
-        if (desk.launch_available) primary = b("desktop-open", "Open", "is-primary", app.running ? `Bring the ${name} to the front on this computer` : `Start the ${name} on this computer`);
-        else if (desk.launch_blocked === "admin") primary = off("Open", desk.launch_blocked_reason || "Only an admin can start apps");
+        if (desk.launch_available) launch = b("desktop-open", openDesk, main, app.running ? `Bring the ${name} to the front on this computer` : `Start the ${name} on this computer`, "", kind);
+        else if (desk.launch_blocked === "admin") launch = off(openDesk, desk.launch_blocked_reason || "Only an admin can start apps", kind);
       } else if (app.running) {
-        primary = first ? b("open", first.label, "is-primary", first.title(name), first.path)
-          : b("open", "Open", "is-primary", `Open ${name} in a new tab, signed in`);
+        launch = first ? b("open", first.label, main, first.title(name), first.path, kind)
+          : b("open", openWeb, main, `Open ${name} in a new browser tab, signed in`, "", kind);
       } else {
         // Installed but stopped (or crashed): Open starts it, then opens it.
-        primary = actions.includes("launch") && admin
-          ? (first ? b("open", first.label, "is-primary", `Start ${name}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}`, first.path)
-            : b("open", "Open", "is-primary", `Start ${name} and open it in a new tab, signed in`))
-          : off("Open", admin ? "Starting is not available right now" : "Only an admin can start apps");
+        launch = actions.includes("launch") && admin
+          ? (first ? b("open", first.label, main, `Start ${name}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}`, first.path, kind)
+            : b("open", openWeb, main, `Start ${name} and open it in a new browser tab, signed in`, "", kind))
+          : off(openWeb, admin ? "Starting is not available right now" : "Only an admin can start apps", kind);
       }
       // Round 8: an app's own settings sit behind a gear beside Open (admin only),
       // opening the settings modal (APP_SETTINGS_DOORS); never a disclosure on the page.
@@ -2013,7 +2044,6 @@ CONSOLE_UI_JS = r"""
       const update = app.update_available && actions.includes("update") && admin && !appJobActive(job)
         ? b("update", app.update_label || "Update", "is-ghost", app.update_tip || "")
         : "";
-      const row = primary + update + tui.button + gear;
       // Technical details ON: the secondary line (text buttons + facts), the
       // terminal commands, the address, the npx line, the logs.
       let tech = "";
@@ -2051,28 +2081,76 @@ CONSOLE_UI_JS = r"""
           + (doneLog ? `<details class="ui-details"><summary>Install log</summary><pre class="ui-log">${esc(doneLog)}</pre></details>` : "")
           + appLogMarkup(app);
       }
-      const blurb = copy.blurb || app.description || "";
-      const tint = appJobActive(job) ? " is-busy" : ((job && job.state === "failed") || app.status === "crash_loop" ? " is-attention" : "");
-      return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(app.id)}"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
-        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(name)}</div><span class="ui-card__status">${appBadgeMarkup(app, job, pend)}</span></div></div>`
-        + `<div class="ui-card__blurb is-oneline" title="${esc(blurb)}">${esc(blurb)}</div>`
-        + `<div class="ui-card__body">${body}</div>`
+      const attention = (job && job.state === "failed") || app.status === "crash_loop";
+      return { badge: appBadgeMarkup(app, job, pend), body, launch, update, tui, gear, tech, kind, busy: appJobActive(job), attention };
+    }
+    // A card (overview `cards[]`): illustration, mark + title + the
+    // identity's status badge, the description, then ONE launcher row
+    // built from `launchers[]` (by member kind: browser, desktop, terminal),
+    // then the lead's body and every member's technical details. The lead
+    // (members[0]) is the first installed member (apps_manager.app_cards);
+    // every other member keeps its own status badge and notes beside its own
+    // launcher (data-app-member). A family card is `data-app-card="family:<id>"`
+    // (never an app id: the desktop Assistant's id is also "assistant"). `withArt`: some card of the
+    // grid has an illustration, so a card without one shows its mark there.
+    function appCardMarkup(card, withArt) {
+      const techOn = uiShowAdvanced();
+      const rows = (Array.isArray(card.members) ? card.members : []).map((id) => {
+        const r = appRowById(id);
+        if (!r) throw new Error(`AbstractGateway console: the apps card "${card.id}" names "${id}", which the apps overview does not list`);
+        return r;
+      });
+      if (!rows.length) throw new Error(`AbstractGateway console: the apps card "${card.id}" has no members`);
+      const lead = rows[0];
+      const shared = rows.length > 1;
+      const parts = new Map(rows.map((r, i) => [r.id, appMemberParts(r, techOn, i === 0, shared)]));
+      const head = parts.get(lead.id);
+      let row = "";
+      let leadDone = false;
+      for (const l of (Array.isArray(card.launchers) ? card.launchers : [])) {
+        const p = parts.get(l.app);
+        if (!p) throw new Error(`AbstractGateway console: the apps card "${card.id}" has a launcher for "${l.app}", not one of its members`);
+        if (l.app === lead.id) {
+          row += l.kind === "terminal" ? p.tui.button : p.launch + p.update;
+          continue;
+        }
+        if (!leadDone) { row += head.gear; leadDone = true; }
+        if (l.kind === "terminal") { row += p.tui.button; continue; }
+        row += `<div class="ui-app-member" data-app-member="${esc(l.app)}"><div class="ui-app-member__line">${p.launch}${p.badge}${p.update}${p.gear}</div>`
+          + (p.body ? `<div class="ui-app-member__notes">${p.body}</div>` : "")
+          + `</div>`;
+      }
+      if (!leadDone) row += head.gear;
+      let tech = shared ? "" : head.tech;
+      if (shared) for (const r of rows) {
+        const t = parts.get(r.id).tech;
+        if (t) tech += `<div class="ui-card__techrow" data-app-member-tech="${esc(r.id)}"><span class="ui-card__techlabel">${r.kind === "desktop" ? "Desktop app" : "Browser app"}</span></div>` + t;
+      }
+      const all = Array.from(parts.values());
+      const tint = all.some((p) => p.busy) ? " is-busy" : (all.some((p) => p.attention) ? " is-attention" : "");
+      const art = card.illustration_url
+        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async">`
+        : (withArt ? `<span class="ui-app-card__artmark" aria-hidden="true">${esc(card.mark || "")}</span>` : "");
+      return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(card.family ? `family:${card.family}` : card.id)}"${card.family ? ` data-app-family="${esc(card.family)}"` : ""}>`
+        + `<div class="ui-app-card__art">${art}</div>`
+        + `<div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`
+        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${head.badge}</span></div></div>`
+        + `<div class="ui-card__blurb">${esc(card.description || "")}</div>`
+        + `<div class="ui-card__body">${head.body}</div>`
         + `<div class="ui-card__actions">${row}</div>`
         + `<div class="ui-card__tech">${tech}</div>`
         + `</article>`;
     }
     function appViewMarkup() {
       const url = gatewayBaseUrl();
+      // No overview: the error only. Every app's words and pictures come
+      // from the gateway's registry, so the console has none of its own.
       if (appStore.error && !appStore.data) {
-        const rows = FIRST_RUN_APPS.map((a) => `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(a.mark)}</span>`
-          + `<div class="ui-card__titles"><div class="ui-card__title">${esc(a.name)}</div></div></div><div class="ui-card__blurb">${esc(a.what)}</div>`
-          + `<div class="ui-advanced"><div class="ui-cmd"><code class="ui-ellip">npx ${esc(a.pkg)}</code></div></div></article>`).join("");
-        return `<div class="ui-alert tone-warn" role="alert"><strong>This gateway cannot manage apps right now.</strong><span>${esc(appStore.error)}</span></div><div class="ui-card-grid">${rows}</div>`;
+        return `<div class="ui-alert tone-warn" role="alert"><strong>This gateway cannot manage apps right now.</strong><span>${esc(appStore.error)}</span></div>`;
       }
       if (!appStore.data) return `<div class="ui-empty">Looking for the apps...</div>`;
       const d = appStore.data;
       const node = ((d.runtime || {}).node) || {};
-      const apps = Array.isArray(d.apps) ? d.apps : [];
       // Apps are served THROUGH the gateway (app_proxy.py): the address is
       // this browser's own origin + /apps/<id>/, wherever it reached us.
       const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
@@ -2083,7 +2161,10 @@ CONSOLE_UI_JS = r"""
       intro += appRuntimeMarkup(d);
       if (d.registry && d.registry.reachable === false) intro += `<div class="ui-alert tone-warn" role="alert"><strong>The app store (npm) is not reachable.</strong><span>Installed apps keep working; installing needs the internet.</span></div>`;
       const msg = appStore.message ? `<div class="ui-alert tone-err" role="alert">${esc(appStore.message)}</div>` : "";
-      return intro + msg + `<div class="ui-card-grid is-aligned">${apps.map(appCardMarkup).join("")}</div>`;
+      // The gateway groups the rows into cards (apps_manager.app_cards).
+      if (!Array.isArray(d.cards)) throw new Error("AbstractGateway console: the apps overview has no cards (a gateway older than the console?)");
+      const withArt = d.cards.some((c) => c && c.illustration_url);
+      return intro + msg + `<div class="ui-card-grid is-aligned">${d.cards.map((c) => appCardMarkup(c, withArt)).join("")}</div>`;
     }
     function appRender() { for (const el of appStore.views.values()) if (el) el.innerHTML = appViewMarkup(); }
     function appBrowserOrigin() {

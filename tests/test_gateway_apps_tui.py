@@ -831,4 +831,7 @@ def test_console_terminal_action_sits_in_the_card_action_row() -> None:
     for tech_only in ("Terminal version: needs the Rust toolchain", "Terminal version, on the other computer", "t.install_command", "t.signin_command"):
         assert tech_only in tech and tech_only not in plain, tech_only
     assert "Also runs in your terminal" not in CONSOLE_UI_JS
-    assert "const row = primary + update + tui.button + gear;" in CONSOLE_UI_JS  # R10.6: one-click Update beside Open
+    # R10.6: one-click Update beside Open; the terminal launcher right after it, then the gear.
+    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(card, withArt) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
+    assert 'row += l.kind === "terminal" ? p.tui.button : p.launch + p.update;' in card
+    assert "if (!leadDone) row += head.gear;" in card
