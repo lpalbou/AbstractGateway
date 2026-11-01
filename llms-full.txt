@@ -4382,6 +4382,13 @@ Windows system tray or a Linux panel. It exists so that anyone running a
 gateway on their own computer — including people who never open a terminal —
 can see what it is doing and act on it in one click:
 
+- **The header** — on macOS a native row: the AbstractFramework logo, the
+  product name, one line saying what the gateway is doing (`2 conversations
+  running · 1 model loaded`, `Paused · Paused — conversations wait until you
+  resume`) and a **switch**: ON while conversations run, OFF pauses the
+  gateway (the console keeps answering; work waits). Windows and Linux show
+  the same as two text lines, with **Pause / Resume** at the bottom (also
+  there on macOS, for the keyboard). See *Pause*.
 - **Open Console** — the web console (`/console`), **already signed in**:
   the tray mints a one-time sign-in link locally (the same code as
   `abstractgateway claim`; see *Security*) so an expired browser session never
@@ -4396,10 +4403,14 @@ can see what it is doing and act on it in one click:
   the rest. Nothing here while nothing waits.
 - **Conversations** — what is going on, by the conversation's **title** (what you
   asked, or the automation's name — never a workflow id): **Running**, **Need
-  attention**, **Scheduled** and **Recent** (the last 24 hours), each row with
-  its own actions. See *Conversations* below.
-- **Models** — what is in memory and the way to eject it, what can be loaded
-  (**Load a Model ▸**), the full memory and GPU figures, **Show Activity
+  attention** and **Recent** (the last 24 hours), each row with its own
+  actions. See *Conversations* below.
+- **Automations** — the standing orders, **Active** and **Paused**, each with
+  **Open in Observer**, **Run now**, **Pause / Resume**, and the Automations
+  page in Observer. See *Conversations* below.
+- **Models** — memory first: the full memory and GPU figures, what is in
+  memory with one **Eject X (size, engine)…** row per model and **Eject All —
+  frees N…** when several are loaded, then **Load a Model ▸**, **Show Activity
   Window…** (two live graphs and the model list; needs `tkinter`, see below)
   and the console's Resources tab. See *Models* below.
 - **Apps** — the AbstractFramework browser apps, one short line each: **Open X**
@@ -4436,8 +4447,8 @@ doors, then whatever waits for you), **look** (Conversations, Models, Apps),
 known, Pause, Restart, Quit):
 
 ```text
-[AbstractGateway 0.18.0 — Running]
-[1 conversation running · 1 needs you · 1 model loaded]
+[logo] AbstractGateway                          (○━━) ← macOS: the native header; ON = running, OFF = paused
+       1 conversation running · 1 needs you · 1 model loaded
 [Memory 32% · this gateway 10.9 GB · GPU 20%]
 ────────
 Open Console                                   (the default item: signed in)
@@ -4446,8 +4457,9 @@ Open Assistant                                 (the desktop app; Install Assista
 [Needs you (1)]                                (only while something waits for a person; at most 3 rows, then "…and N more under Conversations")
 🟡 Clean the build folder · approve `execute_command` ▸   [execute_command {"command": "rm -rf build"}] | Show and approve… | Deny | Open in Observer
 ────────
-Conversations ▸     [Running (1)] 🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸ | [Need attention (1)] … | [Scheduled (1)] ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸ | [Recent — 1 done] ✅ Write the changelog · 7 steps · 1m 42s ▸ | Open Conversations in Console
-Models ▸            [Loaded: 1 · 249 MB · 87.4 GB free] | ✓ Qwen1.5-0.5B-Chat-4bit · 249 MB · MLX ▸ Eject — frees 249 MB | Load a Model ▸ | [Memory 40.6 GB of 128 GB (32%)] | [This gateway 10.9 GB] | [GPU 20% busy · Apple M5 Max] | Show Activity Window… | Open Resources in Console…
+Conversations ▸     [Running (1)] 🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸ | [Need attention (1)] … | [Recent — 1 done] ✅ Write the changelog · 7 steps · 1m 42s ▸ | Open Conversations in Console
+Automations ▸       [Active (1)] ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸ | [Paused (1)] ⏸ Inbox triage · paused · When mail arrives in me@example.org ▸ | Open Automations in Observer
+Models ▸            [Memory 40.6 GB of 128 GB (32%) · this gateway 10.9 GB] | [GPU 20% busy · Apple M5 Max] | [In memory (2) · 16.2 GB] | Eject Qwen3.6-27B-4bit (16.0 GB, MLX)… | Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX)… | Eject All — frees 16.2 GB… | Load a Model ▸ | Show Activity Window… | Open Resources in Console…
 Apps ▸              Open Observer | Open Continuum | Install Code… | [Entity] | Install Flow… | [Installs unavailable now · Console → Apps] | Manage Apps in Console…
 ────────
 Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Addresses — click one to copy it] | http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name | [Who can reach it] | ● Localhost only | ○ Local network | ○ Internet… | Open Network in Console…
@@ -4459,16 +4471,23 @@ Restart…
 Quit AbstractGateway…                          (Force Quit AbstractGateway… while it does not answer)
 ```
 
-The three status lines are always there: the product name, version and
-state (`Running`, `Pausing…`, `Paused`, `Starting…`, `Restarting…`,
-`Updating…`, `Quitting…`, `Not responding`); what the machine is doing in
-words (`Idle · no model loaded`, `2 conversations running · 1 needs you · 1
-model loaded`, `Finishing 2 runs at the next step, then pausing`, `Paused —
-conversations wait until you resume`, `Installing 0.19.0 · conversations keep
-running`, `Can't reach it on this computer · retrying`; `Slow to answer ·`
-leads the line when a probe timed out); and the meters as percentages (the
-full figures and the GPU's name are under **Models ▸**). The product name is
-on the first line and on Quit, nowhere else. An update changes the bottom
+The header is always there. On macOS it is one native row (`NSMenuItem`
+view, `tray/header_mac.py`): the logo (`tray/logo.py`, the framework's
+`assets/logo-framework.png` cropped square, rounded, 72 px), the product
+name, a subtitle and the switch. The subtitle is what the machine is doing
+in words (`Idle · no model loaded`, `2 conversations running · 1 needs you ·
+1 model loaded`; `Slow to answer ·` leads it when a probe timed out) and,
+while the gateway is not plainly running, its state first (`Paused · Paused
+— conversations wait until you resume`, `Pausing… · Finishing 2 runs at the
+next step, then pausing`, `Updating… · Installing 0.19.0 · conversations keep
+running`, `Not responding · Can't reach it on this computer · retrying`,
+`Starting… · Usually a few seconds`). The switch is ON while conversations
+run and OFF while paused; it is greyed while the gateway is pausing,
+updating, starting or not answering, and absent while it cannot be reached.
+Windows and Linux (and macOS without AppKit) show the same as two text
+lines: `AbstractGateway 0.18.0 — Running` and the subtitle. Then the meters
+as percentages (the full figures and the GPU's name are under **Models ▸**).
+The product name is on the header and on Quit, nowhere else. An update changes the bottom
 section: `Checking for Updates…`, `Update to 0.19.0…`, `Updating…`, `Restart
 to Finish Update…` appear above Pause while they apply; otherwise **Check for
 Updates…** waits under Help.
@@ -4558,8 +4577,8 @@ Catalog-published workflows are shown under the name you know them by and are
 not mistaken for the gateway's own bookkeeping runs. Summoned entities' data
 planes are not listed (the payload names them in `skipped_entity_planes`).
 
-Four sections, each under an information line, nothing hidden without saying
-so:
+Three sections under **Conversations ▸** and two under **Automations ▸**,
+each under an information line, nothing hidden without saying so:
 
 - **Running (N)** — `🟢 <title> · step 4 · 2m 10s so far`, whatever day it
   started; a run whose sub-run is working counts as running. A row waiting
@@ -4583,17 +4602,19 @@ so:
   full arguments from `GET /host/runs/{run_id}/wait`). `🟡 <title> · a
   question`: the question, one line; free-text answers stay in the clients
   (the Assistant, Code, the console).
-- **Scheduled (N)** — the automations (`GET /automations`), active and
-  paused: `⏱ <automation title> · Every day at 09:00 · next Fri 17 Oct
-  09:00`, `⏱ <title> · When Python news has a new item` — the trigger in the
-  gateway's words (`trigger_text`, with the next run from `schedule_text` for a
+- **Automations ▸** (its own item under Conversations ▸) — the automations
+  (`GET /automations`) under **Active (N)** and **Paused (N)**: `⏱
+  <automation title> · Every day at 09:00 · next Fri 17 Oct 09:00`, `⏱
+  <title> · When Python news has a new item` — the trigger in the gateway's
+  words (`trigger_text`, with the next run from `schedule_text` for a
   schedule); the tray computes no next run. The submenu: **Open in
   Observer** (the Automations page), **Run now**, **Pause** /
   **Resume** (`POST /automations/{id}/commands`, types
   `automation.run_now`, `automation.pause`, `automation.resume`), each offered
   only when the automation's `capabilities` list it; the gateway's refusal
   (an occurrence already running, an archived automation) is shown with its
-  words.
+  words. **Open Automations in Observer** at the bottom; `No automations
+  yet` when there are none.
 - **Recent — 4 done · 1 cancelled** — the conversations that finished in the last
   24 hours (✅ completed, ❌ failed, ⚪️ cancelled), newest first, with the
   step count and how long each took; five rows, then `…and N more`. The
@@ -4653,13 +4674,17 @@ twice.
 
 ## Models
 
-**Models ▸** leads with what is in memory — a header (`Loaded: N · size ·
-free memory`), then one row per loaded model. Each loaded row is a submenu
-whose one action is **Eject — frees N GB**: a click on a check-marked row
-never unloads by surprise. Eject asks first; when work is running on the
-gateway it says so, because eject stops the calls running on that model first
-and the next request that needs it loads it again (the gateway's eject
-semantics). A locked model ("kept in memory") asks again before it goes.
+**Models ▸** is about memory first: the full meters (`Memory 40.6 GB of 128
+GB (32%) · this gateway 10.9 GB`, `GPU 20% busy · Apple M5 Max`), then what
+is in memory — `In memory (N) · size` and one **Eject X (size, engine)…** row
+per loaded model (`kept in memory` named in the row for a locked one), and
+**Eject All — frees N…** when several are loaded. Every eject asks first
+(that is why a direct row is safe); when work is running on the gateway it
+says so, because eject stops the calls running on that model first and the
+next request that needs it loads it again (the gateway's eject semantics). A
+locked model asks again before it goes; **Eject All** asks once, naming the
+models and what they free, then ejects them one after the other. `Nothing in
+memory` when the list is empty.
 
 **Load a Model ▸** preloads an installed model (`POST
 /api/gateway/models/load`; the gateway pins it resident):
@@ -4800,10 +4825,10 @@ service …`, `apps …`, `models …`).
 
 ## Classic menu
 
-The layout shipped before 1 November 2026 (the one with **Addresses ▸** and
-**Network ▸** as two items, **Show Activity Window…** at the top, the
-gateway-wide controls spread over the bottom half and the product name on
-six rows) is kept whole in `menu_model.py` and is one click away:
+The layout shipped before 1 November 2026 (the one with a text header,
+**Addresses ▸** and **Network ▸** as two items, **Show Activity Window…** at
+the top, the automations inside Conversations ▸, the gateway-wide controls
+spread over the bottom half and the product name on six rows) is kept whole in `menu_model.py` and is one click away:
 
 | Way | Scope | How |
 |---|---|---|
@@ -4818,8 +4843,8 @@ applies to both.
 
 ## Pause
 
-**⏸ Pause** (the bottom section) is process-wide and **persists
-across restarts**: a laptop paused to get its GPU back does not silently
+**⏸ Pause** (the bottom section; on macOS also the header's switch, OFF =
+paused) is process-wide and **persists across restarts**: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
 instead (see *Conversations*). While the gateway is paused:
 

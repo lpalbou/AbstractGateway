@@ -9,41 +9,47 @@ menu stays in `menu_model.py`, byte for byte: `serve --tray-menu classic` or
 What changed and why (the operator's complaints of 2026-11-01: not user
 friendly, not organised, repetitive):
 
-1. **Status first, three glanceable lines.** `AbstractGateway 0.18.0 — Running`,
-   then what the machine is doing in people's words (`2 conversations running
-   · 1 needs you · 1 model loaded`, `Idle · no model loaded`, `Paused —
-   conversations wait until you resume`), then the meters. The product name
-   appears ONCE here (and on Quit, the platform convention), not on six rows.
+1. **A header, not a status line.** On macOS the first row is a native view
+   (`header_mac.py`): the AbstractFramework logo, the product name, one line
+   saying what the gateway is doing (`2 conversations running · 1 model
+   loaded`, `Paused — conversations wait until you resume`) and a switch —
+   ON while conversations run, OFF while the gateway is paused. Windows and
+   Linux get the same as two text lines. The product name appears here and
+   on Quit (the platform convention), not on six rows. The meters follow as
+   one line of percentages.
 2. **Two doors, then what needs you.** *Open Console* (the default item) and
    *Open Assistant* (the desktop app, promoted from Apps ▸) sit alone at the
    top. Anything waiting for a person — an approval, a question — follows as
    its own top-level rows (at most three, then one line naming the rest):
    the most actionable thing on the machine is never a submenu away.
-3. **Five sections, in the order a person thinks.** *Act* (Console, Assistant,
-   Needs you) · *Look* (Conversations, Models, Apps) · *Set up* (Connect,
-   Settings, Help) · *Lifecycle* (Update when one is known, Pause, Restart,
-   Quit). Each submenu opens with an information line saying what it holds.
-4. **Less duplication.** *Addresses ▸* and *Network ▸* were two views of one
-   thing and are now *Connect ▸* (where it answers now, the addresses to copy,
-   who may reach it, the restart that applies it). *Show Activity Window…* and
-   *Manage Models in Console…* live where the numbers are (Models ▸). *Check
-   for Updates…* lives in Help ▸ until an update is known, then the update's
-   state is a top-level row. The memory-warning switch moved from Help to
-   Settings ▸, next to *Start at login*.
-5. **One label grammar.** Verb first (*Open X*, *Install X…*, *Copy …*), `…`
-   only when a dialog or confirmation follows, a check mark only on a setting,
-   radio marks only on *who can reach it*, badges only the five that render
-   on every platform (text is the only paint pystray gives a row on macOS,
-   Windows and AppIndicator alike).
+3. **Sections in the order a person thinks.** *Act* (Console, Assistant,
+   Needs you) · *Look* (Conversations, Automations, Models, Apps) · *Set up*
+   (Connect, Settings, Help) · *Lifecycle* (Update when one is known, Pause,
+   Restart, Quit). Automations are their own section: they are standing
+   orders, not conversations. Each submenu opens with an information line.
+4. **Models ▸ is about memory first.** The full meters lead, then what is in
+   memory with one *Eject* row per model and *Eject All* when there are
+   several: the tray exists to free the machine. *Load a Model ▸* stays as
+   the second thing, the Activity window and the console's Resources tab at
+   the foot.
+5. **Less duplication.** *Addresses ▸* and *Network ▸* were two views of one
+   thing and are now *Connect ▸*. *Check for Updates…* lives in Help ▸ until
+   an update is known, then the update's state is a top-level row. The
+   memory-warning switch moved from Help to Settings ▸, next to *Start at
+   login*.
+6. **One label grammar.** Verb first (*Open X*, *Install X…*, *Eject X…*),
+   `…` only when a dialog or confirmation follows, a check mark only on a
+   setting, radio marks only on *who can reach it*, badges only the five
+   that render on every platform.
 
 Everything the classic menu could do is still reachable (ADR-0026: nothing
-silently dropped): the test `test_gateway_tray_menu_v2.py` checks that every
-classic action name is produced by the new menu too.
+silently dropped): `test_gateway_tray_menu_v2.py` checks that every classic
+action name is produced by the new menu too.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import menu_model as mm
@@ -73,8 +79,29 @@ def menu_style(*, flag: Optional[str], prefs: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class HeaderView:
+    """What the native header shows (macOS) — and what the text fallback says."""
+
+    title: str  # "AbstractGateway"
+    subtitle: str  # what the gateway is doing, one line
+    state: str  # the snapshot's gateway_state
+    switch_on: Optional[bool]  # True: conversations run; False: paused; None: no switch
+    switch_enabled: bool
+    switch_tooltip: str
+
+
+@dataclass(frozen=True)
+class HeaderNode(Node):
+    """The first row: `label` is the text fallback (an information line on
+    Windows / Linux); `view` is what the macOS native header draws."""
+
+    view: Optional[HeaderView] = None
+
+
 def header_line(snap: Snapshot) -> str:
-    """`AbstractGateway 0.18.0 — Running`: the product name ONCE, its version, its state."""
+    """`AbstractGateway 0.18.0 — Running`: the text header — the product name
+    ONCE, its version, its state (Windows, Linux, and macOS without AppKit)."""
     word = mm.STATE_WORDS.get(snap.gateway_state, snap.gateway_state.title())
     version = str(snap.version or "").strip()
     return f"{mm.APP_NAME} {version} — {word}" if version else f"{mm.APP_NAME} — {word}"
@@ -88,10 +115,10 @@ def _counts(snap: Snapshot) -> Dict[str, int]:
 
 
 def activity_line(snap: Snapshot, *, update_latest: Optional[str] = None) -> str:
-    """The second line, ALWAYS present: what the machine is doing, in words.
-    A running gateway: `2 conversations running · 1 needs you · 1 model
-    loaded` / `Idle · no model loaded`; other states keep the classic detail
-    (pausing, paused, starting, updating, stopping, unreachable)."""
+    """What the machine is doing, in words — the header's subtitle. A running
+    gateway: `2 conversations running · 1 needs you · 1 model loaded` / `Idle
+    · no model loaded`; other states keep the classic detail (pausing,
+    paused, starting, updating, stopping, unreachable)."""
     st = snap.gateway_state
     if st == "running":
         c = _counts(snap)
@@ -109,6 +136,29 @@ def activity_line(snap: Snapshot, *, update_latest: Optional[str] = None) -> str
     return detail or ""
 
 
+def header_view(snap: Snapshot, *, update_latest: Optional[str] = None) -> HeaderView:
+    """The native header: the name, the activity line (or the state's words
+    while it is not plainly running), and the switch — ON while
+    conversations run, OFF while paused; greyed while it cannot be told."""
+    st = snap.gateway_state
+    reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
+    word = mm.STATE_WORDS.get(st, st.title())
+    activity = activity_line(snap, update_latest=update_latest)
+    if st == "running":
+        subtitle = activity
+    else:
+        subtitle = f"{word} · {activity}" if activity else word
+    if st in {"paused", "pausing"} or snap.paused:
+        on: Optional[bool] = False
+    elif st in {"running", "updating"}:
+        on = True
+    else:
+        on = None if st == "unreachable" else True
+    enabled = reachable and st not in {"pausing", "updating"}
+    tip = "Switch off to pause: no conversation takes a new step until you switch it back on. The console keeps answering." if on is not False else "Switch on to resume the conversations."
+    return HeaderView(title=mm.APP_NAME, subtitle=subtitle, state=st, switch_on=on, switch_enabled=enabled, switch_tooltip=tip)
+
+
 def meters_line(snap: Snapshot) -> str:
     """`Memory 32% · this gateway 10.9 GB · GPU 20%` — percentages at a
     glance; the full figures (of 128 GB, the GPU's name) are in Models ▸."""
@@ -123,8 +173,20 @@ def meters_line(snap: Snapshot) -> str:
     return " · ".join(parts)
 
 
+def header_nodes(snap: Snapshot, *, native: bool, update_latest: Optional[str] = None) -> Tuple[Node, ...]:
+    """The first rows. Native (macOS): ONE `HeaderNode` carrying the view.
+    Text: the name/version/state line, then the activity line."""
+    if native:
+        return (HeaderNode(header_line(snap), None, enabled=False, view=header_view(snap, update_latest=update_latest)),)
+    out: List[Node] = [info(header_line(snap))]
+    activity = activity_line(snap, update_latest=update_latest)
+    if activity:
+        out.append(info(activity))
+    return tuple(out)
+
+
 # ---------------------------------------------------------------------------
-# Sections
+# Act
 # ---------------------------------------------------------------------------
 
 
@@ -170,39 +232,135 @@ def attention_rows(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
     return tuple(out)
 
 
-def conversations_section(snap: Snapshot, *, observer: bool, reachable: bool) -> Node:
-    """**Conversations ▸** — the complete inventory (the top-level *Needs you*
-    rows are shortcuts into it): Running, Need attention, Scheduled, Recent,
-    exactly the classic sections, and the console door."""
-    return Node("Conversations", children=mm.sessions_items(snap, observer=observer), enabled=reachable)
+# ---------------------------------------------------------------------------
+# Look
+# ---------------------------------------------------------------------------
 
 
-def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
-    """**Models ▸** — the classic section (what is loaded, Eject, Load a
-    Model) with the resource views at its foot: the full meters, *Show
-    Activity Window…* and *Open Resources in Console…* (the console tab the
-    classic *Manage Models in Console…* opened: loaded models, memory, GPU)."""
-    classic = mm.models_section(inputs, reachable=reachable)
-    kids = list(classic.children or ())
-    # Drop the classic foot (SEP, Manage Models in Console…) and rebuild it.
-    while kids and (kids[-1].separator or kids[-1].action == ("open_console_tab", "models")):
-        kids.pop()
-    snap = inputs.snap
-    kids.append(SEP)
-    detail: List[str] = []
+def conversations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
+    """**Conversations ▸** — the complete inventory of conversations (the
+    top-level *Needs you* rows are shortcuts into it): Running, Need
+    attention, Recent (the last 24 hours, `MENU_RECENT_ROWS` then one line
+    naming the rest), and the console door. Automations have their own
+    section."""
+    reachable = snap.reachable
+    groups: Dict[str, List[mm.RunRow]] = {"running": [], "attention": [], "paused": [], "done": []}
+    for row in snap.runs:
+        groups[mm.run_group(row)].append(row)
+    out: List[Node] = []
+    if snap.runs_error and not snap.runs:
+        out += [info("Conversation list unavailable"), info(mm.middle_ellipsis(str(snap.runs_error), 60))]
+    else:
+        running = groups["running"] + groups["paused"]
+        out.append(info(f"Running ({len(running)})" if running else "Running — none"))
+        for row in running:
+            out.append(Node(mm.run_row_label(row), children=mm.run_submenu(row, observer=observer, reachable=reachable)))
+        if groups["attention"]:
+            out.append(SEP)
+            out.append(info(f"Need attention ({len(groups['attention'])})"))
+            for row in groups["attention"]:
+                out.append(Node(mm.run_row_label(row), children=mm.run_submenu(row, observer=observer, reachable=reachable)))
+        done = groups["done"]
+        out.append(SEP)
+        out.append(info(mm.recent_tally(done)))
+        for row in done[: mm.MENU_RECENT_ROWS]:
+            out.append(Node(mm.run_row_label(row), children=mm.run_submenu(row, observer=observer, reachable=reachable)))
+        if len(done) > mm.MENU_RECENT_ROWS:
+            out.append(info(f"…and {len(done) - mm.MENU_RECENT_ROWS} more"))
+    out.append(SEP)
+    out.append(Node("Open Conversations in Console", ("open_runs",), enabled=reachable))
+    return tuple(out)
+
+
+def automations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
+    """**Automations ▸** — the standing orders (`GET /automations`): Active
+    (`⏱ <title> · Every day at 09:00 · next …`) and Paused, each row with the
+    classic submenu (Open in Observer, Run now, Pause / Resume), then the
+    Automations page in Observer. Nothing is computed by the tray: the
+    trigger words and the next run are the gateway's."""
+    reachable = snap.reachable
+    active = [a for a in snap.automations if a.status == "active"]
+    paused = [a for a in snap.automations if a.status == "paused"]
+    out: List[Node] = []
+    if snap.automations_error and not (active or paused):
+        out += [info("Automation list unavailable"), info(mm.middle_ellipsis(str(snap.automations_error), 60))]
+    elif not (active or paused):
+        out.append(info("No automations yet"))
+    if active:
+        out.append(info(f"Active ({len(active)})"))
+        for a in active:
+            out.append(Node(mm.automation_row_label(a), children=mm.automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+    if paused:
+        if active:
+            out.append(SEP)
+        out.append(info(f"Paused ({len(paused)})"))
+        for a in paused:
+            out.append(Node(mm.automation_row_label(a), children=mm.automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+    out.append(SEP)
+    out.append(Node("Open Automations in Observer", ("open_automations_observer",), enabled=bool(observer and reachable and snap.observer_automations_path)))
+    return tuple(out)
+
+
+def _eject_label(row: mm.ModelRow) -> str:
+    size = fmt_bytes(row.size_bytes) if row.size_bytes is not None else "size unknown"
+    bits = [size, mm.provider_label(row.provider)]
+    if row.locked:
+        bits.append("kept in memory")
+    return f"Eject {mm.short_model_name(row.name)} ({', '.join(bits)})…"
+
+
+def models_items(inputs: MenuInputs, *, reachable: bool) -> Tuple[Node, ...]:
+    """**Models ▸** — memory first. The full meters; what is in memory, one
+    *Eject X (size, engine)…* row per loaded model (the eject asks first, so
+    a direct row is safe) and *Eject All — frees N…* with several; the
+    gateway's own held-memory and pending-eject lines (classic); then *Load
+    a Model ▸* (classic: your defaults, then every installed model by
+    engine), the Activity window and the console's Resources tab."""
+    snap, mv = inputs.snap, inputs.models
+    out: List[Node] = []
+    # The meters, in full.
     if snap.mem_supported and snap.mem_used is not None and snap.mem_total:
-        detail.append(f"Memory {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})")
-    share = mm.gateway_share_bytes(snap)
-    if share is not None:
-        detail.append(f"This gateway {fmt_bytes(share)}")
+        share = mm.gateway_share_words(snap)
+        out.append(info(f"Memory {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})" + (f" · {share}" if share else "")))
     if snap.gpu_supported and snap.gpu_pct is not None:
-        detail.append(f"GPU {fmt_pct(snap.gpu_pct)} busy" + (f" · {snap.gpu_name}" if snap.gpu_name else ""))
-    for text in detail:
-        kids.append(info(text))
+        out.append(info(f"GPU {fmt_pct(snap.gpu_pct)} busy" + (f" · {snap.gpu_name}" if snap.gpu_name else "")))
+    if out:
+        out.append(SEP)
+    # What is in memory.
+    loaded = list(snap.models)
+    total = snap.models_total_bytes
+    held = mm._held_bytes(snap)
+    if loaded:
+        out.append(info(f"In memory ({len(loaded)})" + (f" · {fmt_bytes(total)}" if total else "")))
+    elif snap.models_error:
+        out.append(info(f"Loaded models unavailable: {mm.middle_ellipsis(snap.models_error, 60)}"))
+    elif held:
+        out.append(info(f"Gateway still holds {fmt_bytes(held)} (no model listed)"))
+        for text in mm.held_lines(snap):
+            out.append(info(mm.middle_ellipsis(text, 90)))
+        out.append(info("Eject the held model in the Console, or restart the gateway to free it"))
+    else:
+        out.append(info("Nothing in memory"))
+    if held and loaded:
+        out.append(info(mm.middle_ellipsis(f"Gateway memory measured by {snap.device_held_basis or 'basis not reported'}", 90)))
+    for text in mm.eject_lines(snap):
+        out.append(info(mm.middle_ellipsis(text, 90)))
+    for key in mv.loading:
+        out.append(info(f"Loading {mm.short_model_name(key.split('/', 1)[-1])}…"))
+    for row in loaded:
+        busy = row.key in mv.ejecting
+        label = f"Ejecting {mm.short_model_name(row.name)}…" if busy else _eject_label(row)
+        out.append(Node(label, ("eject", row.key), enabled=reachable and not busy))
+    if len(loaded) > 1:
+        frees = f" — frees {fmt_bytes(total)}" if total else ""
+        out.append(Node(f"Eject All{frees}…", ("eject_all",), enabled=reachable and not mv.ejecting))
+    out.append(SEP)
+    out.append(Node("Load a Model", children=mm.load_submenu(inputs, reachable=reachable), enabled=reachable))
+    out.append(SEP)
     if inputs.tk_available:
-        kids.append(Node("Show Activity Window…", ("show_activity",)))
-    kids.append(Node("Open Resources in Console…", ("open_console_tab", "models"), enabled=reachable))
-    return replace(classic, children=tuple(kids))
+        out.append(Node("Show Activity Window…", ("show_activity",)))
+    out.append(Node("Open Resources in Console…", ("open_console_tab", "models"), enabled=reachable))
+    return tuple(out)
 
 
 def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
@@ -234,6 +392,11 @@ def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     while cleaned and cleaned[-1].separator:
         cleaned.pop()
     return replace(classic, children=tuple(cleaned))
+
+
+# ---------------------------------------------------------------------------
+# Set up
+# ---------------------------------------------------------------------------
 
 
 def connect_section(inputs: MenuInputs, *, reachable: bool) -> Node:
@@ -311,6 +474,10 @@ def help_section(inputs: MenuInputs, *, reachable: bool, update_at_top: bool) ->
     return Node("Help", children=tuple(items))
 
 
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
 UPDATE_TOP_PHASES = ("checking", "available", "updating", "installed")
 
 
@@ -325,8 +492,9 @@ def update_node(inputs: MenuInputs, *, reachable: bool) -> Node:
 
 def lifecycle_nodes(inputs: MenuInputs, *, reachable: bool, update_at_top: bool) -> Tuple[Node, ...]:
     """The last section: the update's state when one is known, Pause /
-    Resume, Restart…, Quit (the product name here, the platform convention:
-    quitting stops the gateway, not just the icon)."""
+    Resume (the keyboard-reachable twin of the header's switch), Restart…,
+    Quit (the product name here, the platform convention: quitting stops the
+    gateway, not just the icon)."""
     snap = inputs.snap
     st = snap.gateway_state
     out: List[Node] = []
@@ -349,17 +517,17 @@ def lifecycle_nodes(inputs: MenuInputs, *, reachable: bool, update_at_top: bool)
 # ---------------------------------------------------------------------------
 
 
-def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
+def build_menu(inputs: MenuInputs, *, native_header: bool = False) -> Tuple[Node, ...]:
+    """`native_header=True` (macOS with AppKit): the first row is a
+    `HeaderNode` the renderer draws as logo · name · subtitle · switch;
+    otherwise the header is text lines."""
     snap = inputs.snap
     st = snap.gateway_state
     reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
     observer = mm.observer_open_available(inputs.apps)
     update_at_top = inputs.update_phase in UPDATE_TOP_PHASES
 
-    out: List[Node] = [info(header_line(snap))]
-    activity = activity_line(snap, update_latest=inputs.update_latest)
-    if activity:
-        out.append(info(activity))
+    out: List[Node] = list(header_nodes(snap, native=native_header, update_latest=inputs.update_latest))
     meters = meters_line(snap)
     if meters:
         out.append(info(meters))
@@ -374,9 +542,10 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
         out.append(SEP)
         out.extend(needs)
     out.append(SEP)
-    # Look: what is going on, what is in memory, the apps.
-    out.append(conversations_section(snap, observer=observer, reachable=reachable))
-    out.append(models_section(inputs, reachable=reachable))
+    # Look: what is going on, the standing orders, what is in memory, the apps.
+    out.append(Node("Conversations", children=conversations_items(snap, observer=observer), enabled=reachable))
+    out.append(Node("Automations", children=automations_items(snap, observer=observer), enabled=reachable))
+    out.append(Node("Models", children=models_items(inputs, reachable=reachable), enabled=reachable))
     out.append(apps_section(inputs, reachable=reachable))
     out.append(SEP)
     # Set up.
@@ -402,17 +571,23 @@ __all__ = [
     "CLASSIC",
     "STYLE",
     "STYLES",
+    "HeaderNode",
+    "HeaderView",
     "action_names",
     "activity_line",
     "attention_rows",
+    "automations_items",
     "build_menu",
     "connect_section",
+    "conversations_items",
     "header_line",
+    "header_nodes",
+    "header_view",
     "help_section",
     "lifecycle_nodes",
     "menu_style",
     "meters_line",
-    "models_section",
+    "models_items",
     "settings_section",
     "top_level_labels",
 ]

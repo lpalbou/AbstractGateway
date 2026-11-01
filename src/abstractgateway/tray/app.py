@@ -296,6 +296,11 @@ class TrayApp:
         # `serve --tray-menu classic|v2` for this run (handshake `menu_style`);
         # without it the machine's preference (prefs.json `menu_style`) decides.
         self._menu_style_flag = str(handshake.get("menu_style") or "").strip() or None
+        # macOS draws the redesign's first row as a native view (logo · name ·
+        # subtitle · switch, header_mac.py); the objects it builds live here
+        # until the next menu rebuild (AppKit keeps only weak references).
+        self._native_header = sys.platform == "darwin"
+        self._header_refs: tuple = ()
         self._icon: Any = None
         self._lock = threading.RLock()
         self._last_menu_sig: Optional[tuple] = None
@@ -435,8 +440,25 @@ class TrayApp:
         import io
 
         base = pystray.Icon
+        app = self
 
         class RetinaIcon(base):  # type: ignore[misc,valid-type]
+            def _create_menu_item(self, descriptor, callbacks):  # noqa: D401 - pystray internal
+                """The redesign's header row: a native view (header_mac.py)
+                on the NSMenuItem pystray made; the text stays as its title
+                (VoiceOver reads it). Any failure keeps the text row."""
+                item = base._create_menu_item(self, descriptor, callbacks)
+                view = getattr(descriptor, "_ag_header", None)
+                if view is not None:
+                    built = app._build_header_view(view)
+                    if built is not None:
+                        try:
+                            item.setView_(built)
+                            item.setEnabled_(True)
+                        except Exception:
+                            logger.debug("tray: header view not attached", exc_info=True)
+                return item
+
             def _assert_image(self):  # noqa: D401 - pystray internal
                 if getattr(self, "_icon_image", None) is not None:
                     return
@@ -458,6 +480,34 @@ class TrayApp:
                     base._assert_image(self)
 
         return RetinaIcon
+
+    def _build_header_view(self, view: Any) -> Any:
+        """The macOS header's NSView for a `menu_v2.HeaderView`, or None.
+        Its switch calls `header_toggle` on the GUI thread."""
+        try:
+            from .header_mac import build_header_view
+            from .logo import logo_png
+
+            built = build_header_view(view, logo_png=logo_png(), on_toggle=self.header_toggle)
+        except Exception:
+            logger.debug("tray: header view not built", exc_info=True)
+            return None
+        if built is None:
+            return None
+        nsview, keep = built
+        self._header_refs = (nsview,) + tuple(keep)
+        return nsview
+
+    def header_toggle(self, on: bool) -> None:
+        """The header switch: ON resumes, OFF pauses (the gateway-wide
+        pause — the console keeps answering, conversations wait). The same
+        handlers as the Pause / Resume rows."""
+        snap = self._snap or self.sampler.snapshot()
+        paused = bool(snap.paused or snap.gateway_state in {"paused", "pausing"})
+        if on and paused:
+            self.resume()
+        elif not on and not paused:
+            self.pause()
 
     def _install_signals(self) -> None:
         def _term(*_a: Any) -> None:
@@ -714,7 +764,7 @@ class TrayApp:
         inputs = self.menu_inputs()
         if self.menu_style() == menu_v2.CLASSIC:
             return _with_new_menu_switch(menu_model.build_menu(inputs))
-        return menu_v2.build_menu(inputs)
+        return menu_v2.build_menu(inputs, native_header=self._native_header)
 
     def _menu_items(self):
         """pystray asks for the items on every rebuild: build the pure model,
@@ -741,7 +791,14 @@ class TrayApp:
                 kw["radio"] = True
             if n.checked is not None:
                 kw["checked"] = (lambda value: (lambda _i: value))(bool(n.checked))
-            if n.children is not None:
+            if isinstance(n, menu_v2.HeaderNode) and n.view is not None:
+                # The text is the fallback (a greyed line); the macOS icon
+                # class reads `_ag_header` and draws the native view instead.
+                kw["enabled"] = False
+                item = pystray.MenuItem(n.label, None, **kw)
+                item._ag_header = n.view  # type: ignore[attr-defined]
+                out.append(item)
+            elif n.children is not None:
                 out.append(pystray.MenuItem(n.label, pystray.Menu(*self._render_nodes(n.children)), **kw))
             elif n.action is not None:
                 out.append(pystray.MenuItem(n.label, self._act((lambda a: (lambda: self.dispatch(a)))(n.action)), **kw))
@@ -788,6 +845,7 @@ class TrayApp:
             "quit": self.quit_gateway,
             "force_quit": self.force_quit,
             "eject": self.eject,
+            "eject_all": self.eject_all,
             "load": self.load_model,
             "app_open": self.app_open,
             "app_launch": self.app_launch,
@@ -975,6 +1033,29 @@ class TrayApp:
             self._info("Already unloaded", "That model is no longer in memory.")
             return
         self.unload(row)
+
+    def eject_all(self) -> None:
+        """Models ▸ Eject All: one confirmation naming what goes and what it
+        frees, then every loaded model is ejected in turn (a locked one asks
+        again, as a single eject does)."""
+        snap = self._snap or self.sampler.snapshot()
+        rows = list(snap.models)
+        if not rows:
+            self._info("Nothing in memory", "No model is loaded.")
+            return
+        total = sum(r.size_bytes or 0 for r in rows)
+        names = ", ".join(menu_model.short_model_name(r.name) for r in rows[:4]) + ("…" if len(rows) > 4 else "")
+        frees = f"This frees about {fmt_bytes(total)}." if total else "This frees the memory they use."
+        busy = " Work running on them right now is stopped first." if snap.inflight_ticks > 0 else ""
+
+        def _do() -> None:
+            def _run() -> None:
+                for r in rows:
+                    self._unload_now(r, force=False)
+
+            self._bg(_run, "tray-unload-all")
+
+        self._confirm("unload:all", "Eject All", f"Eject {len(rows)} models?", f"{names}. {frees}{busy} Each loads again from disk the next time something needs it.", ok_label="Eject All", danger=True, action=_do)
 
     def load_model(self, provider: str, model: str, task: str = "text_generation") -> None:
         key = f"{provider}/{model}"

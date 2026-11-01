@@ -40,9 +40,9 @@ def _snap(**over: Any) -> Snapshot:
     return Snapshot(**base)
 
 
-def _loaded(name="mlx-community/Qwen1.5-0.5B-Chat-4bit", provider="mlx", size=249 * (1 << 20)) -> ModelRow:
+def _loaded(name="mlx-community/Qwen1.5-0.5B-Chat-4bit", provider="mlx", size=249 * (1 << 20), locked=False) -> ModelRow:
     rid = f"local:text_generation:{provider}:{name}"
-    return ModelRow(key=rid, name=name, provider=provider, size_bytes=size, size_source="reported", locked=False, lockable=True, resident=True, target={"runtime_id": rid})
+    return ModelRow(key=rid, name=name, provider=provider, size_bytes=size, size_source="reported", locked=locked, lockable=True, resident=True, target={"runtime_id": rid})
 
 
 RUNNING = RunRow("r1", "coding-agent:coder", "running", 4, 130.0, 1.0, observer_path="/apps/observer/#run/r1", title="Refactor the sampler", title_source="prompt")
@@ -96,6 +96,7 @@ def test_the_top_level_reads_act_look_set_up_lifecycle() -> None:
         "Needs you (1)",
         "🟡 Clean the build folder · approve `execute_command`",
         "Conversations",
+        "Automations",
         "Models",
         "Apps",
         "Connect",
@@ -130,22 +131,72 @@ def test_the_activity_line_is_always_there_and_says_what_the_machine_does() -> N
     assert v2.header_line(_snap(gateway_state="paused")) == "AbstractGateway 0.18.0 — Paused"
 
 
-def test_the_meters_line_is_percentages_and_the_full_figures_live_under_models() -> None:
-    nodes = v2.build_menu(_inputs())
+def test_the_meters_line_is_percentages_and_models_leads_with_memory() -> None:
+    nodes = v2.build_menu(_inputs(snap=_snap(models=(_loaded(),), models_total_bytes=249 * (1 << 20))))
     assert "Memory 32% · this gateway 10.9 GB · GPU 20%" in _labels(nodes)
     models = _sub(nodes, "Models")
     labels = _labels(models)
-    assert "Memory 40.6 GB of 128 GB (32%)" in labels
-    assert "This gateway 10.9 GB" in labels
-    assert "GPU 20% busy · Apple M5 Max" in labels
-    assert labels[-2:] == ["Show Activity Window…", "Open Resources in Console…"]
-    assert models[-1].action == ("open_console_tab", "models")
+    assert labels == [
+        "Memory 40.6 GB of 128 GB (32%) · this gateway 10.9 GB",
+        "GPU 20% busy · Apple M5 Max",
+        "In memory (1) · 249 MB",
+        "Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX)…",
+        "Load a Model",
+        "Show Activity Window…",
+        "Open Resources in Console…",
+    ]
+    by = {n.label: n for n in models if not n.separator}
+    assert by["Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX)…"].action == ("eject", _loaded().key)
+    assert by["Load a Model"].children is not None
+    assert by["Open Resources in Console…"].action == ("open_console_tab", "models")
+    # Several loaded: one Eject row each, then Eject All with what it frees.
+    two = (_loaded(), _loaded("mlx-community/Qwen3.6-27B-4bit", size=16 * GB))
+    labels = _labels(_sub(v2.build_menu(_inputs(snap=_snap(models=two, models_total_bytes=16 * GB + 249 * (1 << 20)))), "Models"))
+    assert "In memory (2) · 16.2 GB" in labels
+    assert "Eject Qwen3.6-27B-4bit (16.0 GB, MLX)…" in labels
+    assert "Eject All — frees 16.2 GB…" in labels and labels.index("Eject All — frees 16.2 GB…") == labels.index("Load a Model") - 1
+    # One being ejected: its row says so and Eject All waits.
+    ej = {n.label: n for n in _sub(v2.build_menu(_inputs(snap=_snap(models=two), models=mm.ModelsView(ejecting=(two[0].key,)))), "Models") if not n.separator}
+    assert "Ejecting Qwen1.5-0.5B-Chat-4bit…" in ej and not ej["Ejecting Qwen1.5-0.5B-Chat-4bit…"].enabled
+    assert not ej["Eject All…"].enabled
+    # Nothing loaded: said plainly; a locked model says so in its row.
+    assert "Nothing in memory" in _labels(_sub(v2.build_menu(_inputs()), "Models"))
+    locked = _labels(_sub(v2.build_menu(_inputs(snap=_snap(models=(_loaded(locked=True),)))), "Models"))
+    assert "Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX, kept in memory)…" in locked
     # Without tkinter the Activity window row is absent, the console door stays.
     no_tk = _labels(_sub(v2.build_menu(_inputs(tk_available=False)), "Models"))
     assert "Show Activity Window…" not in no_tk and no_tk[-1] == "Open Resources in Console…"
     # A machine without meters has no meters line at all (no empty row).
     bare = v2.build_menu(_inputs(snap=_snap(mem_supported=False, mem_pct=None, mem_used=None, gpu_supported=False, gpu_pct=None, process_rss=None)))
     assert _labels(bare)[2] == "Open Console"
+
+
+def test_automations_are_their_own_section_and_conversations_keep_only_conversations() -> None:
+    paused = AutomationRow("a2", "Inbox triage", "paused", schedule_text="", capabilities=("run_now", "resume"), trigger_text="When mail arrives in me@example.org")
+    nodes = v2.build_menu(_inputs(snap=_snap(runs=(RUNNING, DONE), automations=(DAILY, paused), observer_automations_path="/apps/observer/#automations")))
+    autos = _sub(nodes, "Automations")
+    labels = _labels(autos)
+    assert labels == [
+        "Active (1)",
+        "⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00",
+        "Paused (1)",
+        "⏸ Inbox triage · paused · When mail arrives in me@example.org",
+        "Open Automations in Observer",
+    ]
+    daily = _sub(autos, "⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00")
+    assert [n.label for n in daily] == ["Active · Every day at 09:00 · next Fri 17 Oct 09:00", "Open in Observer", "Run now", "Pause"]
+    assert daily[2].action == ("auto_run_now", "a1")
+    assert autos[-1].action == ("open_automations_observer",) and autos[-1].enabled
+    conv = _labels(_sub(nodes, "Conversations"))
+    assert conv == ["Running (1)", "🟢 Refactor the sampler · step 4 · 2m 10s so far", "Recent — 1 done", "✅ Write the changelog · 7 steps · 1m 42s", "Open Conversations in Console"]
+    assert not any("Scheduled" in l or "⏱" in l for l in conv)
+    # No automations: said; Observer absent: the door is greyed.
+    none = v2.build_menu(_inputs(snap=_snap(), apps=()))
+    labels = _labels(_sub(none, "Automations"))
+    assert labels == ["No automations yet", "Open Automations in Observer"]
+    assert not _sub(none, "Automations")[-1].enabled
+    err = _labels(_sub(v2.build_menu(_inputs(snap=_snap(automations_error="boom"))), "Automations"))
+    assert err[0] == "Automation list unavailable" and err[1] == "boom"
 
 
 # ------------------------------------------------------------- needs you
@@ -347,6 +398,7 @@ def test_the_app_picks_the_menu_and_the_switch_is_remembered(tmp_path: Path) -> 
     app._force_menu_rebuild = lambda: rebuilt.append(1)  # type: ignore[method-assign]
     app._info = lambda *a, **k: None  # type: ignore[method-assign]
     assert app.menu_style() == "v2"
+    app._native_header = False
     assert _labels(app.menu_nodes())[3] == "Open Console" and "Needs you (1)" in _labels(app.menu_nodes())
     # Settings ▸ Classic menu: the preference is written, the menu rebuilt, the classic shape shows…
     app.dispatch(("set_menu_style", "classic"))
@@ -388,3 +440,87 @@ def test_the_serve_flag_reaches_the_handshake(monkeypatch: pytest.MonkeyPatch) -
     assert ns.tray_menu == "classic"
     with pytest.raises((SystemExit, argparse.ArgumentError)):
         parser.parse_args(["serve", "--tray-menu", "legacy"])
+
+
+# ---------------------------------------------------------------- the header
+
+
+def test_the_native_header_carries_logo_name_subtitle_and_switch() -> None:
+    snap = _snap(runs=(RUNNING, APPROVAL), models=(_loaded(),))
+    nodes = v2.build_menu(_inputs(snap=snap), native_header=True)
+    head = nodes[0]
+    assert isinstance(head, v2.HeaderNode) and head.view is not None
+    assert head.label == "AbstractGateway 0.18.0 — Running"  # the text VoiceOver reads / the fallback
+    assert not head.enabled and head.action is None
+    assert head.view.title == "AbstractGateway"
+    assert head.view.subtitle == "1 conversation running · 1 needs you · 1 model loaded"
+    assert head.view.switch_on is True and head.view.switch_enabled
+    # ONE header row: the activity line is the subtitle, not a second row; the meters follow.
+    assert _labels(nodes)[1] == "Memory 32% · this gateway 10.9 GB · GPU 20%"
+    # Text header (Windows, Linux): two information lines, no HeaderNode.
+    text = v2.build_menu(_inputs(snap=snap), native_header=False)
+    assert not isinstance(text[0], v2.HeaderNode)
+    assert _labels(text)[:2] == ["AbstractGateway 0.18.0 — Running", "1 conversation running · 1 needs you · 1 model loaded"]
+
+
+def test_the_header_switch_follows_the_pause_state() -> None:
+    assert v2.header_view(_snap()).switch_on is True
+    paused = v2.header_view(_snap(gateway_state="paused", paused=True))
+    assert paused.switch_on is False and paused.switch_enabled and paused.subtitle == "Paused · Paused — conversations wait until you resume"
+    pausing = v2.header_view(_snap(gateway_state="pausing", inflight_ticks=1))
+    assert pausing.switch_on is False and not pausing.switch_enabled
+    down = v2.header_view(_snap(gateway_state="unreachable", reachable=False))
+    assert down.switch_on is None and not down.switch_enabled and down.subtitle.startswith("Not responding")
+    starting = v2.header_view(_snap(gateway_state="starting", reachable=False))
+    assert starting.switch_on is True and not starting.switch_enabled
+
+
+def test_the_header_toggle_and_eject_all_go_through_the_same_handlers(tmp_path: Path) -> None:
+    from abstractgateway.tray import app as tray_app
+
+    app = tray_app.TrayApp({"base_url": "http://127.0.0.1:18840", "token": "t", "data_dir": str(tmp_path)})
+    calls: List[str] = []
+    app.pause = lambda: calls.append("pause")  # type: ignore[method-assign]
+    app.resume = lambda: calls.append("resume")  # type: ignore[method-assign]
+    app._snap = _snap()
+    app.header_toggle(False)
+    app.header_toggle(True)  # already running: nothing
+    app._snap = _snap(gateway_state="paused", paused=True)
+    app.header_toggle(True)
+    app.header_toggle(False)  # already paused: nothing
+    assert calls == ["pause", "resume"]
+    assert "eject_all" in app.dispatch_table()
+    # Eject All: one confirmation, then every row through the single-eject path.
+    two = (_loaded(), _loaded("mlx-community/Qwen3.6-27B-4bit", size=16 * GB))
+    app._snap = _snap(models=two, models_total_bytes=16 * GB)
+    confirms: List[tuple] = []
+    unloaded: List[str] = []
+    app._confirm = lambda key, short, title, body, ok_label="", danger=False, action=None: confirms.append((key, title, body, ok_label)) or action()  # type: ignore[method-assign]
+    app._bg = lambda fn, name="": fn()  # type: ignore[method-assign]
+    app._unload_now = lambda row, force=False: unloaded.append(row.name)  # type: ignore[method-assign]
+    app.dispatch(("eject_all",))
+    assert confirms[0][0] == "unload:all" and confirms[0][1] == "Eject 2 models?" and "16.2 GB" in confirms[0][2]
+    assert unloaded == [two[0].name, two[1].name]
+
+
+def test_the_macos_header_view_builds_with_logo_and_switch() -> None:
+    pytest.importorskip("AppKit")  # macOS with the pyobjc Cocoa bindings (the tray extra)
+    from abstractgateway.tray.header_mac import build_header_view
+    from abstractgateway.tray.logo import logo_png
+
+    assert logo_png()[:8] == b"\x89PNG\r\n\x1a\n"
+    toggles: List[bool] = []
+    built = build_header_view(v2.header_view(_snap(models=(_loaded(),))), logo_png=logo_png(), on_toggle=toggles.append)
+    assert built is not None
+    view, keep = built
+    import AppKit
+
+    subviews = list(view.subviews())
+    assert sum(isinstance(sv, AppKit.NSImageView) for sv in subviews) == 1
+    assert sum(isinstance(sv, AppKit.NSSwitch) for sv in subviews) == 1
+    assert sum(isinstance(sv, AppKit.NSTextField) for sv in subviews) == 2
+    sw = next(sv for sv in view.subviews() if isinstance(sv, AppKit.NSSwitch))
+    assert sw.state() == AppKit.NSControlStateValueOn and sw.isEnabled()
+    sw.setState_(AppKit.NSControlStateValueOff)
+    sw.target().toggled_(sw)
+    assert toggles == [False]
