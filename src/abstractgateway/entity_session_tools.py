@@ -372,19 +372,30 @@ def wrap_entity_tool_handler(delegate: Any):
         if not isinstance(calls, list):
             return EffectOutcome.failed("tool_calls must be a list")
         allowed = [c for c in calls if modes.get(_call_name(c), "off") in ("auto", "approve")]
+        public_action = None
+        if "public_action" in payload:
+            from abstractruntime.integrations.abstractcore.effect_handlers import approval_public_action
+
+            public_action = approval_public_action(run, payload, calls, allowed)
         approved = _approved_batch.get() == (run.run_id, _fingerprint(calls))
         needs_approval = any(modes.get(_call_name(c)) == "approve" for c in allowed)
         if needs_approval and not approved:
             wait_key = build_tool_approval_wait_key(run_id=run.run_id, node_id=run.current_node,
                 effect_seq=payload.get("act_seq"), tool_calls=calls)
+            details = {"mode": "approval_required", "tool_calls": copy.deepcopy(allowed),
+                       "entity_session_tools": True, "original_payload": copy.deepcopy(payload)}
+            if public_action is not None:
+                details["public_action"] = public_action
             return EffectOutcome.waiting(WaitState(reason=WaitReason.USER, wait_key=wait_key,
                 resume_to_node=default_next_node, result_key=effect.result_key,
                 prompt="Allow these tools for this step?", choices=["Approve", "Deny"],
-                details={"mode": "approval_required", "tool_calls": copy.deepcopy(allowed),
-                         "entity_session_tools": True, "original_payload": copy.deepcopy(payload)}))
+                details=details))
         if not allowed:
             return EffectOutcome.completed({"mode": "executed", "results": [refusal(c, "Tool is off for this conversation.") for c in calls]})
         forwarded = {**payload, "tool_calls": allowed}
+        forwarded.pop("public_action", None)
+        if public_action is not None:
+            forwarded["public_action"] = public_action
         # The delegate still re-resolves the home's grant and mailbox switch.
         outcome = delegate(run, Effect(type=effect.type, payload=forwarded, result_key=effect.result_key), default_next_node)
         result = outcome.result

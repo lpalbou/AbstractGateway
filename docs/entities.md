@@ -207,6 +207,12 @@ Read `GET /api/gateway/entities/{name}/visit/{run_id}/state`. In conversational 
   applicable, `wait_key`, prompt, choices, `allow_free_text`, `until` and `details.question`.
   When present it is also the `pending_wait`. All pending waits carry their actual `run_id`.
 
+A permission `pending_wait.details.public_action`, when present, carries the actor’s
+explicit public explanation (`text`, `update_id`, `run_id`, `iteration`, `call_ids`).
+It is bound to the exact pending batch and narrowed when the session tool policy
+withholds actions. It grants no permission and does not prove execution. A missing
+explanation must not be reconstructed from private thoughts or another update.
+
 This is a participant-facing projection over the owned visit and verified descendants,
 bounded to 32 runs. Clients must not read the entity home's raw ledger or diary to render it.
 Explicit public events still undergo server-side diary/thinking-fence screening; an event

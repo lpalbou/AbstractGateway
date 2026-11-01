@@ -117,6 +117,10 @@ Set strict JSON `conversation: true` when starting a task, summoning a Flow work
 or opening a canonical entity visit. Render only explicit `public_update` messages from
 the replay view (tasks/Flow) or `visit/{id}/state.public_updates` (driver visits); never
 promote reasoning or raw diary records into public speech.
+For a pending permission request, `details.public_action` is an optional public
+explanation bound to its actor run and exact `call_ids`. Preserve it through the
+entity session gate, including narrowed tool subsets. It is the actor’s stated
+purpose, not evidence that an action happened. Missing context stays missing.
 
 Use `inject_guidance` payload `{guidance: "context and correction", display_text: "original human words"}`
 for task/Flow corrections. Only explicit display text creates public human history. For driver
