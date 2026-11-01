@@ -279,7 +279,7 @@ def test_the_family_card_renders_two_launchers_with_their_badges() -> None:
     assert 'data-app-card="family:assistant"' in card and 'data-app-card="assistant"' not in card
     assert '<div class="ui-card__title">Assistant</div>' in card
     sentence = am.APP_BY_ID["assistant-web"].description
-    assert f'<div class="ui-card__blurb" title="{sentence}">{sentence}</div>' in card  # clamped to two lines, the whole sentence in its title
+    assert f'<div class="ui-card__blurb">{sentence}</div>' in card  # clamped to two lines, no hover tooltip
     row = card[card.index('class="ui-card__actions"'):card.index('class="ui-card__tech"')]
     launchers = [b for b in _buttons(row) if 'data-app-launch="' in b]
     assert [re.search(r'data-app-launch="(\w+)"', b).group(1) for b in launchers] == ["browser", "desktop"]
@@ -378,8 +378,12 @@ const appStore = { jobs: new Map(), busy: new Set(), pending: new Map(), notices
 const APP_PENDING = { "runtime-install": "Starting..." };
 function uiPill(label, tone) { return `<span class="ui-pill tone-${tone}">${label}</span>`; }
 function uiProgressMarkup() { return "<progress></progress>"; }
+let TECH = false; function uiShowAdvanced() { return TECH; }
 FUNCTIONS
 const out = {};
+out.readyPlain = appRuntimeMarkup({ runtime: { node: { available: true, version: "24.14.0", source: "system", path: "/usr/local/bin/node" } } });
+out.missingPlain = appRuntimeMarkup({ runtime: { node: { available: false, install_available: true } } });
+TECH = true;
 out.ready = appRuntimeMarkup({ runtime: { node: { available: true, version: "24.14.0", source: "system", path: "/usr/local/bin/node" } } });
 out.missing = appRuntimeMarkup({ runtime: { node: { available: false, install_available: true } } });
 out.installing = appRuntimeMarkup({ runtime: { node: { available: false, active_job: { id: "j", state: "running", percent: 40 } } } });
@@ -388,10 +392,12 @@ out.failed = appRuntimeMarkup({ runtime: { node: { available: false, install_ava
 console.log(JSON.stringify([out]));
 """.replace("FUNCTIONS", functions)
     out = _node(script)[0]
+    assert out["readyPlain"] == ""  # ready, Technical details off: nothing at all
+    assert '<article class="ui-card ui-runtime-row' in out["missingPlain"]  # it needs the user: always the card
     ready = out["ready"]
     assert "<article" not in ready and "ui-card" not in ready and "ui-mark" not in ready
     assert 'data-runtime-state="ready"' in ready and "Node.js 24.14.0 · found on this computer" in ready
-    assert 'class="ui-ellip ui-advanced"' in ready  # the path: Technical details only
+    assert "/usr/local/bin/node" in ready
     for key in ("missing", "installing", "failed"):
         assert '<article class="ui-card ui-runtime-row' in out[key], key
     assert 'data-app-action="runtime-install"' in out["missing"] and ">Install Node.js</button>" in out["missing"]
@@ -407,3 +413,22 @@ def test_card_styles_clamp_the_description_and_fade_the_illustration() -> None:
     fade = re.search(r"\.ui-app-card__art::after \{([^}]*)\}", CONSOLE_UI_CSS)
     assert fade and "linear-gradient(to bottom, transparent, var(--bg-card" in fade.group(1)
     assert ".ui-card__blurb.is-oneline" not in CONSOLE_UI_CSS
+
+
+def test_the_apps_toolbar_is_one_line_of_icon_buttons() -> None:
+    source = _console_source()
+    view = _slice_function(source, "appViewMarkup")
+    assert "Apps open in your browser" not in source and "already signed in to this gateway" not in view
+    assert 'data-app-action="refresh" aria-label="Refresh" data-af-tip="Check installed apps and updates again"' in view
+    assert "${ICONS.refresh}" in view and '"Check again"' not in view
+    card = _slice_function(source, "appCardMarkup")
+    assert "ui-app-card__chip" not in source and 'class="ui-card__blurb" title=' not in card
+
+
+def test_registry_descriptions_fit_the_two_line_ceiling() -> None:
+    """Two lines of the card at the 3-column desktop width hold ~96
+    characters: every description stays within 92, so none is cut ("…")."""
+    from abstractgateway.apps_desktop import DESKTOP_APPS
+
+    for spec in [*am.APPS, *DESKTOP_APPS]:
+        assert len(spec.description) <= 92, (spec.id, len(spec.description))

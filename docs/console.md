@@ -843,7 +843,7 @@ The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in [apps.md](./apps.md)). What a plain user sees on
 each card: the app's illustration, its mark, name and status badge (Not
 installed, Stopped, Running, Installing, Stopped unexpectedly, Keeps
-crashing), its description (two lines; the whole sentence on hover), and one
+crashing), a one-sentence description (two lines at most), and one
 row of launchers.
 Each launcher says where it opens: a globe for the web browser, a monitor for
 an app on the gateway's computer, `>_` for a terminal. An app family is one
@@ -855,14 +855,14 @@ and on that card each Install says what it installs (**Install browser app**,
 **Install desktop app**). When the gateway cannot list its apps, the tab shows
 the reason only. The words and
 pictures come from the gateway's app registry ([apps.md](./apps.md#registering-an-app)).
-The button rows of the cards side by side are always at the same height. Above
-the cards, one line names where the apps open: this browser's own address
-plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
-address the browser used to reach the gateway. Under it, Node.js (what the browser apps
-run on) is one quiet line when it is ready ("Node.js 24.14.0 · found on this
-computer", its path under **Technical details**); it becomes a card with
-**Install Node.js** only when it is missing, while it installs, or after a
-failed install.
+The button rows of the cards side by side are always at the same height. At
+the top right, **Refresh** (an icon button: it asks again which apps are
+installed and whether updates exist) sits beside the Apps settings gear. Apps
+open at this browser's own address plus `/apps/<app>/`, whatever address the
+browser used to reach the gateway. Node.js (what the browser apps run on) is a
+card with **Install Node.js** only when it is missing, while it installs, or
+after a failed install; when it is ready, **Technical details** show it as one
+quiet line ("Node.js 24.14.0 · found on this computer" and its path).
 
 | The app is | The action row |
 |---|---|

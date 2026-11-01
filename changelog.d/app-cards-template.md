@@ -12,9 +12,9 @@
   copy running, quit to run a new version) beside its own button, and each Install says what it installs.
 - **The Apps tab's error state shows the reason only**: the console no longer carries its own list of apps.
 - **Node.js on the Apps tab is a card only when it needs you** (missing, installing, a failed install); ready, it
-  is one quiet line ("Node.js 24.14.0 · found on this computer"). Every app card gives its description two lines
-  (the whole sentence on hover), its illustration fades into the card with the app's mark as a small chip on it,
-  and the status badge is quieter.
+  is one quiet line under **Technical details**. The Apps toolbar is one line at the top right: a **Refresh** icon
+  button and the settings gear. Every app card gives its description (one richer sentence per app) exactly two
+  lines, its illustration fades into the card, and the status badge is quieter.
 
 ### Added
 

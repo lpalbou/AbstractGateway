@@ -148,12 +148,10 @@ CONSOLE_UI_CSS = r"""
     .ui-app-card__art:empty::after { display: none; }
     .ui-app-card__art > img { display: block; width: 100%; height: 100%; max-width: 100%; object-fit: cover; }
     .ui-app-card__artmark { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 750; font-size: 40px; letter-spacing: -.03em; color: var(--accent); opacity: .55; }
-    /* The mark on an illustrated card: a small chip on the picture's bottom-left corner. */
-    .ui-app-card__chip { position: absolute; left: 14px; bottom: 10px; z-index: 1; padding: 2px 8px; border-radius: var(--radius-md); font-size: var(--font-size-xs); font-weight: 750; letter-spacing: -.01em; line-height: 1.5; color: var(--accent); background: var(--accent-subtle); background: color-mix(in srgb, var(--bg-card, var(--bg-secondary)) 70%, transparent); border: 1px solid var(--accent-border, var(--ui-border-2)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
     /* Without an illustration: a smaller, lighter mark tile in the head. */
     .ui-app-card .ui-card__head .ui-mark { flex-basis: 34px; width: 34px; height: 34px; font-size: 12px; opacity: .85; }
     .ui-app-card .ui-card__titles { min-height: 34px; }
-    /* Exactly two lines of description on every card (the whole sentence in its title). */
+    /* Exactly two lines of description on every card (the registry's sentences fill them). */
     .ui-app-card .ui-card__blurb { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; box-sizing: content-box; min-height: 2.9em; }
     /* A quieter status badge: text and dot, a thin border, no fill. */
     .ui-app-card .ui-card__status .ui-pill, .ui-app-member .ui-pill { background: transparent; border-color: var(--ui-border-1); font-weight: 550; }
@@ -163,7 +161,11 @@ CONSOLE_UI_CSS = r"""
       .ui-app-card:hover { border-color: var(--ui-border-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .16); transform: translateY(-2px); }
     }
     @media (prefers-reduced-motion: reduce) { .ui-app-card, .ui-app-card:hover { transition: none; transform: none; } }
-    /* Node.js when it is ready: one quiet line under the toolbar, no card. */
+    /* The Apps toolbar: icon buttons at the top right of the page content. */
+    .ui-apps-toolbar { justify-content: flex-end; gap: 8px; }
+    .ui-icon-btn.is-loading svg { animation: afspin .8s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .ui-icon-btn.is-loading svg { animation: none; } }
+    /* Node.js when it is ready (Technical details on): one quiet line, no card. */
     .ui-runtime-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .ui-runtime-line__dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 999px; background: var(--success); }
     .ui-runtime-line > code { max-width: 100%; font-size: var(--font-size-xs); }
@@ -1890,8 +1892,8 @@ CONSOLE_UI_JS = r"""
     // Node.js: a card ONLY when it needs the user — missing (its Install,
     // POST /apps/runtime/install, the same job bar as the apps), installing,
     // or a failed install (the reason, and Install again). Ready, it is one
-    // quiet line under the toolbar: version and where it was found (the path
-    // under Technical details).
+    // quiet line under the toolbar, with Technical details on only: version,
+    // where it was found, the path.
     function appRuntimeMarkup(d) {
       const node = ((d && d.runtime) || {}).node || {};
       const admin = !!(state.principal && state.principal.admin);
@@ -1899,11 +1901,12 @@ CONSOLE_UI_JS = r"""
       const busy = appStore.busy.has("__node__");
       const SOURCES = { system: "found on this computer", managed: "installed by the gateway", none: "" };
       if (node.available && !appJobActive(job)) {
+        if (!uiShowAdvanced()) return appNoticeMarkup("__node__");
         const facts = [`Node.js${node.version ? ` ${esc(node.version)}` : ""}`];
         if (SOURCES[node.source]) facts.push(esc(SOURCES[node.source]));
         return `<div class="ui-runtime-line" data-app-runtime="node" data-runtime-state="ready" role="status">`
           + `<span class="ui-runtime-line__dot" aria-hidden="true"></span><span class="ui-runtime-line__text">${facts.join(" · ")}</span>`
-          + (node.path ? `<code class="ui-ellip ui-advanced" title="${esc(node.path)}">${esc(node.path)}</code>` : "")
+          + (node.path ? `<code class="ui-ellip" title="${esc(node.path)}">${esc(node.path)}</code>` : "")
           + `</div>` + appNoticeMarkup("__node__");
       }
       let pill;
@@ -2161,18 +2164,18 @@ CONSOLE_UI_JS = r"""
       }
       const all = Array.from(parts.values());
       const tint = all.some((p) => p.busy) ? " is-busy" : (all.some((p) => p.attention) ? " is-attention" : "");
-      // The mark: a small chip on the illustration's corner, the large mark
-      // in its place when the card has none but a neighbour has, a tile in
-      // the head only when no card of the grid has an illustration.
+      // The mark: never on an illustration; the large mark in its place when
+      // the card has none but a neighbour has, a tile in the head only when no
+      // card of the grid has an illustration.
       const art = card.illustration_url
-        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async"><span class="ui-app-card__chip" aria-hidden="true">${esc(card.mark || "")}</span>`
+        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async">`
         : (withArt ? `<span class="ui-app-card__artmark" aria-hidden="true">${esc(card.mark || "")}</span>` : "");
       const desc = card.description || "";
       return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(card.family ? `family:${card.family}` : card.id)}"${card.family ? ` data-app-family="${esc(card.family)}"` : ""}>`
         + `<div class="ui-app-card__art">${art}</div>`
         + `<div class="ui-card__head">${art ? "" : `<span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`}`
         + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${head.badge}</span></div></div>`
-        + `<div class="ui-card__blurb" title="${esc(desc)}">${esc(desc)}</div>`
+        + `<div class="ui-card__blurb">${esc(desc)}</div>`
         + `<div class="ui-card__body">${head.body}</div>`
         + `<div class="ui-card__actions">${row}</div>`
         + `<div class="ui-card__tech">${tech}</div>`
@@ -2188,11 +2191,10 @@ CONSOLE_UI_JS = r"""
       if (!appStore.data) return `<div class="ui-empty">Looking for the apps...</div>`;
       const d = appStore.data;
       const node = ((d.runtime || {}).node) || {};
-      // Apps are served THROUGH the gateway (app_proxy.py): the address is
-      // this browser's own origin + /apps/<id>/, wherever it reached us.
-      const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
-      let intro = `<div class="ui-toolbar"><span data-apps-base>Apps open in your browser at <code class="ui-ellip">${esc(appsBase)}…</code>, already signed in to this gateway.</span>`
-        + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button>`
+      // ONE line, top right, as on every list page: Refresh (spinning while it
+      // reads) and the Apps settings gear. Nothing explanatory.
+      let intro = `<div class="ui-toolbar ui-apps-toolbar">`
+        + `<button type="button" class="ui-btn is-ghost ui-icon-btn${appStore.loading ? " is-loading" : ""}" data-app-action="refresh" aria-label="Refresh" data-af-tip="Check installed apps and updates again"${appStore.loading ? ' disabled aria-busy="true"' : ""}><span class="button-icon" aria-hidden="true">${ICONS.refresh}</span></button>`
         + (state.principal && state.principal.admin ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="apps-settings" aria-label="Apps settings" data-af-tip="Settings shared by every app (Node.js, ports, registries)"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>` : "")
         + `</div>`;
       intro += appRuntimeMarkup(d);

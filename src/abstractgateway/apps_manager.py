@@ -164,19 +164,19 @@ class AppSpec:
 
 
 APPS: Tuple[AppSpec, ...] = (
-    AppSpec("observer", "Observer", "@abstractframework/observer", "Watch runs live, replay them and steer running work.", STACK_PORT["observer"], "abstractobserver", "ABSTRACTOBSERVER_GATEWAY_URL", "AbstractObserver",
+    AppSpec("observer", "Observer", "@abstractframework/observer", "Watch your agents work in real time: follow each run, replay it and step in to steer.", STACK_PORT["observer"], "abstractobserver", "ABSTRACTOBSERVER_GATEWAY_URL", "AbstractObserver",
             mark="Ob", illustration="observer.webp"),
-    AppSpec("continuum", "Continuum", "@abstractframework/continuum", "Your backlog, inbox and long-running processes, in one place.", STACK_PORT["continuum"], "abstractcontinuum", "ABSTRACTCONTINUUM_GATEWAY_URL", "AbstractContinuum",
+    AppSpec("continuum", "Continuum", "@abstractframework/continuum", "Your backlog, inbox and long-running processes in one place, tracked against this gateway.", STACK_PORT["continuum"], "abstractcontinuum", "ABSTRACTCONTINUUM_GATEWAY_URL", "AbstractContinuum",
             mark="Cn", illustration="continuum.webp"),
-    AppSpec("code", "Code", "@abstractframework/code", "A coding assistant whose sessions survive restarts.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode",
+    AppSpec("code", "Code", "@abstractframework/code", "A coding assistant with durable sessions: restart anytime and pick up where you left off.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode",
             mark="Co", illustration="code.webp"),
-    AppSpec("entity", "Entity", "@abstractframework/entity", "Create entities and talk with them as they learn.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity",
+    AppSpec("entity", "Entity", "@abstractframework/entity", "Create entities whose memory grows as you talk; see what they learn and how it connects.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity",
             mark="En", illustration="entity.webp"),
-    AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Design workflows visually and run them here.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow",
+    AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Design workflows visually, run them here and reuse them in agents and automations.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow",
             mark="Fl", illustration="flow.webp"),
-    AppSpec("note", "Note", "@abstractframework/note", "Capture anything; see how it connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote",
+    AppSpec("note", "Note", "@abstractframework/note", "Capture anything in a line, then see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote",
             mark="No", illustration="note.webp"),
-    AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant", "Chat or talk with the Assistant, with shared conversations, voice and approvals.", STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant",
+    AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant", "Chat or talk with the Assistant, in the browser or on this Mac, with voice and approvals.", STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant",
             mark="As", illustration="assistant.webp", family="assistant"),
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}

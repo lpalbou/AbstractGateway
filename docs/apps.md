@@ -29,7 +29,7 @@ be installed and started, but every `/api/gateway/note/` request answers 404 and
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 
 A card shows the app's illustration, its mark, name and status badge, its
-description (two lines; the whole sentence on hover) and one row of launchers. Each launcher says
+description (two lines at most) and one row of launchers. Each launcher says
 where it opens: a globe for the web browser (**Open in browser**), a monitor for
 an app on the gateway's computer (**Open on this Mac**), `>_` for a terminal
 (**Open in Terminal**). On a card, a plain user sees one button for the state
@@ -78,7 +78,7 @@ it renders what the registry declares.
 | Field | What it is |
 |---|---|
 | `name` | The app's name (the card title, unless a family names the card). |
-| `description` | One short, complete sentence: what the app is for. Every card gives it two lines (a longer sentence is cut, whole on hover), so the cards of a row line up. |
+| `description` | One complete sentence in plain language, at most 92 characters: what the app is for. Every card gives it exactly two lines, so the cards of a row line up. |
 | `mark` | The two letters of the card's mark tile. |
 | `illustration` | A file name under `src/abstractgateway/console_assets/apps/` (16:9 WebP, 768×432), or `None`. |
 | `family` | Optional. Apps of one family share ONE card; `APP_FAMILIES` in `apps_manager.py` gives the family's card title. |
@@ -87,7 +87,7 @@ The Assistant's two entries, for example:
 
 ```python
 AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant",
-        "Chat or talk with the Assistant, with shared conversations, voice and approvals.",
+        "Chat or talk with the Assistant, in the browser or on this Mac, with voice and approvals.",
         STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant",
         mark="As", illustration="assistant.webp", family="assistant")
 
@@ -155,7 +155,7 @@ the npm registry (`dist-tags.latest`), the Assistant from PyPI
 npm registry, PyPI and GitHub (the terminal apps' releases): an answer is
 reused for 10 minutes, a failure for 1 minute, then the registry is asked
 again, so a version published while the gateway runs shows up within 10
-minutes without a restart (**Check again** asks the gateway at once, still
+minutes without a restart (**Refresh** on the Apps page asks the gateway at once, still
 through that cache). `update_available` is true when that version is newer
 than the installed one (semantic versions, prereleases before their release).
 
