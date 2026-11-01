@@ -625,7 +625,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         def _start_tray_when_bound() -> None:
             if not _wait_until_bound(server):
                 return
-            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision)
+            extra = {"menu_style": str(args.tray_menu)} if getattr(args, "tray_menu", None) else None
+            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision, extra=extra)
             if st.get("running"):
                 _stderr(f"Desktop tray: started (pid {st.get('pid')}); console at {base_url}/console")
             else:
@@ -961,6 +962,15 @@ def main(argv: list[str] | None = None) -> None:
         dest="tray",
         help="Show the menu bar / tray icon for this run although it was not started as the machine's gateway "
         "service (a `serve` from a terminal, a test or a script shows none).",
+    )
+    serve.add_argument(
+        "--tray-menu",
+        choices=["v2", "classic"],
+        default=None,
+        dest="tray_menu",
+        help="Which menu the tray icon shows for this run: the redesigned menu (v2, the default) or the previous "
+        "layout (classic). Without the flag, <data dir>/tray/prefs.json `menu_style` decides (Settings ▸ Classic "
+        "menu / Help ▸ New menu write it).",
     )
     serve.add_argument(
         "--watchdog-seconds",

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ..apps_manager import app_launch_config
-from . import apps as tray_apps, dialogs, menu_model, platform as plat
+from . import apps as tray_apps, dialogs, menu_model, menu_v2, platform as plat
 from .client import GatewayClient, Result
 from .events import AttentionLedger, AttentionNotice, EventFollower, is_automation_event
 from .icons import icon_signature, master_size_for_platform, render_icon
@@ -107,6 +107,21 @@ def instance_title(text: str, instance: str) -> str:
     if not name or name == "default" or not text.startswith(APP_NAME):
         return text
     return (f"{APP_NAME} ({name})" + text[len(APP_NAME):])[:120]
+
+
+def _with_new_menu_switch(nodes: tuple) -> tuple:
+    """The classic menu plus Help ▸ *New menu* (before About): the way back
+    to the redesign without editing prefs.json. Everything else is the
+    classic menu as `menu_model.build_menu` made it."""
+    out = []
+    for n in nodes:
+        if n.label == "Help" and n.children is not None:
+            kids = list(n.children)
+            at = next((i for i, k in enumerate(kids) if k.separator), len(kids))
+            kids[at:at] = [Node("New menu", ("set_menu_style", menu_v2.STYLE), checked=False)]
+            n = dataclasses.replace(n, children=tuple(kids))
+        out.append(n)
+    return tuple(out)
 
 
 def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
@@ -278,6 +293,9 @@ class TrayApp:
         self.client = GatewayClient(self.base_url, self.token)
         self.sampler = Sampler(self.client, version=self.version)
         self.prefs = Prefs(self.data_dir)
+        # `serve --tray-menu classic|v2` for this run (handshake `menu_style`);
+        # without it the machine's preference (prefs.json `menu_style`) decides.
+        self._menu_style_flag = str(handshake.get("menu_style") or "").strip() or None
         self._icon: Any = None
         self._lock = threading.RLock()
         self._last_menu_sig: Optional[tuple] = None
@@ -683,11 +701,26 @@ class TrayApp:
             network=dataclasses.replace(self._network, busy=self._network_busy),
         )
 
+    def menu_style(self) -> str:
+        """`v2` (the 2026-11-01 redesign, `menu_v2.py`) or `classic`
+        (`menu_model.py`, kept whole for a roll-back): the launch flag wins for
+        this run, else the machine's preference, else the redesign."""
+        return menu_v2.menu_style(flag=self._menu_style_flag, prefs=self.prefs.data.get("menu_style"))
+
+    def menu_nodes(self) -> tuple:
+        """The menu as nodes, in the chosen style. The classic menu gets ONE
+        extra row (Help ▸ *New menu*) so the way back is a click, not a file
+        edit; `menu_model.build_menu` itself is untouched."""
+        inputs = self.menu_inputs()
+        if self.menu_style() == menu_v2.CLASSIC:
+            return _with_new_menu_switch(menu_model.build_menu(inputs))
+        return menu_v2.build_menu(inputs)
+
     def _menu_items(self):
         """pystray asks for the items on every rebuild: build the pure model,
         render it. `flat_menu` (tray prefs) is the explicit degrade for panels
         that drop submenus."""
-        nodes = menu_model.build_menu(self.menu_inputs())
+        nodes = self.menu_nodes()
         if self.prefs.data.get("flat_menu"):
             nodes = menu_model.flatten(nodes)
         for item in self._render_nodes(nodes):
@@ -750,6 +783,7 @@ class TrayApp:
             "open_url": plat.open_url,
             "copy_console_link": self.copy_console_link,
             "toggle_memory_warn": self.toggle_memory_warn,
+            "set_menu_style": self.set_menu_style,
             "about": self.about,
             "quit": self.quit_gateway,
             "force_quit": self.force_quit,
@@ -783,6 +817,7 @@ class TrayApp:
             tuple(sorted(self._loading)),
             tuple(sorted(self._ejecting)),
             bool(self.prefs.data.get("flat_menu")),
+            self.menu_style(),
             self._network,
             self._network_busy,
         )
@@ -1512,6 +1547,20 @@ class TrayApp:
     def toggle_memory_warn(self) -> None:
         self.prefs.data["memory_warn"] = not bool(self.prefs.data.get("memory_warn", True))
         self.prefs.save()
+
+    def set_menu_style(self, style: str) -> None:
+        """Settings ▸ *Classic menu* / Help ▸ *New menu*: remember the choice
+        for this machine and rebuild the menu now. A launch flag for this run
+        still wins (the tooltip of the menu says nothing; the next open shows
+        the chosen style when no flag pins it)."""
+        word = str(style or "").strip().lower()
+        if word not in menu_v2.STYLES:
+            raise ValueError(f"tray: unknown menu style {style!r}")
+        self.prefs.data["menu_style"] = word
+        self.prefs.save()
+        if self._menu_style_flag and self._menu_style_flag != word:
+            self._info("Menu style saved for next time", f"This run was started with --tray-menu {self._menu_style_flag}; the {word} menu shows when the gateway starts without that flag.")
+        self._force_menu_rebuild()
 
     def pause(self) -> None:
         self.sampler.set_override("pausing")

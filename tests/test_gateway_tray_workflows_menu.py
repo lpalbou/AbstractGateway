@@ -340,7 +340,8 @@ def test_the_menu_has_one_console_door_a_workflows_section_and_unannotated_help(
     stub.MenuItem = _MenuItem  # type: ignore[attr-defined]
     stub.Menu = _Menu  # type: ignore[attr-defined]
 
-    app = tray_app.TrayApp({"base_url": "http://127.0.0.1:8080", "token": "", "data_dir": str(tmp_path)})
+    # The CLASSIC menu is what this ruling describes; the redesign (menu_v2) has its own tests.
+    app = tray_app.TrayApp({"base_url": "http://127.0.0.1:8080", "token": "", "data_dir": str(tmp_path), "menu_style": "classic"})
     app._snap = _snap(
         runs=(
             RunRow("1", "coding-agent:coder", "running", 4, 133.0, 1.0),

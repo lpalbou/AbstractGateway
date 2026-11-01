@@ -1,0 +1,418 @@
+"""The redesigned tray menu (2026-11-01) as DATA: `build_menu(inputs) -> (Node, ...)`.
+
+Same contract as `menu_model.build_menu` (pure: no pystray, no network, no
+clock; the same `Node`, the same action tuples, so `app.py`'s dispatch table
+and handlers serve both menus unchanged) with a different shape. The classic
+menu stays in `menu_model.py`, byte for byte: `serve --tray-menu classic` or
+`"menu_style": "classic"` in `<data_dir>/tray/prefs.json` brings it back.
+
+What changed and why (the operator's complaints of 2026-11-01: not user
+friendly, not organised, repetitive):
+
+1. **Status first, three glanceable lines.** `AbstractGateway 0.18.0 — Running`,
+   then what the machine is doing in people's words (`2 conversations running
+   · 1 needs you · 1 model loaded`, `Idle · no model loaded`, `Paused —
+   conversations wait until you resume`), then the meters. The product name
+   appears ONCE here (and on Quit, the platform convention), not on six rows.
+2. **Two doors, then what needs you.** *Open Console* (the default item) and
+   *Open Assistant* (the desktop app, promoted from Apps ▸) sit alone at the
+   top. Anything waiting for a person — an approval, a question — follows as
+   its own top-level rows (at most three, then one line naming the rest):
+   the most actionable thing on the machine is never a submenu away.
+3. **Five sections, in the order a person thinks.** *Act* (Console, Assistant,
+   Needs you) · *Look* (Conversations, Models, Apps) · *Set up* (Connect,
+   Settings, Help) · *Lifecycle* (Update when one is known, Pause, Restart,
+   Quit). Each submenu opens with an information line saying what it holds.
+4. **Less duplication.** *Addresses ▸* and *Network ▸* were two views of one
+   thing and are now *Connect ▸* (where it answers now, the addresses to copy,
+   who may reach it, the restart that applies it). *Show Activity Window…* and
+   *Manage Models in Console…* live where the numbers are (Models ▸). *Check
+   for Updates…* lives in Help ▸ until an update is known, then the update's
+   state is a top-level row. The memory-warning switch moved from Help to
+   Settings ▸, next to *Start at login*.
+5. **One label grammar.** Verb first (*Open X*, *Install X…*, *Copy …*), `…`
+   only when a dialog or confirmation follows, a check mark only on a setting,
+   radio marks only on *who can reach it*, badges only the five that render
+   on every platform (text is the only paint pystray gives a row on macOS,
+   Windows and AppIndicator alike).
+
+Everything the classic menu could do is still reachable (ADR-0026: nothing
+silently dropped): the test `test_gateway_tray_menu_v2.py` checks that every
+classic action name is produced by the new menu too.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from . import menu_model as mm
+from .menu_model import SEP, MenuInputs, Node, info
+from .sampler import Snapshot, fmt_bytes, fmt_pct
+
+STYLE = "v2"
+CLASSIC = "classic"
+STYLES = (STYLE, CLASSIC)
+#: Top-level "Needs you" rows before the rest is named in one line.
+ATTENTION_ROWS = 3
+
+
+def menu_style(*, flag: Optional[str], prefs: Optional[str]) -> str:
+    """Which menu a tray shows: the launch flag (`serve --tray-menu`) for this
+    run, else the machine's preference, else the redesign. An unknown word is
+    ignored, never a crash: a typo in prefs.json still shows a menu."""
+    for word in (flag, prefs):
+        w = str(word or "").strip().lower()
+        if w in STYLES:
+            return w
+    return STYLE
+
+
+# ---------------------------------------------------------------------------
+# The header
+# ---------------------------------------------------------------------------
+
+
+def header_line(snap: Snapshot) -> str:
+    """`AbstractGateway 0.18.0 — Running`: the product name ONCE, its version, its state."""
+    word = mm.STATE_WORDS.get(snap.gateway_state, snap.gateway_state.title())
+    version = str(snap.version or "").strip()
+    return f"{mm.APP_NAME} {version} — {word}" if version else f"{mm.APP_NAME} — {word}"
+
+
+def _counts(snap: Snapshot) -> Dict[str, int]:
+    out = {"running": 0, "attention": 0, "paused": 0, "done": 0}
+    for row in snap.runs:
+        out[mm.run_group(row)] += 1
+    return out
+
+
+def activity_line(snap: Snapshot, *, update_latest: Optional[str] = None) -> str:
+    """The second line, ALWAYS present: what the machine is doing, in words.
+    A running gateway: `2 conversations running · 1 needs you · 1 model
+    loaded` / `Idle · no model loaded`; other states keep the classic detail
+    (pausing, paused, starting, updating, stopping, unreachable)."""
+    st = snap.gateway_state
+    if st == "running":
+        c = _counts(snap)
+        active = c["running"] + c["paused"]
+        parts: List[str] = []
+        if snap.slow:
+            parts.append("Slow to answer")
+        parts.append(f"{active} conversation{'s' if active != 1 else ''} running" if active else "Idle")
+        if c["attention"]:
+            parts.append(f"{c['attention']} need{'s' if c['attention'] == 1 else ''} you")
+        n = len(snap.models)
+        parts.append(f"{n} model{'s' if n != 1 else ''} loaded" if n else "no model loaded")
+        return " · ".join(parts)
+    _, detail = mm.state_lines(snap, update_phase="idle", update_latest=update_latest)
+    return detail or ""
+
+
+def meters_line(snap: Snapshot) -> str:
+    """`Memory 32% · this gateway 10.9 GB · GPU 20%` — percentages at a
+    glance; the full figures (of 128 GB, the GPU's name) are in Models ▸."""
+    parts: List[str] = []
+    if snap.mem_supported and snap.mem_pct is not None:
+        parts.append(f"Memory {fmt_pct(snap.mem_pct)}")
+    share = mm.gateway_share_words(snap)
+    if share and parts:
+        parts.append(share)
+    if snap.gpu_supported and snap.gpu_pct is not None:
+        parts.append(f"GPU {fmt_pct(snap.gpu_pct)}")
+    return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Sections
+# ---------------------------------------------------------------------------
+
+
+def assistant_door(inputs: MenuInputs, *, reachable: bool) -> Tuple[Node, ...]:
+    """*Open Assistant* at the top when the desktop app can be opened,
+    *Install Assistant…* when the gateway can install it, a progress line
+    while it installs; nothing when it is neither (Apps ▸ then lists it,
+    greyed)."""
+    if not inputs.apps_fetched:
+        return ()
+    for a in inputs.apps:
+        if a.id != "assistant":
+            continue
+        if a.status in {"available", "running"}:
+            out = [Node(f"Open {a.name}", ("assistant_launch",))]
+            if a.notice:
+                out.append(info(a.notice))
+            return tuple(out)
+        if a.status == "installing":
+            pct = f" {int(a.job_percent)}%" if isinstance(a.job_percent, (int, float)) else ""
+            return (info(f"{a.name} — installing{pct}…"),)
+        if a.status == "not_installed" and a.install_available:
+            return (Node(f"Install {a.name}…", ("app_install", a.id), enabled=reachable),)
+    return ()
+
+
+def _assistant_shown_at_top(inputs: MenuInputs, *, reachable: bool) -> bool:
+    return bool(assistant_door(inputs, reachable=reachable))
+
+
+def attention_rows(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
+    """**Needs you (N)** at the top level: the approvals and questions, each
+    with the classic row submenu (what is asked, Show and approve…, Deny,
+    Open in Observer); at most `ATTENTION_ROWS`, then one line for the rest."""
+    rows = [r for r in snap.runs if mm.run_group(r) == "attention"]
+    if not rows:
+        return ()
+    out: List[Node] = [info(f"Needs you ({len(rows)})")]
+    for row in rows[:ATTENTION_ROWS]:
+        out.append(Node(mm.run_row_label(row), children=mm.run_submenu(row, observer=observer, reachable=snap.reachable)))
+    if len(rows) > ATTENTION_ROWS:
+        out.append(info(f"…and {len(rows) - ATTENTION_ROWS} more under Conversations"))
+    return tuple(out)
+
+
+def conversations_section(snap: Snapshot, *, observer: bool, reachable: bool) -> Node:
+    """**Conversations ▸** — the complete inventory (the top-level *Needs you*
+    rows are shortcuts into it): Running, Need attention, Scheduled, Recent,
+    exactly the classic sections, and the console door."""
+    return Node("Conversations", children=mm.sessions_items(snap, observer=observer), enabled=reachable)
+
+
+def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
+    """**Models ▸** — the classic section (what is loaded, Eject, Load a
+    Model) with the resource views at its foot: the full meters, *Show
+    Activity Window…* and *Open Resources in Console…* (the console tab the
+    classic *Manage Models in Console…* opened: loaded models, memory, GPU)."""
+    classic = mm.models_section(inputs, reachable=reachable)
+    kids = list(classic.children or ())
+    # Drop the classic foot (SEP, Manage Models in Console…) and rebuild it.
+    while kids and (kids[-1].separator or kids[-1].action == ("open_console_tab", "models")):
+        kids.pop()
+    snap = inputs.snap
+    kids.append(SEP)
+    detail: List[str] = []
+    if snap.mem_supported and snap.mem_used is not None and snap.mem_total:
+        detail.append(f"Memory {fmt_bytes(snap.mem_used)} of {fmt_bytes(snap.mem_total)} ({fmt_pct(snap.mem_pct)})")
+    share = mm.gateway_share_bytes(snap)
+    if share is not None:
+        detail.append(f"This gateway {fmt_bytes(share)}")
+    if snap.gpu_supported and snap.gpu_pct is not None:
+        detail.append(f"GPU {fmt_pct(snap.gpu_pct)} busy" + (f" · {snap.gpu_name}" if snap.gpu_name else ""))
+    for text in detail:
+        kids.append(info(text))
+    if inputs.tk_available:
+        kids.append(Node("Show Activity Window…", ("show_activity",)))
+    kids.append(Node("Open Resources in Console…", ("open_console_tab", "models"), enabled=reachable))
+    return replace(classic, children=tuple(kids))
+
+
+def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
+    """**Apps ▸** — the classic rows. The Assistant's rows are left out while
+    the top-level door shows them (one place, not two); when the Assistant is
+    neither openable nor installable it stays here, greyed, as before."""
+    classic = mm.apps_section(inputs, reachable=reachable)
+    if not _assistant_shown_at_top(inputs, reachable=reachable):
+        return classic
+    assistant = next((a for a in inputs.apps if a.id == "assistant"), None)
+
+    def _is_assistant_row(n: Node) -> bool:
+        if assistant is None or n.separator:
+            return False
+        name = assistant.name
+        return (
+            n.label in {f"Launch {name}", f"Install {name}…", name}
+            or n.label.startswith(f"{name} — installing")
+            or (bool(assistant.notice) and n.label == assistant.notice)
+        )
+
+    cleaned: List[Node] = []
+    for n in classic.children or ():
+        if _is_assistant_row(n):
+            continue
+        if n.separator and (not cleaned or cleaned[-1].separator):
+            continue  # a doubled separator the removal would leave
+        cleaned.append(n)
+    while cleaned and cleaned[-1].separator:
+        cleaned.pop()
+    return replace(classic, children=tuple(cleaned))
+
+
+def connect_section(inputs: MenuInputs, *, reachable: bool) -> Node:
+    """**Connect ▸** — Addresses ▸ and Network ▸ as ONE place: where the
+    gateway answers now, every address (a click copies it), who may reach it
+    (the three radio choices), the restart that applies a change, the
+    gateway's warnings, and the console's Network tab."""
+    nv = inputs.network
+    base = inputs.base_url.rstrip("/")
+    label = "Connect" + (" — restart required" if nv.restart_required else "")
+    items: List[Node] = []
+    if nv.available:
+        eff = mm.NETWORK_WORDS.get(str(nv.effective_mode or ""), str(nv.effective_mode or "unknown"))
+        where = f"{nv.bind_host}:{nv.port}" if nv.bind_host and nv.port else (f"port {nv.port}" if nv.port else "")
+        items.append(info(f"Now: {eff}" + (f" · {where}" if where else "")))
+        if nv.overridden_by_cli:
+            items.append(info("Started with an explicit --host/--port: the choice below applies when started without them"))
+    else:
+        items.append(info(mm.middle_ellipsis(nv.error or "Reading the network settings…", 80)))
+    items.append(SEP)
+    items.append(info("Addresses — click one to copy it"))
+    if nv.available and nv.addresses:
+        items.extend(Node(mm.address_label(a), ("copy_address", a.url)) for a in nv.addresses)
+    else:
+        items.append(Node(f"{base} · {mm.ADDRESS_WORDS['loopback']}", ("copy_address", base)))
+    if nv.available:
+        items.append(SEP)
+        items.append(info("Who can reach it"))
+        busy = nv.busy
+        for mode, words in mm.NETWORK_MODES:
+            text = words + ("…" if mode == "internet" else "")
+            items.append(Node(text, ("network_set", mode), checked=(nv.configured_mode == mode), radio=True, enabled=reachable and not busy))
+        if nv.restart_required:
+            items.append(Node(f"Restart to apply ({mm.NETWORK_WORDS.get(str(nv.configured_mode), nv.configured_mode)})", ("network_restart",), enabled=reachable and not busy))
+        if nv.auth_ok_for_mode is False:
+            items.append(info("⚠ Sign-in is not set up for this mode" + (f": {mm.middle_ellipsis(nv.auth_fix, 70)}" if nv.auth_fix else "")))
+        for w in nv.warnings:
+            items.append(info("⚠ " + mm.middle_ellipsis(w, 80)))
+    items.append(SEP)
+    items.append(Node("Open Network in Console…", ("open_console_tab", "network"), enabled=reachable))
+    return Node(label, children=tuple(items))
+
+
+AUTOSTART_SHORT = "Start at login"
+
+
+def settings_section(inputs: MenuInputs, *, reachable: bool) -> Node:
+    """**Settings ▸** — the per-machine switches: *Start at login* (the
+    classic item, its state logic unchanged, the product name dropped from
+    the label), *Warn when memory is almost full*, *Classic menu* (back to the
+    previous layout at the next menu open; the preference is remembered)."""
+    items: List[Node] = []
+    for n in mm.autostart_nodes(inputs.autostart):
+        items.append(replace(n, label=n.label.replace(mm.AUTOSTART_LABEL, AUTOSTART_SHORT, 1)))
+    items.append(Node("Warn when memory is almost full", ("toggle_memory_warn",), checked=bool(inputs.memory_warn)))
+    items.append(SEP)
+    items.append(Node("Classic menu", ("set_menu_style", CLASSIC), checked=False))
+    return Node("Settings", children=tuple(items))
+
+
+def help_section(inputs: MenuInputs, *, reachable: bool, update_at_top: bool) -> Node:
+    """**Help ▸** — the links, the console link to paste, *Check for
+    Updates…* (while no update is known), About."""
+    items: List[Node] = [
+        Node("Documentation", ("open_url", mm.DOCS_URL)),
+        Node("Report a Problem…", ("open_url", mm.ISSUES_URL)),
+        Node("Developer API Reference", ("open_url", inputs.base_url.rstrip("/") + "/docs")),
+        Node("Copy Console Link", ("copy_console_link",)),
+    ]
+    if not update_at_top:
+        items.append(SEP)
+        items.append(update_node(inputs, reachable=reachable))
+    items.append(SEP)
+    items.append(Node(f"About {mm.APP_NAME}…", ("about",)))
+    return Node("Help", children=tuple(items))
+
+
+UPDATE_TOP_PHASES = ("checking", "available", "updating", "installed")
+
+
+def update_node(inputs: MenuInputs, *, reachable: bool) -> Node:
+    snap = inputs.snap
+    return Node(
+        mm.update_label(inputs.update_phase, inputs.update_latest),
+        ("check_update",),
+        enabled=reachable and inputs.update_phase not in {"checking", "updating"} and not snap.update_job_running,
+    )
+
+
+def lifecycle_nodes(inputs: MenuInputs, *, reachable: bool, update_at_top: bool) -> Tuple[Node, ...]:
+    """The last section: the update's state when one is known, Pause /
+    Resume, Restart…, Quit (the product name here, the platform convention:
+    quitting stops the gateway, not just the icon)."""
+    snap = inputs.snap
+    st = snap.gateway_state
+    out: List[Node] = []
+    if update_at_top:
+        out.append(update_node(inputs, reachable=reachable))
+    if snap.paused or st == "pausing":
+        out.append(Node("▶ Resume", ("resume",), enabled=reachable))
+    else:
+        out.append(Node("⏸ Pause", ("pause",), enabled=reachable))
+    out.append(Node("Restart…", ("restart",), enabled=reachable and snap.can_restart))
+    if st == "unreachable":
+        out.append(Node(f"Force Quit {mm.APP_NAME}…", ("force_quit",)))
+    else:
+        out.append(Node(f"Quit {mm.APP_NAME}…", ("quit",), enabled=snap.can_shutdown or not reachable))
+    return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# The menu
+# ---------------------------------------------------------------------------
+
+
+def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
+    snap = inputs.snap
+    st = snap.gateway_state
+    reachable = st not in {"unreachable", "starting", "restarting", "stopping"}
+    observer = mm.observer_open_available(inputs.apps)
+    update_at_top = inputs.update_phase in UPDATE_TOP_PHASES
+
+    out: List[Node] = [info(header_line(snap))]
+    activity = activity_line(snap, update_latest=inputs.update_latest)
+    if activity:
+        out.append(info(activity))
+    meters = meters_line(snap)
+    if meters:
+        out.append(info(meters))
+    if inputs.pending_label:
+        out += [SEP, Node(f"Confirm: {inputs.pending_label}", ("confirm_pending",))]
+    out.append(SEP)
+    # Act: the two doors, then what needs a person.
+    out.append(Node("Open Console", ("open_console",), default=True, enabled=reachable or st == "unreachable"))
+    out.extend(assistant_door(inputs, reachable=reachable))
+    needs = attention_rows(snap, observer=observer)
+    if needs:
+        out.append(SEP)
+        out.extend(needs)
+    out.append(SEP)
+    # Look: what is going on, what is in memory, the apps.
+    out.append(conversations_section(snap, observer=observer, reachable=reachable))
+    out.append(models_section(inputs, reachable=reachable))
+    out.append(apps_section(inputs, reachable=reachable))
+    out.append(SEP)
+    # Set up.
+    out.append(connect_section(inputs, reachable=reachable))
+    out.append(settings_section(inputs, reachable=reachable))
+    out.append(help_section(inputs, reachable=reachable, update_at_top=update_at_top))
+    out.append(SEP)
+    # Lifecycle.
+    out.extend(lifecycle_nodes(inputs, reachable=reachable, update_at_top=update_at_top))
+    return tuple(out)
+
+
+def action_names(nodes: Sequence[Node]) -> set:
+    return {n.action[0] for n in mm.iter_nodes(nodes) if n.action}
+
+
+def top_level_labels(nodes: Sequence[Node]) -> List[str]:
+    return [n.label for n in nodes if not n.separator]
+
+
+__all__ = [
+    "ATTENTION_ROWS",
+    "CLASSIC",
+    "STYLE",
+    "STYLES",
+    "action_names",
+    "activity_line",
+    "attention_rows",
+    "build_menu",
+    "connect_section",
+    "header_line",
+    "help_section",
+    "lifecycle_nodes",
+    "menu_style",
+    "meters_line",
+    "models_section",
+    "settings_section",
+    "top_level_labels",
+]
