@@ -195,7 +195,7 @@ CATALOG_JS = r"""
     const MC_QUANT_CHIPS = [["all", "All"], ["4bit", "4-bit"], ["8bit", "8-bit"], ["other", "Other"]];
     const MC_STATUS_CHIPS = [["all", "All"], ["downloaded", "Downloaded"], ["not_downloaded", "Not downloaded"]];
     const MC_ASSET_KINDS = [["model", "Models"], ["adapter", "Adapters"], ["component", "Components"], ["unknown", "Unclassified"], ["all", "All assets"]];
-    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
+    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"], ["decision", "Decision"]];
     const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images & video", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
     const MC_WEIGHTS = { installed: ["Downloaded", "ok"], absent: ["Not downloaded", "muted"], unknown: ["Unknown", "muted"], not_applicable: ["Remote", "muted"] };
     // needs_gpu_limit (AbstractCore 2.18): fits once the Mac's GPU memory limit
@@ -339,6 +339,9 @@ CATALOG_JS = r"""
       if (c.speech_synthesis === true) out.push("voice");
       if (c.image_generation === true) out.push("image");
       if (c.video_generation === true) out.push("video");
+      // AbstractCore 2.32.0 decision models (kev, lev, laya): the catalog row carries the
+      // `decision` tag; a `decision` capability flag counts the same way.
+      if (c.decision === true || (Array.isArray(row.tags) && row.tags.includes("decision"))) out.push("decision");
       return out;
     }
     function mcProviderLabel(p) { return MC_PROVIDER_LABEL[p] || String(p || ""); }
@@ -626,7 +629,7 @@ CATALOG_JS = r"""
     function mcIconButton(action, icon, label, tip, attrs, disabled, extra) {
       return `<span class="mc-icon-wrap" data-af-tip="${esc(tip || label)}"><button type="button" class="ui-btn mc-icon-action${extra || ""}"${action ? ` data-mc-action="${esc(action)}"` : ""} ${attrs || ""} aria-label="${esc(label)}" data-af-tip="${esc(tip || label)}"${disabled ? " disabled" : ""}>${ICONS[icon]}</button></span>`;
     }
-    const MC_CAP_ICON = { text:"text", thinking:"brain", tools:"tool", vision:"eye", audio:"waveform", embedding:"embedding", voice:"mic", image:"image", video:"video" };
+    const MC_CAP_ICON = { text:"text", thinking:"brain", tools:"tool", vision:"eye", audio:"waveform", embedding:"embedding", voice:"mic", image:"image", video:"video", decision:"check" };
     const MC_CAP_HELP = {
       text: { title: "Text generation", description: "Produces text responses from prompts, such as chat, summaries and code." },
       thinking: { title: "Thinking", description: "Can reason through a problem before giving its final answer. Useful for complex questions, but may take longer to respond." },
@@ -636,7 +639,8 @@ CATALOG_JS = r"""
       embedding: { title: "Embeddings", description: "Turns content into numerical vectors for semantic search, similarity matching and retrieval." },
       voice: { title: "Speech generation", description: "Converts text into spoken audio for read-aloud responses and narration. Available voices and languages depend on the model." },
       image: { title: "Image generation", description: "Creates images from a prompt. Editing and reference-image support depend on the model." },
-      video: { title: "Video generation", description: "Creates video clips from a prompt. Supported length and reference inputs depend on the model." }
+      video: { title: "Video generation", description: "Creates video clips from a prompt. Supported length and reference inputs depend on the model." },
+      decision: { title: "Decisions", description: "Answers yes/no, choice and score questions about a text with calibrated confidence. Generates no text." }
     };
     function mcCapabilityHelp(cap, row) {
       if (cap === "tools" && row.capabilities.tools === "prompted") return { title: "Tool use (prompted)", description: "Can request tools through instructions in its prompt. The app interprets those requests and runs tools under its permission rules." };

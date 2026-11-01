@@ -295,6 +295,8 @@ returns artifacts):
 - video: `POST /api/gateway/runs/{run_id}/videos/generate`,
   `/videos/from_image`
 - music: `POST /api/gateway/runs/{run_id}/music/generate`
+- decisions: `POST /api/gateway/runs/{run_id}/decisions` (yes/no, choice and
+  score answers about a text, with confidence; no artifact)
 - run data: `GET /api/gateway/runs/{run_id}/input_data`,
   `GET /api/gateway/runs/{run_id}/history_bundle`
 

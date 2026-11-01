@@ -47,6 +47,7 @@ use crate::worker::Cmd;
 /// |   image_to_video                          |           |        |
 /// | tts / stt                                 | Voice     | Info   |
 /// | music_generation                          | Music     | Warn   |
+/// | decision                                  | Decision  | Accent |
 /// | scene3d_generation / text_to_scene3d /    | 3D        | Muted  |
 /// |   image_to_scene3d                        |           |        |
 /// | embedding                                 | Embedding | Muted  |
@@ -67,6 +68,8 @@ pub fn task_tone(task: Option<&str>) -> (Tone, &'static str) {
         }
         Some("tts") | Some("stt") => (Tone::Info, "Voice"),
         Some("music_generation") => (Tone::Warn, "Music"),
+        // AbstractCore 2.32.0 decision models (output.decision): text in, typed answers out.
+        Some("decision") => (Tone::Accent, "Decision"),
         Some("scene3d_generation") | Some("text_to_scene3d") | Some("image_to_scene3d") => {
             (Tone::Muted, "3D")
         }
@@ -2525,6 +2528,7 @@ mod tests {
         assert_eq!(task_tone(Some("tts")), (Tone::Info, "Voice"));
         assert_eq!(task_tone(Some("stt")), (Tone::Info, "Voice"));
         assert_eq!(task_tone(Some("music_generation")), (Tone::Warn, "Music"));
+        assert_eq!(task_tone(Some("decision")), (Tone::Accent, "Decision"));
         for t in ["scene3d_generation", "text_to_scene3d", "image_to_scene3d"] {
             assert_eq!(task_tone(Some(t)), (Tone::Muted, "3D"), "{t}");
         }

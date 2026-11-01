@@ -562,9 +562,9 @@ definition. Use distinct ids across the two unless you intend that.
 The Gateway is a full CRUD surface over AbstractCore's per-modality
 provider/model defaults (configure, surface, live-refresh) and keeps **zero**
 local storage. Every read hits Core's manager and every write goes through
-Core's setter, so configuring a default here configures Core's default, for text
-and for every media modality: image, video, voice (TTS), voice input (STT),
-sound, music, 3D.
+Core's setter, so configuring a default here configures Core's default, for text,
+for every media modality: image, video, voice (TTS), voice input (STT),
+sound, music, 3D, and for decisions (`output.decision`).
 
 **Where it is stored.** A JSON file under key `capability_defaults.routes`:
 `~/.abstractcore/config/abstractcore.json` normally, or the Gateway-scoped
@@ -579,13 +579,17 @@ reports both as `config_file` / `gateway_config_file` / `principal_config_file`)
 | `output.video[.text_to_video\|.image_to_video]` | video generation |
 | `output.voice` / `input.voice` | TTS **and voice cloning** / STT |
 | `output.music` / `output.sound` | music / sound-effect generation |
+| `output.decision` | decisions: yes/no, choice and score answers about a text, from a decision model such as `mlx` / `jaredpalmer/kev-4b` ([api.md](./api.md#decisions)) |
 | `output.scene3d[.text_to_scene3d\|.image_to_scene3d]` | 3D scene generation |
 | `input.image` / `input.video` / `input.sound` / `input.music` | understanding (covered by `input.text` when that model is multimodal) |
 
 The task→route mapping is stated once, in AbstractCore's capability-defaults
 module, and every layer reads it from there. A `.task` suffix is only valid for
-the tasks Core persists; `tts`, `stt`, `music_generation` and
-`sound_generation` resolve at the modality cell.
+the tasks Core persists; `tts`, `stt`, `music_generation`, `sound_generation`
+and `decision` resolve at the modality cell. `output.decision` is set like any
+other route: `PUT /api/gateway/config/capability-defaults/output/decision`,
+the console's Multimodal page, or
+`abstractcore config set-default output.decision --provider mlx --model jaredpalmer/kev-4b`.
 
 CRUD: `GET /api/gateway/config/capability-defaults` (full grid — configured,
 derived and unset rows, each naming its source),
@@ -1119,8 +1123,8 @@ question resolves through the canonical generation task
 (`output.image.text_to_image`) before falling back to `output.image`, so the
 backend Gateway advertises is always the backend it will execute.
 
-`output.voice`, `output.sound` and `output.music` have no task rows; their
-modality row is the primary key, not a fallback.
+`output.voice`, `output.sound`, `output.music` and `output.decision` have no
+task rows; their modality row is the primary key, not a fallback.
 
 In the Multimodal Capabilities grid the task rows are indented beneath their
 modality row, and a modality row that is unset while every task row beneath it
@@ -1512,7 +1516,7 @@ does not implicitly install them.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. The `ABSTRACTVOICE_*` names are also accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, `music` and `decision`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music/decision endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
@@ -1527,6 +1531,7 @@ does not implicitly install them.
 - `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients. `task: "text_to_audio"` makes a sound effect. `seconds` is the clip length (`duration_s` is accepted as the same value; two different values answer 400, a value that is not a number between 0 and 3600 answers 422); without it a sound effect is 5 seconds and music keeps the backend default (30 seconds for Stable Audio 3), and the model's own maximum applies (120 seconds for the Stable Audio 3 small checkpoints). `music_model` selects the checkpoint that runs.
+- `POST /api/gateway/runs/{run_id}/decisions`: creates a durable Runtime child run for one calibrated decision and returns its `decision` body and `answers` in the response (no artifact). `state` and `questions` are required; `model` (`provider/model`) and `truncate` are passed through only when the client supplies them, and without `model` the `output.decision` default answers. See [api.md](./api.md#decisions).
 
 Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 `event_name=abstract.progress`. Thin clients should stream the returned

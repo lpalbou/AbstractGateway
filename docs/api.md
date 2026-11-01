@@ -38,6 +38,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
+| `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
 | `/api/gateway/runs/{run_id}/view`, `/view/stream` | the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client) | [below](#replay-view-runsrun_idview) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](./push.md) |
@@ -1928,8 +1929,12 @@ These exist to help thin clients adapt to the deployed gateway.
 The capabilities payload includes package presence (`abstractruntime`,
 `abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
 gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
-AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
-`music`.
+AbstractCore capability plugin status for `voice`, `audio`, `vision`,
+`music` and `decision`. The contracts (`contracts.common`, `flow_editor` and
+`assistant`) carry a `decision` descriptor beside `media`: the VisualFlow
+`decide` node (`workflow`) and the direct endpoint (`direct_endpoint`:
+`endpoint`, `openai_endpoint`, `capability_route`, `returns`), each with
+`available`; see [Decisions](#decisions).
 
 The route paths and contract descriptors are the stable part of this surface.
 Catalog routes also include a stable Gateway-owned envelope:
@@ -2148,6 +2153,7 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
+- `POST /api/gateway/runs/{run_id}/decisions` ([below](#decisions))
 - `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/voice/languages`, `GET /api/gateway/voice/clones`, `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility`
@@ -2335,6 +2341,44 @@ STT and listen contract notes:
   not a live microphone socket. They tell higher apps to capture locally and
   emit an event or upload the resulting audio artifact.
 
+### Decisions
+
+A decision is text in, calibrated typed answers out: a decision model (AbstractCore's
+`decision` output modality; models, question kinds and measured quality in AbstractCore's
+[docs/decision-models.md](https://github.com/lpalbou/AbstractCore/blob/main/docs/decision-models.md)) reads a `state` and answers every named question in
+one pass. It generates no text and produces no artifact.
+
+`POST /api/gateway/runs/{run_id}/decisions` runs one durable child run (`run_facade.decide`)
+under the run named in the path:
+
+| Field | Meaning |
+|---|---|
+| `state` (required) | the text the questions are about: a message, a document, a transcript |
+| `questions` (required) | named questions `{name: {type, instructions, criteria}}` with `type` `choice`, `noul` (yes/no) or `score`; shorthand: a yes/no sentence is a `noul` question, a list of option names a `choice` |
+| `model` | `provider/model` (`mlx/jaredpalmer/kev-4b`, `huggingface/ggml-org/Kev-4B-GGUF:Q4_K_M`, `typesafe/jev-latest`) or a bare model id; without it the `output.decision` capability default answers |
+| `truncate` | read only what fits the model's context instead of refusing an over-long state |
+| `request_id` | optional idempotency key |
+
+The answer carries `run_id`, `request_id`, `child_run_id`, `decision` (the System One body:
+`model`, `answers`, `usage`, `latency_ms`, and `truncated` when the state was cut) and
+`answers`, the same answers by question name: `choice` → `{type, choice, confidence,
+probabilities}`, `noul` → `{type, noul}` (the probability that the statement is true),
+`score` → `{type, score, confidence, legend, probabilities}`; plus the `provider` and `model`
+that answered. A refused decision answers `ok: false` with a `code`, like the media routes:
+`decision_unavailable` (the runtime exposes no decision facade), `decision_error` (the
+error sentence from the route or the model) or `decision_no_answers`. An empty `state` or no
+question answers 400.
+
+Thin clients discover the route from `capabilities.contracts.flow_editor.decision` or
+`capabilities.contracts.assistant.decision` (`direct_endpoint.available`; the same descriptor
+names the VisualFlow `decide` node under `workflow`). The model is the `output.decision`
+capability default ([configuration.md](./configuration.md#capability-defaults)); decision
+models are the catalog rows tagged `decision` ([Models and engines](#models-and-engines)).
+Flows use the `decide` node (inputs `state`, `questions`, `model`, `truncate`; outputs
+`answers`, `decision`, `model`, `content`). The same models answer at the OpenAI door as
+`POST /v1/decisions` with the body `{model, state, questions, truncate?}`
+([openai-api.md](./openai-api.md)).
+
 ## KG memory
 
 `POST /api/gateway/kg/query` queries the configured AbstractMemory TripleStore (opened through the
@@ -2484,7 +2528,11 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | `POST /jobs/{id}/cancel` | admin | none (an empty `{}` is accepted) | `host_job_v1`; 404 when unknown |
 
 Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
-`hub` accept `1`/`0` and `true`/`false`.
+`hub` accept `1`/`0` and `true`/`false`. Decision models (AbstractCore's
+`decision` output modality: Kev, Lev, Laya) are the catalog rows tagged
+`decision` (`tag=decision`); their capability route is `output.decision`, and
+the console's Models page filters them with its **Decision** chip. See
+[Decisions](#decisions).
 
 **Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
 unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").

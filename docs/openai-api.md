@@ -218,7 +218,9 @@ Also served when an engine for the capability is set up (AbstractCore answers;
 not part of the SDK checks): `POST /v1/responses`, `POST /v1/audio/speech`,
 `POST /v1/audio/transcriptions`, `POST /v1/audio/translations`,
 `POST /v1/images/generations`, `POST /v1/images/edits`,
-`POST /v1/images/variations`.
+`POST /v1/images/variations`, `POST /v1/decisions` (AbstractCore's decision
+modality: body `{model, state, questions, truncate?}`, calibrated typed answers,
+no text; Guest may use it).
 
 Not yet: `response_format` together with `tools`, `text.format` on
 `/v1/responses`, `n` greater than 1, `logprobs`, `logit_bias` (each answers

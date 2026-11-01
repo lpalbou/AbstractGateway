@@ -13424,6 +13424,47 @@ class MusicGenerateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class DecisionRequest(BaseModel):
+    """One calibrated decision (AbstractCore 2.32.0 `decision` output modality): text in,
+    typed answers out, no text generation and no artifact."""
+
+    state: str = Field(
+        ...,
+        description="The text the decision is about (the decision model's state): a message, a document, a transcript.",
+        examples=["Subject: invoice overdue\n\nHi, the March invoice is still unpaid; please settle it this week."],
+    )
+    questions: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Named questions: {name: {type: choice|noul|score, instructions, criteria}}. Shorthand: a yes/no "
+            "sentence (noul) or a list of options (choice)."
+        ),
+        examples=[{"urgent": "Does the sender need an answer today?", "topic": ["billing", "support", "other"]}],
+    )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=240,
+        description="Optional decision model as `provider/model` or a bare model id; without it the output.decision capability default answers.",
+        examples=["mlx/jaredpalmer/kev-4b"],
+    )
+    truncate: Optional[bool] = Field(default=None, description="Cut the state to the model's context instead of failing on overflow.")
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+
+
+class DecisionResponse(BaseModel):
+    ok: bool = Field(default=True)
+    supported: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    child_run_id: Optional[str] = None
+    decision: Optional[Dict[str, Any]] = Field(default=None, description="The System One body: model, answers, usage, latency_ms[, truncated].")
+    answers: Optional[Dict[str, Any]] = Field(default=None, description="The answers by question name (= decision.answers).")
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
 @router.post("/runs/{run_id}/audio/transcribe", response_model=AudioTranscribeResponse)
 async def audio_transcribe(run_id: str, req: AudioTranscribeRequest) -> AudioTranscribeResponse:
     """Delegate STT to Runtime-owned durable child execution."""
@@ -15417,6 +15458,116 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
         request_id=request_id,
         child_run_id=str(child.run_id),
         music_artifact=music_ref,
+    )
+
+
+@router.post("/runs/{run_id}/decisions", response_model=DecisionResponse)
+async def run_decision(run_id: str, req: DecisionRequest) -> DecisionResponse:
+    """Delegate one calibrated decision to a Runtime-owned durable child run: an LLM_CALL whose
+    output spec is `decision` (`run_facade.decide`). No artifact: the answers come back in the body."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    state = str(getattr(req, "state", "") or "").strip()
+    if not state:
+        raise HTTPException(status_code=400, detail="state is required")
+    questions = req.questions if isinstance(req.questions, dict) else {}
+    if not questions:
+        raise HTTPException(status_code=400, detail="questions is required: at least one named question")
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        return DecisionResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="decision_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable helpers.",
+        )
+
+    session_id = str(getattr(run, "session_id", "") or "")
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    model = str(getattr(req, "model", "") or "").strip() or None
+
+    try:
+        child = await off_loop("watchers",
+            run_facade.decide,
+            str(getattr(run, "run_id", rid)),
+            state=state,
+            questions=questions,
+            model=model,
+            truncate=req.truncate,
+            params=params,
+        )
+    except Exception as e:
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="decision_error",
+            error=str(e),
+        )
+
+    if child.status != RunStatus.COMPLETED:
+        # The model refused or failed (no output.decision default, bad questions, state over the
+        # limit): the child run records the reason; answer it, do not turn it into a 500.
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="decision_error",
+            error=str(child.error or child.status.value),
+        )
+    result = _gateway_completed_child_result(child, operation="decision")
+    decision = result.get("decision") if isinstance(result.get("decision"), dict) else None
+    answers = result.get("answers") if isinstance(result.get("answers"), dict) else None
+    if decision is None or answers is None:
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="decision_no_answers",
+            error="The decision completed without a decision body and answers.",
+        )
+
+    return DecisionResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        decision=decision,
+        answers=answers,
+        provider=str(result.get("provider")) if result.get("provider") else None,
+        model=str(result.get("model")) if result.get("model") else None,
     )
 
 
@@ -18929,6 +19080,41 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _decision_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
+    """The `decision` capability (AbstractCore 2.32.0): text in, calibrated typed answers out. It
+    produces no bytes and needs no artifact store, so it is a sibling of the media contract, not
+    part of it. Two doors: the VisualFlow `decide` node (lowered to an LLM_CALL with a `decision`
+    output spec) and the run-scoped direct endpoint, both through `run_facade.decide`."""
+    _ = caps
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    route_available = bool(run_facade is not None and not run_err)
+    hint = (
+        {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable helpers.")}
+        if not route_available
+        else {}
+    )
+    return {
+        "workflow": {
+            "available": route_available,
+            "node": "decide",
+            "effect": "LLM_CALL",
+            "output_modality": "decision",
+            **hint,
+        },
+        "direct_endpoint": {
+            "available": route_available,
+            "route_available": route_available,
+            "endpoint": _api_gateway_path("/runs/{run_id}/decisions"),
+            "openai_endpoint": "/v1/decisions",
+            "capability_route": "output.decision",
+            "durability": "runtime_child_run",
+            "returns_child_run_id": True,
+            "returns": ["decision", "answers"],
+            **hint,
+        },
+    }
+
+
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
     try:
@@ -19252,6 +19438,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "memory": _memory_contract_descriptor(caps),
     }
     generated_media = _generated_media_contract(caps)
+    decision_contract = _decision_contract_descriptor(caps)
+    common["decision"] = decision_contract
     tts_contract = _voice_contract_descriptor(caps, kind="tts")
     stt_contract = _voice_contract_descriptor(caps, kind="stt")
     assistant_voice = {
@@ -19343,6 +19531,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "voice": assistant_voice,
         "model_residency": common["model_residency"],
         "media": generated_media,
+        "decision": decision_contract,
         "helpers": {
             "providers": common["discovery"]["providers"],
             "tools": common["discovery"]["tools"],
@@ -19374,6 +19563,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "artifacts": common["artifacts"],
         "voice": assistant_voice,
         "media": generated_media,
+        "decision": decision_contract,
         "model_residency": common["model_residency"],
         "prompt_cache": {
             "provider_controls": True,
@@ -19478,6 +19668,8 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
     plugin_caps = {
         "voice": {"available": bool(run_facade is not None and not run_err)},
         "audio": {"available": bool(run_facade is not None and not run_err)},
+        # The decision modality (AbstractCore 2.32.0): run_facade.decide, no artifact.
+        "decision": {"available": bool(run_facade is not None and not run_err)},
         "vision": {"available": bool((run_facade is not None and not run_err) or (discovery_facade is not None and not discovery_err))},
         "music": {
             "available": bool(music_route_available and music_configured),

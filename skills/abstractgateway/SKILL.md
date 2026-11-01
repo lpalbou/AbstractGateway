@@ -107,6 +107,7 @@ console link. Starting it creates its data directory and auth state.
 | Artifacts, sessions and history | run/artifact/session routes under `/api/gateway` |
 | Accounts, workspace policy, provider connections | authenticated account/config/workspace routes; admin restrictions apply |
 | Models, engines and capability defaults | `/models/*`, `/engines/*`, `/config/capability-defaults` |
+| One calibrated decision about a text | `POST /api/gateway/runs/{id}/decisions`; `POST /v1/decisions` on Gateway `/v1` |
 | Browser apps, console, CLI and tray | `/console`, `abstractgateway`, `/apps/*`, `/host/*` |
 | Optional inference HTTP | Gateway `/v1`; direct Core listener controlled by `direct_enabled` |
 | Host/process diagnosis | `GET /api/health`, admin `/host/*`, admin `/core-endpoint` |
@@ -195,6 +196,47 @@ several approval actions. A receipt contains `accepted`, `duplicate`, `seq`.
 Continue following the view until the interaction ends; do not hide the wait
 solely because the POST was accepted. Use the view's proposed `command` for
 other interaction kinds rather than inventing their answer payload.
+
+### Ask a decision model
+
+A decision model answers typed questions about a text with calibrated
+probabilities and generates no text. Through a run (a durable child run; the
+`output.decision` capability default answers when `model` is omitted):
+
+```bash
+curl --fail-with-body -sS -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"state":"<TEXT>","questions":{"urgent":"Does the sender need an answer today?","topic":["billing","support","other"]}}' \
+  "$GATEWAY_URL/api/gateway/runs/$RUN_ID/decisions"
+```
+
+Read `ok`. A true answer carries `child_run_id`, `decision` (`model`, `answers`,
+`usage`, `latency_ms`) and `answers` by question name: a `noul` answer is the
+probability that the statement is true; a `choice` answer has `choice`,
+`confidence` and `probabilities`; a `score` answer has `score`, `confidence`,
+`legend` and `probabilities`. `ok: false` names the reason in `code`
+(`decision_unavailable`, `decision_error`, `decision_no_answers`); inspect it,
+do not retry blindly. The typed question form is `{type: choice|noul|score,
+instructions, criteria}`; add `"model": "<provider/model>"` to choose the model
+and `"truncate": true` to cut an over-long state instead of failing. Discover
+the route first: `GET /api/gateway/discovery/capabilities` →
+`contracts.assistant.decision.direct_endpoint.available`.
+
+Through Gateway `/v1` (a Gateway `/v1` API key from the OpenAI API page, not the
+Gateway token; Guest may call it when the API is in Open mode):
+
+```bash
+curl --fail-with-body -sS -H "Authorization: Bearer $GATEWAY_V1_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"kev-latest","state":"<TEXT>","questions":{"urgent":"Does the sender need an answer today?"}}' \
+  "$GATEWAY_URL/v1/decisions"
+```
+
+AbstractCore answers `{model, answers, usage, latency_ms}`. `kev-latest` reuses
+the decision model loaded most recently, else the configured `output.decision`
+default (400 when there is neither; pass `provider/model`, for example
+`mlx/jaredpalmer/kev-4b`); 404 means the model is not downloaded; 422 means the
+state is over the model's context (`"truncate": true` cuts it).
 
 ### Inspect optional inference services
 

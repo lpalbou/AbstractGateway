@@ -9579,6 +9579,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           emptyModels: "No 3D scene discovery — type the model id",
         };
       }
+      // output.decision (AbstractCore 2.32.0): the discovery catalog filtered on the
+      // route, like the input routes — a decision model is a text-shaped model whose
+      // capability_routes.output is ["decision"] (kev, lev, laya), not a media engine.
+      if (key === "output.decision") {
+        return textCatalog("decision", { capability_route: "output.decision" });
+      }
       if (key === "output.music") {
         return {
           scope: "music generation",
@@ -14172,9 +14178,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             voice: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
             sound: '<path d="M4 9v6M8 5v14M12 2v20M16 5v14M20 9v6"/>',
             music: '<path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
-            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>'
+            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>',
+            decision: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0l-3-7M17 7l-3 7a3 3 0 0 0 6 0l-3-7"/>'
           };
-          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene"};
+          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene",decision:"Decision"};
           const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
           const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
           const direction = defaultRowKindModality(row).kind;
@@ -15737,6 +15744,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v4"></path><path d="M8 22h8"></path>',
       speaker: '<path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18 6a9 9 0 0 1 0 12"></path>',
       music: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+      decision: '<path d="M12 3v18"></path><path d="M5 7h14"></path><path d="M7 7l-3 7a3 3 0 0 0 6 0l-3-7"></path><path d="M17 7l-3 7a3 3 0 0 0 6 0l-3-7"></path>',
       file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
       database: '<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path>',
       // Not in the kit's icon set (root backlog 1073: one icon set across apps): drawn on the kit's
@@ -15763,6 +15771,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "out-video", label: "Video", icon: "video", hue: "#ef4444", route: "output.video", catalog: "video_generation", what: "Clips from a description or a picture" },
       { id: "out-voice", label: "Voice", icon: "speaker", hue: "#f59e0b", route: "output.voice", what: "Reads answers aloud" },
       { id: "out-music", label: "Music", icon: "music", hue: "#8b5cf6", route: "output.music", what: "Songs and soundtracks" },
+      { id: "out-decision", label: "Decisions", icon: "decision", hue: "#0f766e", route: "output.decision", what: "Yes/no, choice and score answers with confidence" },
       { id: "out-3d", label: "3D", icon: "cube", hue: "#14b8a6", route: "output.scene3d", what: "3D scenes" },
       { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
       { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
@@ -15901,6 +15910,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "voice_out", label: "Voice out", route: "output.voice", inputs: ["text"], outputs: ["speech"], what: "Reads answers aloud" },
       { id: "voice_in", label: "Voice in", route: "input.voice", inputs: ["speech"], outputs: ["text"], what: "Turns speech into text" },
       { id: "music", label: "Music", route: "output.music", inputs: ["text"], outputs: ["music"], what: "Songs and soundtracks" },
+      { id: "decision", label: "Decisions", route: "output.decision", inputs: ["text"], outputs: ["decisions"], what: "Yes/no, choice and score answers with confidence" },
       { id: "3d", label: "3D", route: "output.scene3d", inputs: ["text", "image"], outputs: ["3D scene"], what: "3D scenes from a description or a picture" },
       { id: "embeddings", label: "Embeddings", route: "embedding.text", inputs: ["text"], outputs: ["vectors"], what: "Search and memory" },
       { id: "rankers", label: "Rankers", route: "rerank.text", inputs: ["query", "texts"], outputs: ["scores"], what: "Orders search results by relevance" },

@@ -71,13 +71,14 @@ REACH_LABELS = {
 
 # Open (no key) mode: anonymous requests run as this account. The built-in guest
 # may USE the models (chat, responses, embeddings, text-to-speech, image
-# generation when routed) but with no tools, no files, attachments or media
-# inputs, no workspace, email or run tools; it never reaches /api/gateway.
+# generation and decisions when routed) but with no tools, no files, attachments
+# or media inputs, no workspace, email or run tools; it never reaches /api/gateway.
 GUEST_ACCOUNT = "guest"
 GUEST_LABEL = "Guest (models only)"
 GUEST_PATHS = frozenset({"/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/embeddings",
-                         "/v1/audio/speech", "/v1/images/generations"})
+                         "/v1/audio/speech", "/v1/images/generations", "/v1/decisions"})
 _GUEST_TOOL_FIELDS = ("tools", "tool_choice", "functions", "function_call")
+_GUEST_HOSTED_DECISION_PROVIDERS = frozenset({"typesafe", "systemone"})
 _TEXT_PARTS = frozenset({"text", "input_text", "output_text"})
 
 
@@ -282,6 +283,9 @@ SERVING_ROUTES = {
     "/v1/images/generations": "POST",
     "/v1/images/edits": "POST",
     "/v1/images/variations": "POST",
+    # AbstractCore 2.32.0: the `decision` output modality (text in, calibrated typed
+    # answers out; body {model, state, questions, truncate?}). No bytes, no artifact.
+    "/v1/decisions": "POST",
 }
 
 
@@ -293,7 +297,7 @@ SUPPORT = {
                "POST /v1/embeddings: float and base64"],
     "served": ["POST /v1/responses", "POST /v1/audio/speech", "POST /v1/audio/transcriptions",
                "POST /v1/audio/translations", "POST /v1/images/generations", "POST /v1/images/edits",
-               "POST /v1/images/variations"],
+               "POST /v1/images/variations", "POST /v1/decisions"],
     "not_yet": ["response_format together with tools", "text.format on /v1/responses", "n > 1", "logprobs", "logit_bias",
                 "files, batches, assistants, fine-tuning, moderations, realtime"],
 }
@@ -500,6 +504,11 @@ def refuse_for_guest(doc: Any) -> None:
         if doc.get(name):
             raise RequestRefused(f"Without a key, {name} can't be used (Guest: models only).", name,
                                  "guest_not_allowed", 403)
+    model = doc.get("model")
+    if isinstance(model, str) and model.strip().lower().split("/", 1)[0] in _GUEST_HOSTED_DECISION_PROVIDERS:
+        # A hosted decision model (`typesafe/jev-latest`, `systemone/...`) spends the operator's key.
+        raise RequestRefused("Without a key, hosted decision models can't be used (Guest: local models only).",
+                             "model", "guest_not_allowed", 403)
     turns = doc.get("messages") if isinstance(doc.get("messages"), list) else []
     if isinstance(doc.get("input"), list):
         turns = turns + doc["input"]

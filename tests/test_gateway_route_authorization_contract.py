@@ -339,6 +339,7 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/runs/{run_id}/images/edit"),
     ("POST", "/api/gateway/runs/{run_id}/images/upscale"),
     ("POST", "/api/gateway/runs/{run_id}/music/generate"),
+    ("POST", "/api/gateway/runs/{run_id}/decisions"),
     ("POST", "/api/gateway/runs/{run_id}/videos/generate"),
     ("POST", "/api/gateway/runs/{run_id}/videos/from_image"),
     ("POST", "/api/gateway/runs/{run_id}/voice/tts"),

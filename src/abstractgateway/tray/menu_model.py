@@ -315,6 +315,9 @@ ROUTE_TASKS: Dict[str, Tuple[str, str]] = {
     "output.voice": ("Voice", "tts"),
     "input.voice": ("Speech to text", "stt"),
     "output.music": ("Music", "music_generation"),
+    # AbstractCore 2.32.0 decision models (output.decision); the task is the
+    # generate contract's "decision" (abstractcore core/generate_contract.py).
+    "output.decision": ("Decision", "decision"),
 }
 
 

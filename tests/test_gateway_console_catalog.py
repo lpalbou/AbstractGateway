@@ -324,7 +324,7 @@ EMPTY_INSTALLED = {"schema": "models_installed_v1", "rows": [], "errors": {}}
 
 def test_capability_badges_explain_practical_use_and_input_output() -> None:
     out = _run(_catalog(1), "capabilities")
-    meanings = {"text": "chat, summaries and code", "thinking": "may take longer", "tools": "permission rules", "vision": "images attached", "audio": "Accepts audio", "embedding": "semantic search", "voice": "spoken audio", "image": "Creates images", "video": "Creates video clips"}
+    meanings = {"text": "chat, summaries and code", "thinking": "may take longer", "tools": "permission rules", "vision": "images attached", "audio": "Accepts audio", "embedding": "semantic search", "voice": "spoken audio", "image": "Creates images", "video": "Creates video clips", "decision": "calibrated confidence"}
     assert set(out["help"]) == set(meanings)
     for cap, meaning in meanings.items():
         assert meaning in out["help"][cap]["description"]
@@ -336,7 +336,7 @@ def test_capability_badges_explain_practical_use_and_input_output() -> None:
     assert out["html"].count('data-af-tip-content=') == 8
     assert 'aria-hidden="true" data-af-tip' not in out["html"]
     assert 'aria-label="Speech generation"' in out["voice"]
-    assert out["empty"].count('data-mc-slot=') == 9
+    assert out["empty"].count('data-mc-slot=') == 10
     assert 'role="img"' not in out["empty"] and 'tabindex=' not in out["empty"]
 
 
