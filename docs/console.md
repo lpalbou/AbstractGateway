@@ -848,10 +848,11 @@ row of launchers.
 Each launcher says where it opens: a globe for the web browser, a monitor for
 an app on the gateway's computer, `>_` for a terminal. An app family is one
 card: the **Assistant** card holds **Open in browser** (the web Assistant)
-and **Open on this Mac** (the desktop Assistant). The card's status badge and
-primary button are those of the Assistant installed on this computer (the web
-one first); the other keeps its own status badge and notes beside its button,
-and on that card each Install says what it installs (**Install browser app**,
+and **Open on this Mac** (the desktop Assistant). Its one status badge shows
+both, each with its icon (globe Running · monitor Stopped), and each part
+starts or stops its own Assistant; the primary button is the Assistant
+installed on this computer (the web one first); the desktop Assistant's notes
+sit beside its button, and on that card each Install says what it installs (**Install browser app**,
 **Install desktop app**). When the gateway cannot list its apps, the tab shows
 the reason only. The words and
 pictures come from the gateway's app registry ([apps.md](./apps.md#registering-an-app)).

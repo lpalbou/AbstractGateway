@@ -418,7 +418,8 @@ if (scenario.name === "claim") {
   // details off: no Stop, no Show log, no versions, no commands.
   if (!apps.includes('class="ui-card-grid is-aligned"')) fail("the apps grid must pin the action rows (is-aligned): " + apps);
   for (const gone of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "npx @abstractframework/", "Version 0.4.2", "Open it with the Open button", "Also runs in your terminal", "abstractcode --gateway"]) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
-  if (!apps.includes("http://127.0.0.1:18080")) fail("apps step did not name the gateway URL");
+  // One toolbar line, no explanatory sentence: the refresh icon button (and the settings gear).
+  if (apps.includes("Apps open in your browser") || !apps.includes('data-app-action="refresh" aria-label="Refresh"')) fail("the apps toolbar must be the refresh icon button only: " + apps);
   if (apps.includes("nodejs.org")) fail("apps step must not send people to nodejs.org");
   for (const want of ['data-app-action="install"', ">Install</button>", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway", 'data-app-card="assistant"', 'data-app-action="desktop-open"']) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
   // Mission LL: ONE Install (it installs the terminal app too), never

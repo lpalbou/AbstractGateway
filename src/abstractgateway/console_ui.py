@@ -173,7 +173,16 @@ CONSOLE_UI_CSS = r"""
     .ui-btn.ui-app-launch { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
     .ui-app-launch__icon { display: inline-flex; }
     .ui-app-launch__icon svg { width: 16px; height: 16px; }
-    /* A family member's launcher with its own status badge and notes beside it. */
+    /* A family card's one badge: a segment per member (icon, dot, state), thin separators; it wraps, never truncates. */
+    .ui-app-card .ui-card__status { max-width: 100%; min-width: 0; }
+    .ui-app-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; max-width: 100%; padding: 2px 8px; border: 1px solid var(--ui-border-1); border-radius: 999px; }
+    .ui-app-badges > .ui-pill.ui-app-seg { border: 0; background: transparent; padding: 1px 2px; gap: 5px; }
+    .ui-app-badges > .ui-pill.ui-app-seg::before { order: 1; }
+    .ui-app-seg__icon { order: 0; display: inline-flex; }
+    .ui-app-seg__icon svg { width: 14px; height: 14px; }
+    .ui-app-seg__label { order: 2; white-space: nowrap; }
+    .ui-app-badges__sep { align-self: stretch; width: 1px; margin-block: 3px; background: var(--ui-border-2); }
+    /* A family member's launcher with its notes beside it. */
     .ui-app-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
     .ui-app-member__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
     .ui-app-member__notes { flex: 1 1 100%; display: grid; gap: 6px; min-width: 0; }
@@ -1963,18 +1972,44 @@ CONSOLE_UI_JS = r"""
     // reason) for an app started outside the gateway or a non-admin. A plain
     // pill when tip is null (not installed, starting, stopping).
     const APP_BADGE_PENDING = { stop: "Stopping…", launch: "Starting…", open: "Starting…", "desktop-open": "Starting…" };
-    function appBadgeMarkup(app, job, pend) {
-      if (appJobActive(job)) return uiPill("Installing", "info tone-busy");
+    // `seg` (a launcher kind: "browser" | "desktop"): this badge is one
+    // SEGMENT of a family card's single badge (appFamilyBadgeMarkup): the
+    // kind's icon, the state dot, the label; `data-member` names the app it
+    // stops/starts (R11.3, per segment).
+    function appBadgeMarkup(app, job, pend, seg) {
+      const cls = seg ? " ui-app-seg" : "";
+      const member = seg ? ` data-member="${esc(app.id)}"` : "";
+      const body = (label) => seg ? `${appLaunchIcon(seg).replace("ui-app-launch__icon", "ui-app-seg__icon")}<span class="ui-app-seg__label">${esc(label)}</span>` : esc(label);
+      const pill = (label, tone) => seg ? `<span class="ui-pill tone-${esc(tone)}${cls}"${member}>${body(label)}</span>` : uiPill(label, tone);
+      if (appJobActive(job)) return pill("Installing", "info tone-busy");
       if (pend && APP_BADGE_PENDING[pend.action] && (pend.action !== "open" || !app.running)) {
-        return `<button type="button" class="ui-pill tone-info tone-busy ui-app-badge" data-app-badge="${esc(app.id)}" disabled aria-busy="true">${esc(APP_BADGE_PENDING[pend.action])}</button>`;
+        return `<button type="button" class="ui-pill tone-info tone-busy ui-app-badge${cls}"${member} data-app-badge="${esc(app.id)}" disabled aria-busy="true">${body(APP_BADGE_PENDING[pend.action])}</button>`;
       }
       const sc = app.status_control;
       if (!sc || typeof sc !== "object") throw new Error(`AbstractGateway console: the apps row "${app.id}" has no status_control (gateway older than the console?)`);
       const tone = `${sc.tone || "muted"}${sc.busy ? " tone-busy" : ""}`;
-      if (!sc.tip) return uiPill(sc.label, tone);
+      if (!sc.tip) return pill(sc.label, tone);
       const off = !sc.enabled;
-      return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge" data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
-        + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${esc(sc.label)}</button>`;
+      return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge${cls}"${member} data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
+        + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${body(sc.label)}</button>`;
+    }
+    // A family card's ONE status badge: every member's state, in member
+    // order, each segment with its launcher's icon and its own dot, a thin
+    // separator between them. Its name says each place: "Browser: Running.
+    // This Mac: Stopped."
+    function appFamilyBadgeMarkup(rows, parts) {
+      const where = (r) => r.kind === "desktop" ? ((r.desktop && r.desktop.where_label) || "This computer") : "Browser";
+      const said = (r) => {
+        const job = appStore.jobs.get(r.id) || r.active_job || null;
+        if (appJobActive(job)) return "Installing";
+        const pend = appStore.busy.has(r.id) ? appStore.pending.get(r.id) : null;
+        if (pend && APP_BADGE_PENDING[pend.action] && (pend.action !== "open" || !r.running)) return APP_BADGE_PENDING[pend.action];
+        return (r.status_control && r.status_control.label) || "";
+      };
+      const name = rows.map((r) => `${where(r)}: ${said(r)}.`).join(" ");
+      return `<span class="ui-app-badges" role="group" aria-label="${esc(name)}">`
+        + rows.map((r) => parts.get(r.id).segment).join(`<span class="ui-app-badges__sep" aria-hidden="true"></span>`)
+        + `</span>`;
     }
     // One member of a card (an apps row), in parts: its status badge, its
     // body (progress, a failure, notes), its launcher (the state's one
@@ -2118,7 +2153,7 @@ CONSOLE_UI_JS = r"""
           + appLogMarkup(app);
       }
       const attention = (job && job.state === "failed") || app.status === "crash_loop";
-      return { badge: appBadgeMarkup(app, job, pend), body, launch, update, tui, gear, tech, kind, busy: appJobActive(job), attention };
+      return { badge: appBadgeMarkup(app, job, pend), segment: appBadgeMarkup(app, job, pend, kind), body, launch, update, tui, gear, tech, kind, busy: appJobActive(job), attention };
     }
     // A card (overview `cards[]`): illustration, mark + title + the
     // identity's status badge, the description, then ONE launcher row
@@ -2152,7 +2187,8 @@ CONSOLE_UI_JS = r"""
         }
         if (!leadDone) { row += head.gear; leadDone = true; }
         if (l.kind === "terminal") { row += p.tui.button; continue; }
-        row += `<div class="ui-app-member" data-app-member="${esc(l.app)}"><div class="ui-app-member__line">${p.launch}${p.badge}${p.update}${p.gear}</div>`
+        // Its state is a segment of the card's one badge; its notes stay here, beside its button.
+        row += `<div class="ui-app-member" data-app-member="${esc(l.app)}"><div class="ui-app-member__line">${p.launch}${p.update}${p.gear}</div>`
           + (p.body ? `<div class="ui-app-member__notes">${p.body}</div>` : "")
           + `</div>`;
       }
@@ -2174,7 +2210,7 @@ CONSOLE_UI_JS = r"""
       return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(card.family ? `family:${card.family}` : card.id)}"${card.family ? ` data-app-family="${esc(card.family)}"` : ""}>`
         + `<div class="ui-app-card__art">${art}</div>`
         + `<div class="ui-card__head">${art ? "" : `<span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`}`
-        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${head.badge}</span></div></div>`
+        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${shared ? appFamilyBadgeMarkup(rows, parts) : head.badge}</span></div></div>`
         + `<div class="ui-card__blurb">${esc(desc)}</div>`
         + `<div class="ui-card__body">${head.body}</div>`
         + `<div class="ui-card__actions">${row}</div>`

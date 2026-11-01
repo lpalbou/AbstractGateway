@@ -101,12 +101,15 @@ APP_FAMILIES = {"assistant": "Assistant"}
 
 **Cards.** `GET /api/gateway/apps` returns `cards[]` next to the rows: one card
 per family, else one per app, in registry order. A family card's description,
-mark and illustration are its browser app's. Its status badge and primary
-button belong to its lead: the first member installed on this computer, the
-browser app first (the browser app when none is installed), so the card's
-headline describes what you have. Every other member keeps its own status
-badge and its own notes (another copy running, quit to run a new version, why
-no version is shown) beside its own launcher; each member's technical details
+mark and illustration are its browser app's. Its primary button belongs to
+its lead: the first member installed on this computer, the browser app first
+(the browser app when none is installed), so the card's headline describes
+what you have. Its ONE status badge shows every member's state in member
+order, each part with its launcher's icon (globe, monitor): "Running ·
+Stopped", read out as "Browser: Running. This Mac: Stopped."; each part is
+that member's start/stop control. Every other member's notes (another copy
+running, quit to run a new version, why no version is shown) sit beside its
+own launcher; each member's technical details
 sit under its own label (**Browser app**, **Desktop app**). Without `family`,
 each app has a card of its own.
 
@@ -610,8 +613,8 @@ companion: a menu-bar app with a chat palette and hands-free voice
 conversations. It is a Python app, not a browser app, so its row
 (`kind: "desktop"`, id `assistant`, after the browser apps) has no address
 or port. On the Apps page it is the second launcher of the **Assistant** card
-(family `assistant`, with the web Assistant), with its own status badge and
-notes beside **Open on this Mac**. The full `abstractframework` install already includes it, in the same
+(family `assistant`, with the web Assistant): its state is the monitor part of
+the card's badge, and its notes sit beside **Open on this Mac**. The full `abstractframework` install already includes it, in the same
 Python environment as the gateway; a gateway-only install may not.
 
 - **Found by presence** (nothing is imported or started to find it): the

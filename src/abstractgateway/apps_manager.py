@@ -4078,6 +4078,8 @@ class AppsManager:
                 "launch_blocked_reason": launch_blocked,
                 # The card's desktop launcher, in this computer's words.
                 "open_label": "Open on this Mac" if sys.platform == "darwin" else "Open on this computer",
+                # Where it runs, in the family card's badge ("This Mac: Stopped.").
+                "where_label": "This Mac" if sys.platform == "darwin" else "This computer",
                 # A running Assistant of the OTHER artifact (R10.5): its own
                 # sentence; Open still launches the one this card describes.
                 "other_running": (dict(pres["other_running"], argv=None) if pres.get("other_running") else None),

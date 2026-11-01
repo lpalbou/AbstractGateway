@@ -7,9 +7,10 @@
   description and one row of launchers derived from its members' kinds: **Open in browser** with a globe badge,
   **Open on this Mac** (**Open on this computer** elsewhere) with a monitor badge, **Open in Terminal** with `>_`.
 - **The Assistant is one card with two launchers**: the web Assistant (`assistant-web`) and the desktop Assistant
-  (`assistant`) form the `assistant` family. The card's status badge and primary button are those of the
-  Assistant installed on this computer (the web one first); the other keeps its own status badge and notes (another
-  copy running, quit to run a new version) beside its own button, and each Install says what it installs.
+  (`assistant`) form the `assistant` family. Its one status badge shows both states, each with its launcher's
+  icon, and each part starts or stops its own Assistant; the primary button is the Assistant installed on this
+  computer (the web one first); the desktop Assistant's notes (another copy running, quit to run a new version)
+  sit beside its own button, and each Install says what it installs.
 - **The Apps tab's error state shows the reason only**: the console no longer carries its own list of apps.
 - **Node.js on the Apps tab is a card only when it needs you** (missing, installing, a failed install); ready, it
   is one quiet line under **Technical details**. The Apps toolbar is one line at the top right: a **Refresh** icon

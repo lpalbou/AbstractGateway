@@ -201,7 +201,7 @@ def test_the_asset_route_serves_registered_files_only(assets_client) -> None:
 _CARD_FUNCTIONS = (
     "appLaunchIcon", "appMemberParts", "appCardMarkup", "appBadgeMarkup", "appTuiParts", "appTuiOf", "appNoticeMarkup",
     "appJobActive", "appJobAsProgress", "appPartsMarkup", "appTechSep", "appCmdLine", "appFirstRun", "appLogMarkup",
-    "appRowById", "appBrowserOrigin",
+    "appRowById", "appBrowserOrigin", "appFamilyBadgeMarkup",
 )
 
 
@@ -233,7 +233,7 @@ def _rows(*, family: bool) -> List[Dict[str, Any]]:
            "interfaces": [{"kind": "web"}], "status_control": _badge(True), "package": "@abstractframework/assistant"}
     mac = {"id": "assistant", "name": "Assistant", "kind": "desktop", "description": desk.ASSISTANT.description, **fields(desk.ASSISTANT),
            "installed": True, "running": False, "status": "stopped", "actions": ["open"], "interfaces": [], "status_control": _badge(False),
-           "desktop": {"launch_available": True, "launch_blocked": None, "open_label": "Open on this Mac",
+           "desktop": {"launch_available": True, "launch_blocked": None, "open_label": "Open on this Mac", "where_label": "This Mac",
                        "other_running": {"sentence": "Another Assistant is running: /Applications/AbstractAssistant.app 0.5.0."},
                        "restart_note": "Quit it and open it again to run 0.14.0."}}
     code = {"id": "code", "name": "Code", "kind": "web", "description": am.APP_BY_ID["code"].description, **fields(am.APP_BY_ID["code"]),
@@ -287,11 +287,22 @@ def test_the_family_card_renders_two_launchers_with_their_badges() -> None:
     assert "is-primary" in web and ">Open in browser</button>" in web and 'data-app-launch-badge="browser"' in web and "data-icon=globe" in web
     assert "is-ghost" in mac and ">Open on this Mac</button>" in mac and 'data-app-launch-badge="desktop"' in mac and "data-icon=monitor" in mac
     assert "data-icon=globe" not in mac and 'data-app-launch-badge="browser"' not in mac
-    # The header badge is the browser app's; the desktop app's badge and notes sit beside its own launcher.
+    # ONE header badge for the family: a segment per member, in member order, each with its launcher's icon.
     head = card[card.index('class="ui-card__head"'):card.index('class="ui-card__blurb"')]
-    assert 'data-app-badge="assistant-web"' in head and 'data-app-badge="assistant"' not in head
+    assert head.count('class="ui-app-badges"') == 1
+    assert 'role="group" aria-label="Browser: Running. This Mac: Stopped."' in head
+    segs = re.findall(r'<button[^>]*ui-app-seg[^>]*>.*?</button>', head, flags=re.S)
+    assert [re.search(r'data-member="([\w-]+)"', g).group(1) for g in segs] == ["assistant-web", "assistant"]
+    web_seg, mac_seg = segs
+    assert "data-icon=globe" in web_seg and '<span class="ui-app-seg__label">Running</span>' in web_seg
+    assert "data-icon=monitor" in mac_seg and '<span class="ui-app-seg__label">Stopped</span>' in mac_seg
+    # R11.3 per segment: each stops/starts its own member.
+    assert 'data-app-action="badge" data-app="assistant-web"' in web_seg and 'data-badge-action="stop"' in web_seg
+    assert 'data-app-action="badge" data-app="assistant"' in mac_seg and 'data-badge-action="launch"' in mac_seg
+    assert head.count('class="ui-app-badges__sep"') == 1
+    # No badge beside a member's button any more; its notes stay there.
     member = row[row.index('data-app-member="assistant"'):]
-    assert 'data-app-badge="assistant"' in member and ">Stopped</button>" in member
+    assert "data-app-badge" not in row and "ui-app-seg" not in row
     assert 'data-app-desktop-other="assistant"' in member and 'data-app-desktop-restart="assistant"' in member
     assert len([b for b in _buttons(row) if "is-primary" in b]) == 1
     # The family's illustration (the browser member's registration), served with a version query.
@@ -320,6 +331,13 @@ def test_without_the_family_the_console_renders_two_assistant_cards() -> None:
     assert "data-app-member" not in out["assistant-web"] and "data-app-member" not in out["assistant"]
     mac = [b for b in _buttons(out["assistant"]) if 'data-app-launch="desktop"' in b]
     assert len(mac) == 1 and "is-primary" in mac[0]  # alone, the desktop app is its card's primary launcher
+    # A single-member card keeps its plain badge (no segments, no group).
+    for key, app_id in (("assistant", "assistant"), ("assistant-web", "assistant-web")):
+        head = out[key][out[key].index('class="ui-card__head"'):out[key].index('class="ui-card__blurb"')]
+        assert "ui-app-badges" not in head and "ui-app-seg" not in head and "data-member=" not in head
+        assert f'ui-app-badge" data-app-action="badge" data-app="{app_id}"' in head
+    code = out["code"][out["code"].index('class="ui-card__head"'):out["code"].index('class="ui-card__blurb"')]
+    assert 'class="ui-pill tone-ok ui-app-badge" data-app-action="badge" data-app="code"' in code and "ui-app-badges" not in code
 
 
 def test_an_illustration_shows_and_its_neighbours_show_their_mark() -> None:
