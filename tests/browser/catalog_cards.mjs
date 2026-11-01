@@ -296,9 +296,16 @@ try {
   await cloud.locator('[data-cloud-provider="ovh"]').waitFor();
   check(await cloud.locator('[data-cloud-provider]').count()===6,`${theme}: wizard native providers, OVH and generic endpoint`);
   for(const id of ['anthropic','openai','openrouter','portkey','ovh'])check(await cloud.locator(`[data-brand="${id}"] svg`).isVisible(),`${theme}: ${id} official artwork`);
-  check((await cloud.locator('[data-cloud-provider="ovh"]').innerText()).includes('oai.endpoints.kepler.ai.cloud.ovh.net/v1'),`${theme}: OVH preset URL`);
-  const generic=cloud.locator('[data-cloud-provider="openai-compatible"]');
-  check(await generic.getByLabel('Name',{exact:true}).isVisible()&&await generic.getByLabel('Base URL',{exact:true}).isVisible(),`${theme}: other compatible services accept a name and URL`);
+  // Kit 0.9.12: simpler cards (ONE status, ONE button) and the fields in the Connect/Edit modal.
+  check(await cloud.locator('[data-cloud-provider] input').count()===0,`${theme}: no field on a cloud card`);
+  await cloud.locator('[data-cloud-provider="ovh"] button').click();
+  const ovhModal=page.getByRole('dialog',{name:'Connect OVH AI Endpoints'});await ovhModal.waitFor();
+  check((await ovhModal.getByLabel('Base URL',{exact:true}).inputValue())==='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',`${theme}: OVH preset URL in its modal`);
+  await ovhModal.getByRole('button',{name:'Cancel',exact:true}).click();await ovhModal.waitFor({state:'detached'});
+  await cloud.locator('[data-cloud-provider="openai-compatible"] button').click();
+  const genericModal=page.getByRole('dialog',{name:'Connect Other OpenAI-compatible endpoint'});await genericModal.waitFor();
+  check(await genericModal.getByLabel('Name',{exact:true}).isVisible()&&await genericModal.getByLabel('Base URL',{exact:true}).isVisible(),`${theme}: other compatible services accept a name and URL`);
+  await genericModal.getByRole('button',{name:'Cancel',exact:true}).click();await genericModal.waitFor({state:'detached'});
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`wizard-providers-${theme}.png`)});
   await page.setViewportSize({width:390,height:844});
   await page.locator('#first-run-next').focus();
