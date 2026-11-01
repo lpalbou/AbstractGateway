@@ -294,7 +294,8 @@ try {
   await page.locator('[data-first-run-step="cloud"]').first().click();
   const cloud=page.locator('#first-run-cloud-body');
   await cloud.locator('[data-cloud-provider="ovh"]').waitFor();
-  check(await cloud.locator('[data-cloud-provider]').count()===6,`${theme}: wizard native providers, OVH and generic endpoint`);
+  const wizIds=await cloud.locator('[data-cloud-provider]').evaluateAll(els=>els.map(e=>e.getAttribute('data-cloud-provider')));
+  check(wizIds.slice(wizIds.indexOf('ovh')).join(',')===(wizIds.includes('systemone')?'ovh,openai-compatible,systemone':'ovh,openai-compatible'),`${theme}: brand cards, OVH, then the compatible cards last`);
   for(const id of ['anthropic','openai','openrouter','portkey','ovh'])check(await cloud.locator(`[data-brand="${id}"] svg`).isVisible(),`${theme}: ${id} official artwork`);
   // Kit 0.9.12: simpler cards (ONE status, ONE button) and the fields in the Connect/Edit modal.
   check(await cloud.locator('[data-cloud-provider] input').count()===0,`${theme}: no field on a cloud card`);
@@ -303,7 +304,7 @@ try {
   check((await ovhModal.getByLabel('Base URL',{exact:true}).inputValue())==='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',`${theme}: OVH preset URL in its modal`);
   await ovhModal.getByRole('button',{name:'Cancel',exact:true}).click();await ovhModal.waitFor({state:'detached'});
   await cloud.locator('[data-cloud-provider="openai-compatible"] button').click();
-  const genericModal=page.getByRole('dialog',{name:'Connect Other OpenAI-compatible endpoint'});await genericModal.waitFor();
+  const genericModal=page.getByRole('dialog',{name:'Connect OpenAI-compatible endpoint'});await genericModal.waitFor();
   check(await genericModal.getByLabel('Name',{exact:true}).isVisible()&&await genericModal.getByLabel('Base URL',{exact:true}).isVisible(),`${theme}: other compatible services accept a name and URL`);
   await genericModal.getByRole('button',{name:'Cancel',exact:true}).click();await genericModal.waitFor({state:'detached'});
   await page.screenshot({animations:"disabled",path:path.join(SHOTS,`wizard-providers-${theme}.png`)});

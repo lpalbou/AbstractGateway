@@ -191,7 +191,7 @@ try {
   });
   await page.waitForSelector("#cloud-providers-root [data-cloud-provider]", { timeout: 20000 });
   const cloudIds = await page.$$eval("#cloud-providers-root [data-cloud-provider]", (els) => els.map((e) => e.getAttribute("data-cloud-provider")));
-  check(["anthropic", "openai", "openrouter", "portkey"].every((id) => cloudIds.includes(id)) && JSON.stringify(cloudIds.slice(-2)) === JSON.stringify(["ovh", "openai-compatible"]), "one cloud card per AbstractCore cloud provider, then OVH and the generic endpoint", cloudIds);
+  check(["anthropic", "openai", "openrouter", "portkey"].every((id) => cloudIds.includes(id)) && cloudIds.slice(cloudIds.indexOf("ovh")).join(",") === (cloudIds.includes("systemone") ? "ovh,openai-compatible,systemone" : "ovh,openai-compatible"), "brand cards, OVH, then the compatible cards last (OpenAI-compatible, System One-compatible)", cloudIds);
   const presets = await page.$$eval("#provider-preset-grid .provider-preset", (els) => els.map((e) => e.id.replace(/^provider-preset-/, "")));
   check(JSON.stringify(presets) === JSON.stringify(["openai-compatible"]), "only the custom server stays a preset", presets);
   const cloud = (id) => `#cloud-providers-root [data-cloud-provider="${id}"]`;
