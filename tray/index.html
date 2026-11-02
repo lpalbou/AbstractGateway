@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -592,6 +619,17 @@
     <span class="md-ellipsis">
       
         Menus without submenus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#classic-menu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classic menu
       
     </span>
   </a>
@@ -1177,6 +1215,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#classic-menu" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classic menu
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#pause" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1296,90 +1345,122 @@ Windows system tray or a Linux panel. It exists so that anyone running a
 gateway on their own computer — including people who never open a terminal —
 can see what it is doing and act on it in one click:</p>
 <ul>
+<li><strong>The header</strong> — on macOS a native row: the AbstractFramework logo, the
+  product name, one line saying what the gateway is doing (<code>2 conversations
+  running · 1 model loaded</code>, <code>Paused · Paused — conversations wait until you
+  resume</code>) and a <strong>switch</strong>: ON while conversations run, OFF pauses the
+  gateway (the console keeps answering; work waits). Windows and Linux show
+  the name (Linux with the logo beside it), the subtitle and a <strong>☑ Running</strong>
+  check row that is the same switch. There is no Pause row anywhere else:
+  the switch is the control. See <em>Pause</em>.</li>
 <li><strong>Open Console</strong> — the web console (<code>/console</code>), <strong>already signed in</strong>:
   the tray mints a one-time sign-in link locally (the same code as
   <code>abstractgateway claim</code>; see <em>Security</em>) so an expired browser session never
   ends on a token prompt. One door: every other console entry point in the menu
   is a deep link to a tab of it.</li>
-<li><strong>Apps</strong> — the six AbstractFramework apps, one short line each: <strong>Open X</strong>
+<li><strong>Open Assistant</strong> — the desktop app, connected and signed in to this
+  gateway (<strong>Install Assistant…</strong> when the gateway can install it; absent
+  when it can neither, the name then sits greyed under Apps). See <em>Apps</em>.</li>
+<li><strong>Needs you</strong> — every conversation waiting for a person (an approval, a
+  question) as its own row at the top of the menu, with <strong>Show and approve…</strong>,
+  <strong>Deny</strong> and <strong>Open in Observer</strong>; at most three rows, then one line naming
+  the rest. Nothing here while nothing waits.</li>
+<li><strong>Conversations</strong> — what is going on, by the conversation's <strong>title</strong> (what you
+  asked, or the automation's name — never a workflow id): <strong>Running</strong>, <strong>Need
+  attention</strong> and <strong>Recent</strong> (the last 24 hours), each row with its own
+  actions. See <em>Conversations</em> below.</li>
+<li><strong>Automations</strong> — the standing orders, <strong>Active</strong> and <strong>Paused</strong>, each with
+  <strong>Open in Observer</strong>, <strong>Run now</strong>, <strong>Pause / Resume</strong>, and the Automations
+  page in Observer. See <em>Conversations</em> below.</li>
+<li><strong>Models</strong> — memory first: the full memory and GPU figures, what is in
+  memory with one <strong>Eject X (size, engine)…</strong> row per model and <strong>Eject All —
+  frees N…</strong> when several are loaded, then <strong>Load a Model ▸</strong>, <strong>Show Activity
+  Window…</strong> (two live graphs and the model list; needs <code>tkinter</code>, see below)
+  and the console's Resources tab. See <em>Models</em> below.</li>
+<li><strong>Apps</strong> — the AbstractFramework browser apps, one short line each: <strong>Open X</strong>
   (running, whoever started it, or installed: started first), <strong>Install X…</strong>
   (installs through the gateway, with progress notifications: the same
   install as the console's Install button, so Code's terminal app comes with
-  it; nothing opens by itself, the menu then offers <strong>Open X</strong>), <strong>Launch
-  Assistant</strong> (the desktop app), otherwise the app's name, greyed. See <em>Apps</em>
-  below.</li>
-<li><strong>Addresses</strong> — every address the gateway answers on, each saying where it
-  reaches (<code>http://127.0.0.1:8080 · this computer</code>, <code>http://192.168.1.175:8080
-  · local network (Wi-Fi)</code>, a <code>.local</code> name, a tailscale name, the internet);
-  a click copies it and a notification says what was copied.</li>
-<li><strong>Conversations</strong> — what is going on, by the conversation's <strong>title</strong> (what you
-  asked, or the automation's name — never a workflow id): <strong>Running</strong>, <strong>Need
-  attention</strong>, <strong>Scheduled</strong> and <strong>Recent</strong> (the last 24 hours), each row with
-  its own actions. See <em>Conversations</em> below.</li>
-<li><strong>Pause / Resume AbstractGateway</strong> — the one gateway-wide control, under
-  Conversations: stop new steps from running to free the machine or to look at
-  what is going on (the console keeps answering; work queues until you
-  resume). While paused the header reads <code>AbstractGateway — Paused</code>.</li>
-<li><strong>Models</strong> — what is in memory, what can be loaded, and the way to either:
-  eject a loaded model, or preload an installed one. See <em>Models</em> below.</li>
-<li><strong>Show Activity Window</strong> — two live graphs (memory, GPU) and the model list
-  in a small window (needs <code>tkinter</code>; see below).</li>
-<li><strong>Start AbstractGateway at login</strong> — a check item that shows whether this
-  gateway WOULD start at your next login, and switches it. See <em>Start at login</em>.</li>
-<li><strong>Check for Updates / Restart / Quit / About / Help.</strong> About shows the
-  gateway's version, console address and data folder, the AbstractFramework
-  project details (website, source, documentation, where to report an issue
-  or give feedback, contact) and the versions of the framework packages this
-  gateway runs (from <code>GET /api/gateway/about</code>).</li>
+  it; nothing opens by itself, the menu then offers <strong>Open X</strong>), otherwise
+  the app's name, greyed. See <em>Apps</em> below.</li>
+<li><strong>Connect</strong> — where the gateway answers now, every address it answers on
+  (<code>http://127.0.0.1:8080 · this computer</code>, <code>http://192.168.1.175:8080 ·
+  local network (Wi-Fi)</code>, a <code>.local</code> name, a tailscale name, the internet; a
+  click copies it and a notification says what was copied), who may reach
+  it (<strong>Localhost only</strong> / <strong>Local network</strong> / <strong>Internet…</strong>) and the restart
+  that applies a change. See <em>Network and addresses</em> below.</li>
+<li><strong>Settings</strong> — <strong>Start at login</strong> (a check item that shows whether this
+  gateway WOULD start at your next login, and switches it; see <em>Start at
+  login</em>), <strong>Warn when memory is almost full</strong>, <strong>Classic menu</strong>.</li>
+<li><strong>Help</strong> — Documentation, Report a Problem, the developer API reference,
+  Copy Console Link, <strong>Check for Updates…</strong> (while no update is known) and
+  About: the gateway's version, console address and data folder, the
+  AbstractFramework project details and the versions of the framework
+  packages this gateway runs (from <code>GET /api/gateway/about</code>).</li>
+<li><strong>Restart…, Quit</strong> — at the bottom. An update's state (<strong>Update to …</strong>,
+  <strong>Restart to Finish Update…</strong>) joins them while it applies. Pausing is the
+  header's switch (see above): it stops new steps from running to free the
+  machine or to look at what is going on (the console keeps answering; work
+  queues until you switch it back on); while paused the subtitle reads
+  <code>Paused — conversations wait until you resume</code>.</li>
 </ul>
-<p>The menu as shipped (macOS, a machine with 151 installed models; <code>[…]</code> is a
-greyed information line, <code>▸</code> a submenu, <code>☐/☑</code> the check item). The header is
-ONE line; a second appears only when it carries news (<code>Working on 2 steps</code>,
-<code>Finishing 1 run at the next step, then pausing</code>, <code>Paused — conversations wait
-until you resume</code>, <code>Installing …</code>, <code>Can't reach it on this computer ·
-retrying</code>):</p>
-<div class="highlight"><pre><span></span><code>[AbstractGateway — Running]
-Open Console
-Show Activity Window…
-Apps ▸              Open Observer | Open Continuum | Install Code… | … | Launch Assistant | Manage Apps in Console…
-Addresses ▸         http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name
-Conversations ▸
-    [Running (2)]
-    🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸   [Running · started 14:02] | Open in Observer | Pause | Stop…
-    ⏸ Market study · paused · 5m 02s so far ▸                          [Paused · started 13:58] | Open in Observer | Resume | Stop…
-    [Need attention (2)]
-    🟡 Clean the build folder · approve `execute_command` ▸             [execute_command {"command": "rm -rf build"}] | Show and approve… | Deny | Open in Observer
-    🟡 Plan the trip · a question ▸                                     [Which dates?] | Open in Observer
-    [Scheduled (3)]
-    ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸       [Active · Every day at 09:00 · next Fri 17 Oct 09:00] | Open in Observer | Run now | Pause
-    ⏱ Python news · When Python news has a new item ▸                   [Active · When Python news has a new item] | Open in Observer | Run now | Pause
-    ⏸ Inbox triage · paused · When mail arrives in me@example.org ▸     [Paused · When mail arrives in me@example.org] | Open in Observer | Run now | Resume
-    [Recent — 4 done · 1 cancelled]
-    ✅ Write the changelog · 7 steps · 1m 42s ▸                         [Started 13:40] | Open in Observer
-    …
-    Open Conversations in Console
-⏸ Pause AbstractGateway
-[Memory 47.0 GB of 128 GB (37%) · GPU 38% busy]
-Models ▸
-    [Loaded: 1 · 249 MB · 45.2 GB free]
-    ✓ Qwen1.5-0.5B-Chat-4bit · 249 MB · MLX ▸
-        Eject — frees 249 MB
-    Load a Model ▸
-        [Your defaults]
-        ☑ Text: Qwen1.5-0.5B-Chat-4bit · 260 MB · MLX · loaded
-        MLX (11) ▸         recognised models first, then A–Z
-        LM Studio (13) ▸
-        Ollama (1) ▸
-        Hugging Face (126) ▸   Recognised models (3) ▸ | A – F (30) ▸ | F – Q (30) ▸ | …
-        Download Models in Console…
-    Manage Models in Console…
-Check for Updates…
-Restart AbstractGateway…
-☐ Start AbstractGateway at login
-Network ▸           [Now: localhost only · 127.0.0.1:8080] | ● Localhost only | ○ Local network | ○ Internet…
-Help ▸
-Quit AbstractGateway…
+<p>The menu (macOS; <code>[…]</code> is a greyed information line, <code>▸</code> a submenu, <code>☑/☐</code> a
+check item, <code>●/○</code> a radio choice). It reads top to bottom in the order a
+person thinks: <strong>what is going on</strong> (three status lines), <strong>act</strong> (the two
+doors, then whatever waits for you), <strong>look</strong> (Conversations, Models, Apps),
+<strong>set up</strong> (Connect, Settings, Help), <strong>lifecycle</strong> (an update when one is
+known, Pause, Restart, Quit):</p>
+<div class="highlight"><pre><span></span><code>[logo] AbstractGateway                          (○━━) ← macOS: the native header; ON = running, OFF = paused
+       1 conversation running · 1 needs you · 1 model loaded
+[Memory 32% · this gateway 10.9 GB · GPU 20%]
+────────
+Open Console                                   (the default item: signed in)
+Open Assistant                                 (the desktop app; Install Assistant… when it can be installed)
+────────
+[Needs you (1)]                                (only while something waits for a person; at most 3 rows, then "…and N more under Conversations")
+🟡 Clean the build folder · approve `execute_command` ▸   [execute_command {"command": "rm -rf build"}] | Show and approve… | Deny | Open in Observer
+────────
+Conversations ▸     [Running (1)] 🟢 Refactor the sampler into two lanes · step 4 · 2m 10s so far ▸ | [Need attention (1)] … | [Recent — 1 done] ✅ Write the changelog · 7 steps · 1m 42s ▸ | Open Conversations in Console
+Automations ▸       [Active (1)] ⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00 ▸ | [Paused (1)] ⏸ Inbox triage · paused · When mail arrives in me@example.org ▸ | Open Automations in Observer
+Models ▸            [Memory 40.6 GB of 128 GB (32%) · this gateway 10.9 GB] | [GPU 20% busy · Apple M5 Max] | [In memory (2) · 16.2 GB] | Eject Qwen3.6-27B-4bit (16.0 GB, MLX)… | Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX)… | Eject All — frees 16.2 GB… | Load a Model ▸ | Show Activity Window… | Open Resources in Console…
+Apps ▸              Open Observer | Open Continuum | Install Code… | [Entity] | Install Flow… | [Installs unavailable now · Console → Apps] | Manage Apps in Console…
+────────
+Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Addresses — click one to copy it] | http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name | [Who can reach it] | ● Localhost only | ○ Local network | ○ Internet… | Open Network in Console…
+Settings ▸          ☑ Start at login | ☑ Warn when memory is almost full | ☐ Classic menu
+Help ▸              Documentation | Report a Problem… | Developer API Reference | Copy Console Link | Check for Updates… | About AbstractGateway…
+────────
+Restart…
+Quit AbstractGateway…                          (Force Quit AbstractGateway… while it does not answer)
 </code></pre></div>
+<p>The header is always there. On macOS it is one native row (<code>NSMenuItem</code>
+view, <code>tray/header_mac.py</code>): the logo (<code>tray/logo.py</code>, the framework's
+<code>assets/logo-framework.png</code> cropped square, rounded, 72 px), the product
+name, a subtitle and the switch. The subtitle is what the machine is doing
+in words (<code>Idle · no model loaded</code>, <code>2 conversations running · 1 needs you ·
+1 model loaded</code>; <code>Slow to answer ·</code> leads it when a probe timed out) and,
+while the gateway is not plainly running, its state first (<code>Paused · Paused
+— conversations wait until you resume</code>, <code>Pausing… · Finishing 2 runs at the
+next step, then pausing</code>, <code>Updating… · Installing 0.19.0 · conversations keep
+running</code>, <code>Not responding · Can't reach it on this computer · retrying</code>,
+<code>Starting… · Usually a few seconds</code>). The switch is ON while conversations
+run and OFF while paused; it is greyed while the gateway is pausing,
+updating, starting or not answering, and absent while it cannot be reached.</p>
+<p>Windows and Linux menus cannot hold a control in a row (a Win32 menu row is
+text, an AppIndicator menu is exported over DBus and drawn by the panel:
+label, icon, check mark), so there the header is three rows: <code>AbstractGateway
+0.19.0</code> (Linux: with the logo beside it, a <code>GtkImageMenuItem</code>), the subtitle,
+and <strong>☑ Running</strong> — the switch as a check item: unticking pauses, ticking
+resumes, greyed while it cannot be told. macOS without a usable AppKit falls
+back to the same three rows, so the switch is never missing. Then the meters
+as percentages (the full figures and the GPU's name are under <strong>Models ▸</strong>).
+The product name is on the header and on Quit, nowhere else. An update changes the bottom
+section: <code>Checking for Updates…</code>, <code>Update to 0.19.0…</code>, <code>Updating…</code>, <code>Restart
+to Finish Update…</code> appear above Pause while they apply; otherwise <strong>Check for
+Updates…</strong> waits under Help.</p>
+<p>This is the menu since 1 November 2026. The previous layout is kept whole
+and is one click away (see <a href="#classic-menu">Classic menu</a>); its text rendering
+is in the gateway's <code>menu_model.py</code> docstring and in
+<code>tests/test_gateway_tray_menu_model.py</code>.</p>
 <p>The icon itself is a live gauge: the outer ring fills with system memory in
 use (blue), the inner ring with GPU load (amber). A green dot in the centre
 means a workflow step is executing right now; pause bars mean paused; a red
@@ -1426,10 +1507,16 @@ time). When it is missing, the item is absent; the console's <strong>Resources</
 shows the same graphs.</p>
 <h2 id="when-the-icon-appears">When the icon appears<a class="headerlink" href="#when-the-icon-appears" title="Permanent link">&para;</a></h2>
 <p>At <code>abstractgateway serve</code> time the gateway decides, and says why on stderr:</p>
-<p><strong>While the gateway runs, the icon is there.</strong> There is no setting to turn it
-off and no <em>Hide</em> item in its menu, because the icon is how people who never
-open a terminal reach their gateway. It is absent only for one of these
-reasons:</p>
+<p><strong>While the machine's gateway service runs, the icon is there.</strong> The service is
+the gateway started at login by <code>abstractgateway service install</code> or the
+installer: the LaunchAgent (launchd job <code>ai.abstractframework.gateway</code>), the
+systemd user unit (<code>abstractgateway.service</code>), the XDG autostart entry or the
+Windows Run entry. A <code>serve</code> started any other way (a terminal, a test, an e2e
+harness, a script) shows no icon unless it is started with <code>--tray</code>, so a
+scratch gateway never puts a second icon next to yours (operator ruling
+2026-10-29). There is no setting to turn the service's icon off and no <em>Hide</em>
+item in its menu, because the icon is how people who never open a terminal
+reach their gateway. It is absent only for one of these reasons:</p>
 <table>
 <thead>
 <tr>
@@ -1455,8 +1542,12 @@ reasons:</p>
 <td>not started; the tray belongs to the process that serves the console</td>
 </tr>
 <tr>
-<td><code>serve --no-tray</code> (a test or scratch gateway next to your usual one)</td>
-<td>not started for this run (reason <code>no_tray_flag</code>)</td>
+<td>Not the machine's gateway service and no <code>--tray</code> (a terminal, a test, a harness)</td>
+<td>not started (reason <code>not_service</code>)</td>
+</tr>
+<tr>
+<td><code>serve --no-tray</code></td>
+<td>not started for this run (reason <code>no_tray_flag</code>), even for the service</td>
 </tr>
 <tr>
 <td>A test gateway start: <code>--host 127.0.0.1</code>, a <code>--port</code> other than the configured one (the network setting's, else 8080) and <code>--print-token</code></td>
@@ -1487,8 +1578,8 @@ describe the machine, and the conversation list has to describe the same machine
 Catalog-published workflows are shown under the name you know them by and are
 not mistaken for the gateway's own bookkeeping runs. Summoned entities' data
 planes are not listed (the payload names them in <code>skipped_entity_planes</code>).</p>
-<p>Four sections, each under an information line, nothing hidden without saying
-so:</p>
+<p>Three sections under <strong>Conversations ▸</strong> and two under <strong>Automations ▸</strong>,
+each under an information line, nothing hidden without saying so:</p>
 <ul>
 <li><strong>Running (N)</strong> — <code>🟢 &lt;title&gt; · step 4 · 2m 10s so far</code>, whatever day it
   started; a run whose sub-run is working counts as running. A row waiting
@@ -1511,17 +1602,19 @@ so:</p>
   full arguments from</code>GET /host/runs/{run_id}/wait<code>).</code>🟡 <title> · a
   question`: the question, one line; free-text answers stay in the clients
   (the Assistant, Code, the console).</li>
-<li><strong>Scheduled (N)</strong> — the automations (<code>GET /automations</code>), active and
-  paused: <code>⏱ &lt;automation title&gt; · Every day at 09:00 · next Fri 17 Oct
-  09:00</code>, <code>⏱ &lt;title&gt; · When Python news has a new item</code> — the trigger in the
-  gateway's words (<code>trigger_text</code>, with the next run from <code>schedule_text</code> for a
+<li><strong>Automations ▸</strong> (its own item under Conversations ▸) — the automations
+  (<code>GET /automations</code>) under <strong>Active (N)</strong> and <strong>Paused (N)</strong>: <code>⏱
+  &lt;automation title&gt; · Every day at 09:00 · next Fri 17 Oct 09:00</code>, <code>⏱
+  &lt;title&gt; · When Python news has a new item</code> — the trigger in the gateway's
+  words (<code>trigger_text</code>, with the next run from <code>schedule_text</code> for a
   schedule); the tray computes no next run. The submenu: <strong>Open in
   Observer</strong> (the Automations page), <strong>Run now</strong>, <strong>Pause</strong> /
   <strong>Resume</strong> (<code>POST /automations/{id}/commands</code>, types
   <code>automation.run_now</code>, <code>automation.pause</code>, <code>automation.resume</code>), each offered
   only when the automation's <code>capabilities</code> list it; the gateway's refusal
   (an occurrence already running, an archived automation) is shown with its
-  words.</li>
+  words. <strong>Open Automations in Observer</strong> at the bottom; <code>No automations
+  yet</code> when there are none.</li>
 <li><strong>Recent — 4 done · 1 cancelled</strong> — the conversations that finished in the last
   24 hours (✅ completed, ❌ failed, ⚪️ cancelled), newest first, with the
   step count and how long each took; five rows, then <code>…and N more</code>. The
@@ -1576,13 +1669,17 @@ twice.</p>
   <code>notification.failed</code> with <code>channel: "tray"</code>.</li>
 </ul>
 <h2 id="models">Models<a class="headerlink" href="#models" title="Permanent link">&para;</a></h2>
-<p><strong>Models ▸</strong> leads with what is in memory — a header (<code>Loaded: N · size ·
-free memory</code>), then one row per loaded model. Each loaded row is a submenu
-whose one action is <strong>Eject — frees N GB</strong>: a click on a check-marked row
-never unloads by surprise. Eject asks first; when work is running on the
-gateway it says so, because eject stops the calls running on that model first
-and the next request that needs it loads it again (the gateway's eject
-semantics). A locked model ("kept in memory") asks again before it goes.</p>
+<p><strong>Models ▸</strong> is about memory first: the full meters (<code>Memory 40.6 GB of 128
+GB (32%) · this gateway 10.9 GB</code>, <code>GPU 20% busy · Apple M5 Max</code>), then what
+is in memory — <code>In memory (N) · size</code> and one <strong>Eject X (size, engine)…</strong> row
+per loaded model (<code>kept in memory</code> named in the row for a locked one), and
+<strong>Eject All — frees N…</strong> when several are loaded. Every eject asks first
+(that is why a direct row is safe); when work is running on the gateway it
+says so, because eject stops the calls running on that model first and the
+next request that needs it loads it again (the gateway's eject semantics). A
+locked model asks again before it goes; <strong>Eject All</strong> asks once, naming the
+models and what they free, then ejects them one after the other. <code>Nothing in
+memory</code> when the list is empty.</p>
 <p><strong>Load a Model ▸</strong> preloads an installed model (<code>POST
 /api/gateway/models/load</code>; the gateway pins it resident):</p>
 <ol>
@@ -1747,8 +1844,44 @@ prefixed with its path (<code>Models › Load a Model › MLX › …</code>). p
 X11 backend (<code>xorg</code>) has no menu at all: clicking the icon opens the console,
 and a notification at start names the CLI equivalents (<code>abstractgateway
 service …</code>, <code>apps …</code>, <code>models …</code>).</p>
+<h2 id="classic-menu">Classic menu<a class="headerlink" href="#classic-menu" title="Permanent link">&para;</a></h2>
+<p>The layout shipped before 1 November 2026 (the one with a text header,
+<strong>Addresses ▸</strong> and <strong>Network ▸</strong> as two items, <strong>Show Activity Window…</strong> at
+the top, the automations inside Conversations ▸, the gateway-wide controls
+spread over the bottom half and the product name on six rows) is kept whole in <code>menu_model.py</code> and is one click away:</p>
+<table>
+<thead>
+<tr>
+<th>Way</th>
+<th>Scope</th>
+<th>How</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Settings ▸ Classic menu</strong></td>
+<td>this machine, remembered</td>
+<td>writes <code>"menu_style": "classic"</code> to <code>&lt;data_dir&gt;/tray/prefs.json</code> and rebuilds the menu at once; the classic menu's <strong>Help ▸ New menu</strong> is the way back</td>
+</tr>
+<tr>
+<td><code>abstractgateway serve --tray-menu classic</code> (or <code>v2</code>)</td>
+<td>this run</td>
+<td>pins the style for the run whatever the preference says; the service's command line is where to put it for every start (<code>abstractgateway service enable</code> keeps the stored one)</td>
+</tr>
+<tr>
+<td><code>prefs.json</code> by hand</td>
+<td>this machine</td>
+<td><code>"menu_style": "classic"</code> or <code>"v2"</code>; an unknown word is ignored</td>
+</tr>
+</tbody>
+</table>
+<p>Both menus call the same handlers for the same actions (<code>tests/test_gateway_tray_menu_v2.py</code>
+checks that every classic action is still produced by the new menu), so a
+roll-back changes what you see, never what the tray can do. <code>flat_menu</code>
+applies to both.</p>
 <h2 id="pause">Pause<a class="headerlink" href="#pause" title="Permanent link">&para;</a></h2>
-<p><strong>⏸ Pause AbstractGateway</strong> (under Conversations) is process-wide and <strong>persists
+<p><strong>Pause</strong> — the header's switch on macOS (OFF = paused), the <strong>☑ Running</strong>
+row on Windows and Linux (unticked = paused) — is process-wide and <strong>persists
 across restarts</strong>: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
 instead (see <em>Conversations</em>). While the gateway is paused:</p>

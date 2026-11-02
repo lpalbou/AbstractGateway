@@ -16,7 +16,7 @@
         <link rel="prev" href="../apps/">
       
       
-        <link rel="next" href="../model-downloads/">
+        <link rel="next" href="../engines-install/">
       
       
         
@@ -458,10 +458,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#when-the-apple-command-line-tools-are-needed" class="md-nav__link">
+  <a href="#prebuilt-only-never-a-source-build" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When the Apple command-line tools are needed
+        Prebuilt only, never a source build
       
     </span>
   </a>
@@ -521,6 +521,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -969,10 +996,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#when-the-apple-command-line-tools-are-needed" class="md-nav__link">
+  <a href="#prebuilt-only-never-a-source-build" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When the Apple command-line tools are needed
+        Prebuilt only, never a source build
       
     </span>
   </a>
@@ -1053,8 +1080,9 @@
 llama.cpp, vLLM, the Hugging Face stack) on the machine it runs on, from the
 console or the command line, without a terminal and without a password in the
 common case. This page explains what each <strong>Install</strong> does, when it asks for
-the Apple command-line tools or an administrator password, and the API a UI
-renders.</p>
+an administrator password (almost never), and the API a UI renders. The rules every
+install follows are ADR 0003 (engine installation contract); the per-engine, per-OS facts
+are in <a href="../engines-install/">engines-install.md</a>.</p>
 <h2 id="what-install-does-engine-by-engine">What Install does, engine by engine<a class="headerlink" href="#what-install-does-engine-by-engine" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1070,14 +1098,14 @@ renders.</p>
 <tr>
 <td><strong>Ollama</strong></td>
 <td>Downloads the signed <code>Ollama-darwin.zip</code> from Ollama's official GitHub release, checks its published SHA-256 and the Developer ID signature (team <code>3MU9H2V9Y9</code>), places <code>Ollama.app</code> in <code>/Applications</code> when your account can write it (an admin account can, with no password) or else in <code>~/Applications</code>, then starts it and waits until <code>http://127.0.0.1:11434/api/version</code> answers</td>
-<td>Ollama's official installer (<code>curl -fsSL https://ollama.com/install.sh \| sh</code>)</td>
+<td>Once for this computer, under the gateway's service account (whatever account that is, root included): Ollama's official <code>ollama-linux-&lt;arch&gt;.tar.zst</code> from its GitHub release (SHA-256 checked), unpacked beside the installed one and swapped into <code>~/.local</code> (a failed update keeps the old one), served by a systemd user service <code>ollama.service</code> on port 11434. Needs <code>zstd</code> to unpack</td>
 <td><code>winget install Ollama.Ollama</code> (per-user)</td>
-<td>macOS: no. Linux: yes (the installer writes <code>/usr/local</code> and a systemd service). Windows: no</td>
+<td>No, on every system</td>
 </tr>
 <tr>
 <td><strong>LM Studio</strong></td>
 <td>Downloads the signed disk image from lmstudio.ai, checks the signature (team <code>D65G88RHWN</code>), copies <code>LM Studio.app</code> to <code>/Applications</code> or <code>~/Applications</code>, opens it once and starts its local server (<code>lms server start</code>)</td>
-<td>LM Studio's official installer: the headless daemon and the <code>lms</code> CLI under <code>~/.lmstudio</code></td>
+<td>LM Studio's official installer: the headless daemon and the <code>lms</code> CLI under <code>~/.lmstudio</code>. It needs the <code>libatomic1</code> system library, which minimal server images lack: the install checks it first and, when it is missing, stops in <em>needs tools</em> with the line to run (<code>sudo apt-get install -y libatomic1</code>; Fedora: <code>sudo dnf install -y libatomic</code>), then <strong>re-check</strong> continues</td>
 <td>LM Studio's official PowerShell installer (the <code>lms</code> CLI under <code>~/.lmstudio</code>)</td>
 <td>no</td>
 </tr>
@@ -1091,7 +1119,7 @@ renders.</p>
 <tr>
 <td><strong>llama.cpp</strong></td>
 <td><code>abstractcore[apple]</code>, with its llama.cpp taken from upstream's prebuilt Metal wheel (<code>llama-cpp-python</code> 0.3.28); no compiler</td>
-<td><code>abstractcore[gpu]</code> with the prebuilt CPU wheel (0.3.35)</td>
+<td><code>abstractcore[gpu]</code> with the prebuilt CUDA wheel (cu125/cu130, matched to the installed CUDA) on an NVIDIA machine, else the prebuilt CPU wheel (0.3.36)</td>
 <td>comes with the AbstractFramework installer, which adds llama.cpp's prebuilt CUDA, Vulkan or CPU build; the row's Install shows that installer's command</td>
 <td>no</td>
 </tr>
@@ -1122,25 +1150,28 @@ vendor PowerShell installers).</p>
 <p>Everything the gateway's own Python receives is installed with the gateway's
 <code>abstract*</code> packages pinned to the versions it runs, so an engine install can
 never change the gateway itself.</p>
-<h3 id="when-the-apple-command-line-tools-are-needed">When the Apple command-line tools are needed<a class="headerlink" href="#when-the-apple-command-line-tools-are-needed" title="Permanent link">&para;</a></h3>
-<p>Only for llama.cpp when no prebuilt wheel fits (a Linux machine outside x86_64/arm64,
-or a broken wheel): the setting's llama.cpp must then be built from source, which needs a
-C compiler. The job stops <strong>before</strong> the build, in the <code>needs_tools</code> state,
-with the reason in plain words, for example:</p>
+<h3 id="prebuilt-only-never-a-source-build">Prebuilt only, never a source build<a class="headerlink" href="#prebuilt-only-never-a-source-build" title="Permanent link">&para;</a></h3>
+<p>Every engine arrives as the vendor's prebuilt binary or wheel (ADR 0003). The native packages of
+AbstractCore's settings (<code>llama-cpp-python</code>, PyTorch, vLLM, MLX) are installed with
+<code>--only-binary</code>, so no install ever starts a compiler. A machine with no prebuilt build of an
+engine does not get that engine; its row says so in one sentence and has no Install button, for
+example:</p>
 <blockquote>
-<p>The prebuilt llama.cpp wheel did not install (no matching package for this
-Python and machine); building from source needs the Apple command-line tools.</p>
+<p>llama.cpp has no prebuilt build for this computer (linux riscv64), and the gateway never builds
+engines from source. Ollama or LM Studio run GGUF models here when they are offered on this
+computer.</p>
 </blockquote>
-<p><strong>Install tools</strong> runs <code>xcode-select --install</code>, which opens Apple's own
-installer dialog on the gateway machine's screen (no administrator password
-involved). The job waits and continues by itself once the tools are there.</p>
+<p>An update is atomic: when the new version fails to install or to load, the packages it changed go
+back to the versions they had, and an app or archive is unpacked beside the installed one and
+swapped in only once it is complete.</p>
 <h3 id="when-an-administrator-password-is-needed">When an administrator password is needed<a class="headerlink" href="#when-an-administrator-password-is-needed" title="Permanent link">&para;</a></h3>
 <p>Only when a step genuinely needs it, and never silently:</p>
 <ul>
 <li>you asked for <code>/Applications</code> (<code>"location": "system"</code>) and your account
-  cannot write it (a standard, non-admin account);</li>
-<li>Ollama on Linux (its installer writes <code>/usr/local</code> and creates a service).</li>
+  cannot write it (a standard, non-admin account).</li>
 </ul>
+<p>A system library an engine links (LM Studio's <code>libatomic1</code> on minimal Linux images) is installed by
+the machine's administrator once; the job says which line to run.</p>
 <p>The job stops in the <code>needs_admin</code> state and shows the exact reason and the
 exact command. Nothing runs with administrator rights until someone presses
 <strong>Continue with administrator password</strong>; the gateway then asks the operating
@@ -1151,12 +1182,13 @@ a terminal and a <strong>re-check</strong> button. There is no hidden <code>sudo
 <h3 id="what-you-see-when-something-fails">What you see when something fails<a class="headerlink" href="#what-you-see-when-something-fails" title="Permanent link">&para;</a></h3>
 <p>The job's <code>message</code> is one plain sentence (what failed and why); the whole
 log (every line, never a tail) is behind it in <code>details</code> and in a log file in
-the gateway's data folder (<code>engines/jobs/&lt;job id&gt;.log</code>). A failed llama.cpp
-build, for example, reads:</p>
+the gateway's data folder (<code>engines/jobs/&lt;job id&gt;.log</code>). A llama.cpp wheel
+that does not install, for example, reads:</p>
 <blockquote>
-<p>The prebuilt llama.cpp wheel did not install (the wheel file is corrupted),
-and building it from source failed: no C compiler was found. The full build
-log is in the details.</p>
+<p>The prebuilt llama.cpp metal wheel 0.3.28 did not install (the wheel file is
+corrupted). Nothing was built from source, and the llama.cpp that was installed
+before (if any) is kept. The packages it changed were put back to the versions
+they had: the engine installed before is unchanged.</p>
 </blockquote>
 <h2 id="command-line">Command line<a class="headerlink" href="#command-line" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>engines<span class="w"> </span>status<span class="w"> </span>--probe

@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -1296,6 +1323,22 @@ fires only when the loop made no progress across one more tick. The LaunchAgent
 restart policy (<code>restart: unless-stopped</code>) for the same effect. <code>GET
 /api/health</code> reports <code>watchdog: {enabled, limit_s, last_tick_age_s}</code>. See
 <a href="../troubleshooting/#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">troubleshooting.md</a>.</p>
+<p><strong>The models run in a child process, on every OS.</strong> <code>serve</code> defaults to
+<code>--model-host process</code> (Linux, macOS, Windows): every AbstractCore provider call and model load
+happens in one child the gateway starts, pings, restarts (backoff, at most 5
+restarts in 10 minutes) and kills above a memory ceiling (default 80 % of the
+machine's memory, <code>--model-host-memory-gb</code>). A llama.cpp abort, a KV cache that
+runs out or an out-of-memory kill costs the requests in flight, with a sentence
+naming the cause, while the gateway keeps answering; the child is back in about
+a second and warms its default model again. The systemd unit needs no change:
+the child exits with the gateway (<code>KillMode=mixed</code> stops the rest). Each crash
+writes <code>&lt;data dir&gt;/incidents/model-host-&lt;stamp&gt;-&lt;id&gt;-&lt;kind&gt;.json</code>, the child's
+log is <code>&lt;data dir&gt;/logs/model-host.log</code>, and <code>GET /api/health</code> shows
+<code>model_host</code>. <code>--model-host in-process</code> keeps everything in one process. See
+<a href="../configuration/#model-host-the-models-run-in-a-supervised-child-process">configuration.md</a>.</p>
+<p><strong>A stop is quick.</strong> On SIGTERM (<code>systemctl stop</code>, <code>launchctl</code>, <code>docker stop</code>) the gateway ends its live
+streams at once (clients reconnect with their cursor), gives requests in flight 10 s
+(<code>ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S</code>), runs its shutdown steps and exits 0, typically in under a second.</p>
 <p><strong>Incident files.</strong> Before it exits, the watchdog writes
 <code>&lt;data dir&gt;/incidents/watchdog-&lt;UTC stamp&gt;.json</code> and
 <code>watchdog-&lt;stamp&gt;.threads.txt</code> (every thread's stack). The JSON

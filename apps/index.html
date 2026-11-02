@@ -419,6 +419,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#registering-an-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering an app
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -668,6 +679,33 @@
     
   
     Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
   
 
     
@@ -1112,6 +1150,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#registering-an-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering an app
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#updates" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1359,11 +1408,21 @@
 
 
 <h1 id="apps">Apps<a class="headerlink" href="#apps" title="Permanent link">&para;</a></h1>
-<p>The six browser apps (Observer, Continuum, Code, Entity, Flow Editor and Note) can be
+<p>The seven browser apps (Observer, Continuum, Code, Entity, Flow Editor, Note and Assistant web) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with <code>abstractgateway apps</code>. Nobody has
 to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the <strong>Assistant</strong> (see <a href="#the-assistant-a-desktop-app">The Assistant</a>).</p>
+<p><strong>Assistant (web)</strong> uses catalog id <code>assistant-web</code>, npm package
+<code>@abstractframework/assistant</code> and port 3008. On the console's Apps page it shares
+ONE <strong>Assistant</strong> card with the desktop Assistant (<code>assistant</code>): <strong>Open in browser</strong>
+opens the web app, <strong>Open on this Mac</strong> (<strong>Open on this computer</strong> on other systems)
+opens the desktop one, and the card's status badge is the installed one's (see <a href="#registering-an-app">Registering an app</a>). In the tray it
+is <strong>Apps → Assistant (web)</strong>. The gateway signs you in through its one-time handover
+and serves it at <code>&lt;gateway&gt;/apps/assistant-web/</code>; the two are separate apps, each with
+its own install, version and status. The web package is currently a private
+preview: this checkout can build and install it locally; registry installation
+requires its first npm release.</p>
 <p><strong>Note</strong> (<code>@abstractframework/note</code>, port 3006) is the AbstractNote web app: capture
 anything, see how it connects and how it changed over time. Its server side is the
 <code>abstractnote</code> Python package, installed in the same Python environment as the gateway. With
@@ -1374,7 +1433,12 @@ notebook), and
 loads the <code>abstractnote</code> workflows as framework bundles. Without the package the app can still
 be installed and started, but every <code>/api/gateway/note/</code> request answers 404 and the
 <code>abstractnote</code> workflows are absent: install the package, then restart the gateway.</p>
-<p>On a card, a plain user sees one button for the state the app is in:</p>
+<p>A card shows the app's illustration, its mark, name and status badge, its
+description (two lines at most) and one row of launchers. Each launcher says
+where it opens: a globe for the web browser (<strong>Open in browser</strong>), a monitor for
+an app on the gateway's computer (<strong>Open on this Mac</strong>), <code>&gt;_</code> for a terminal
+(<strong>Open in Terminal</strong>). On a card, a plain user sees one button for the state
+the app is in:</p>
 <table>
 <thead>
 <tr>
@@ -1393,11 +1457,11 @@ be installed and started, but every <code>/api/gateway/note/</code> request answ
 </tr>
 <tr>
 <td>Installed (running or not)</td>
-<td><strong>Open</strong>, and <strong>Open in Terminal</strong> right beside it when the app's terminal version is installed</td>
+<td><strong>Open in browser</strong>, and <strong>Open in Terminal</strong> right beside it when the app's terminal version is installed</td>
 </tr>
 <tr>
 <td>A newer version is published</td>
-<td><strong>Update to x.y.z</strong> beside <strong>Open</strong> (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it")</td>
+<td><strong>Update to x.y.z</strong> beside <strong>Open in browser</strong> (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it")</td>
 </tr>
 <tr>
 <td>Failed</td>
@@ -1461,6 +1525,111 @@ stopped app, then opens it). The Assistant's badge: see
 every row (<code>status_control</code>, see <a href="#http-api">HTTP API</a>), so the web console and the
 terminal console say the same words.</p>
 <p>Show log, versions, addresses and commands are under <strong>Technical details</strong>.</p>
+<h2 id="registering-an-app">Registering an app<a class="headerlink" href="#registering-an-app" title="Permanent link">&para;</a></h2>
+<p>Every app the Apps page shows is one entry of the gateway's app registry:
+<code>APPS</code> in <code>apps_manager.py</code> (browser apps, <code>AppSpec</code>) and <code>DESKTOP_APPS</code> in
+<code>apps_desktop.py</code> (desktop apps, <code>DesktopAppSpec</code>). Besides what the gateway
+needs to install and run the app (package, port, cookie prefix, page title),
+an entry declares its card. The console holds no per-app words or pictures:
+it renders what the registry declares.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>The app's name (the card title, unless a family names the card).</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>One complete sentence in plain language, at most 92 characters: what the app is for. Every card gives it exactly two lines, so the cards of a row line up.</td>
+</tr>
+<tr>
+<td><code>mark</code></td>
+<td>The two letters of the card's mark tile.</td>
+</tr>
+<tr>
+<td><code>illustration</code></td>
+<td>A file name under <code>src/abstractgateway/console_assets/apps/</code> (16:9 WebP, 768×432), or <code>None</code>.</td>
+</tr>
+<tr>
+<td><code>family</code></td>
+<td>Optional. Apps of one family share ONE card; <code>APP_FAMILIES</code> in <code>apps_manager.py</code> gives the family's card title.</td>
+</tr>
+</tbody>
+</table>
+<p>The Assistant's two entries, for example:</p>
+<div class="highlight"><pre><span></span><code><span class="n">AppSpec</span><span class="p">(</span><span class="s2">"assistant-web"</span><span class="p">,</span> <span class="s2">"Assistant (web)"</span><span class="p">,</span> <span class="s2">"@abstractframework/assistant"</span><span class="p">,</span>
+        <span class="s2">"Chat or talk with the Assistant, in the browser or on this Mac, with voice and approvals."</span><span class="p">,</span>
+        <span class="n">STACK_PORT</span><span class="p">[</span><span class="s2">"assistant-web"</span><span class="p">],</span> <span class="s2">"abstractassistant"</span><span class="p">,</span> <span class="s2">"ABSTRACTASSISTANT_GATEWAY_URL"</span><span class="p">,</span> <span class="s2">"AbstractAssistant"</span><span class="p">,</span>
+        <span class="n">mark</span><span class="o">=</span><span class="s2">"As"</span><span class="p">,</span> <span class="n">illustration</span><span class="o">=</span><span class="s2">"assistant.webp"</span><span class="p">,</span> <span class="n">family</span><span class="o">=</span><span class="s2">"assistant"</span><span class="p">)</span>
+
+<span class="n">ASSISTANT</span> <span class="o">=</span> <span class="n">DesktopAppSpec</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">"assistant"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"Assistant"</span><span class="p">,</span> <span class="n">package</span><span class="o">=</span><span class="s2">"abstractassistant"</span><span class="p">,</span>
+                           <span class="n">script</span><span class="o">=</span><span class="s2">"abstractassistant"</span><span class="p">,</span> <span class="n">bundle</span><span class="o">=</span><span class="s2">"AbstractAssistant.app"</span><span class="p">,</span>
+                           <span class="n">description</span><span class="o">=</span><span class="s2">"A menu-bar assistant: chat or talk hands-free."</span><span class="p">,</span>
+                           <span class="n">mark</span><span class="o">=</span><span class="s2">"As"</span><span class="p">,</span> <span class="n">illustration</span><span class="o">=</span><span class="s2">"assistant.webp"</span><span class="p">,</span> <span class="n">family</span><span class="o">=</span><span class="s2">"assistant"</span><span class="p">)</span>
+
+<span class="n">APP_FAMILIES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"assistant"</span><span class="p">:</span> <span class="s2">"Assistant"</span><span class="p">}</span>
+</code></pre></div>
+<p><strong>Cards.</strong> <code>GET /api/gateway/apps</code> returns <code>cards[]</code> next to the rows: one card
+per family, else one per app, in registry order. A family card's description,
+mark and illustration are its browser app's. Its primary button belongs to
+its lead: the first member installed on this computer, the browser app first
+(the browser app when none is installed), so the card's headline describes
+what you have. Its ONE status badge shows every member's state in member
+order, each part with its launcher's icon (globe, monitor): "Running ·
+Stopped", read out as "Browser: Running. This Mac: Stopped."; each part is
+that member's start/stop control. Every other member's notes (another copy
+running, quit to run a new version, why no version is shown) sit beside its
+own launcher; each member's technical details
+sit under its own label (<strong>Browser app</strong>, <strong>Desktop app</strong>). Without <code>family</code>,
+each app has a card of its own.</p>
+<p><strong>Launchers</strong> follow from the members' kinds, in member order:</p>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Launcher</th>
+<th>Badge</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>a browser app (<code>kind: "web"</code>)</td>
+<td><strong>Open in browser</strong> (or the app's first-run action, such as <strong>Create your first entity</strong>)</td>
+<td>globe</td>
+</tr>
+<tr>
+<td>a desktop app (<code>kind: "desktop"</code>)</td>
+<td><strong>Open on this Mac</strong>, or <strong>Open on this computer</strong> on Windows and Linux</td>
+<td>monitor</td>
+</tr>
+<tr>
+<td>a terminal version (an <code>interfaces[]</code> entry of kind <code>tui</code>)</td>
+<td><strong>Open in Terminal</strong></td>
+<td><code>&gt;_</code></td>
+</tr>
+</tbody>
+</table>
+<p>The lead's launcher is the primary button; the other launchers are quiet
+buttons beside it. On a card with one app, a missing app shows <strong>Install</strong>; on
+a family card every Install says what it installs (<strong>Install browser app</strong>,
+<strong>Install desktop app</strong>).</p>
+<p><strong>Illustrations.</strong> Put the file in <code>src/abstractgateway/console_assets/apps/</code>
+(it ships in the package with the rest of <code>src/abstractgateway/</code>) and name it
+in the entry. Several entries may name one file (the two Assistants share
+<code>assistant.webp</code>). The gateway serves it at <code>/console/assets/apps/&lt;file&gt;</code>, without a
+sign-in like the console page itself, and only for a file name the registry
+declares (WebP, PNG, JPEG or AVIF; never SVG): any other name answers 404. The
+card's URL carries a version query (<code>?v=…</code>, from the file's content) and the
+answer is cached as immutable, so a replaced file shows on the next page load. A registered file
+that is not there yet gives no URL: the card shows its mark. When at least one
+card of the page has an illustration, a card without one shows its mark in
+the illustration's place, so the rows stay aligned.</p>
 <h2 id="updates">Updates<a class="headerlink" href="#updates" title="Permanent link">&para;</a></h2>
 <p><strong>Install follows the release.</strong> A gateway set up by the AbstractFramework installer records its
 release in <code>&lt;data dir&gt;/bootstrap.env</code> (<code>FRAMEWORK_VERSION</code>). Installing a browser app without a
@@ -1479,7 +1648,7 @@ the npm registry (<code>dist-tags.latest</code>), the Assistant from PyPI
 npm registry, PyPI and GitHub (the terminal apps' releases): an answer is
 reused for 10 minutes, a failure for 1 minute, then the registry is asked
 again, so a version published while the gateway runs shows up within 10
-minutes without a restart (<strong>Check again</strong> asks the gateway at once, still
+minutes without a restart (<strong>Refresh</strong> on the Apps page asks the gateway at once, still
 through that cache). <code>update_available</code> is true when that version is newer
 than the installed one (semantic versions, prereleases before their release).</p>
 <ul>
@@ -1560,7 +1729,7 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (<code>scripts/start-local.sh</code>): Observer 3001,
-  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006.</li>
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006, Assistant web 3008.</li>
 </ul>
 <h2 id="apps-are-served-through-the-gateway">Apps are served through the gateway<a class="headerlink" href="#apps-are-served-through-the-gateway" title="Permanent link">&para;</a></h2>
 <p>Every browser app opens at <strong><code>/apps/&lt;app&gt;/</code> on the gateway's own address</strong>:
@@ -1616,10 +1785,10 @@ paths, the identity header) is the app-server kit's contract:
 <p>An app can also run without the gateway having started it: the framework's
 development stack (<code>scripts/start-local.sh</code>), <code>npx @abstractframework/observer</code>,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3006, then 3000 and 3007) for their start
+usual ports on this machine (3001-3006 and 3008, then 3000 and 3007) for their start
 page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
-"AbstractFlow", "AbstractNote"). None of the apps has an address that says who it is without
+"AbstractFlow", "AbstractNote", "AbstractAssistant"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
 local request per port (half a second at most, all ports at once, remembered
 for 5 seconds). The version is read from the <code>package.json</code> of the program
@@ -1905,9 +2074,11 @@ admin token on a loopback URL.</p>
 <h2 id="the-assistant-a-desktop-app">The Assistant (a desktop app)<a class="headerlink" href="#the-assistant-a-desktop-app" title="Permanent link">&para;</a></h2>
 <p>AbstractAssistant (PyPI <code>abstractassistant</code>) is the framework's desktop
 companion: a menu-bar app with a chat palette and hands-free voice
-conversations. It is a Python app, not a browser app, so its card
+conversations. It is a Python app, not a browser app, so its row
 (<code>kind: "desktop"</code>, id <code>assistant</code>, after the browser apps) has no address
-or port. The full <code>abstractframework</code> install already includes it, in the same
+or port. On the Apps page it is the second launcher of the <strong>Assistant</strong> card
+(family <code>assistant</code>, with the web Assistant): its state is the monitor part of
+the card's badge, and its notes sit beside <strong>Open on this Mac</strong>. The full <code>abstractframework</code> install already includes it, in the same
 Python environment as the gateway; a gateway-only install may not.</p>
 <ul>
 <li><strong>Found by presence</strong> (nothing is imported or started to find it): the
@@ -2006,7 +2177,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>GET /apps?latest=true</code></td>
 <td>any user</td>
-<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}</code>); every row has <code>latest_version</code>, <code>update_available</code>, <code>update_label</code> and <code>update_tip</code> (see <a href="#updates">Updates</a>) and <code>status_control {label, tone, busy, action, enabled, tip}</code> — the status badge for THIS caller: <code>action</code> <code>stop</code> or <code>launch</code> is what a click posts, <code>enabled</code> false with <code>tip</code> as the reason, <code>tip</code> null for a plain pill (the badge table at the top of this page) and <code>console_tui</code> (the gateway console's terminal app). <code>gateway_url</code> is where the app servers reach the gateway (on its machine); <code>browser_gateway_url</code> is the address the caller uses (e.g. <code>https://&lt;host&gt;.ts.net</code> behind <code>tailscale serve</code>), the one to show in any command or link. <code>latest=false</code> skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes).</td>
+<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, open_label, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}</code>); <code>cards[]</code> <code>{id, family, name, description, mark, illustration_url, members, launchers[{app, kind}]}</code> (see <a href="#registering-an-app">Registering an app</a>); every row has <code>description</code>, <code>mark</code>, <code>family</code> and <code>illustration_url</code> (null until the file exists), and <code>latest_version</code>, <code>update_available</code>, <code>update_label</code> and <code>update_tip</code> (see <a href="#updates">Updates</a>) and <code>status_control {label, tone, busy, action, enabled, tip}</code> — the status badge for THIS caller: <code>action</code> <code>stop</code> or <code>launch</code> is what a click posts, <code>enabled</code> false with <code>tip</code> as the reason, <code>tip</code> null for a plain pill (the badge table at the top of this page) and <code>console_tui</code> (the gateway console's terminal app). <code>gateway_url</code> is where the app servers reach the gateway (on its machine); <code>browser_gateway_url</code> is the address the caller uses (e.g. <code>https://&lt;host&gt;.ts.net</code> behind <code>tailscale serve</code>), the one to show in any command or link. <code>latest=false</code> skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes).</td>
 </tr>
 <tr>
 <td><code>POST /apps/runtime/install</code></td>

@@ -614,6 +614,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -1231,7 +1258,7 @@ migration.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Python <code>&gt;=3.10</code> (see <code>pyproject.toml</code>)</li>
-<li>AbstractRuntime 0.8.2 or later, installed with the gateway; the gateway
+<li>AbstractRuntime 0.15.3 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install</li>
 <li>Workflows: none needed to start. The gateway serves its shipped bundles
   (<a href="../shipped-workflows/">shipped-workflows.md</a>); you can point it at your
@@ -1296,7 +1323,7 @@ setting: <code>abstractgateway network set --allowed-origins https://your.host</
 curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token"</span><span class="k">)</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"http://127.0.0.1:8080/api/gateway/bundles"</span>
 </code></pre></div>
-<p>If <code>bundles.items</code> is empty (see also
+<p>If the bundle response's <code>items</code> list is empty (see also
 <a href="../troubleshooting/#get-apigatewaybundles-returns-no-bundles">troubleshooting.md</a>), either:
 - point <code>ABSTRACTGATEWAY_FLOWS_DIR</code> at the shipped bundle directory or another
   directory containing <code>*.flow</code> files (or a single <code>.flow</code> file), or

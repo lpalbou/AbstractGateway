@@ -808,6 +808,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#model-host-the-models-run-in-a-supervised-child-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model host: the models run in a supervised child process
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#split-mode-api-and-runner-in-two-processes-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -917,6 +928,33 @@
     
   
     Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
   
 
     
@@ -1804,6 +1842,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#model-host-the-models-run-in-a-supervised-child-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model host: the models run in a supervised child process
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#split-mode-api-and-runner-in-two-processes-opt-in" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1891,11 +1940,12 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.15.0</code> (the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- <code>abstractcore&gt;=2.30.0</code> (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- <code>AbstractRuntime&gt;=0.16.0</code> (decisions through <code>run_facade.decide</code>, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- <code>abstractcore&gt;=2.32.0</code> (the <code>decision</code> output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - <code>abstractvoice&gt;=0.18.2</code> (the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
-- <code>abstractagent&gt;=0.4.0</code> (the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
-- <code>AbstractMemory[lancedb]&gt;=0.4.0</code> (the memory graph, <code>abstractmemory.graph</code>)</p>
+- <code>abstractagent&gt;=0.5.0</code> (ReAct honours <code>_runtime.conversation</code>: public conversation updates and questions on entity visits and task starts; the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
+- <code>AbstractMemory[lancedb]&gt;=0.4.0</code> (the memory graph, <code>abstractmemory.graph</code>)
+- <code>abstractskill&gt;=0.3.4</code> (the curated skill shelf the gateway seeds into <code>&lt;data dir&gt;/skills/registry</code>)</p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -2366,6 +2416,44 @@ for what each mode changes for someone on your network.</p>
 <p>The OpenAI-compatible API is served at <code>http://&lt;gateway&gt;/v1</code> and managed on the
 console's <strong>OpenAI API</strong> page. See <a href="../openai-api/">openai-api.md</a> for what it
 supports, the access settings, the request log and its admin API.</p>
+<p>There are two independent optional HTTP surfaces:</p>
+<table>
+<thead>
+<tr>
+<th>Surface</th>
+<th>Switch in <code>config/core_endpoint.json</code></th>
+<th>Address and credentials</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Gateway <code>/v1</code> compatibility API</td>
+<td><code>enabled</code> (default <code>false</code>)</td>
+<td>Gateway listener and account API keys; Gateway admission and request log</td>
+</tr>
+<tr>
+<td>Direct AbstractCore HTTP service</td>
+<td><code>direct_enabled</code> (default <code>false</code>)</td>
+<td>Core's <code>server.host</code> / <code>server.port</code> (default <code>127.0.0.1:8000</code>) and Core's own server authentication</td>
+</tr>
+</tbody>
+</table>
+<p>An admin changes either switch through <code>POST /api/gateway/admin/core-endpoint</code>;
+send JSON booleans, for example <code>{"direct_enabled": true}</code>. Changing one
+switch leaves the other unchanged. Core owns the direct service's configuration
+and tokens; see <a href="https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md">Core server configuration</a>.
+Gateway account API keys and its <em>Who can connect</em> setting govern Gateway
+<code>/v1</code>, not the direct Core listener.</p>
+<p>The execution owner starts and stops these listeners without restarting its
+model pool. Native runs use the Gateway run APIs, Runtime and native RPC;
+they do not require either HTTP surface. With both switches off, execution
+readiness does not start an HTTP listener or prepare a server token. An HTTP
+startup failure leaves native execution available. Admin status includes
+<code>http_services</code> with each service's <code>state</code>, <code>url</code> and <code>error</code>; inspect this
+before assuming an enabled service is listening. Failed cleanup stays
+<code>stopping</code> until its listener actually stops. Service recovery uses bounded
+backoff; after its restart limit, correct the cause and toggle that service
+off and on to retry.</p>
 <h2 id="two-entry-points-one-store">Two entry points, one store<a class="headerlink" href="#two-entry-points-one-store" title="Permanent link">&para;</a></h2>
 <p>AbstractCore (low level) and AbstractGateway (high level) are the two entry
 points to the framework, and they share configuration. Where AbstractCore holds
@@ -2473,9 +2561,9 @@ definition. Use distinct ids across the two unless you intend that.</p>
 <p>The Gateway is a full CRUD surface over AbstractCore's per-modality
 provider/model defaults (configure, surface, live-refresh) and keeps <strong>zero</strong>
 local storage. Every read hits Core's manager and every write goes through
-Core's setter, so configuring a default here configures Core's default, for text
-and for every media modality: image, video, voice (TTS), voice input (STT),
-sound, music, 3D.</p>
+Core's setter, so configuring a default here configures Core's default, for text,
+for every media modality: image, video, voice (TTS), voice input (STT),
+sound, music, 3D, and for decisions (<code>output.decision</code>).</p>
 <p><strong>Where it is stored.</strong> A JSON file under key <code>capability_defaults.routes</code>:
 <code>~/.abstractcore/config/abstractcore.json</code> normally, or the Gateway-scoped
 <code>&lt;data_dir&gt;/config/abstractcore.json</code> in hosted user-auth mode (the payload
@@ -2510,6 +2598,10 @@ reports both as <code>config_file</code> / <code>gateway_config_file</code> / <c
 <td>music / sound-effect generation</td>
 </tr>
 <tr>
+<td><code>output.decision</code></td>
+<td>decisions: yes/no, choice and score answers about a text, from a decision model such as <code>mlx</code> / <code>jaredpalmer/kev-4b</code> (<a href="../api/#decisions">api.md</a>)</td>
+</tr>
+<tr>
 <td><code>output.scene3d[.text_to_scene3d\|.image_to_scene3d]</code></td>
 <td>3D scene generation</td>
 </tr>
@@ -2521,8 +2613,11 @@ reports both as <code>config_file</code> / <code>gateway_config_file</code> / <c
 </table>
 <p>The task→route mapping is stated once, in AbstractCore's capability-defaults
 module, and every layer reads it from there. A <code>.task</code> suffix is only valid for
-the tasks Core persists; <code>tts</code>, <code>stt</code>, <code>music_generation</code> and
-<code>sound_generation</code> resolve at the modality cell.</p>
+the tasks Core persists; <code>tts</code>, <code>stt</code>, <code>music_generation</code>, <code>sound_generation</code>
+and <code>decision</code> resolve at the modality cell. <code>output.decision</code> is set like any
+other route: <code>PUT /api/gateway/config/capability-defaults/output/decision</code>,
+the console's Multimodal page, or
+<code>abstractcore config set-default output.decision --provider mlx --model jaredpalmer/kev-4b</code>.</p>
 <p>CRUD: <code>GET /api/gateway/config/capability-defaults</code> (full grid — configured,
 derived and unset rows, each naming its source),
 <code>PUT</code>/<code>DELETE /api/gateway/config/capability-defaults/{kind}/{modality}</code> and
@@ -3290,8 +3385,8 @@ advertises — is <strong>task row first, modality row second</strong>. A modali
 question resolves through the canonical generation task
 (<code>output.image.text_to_image</code>) before falling back to <code>output.image</code>, so the
 backend Gateway advertises is always the backend it will execute.</p>
-<p><code>output.voice</code>, <code>output.sound</code> and <code>output.music</code> have no task rows; their
-modality row is the primary key, not a fallback.</p>
+<p><code>output.voice</code>, <code>output.sound</code>, <code>output.music</code> and <code>output.decision</code> have no
+task rows; their modality row is the primary key, not a fallback.</p>
 <p>In the Multimodal Capabilities grid the task rows are indented beneath their
 modality row, and a modality row that is unset while every task row beneath it
 is configured shows <code>not needed</code> rather than <code>not configured</code> — nothing can
@@ -3656,7 +3751,7 @@ does not implicitly install them.</p>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. The <code>ABSTRACTVOICE_*</code> names are also accepted by the lower package.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
-<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>
+<li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, <code>music</code> and <code>decision</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music/decision endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>
 <li><code>GET /api/gateway/voice/voices</code>: proxies AbstractCore <code>/v1/audio/voices</code> when <code>ABSTRACTCORE_SERVER_BASE_URL</code> is configured; otherwise returns static Gateway/env voice descriptors.</li>
 <li><code>GET /api/gateway/audio/speech/models</code>: proxies AbstractCore <code>/v1/audio/speech/models</code> when configured.</li>
 <li><code>GET /api/gateway/audio/transcriptions/models</code>: proxies AbstractCore <code>/v1/audio/transcriptions/models</code> when configured.</li>
@@ -3671,6 +3766,7 @@ does not implicitly install them.</p>
 <li><code>POST /api/gateway/runs/{run_id}/videos/generate</code>: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch <code>count</code> / <code>n</code>, <code>seeds</code>, ordered <code>lora_adapters</code>, and <code>flow_shift</code> values are passed through only when the client supplies them. Batch responses also return <code>video_artifacts</code>.</li>
 <li><code>POST /api/gateway/runs/{run_id}/videos/from_image</code>: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch <code>count</code> / <code>n</code>, <code>seeds</code>, ordered <code>lora_adapters</code>, and <code>flow_shift</code> values are passed through only when the client supplies them. Batch responses also return <code>video_artifacts</code>.</li>
 <li><code>POST /api/gateway/runs/{run_id}/music/generate</code>: creates a durable Runtime child run and returns an artifact-backed music result for thin clients. <code>task: "text_to_audio"</code> makes a sound effect. <code>seconds</code> is the clip length (<code>duration_s</code> is accepted as the same value; two different values answer 400, a value that is not a number between 0 and 3600 answers 422); without it a sound effect is 5 seconds and music keeps the backend default (30 seconds for Stable Audio 3), and the model's own maximum applies (120 seconds for the Stable Audio 3 small checkpoints). <code>music_model</code> selects the checkpoint that runs.</li>
+<li><code>POST /api/gateway/runs/{run_id}/decisions</code>: creates a durable Runtime child run for one calibrated decision and returns its <code>decision</code> body and <code>answers</code> in the response (no artifact). <code>state</code> and <code>questions</code> are required; <code>model</code> (<code>provider/model</code>) and <code>truncate</code> are passed through only when the client supplies them, and without <code>model</code> the <code>output.decision</code> default answers. See <a href="../api/#decisions">api.md</a>.</li>
 </ul>
 <p>Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 <code>event_name=abstract.progress</code>. Thin clients should stream the returned
@@ -3685,9 +3781,101 @@ then the final artifact.</p>
   This is separate from Gateway auth.</li>
 <li><code>ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S</code>: catalog proxy timeout (default <code>3.0</code> seconds).</li>
 </ul>
+<h2 id="model-host-the-models-run-in-a-supervised-child-process">Model host: the models run in a supervised child process<a class="headerlink" href="#model-host-the-models-run-in-a-supervised-child-process" title="Permanent link">&para;</a></h2>
+<p>ADR 0002 (<code>docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md</code> in the repository). With
+<code>--model-host process</code> (the default on every OS), Runtime-backed provider calls use one child
+process the gateway starts, watches and restarts. That owner holds the managed model pool.
+A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
+memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
+<code>/api/health</code> keep answering.</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>serve<span class="w">                         </span><span class="c1"># every OS: --model-host process</span>
+abstractgateway<span class="w"> </span>serve<span class="w"> </span>--model-host<span class="w"> </span>in-process<span class="w"> </span><span class="c1"># everything in one process (development, --reload)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Work</th>
+<th>gateway process</th>
+<th>model host child</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Accounts, sign-in, routes, console, live streams, <code>/api/health</code></td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Run stores, ledger, run ticking, tools, mail, push, bridges</td>
+<td>yes</td>
+<td>no</td>
+</tr>
+<tr>
+<td>Managed provider calls and model loads (runs, run summaries, Ask on a run, the console sandbox, entity chat)</td>
+<td>no: a proxy with the same API</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>Optional Gateway <code>/v1</code></td>
+<td>admits it (key, Who can connect, Guest, request log), then forwards it</td>
+<td>serves it through a private Core listener, sharing model resources</td>
+</tr>
+<tr>
+<td>Optional direct Core HTTP</td>
+<td>admin lifecycle control only</td>
+<td>Core serves requests directly with its own token and bind</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>The default</strong>: <code>process</code> on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
+  the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
+  <code>in-process</code> only with <code>--reload</code> or when chosen. A gateway embedded without the CLI (tests) is in-process.
+  <code>serve --no-runner</code> (the split API process) holds no model and starts no child; the split <code>runner</code>
+  takes the same flags and starts the child itself.</li>
+<li><strong>Limits</strong>: <code>--model-host-memory-gb GB</code> kills and restarts the child when its resident memory passes
+  GB (default 80 % of this machine's memory; <code>0</code> turns it off); <code>--model-host-nice N</code> (default 5) lets
+  the gateway answer first when inference uses every CPU. No environment variable.</li>
+<li><strong>Supervision</strong>: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
+  after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
+  10 minutes, then stops restarting (<code>model_host.state: failed</code>, <code>status: degraded</code>) until the gateway
+  restarts. The child exits when the gateway does (its stdin closes), so it never outlives it.</li>
+<li><strong>Readiness and progress</strong>: readiness means the authenticated native RPC connection is available,
+  independently of optional HTTP. A ping confirms process responsiveness, not progress of a
+  particular inference. An ordinary provider error fails its request without restarting a healthy
+  child; deterministic request-encoding or schema-preparation errors fail without retries.</li>
+<li><strong>A request when the child dies</strong> fails within a second: "The model host (the process that runs the
+  models) stopped while answering (killed by signal 9 (SIGKILL)). The gateway is fine and is restarting
+  it; send the message again in a few seconds." (status 424, not retried automatically: the request may
+  be what crashed it). A request while it restarts fails at once with status 503 (retried by the
+  runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.</li>
+<li><strong>Incidents</strong>: each unexpected exit writes <code>&lt;data dir&gt;/incidents/model-host-&lt;UTC stamp&gt;-&lt;id&gt;-&lt;kind&gt;.json</code>
+  (0600, schema <code>abstractgateway.incident.v1</code>, the newest 200 kept): <code>kind</code> (<code>exit</code>, <code>memory_ceiling</code>,
+  <code>unresponsive</code>, <code>gave_up</code>), <code>pid</code>, <code>exit_code</code>, <code>signal</code>, <code>description</code>, <code>rss_bytes_last</code>,
+  <code>memory_ceiling_bytes</code>, <code>inflight</code> (method, effective provider/model and available run, step,
+  request, node, workflow, effect-idempotency and attempt identifiers), <code>restart</code> (<code>will_restart</code>,
+  <code>backoff_s</code>, <code>restarts_in_window</code>) and <code>log_tail</code>. The child's log is <code>&lt;data dir&gt;/logs/model-host.log</code>.</li>
+<li><strong>Health</strong>: <code>GET /api/health</code> carries <code>model_host</code>: <code>mode</code>, <code>state</code> (<code>starting</code>, <code>up</code>, <code>restarting</code>,
+  <code>failed</code>, <code>stopped</code>; <code>in-process</code> in that mode), <code>pid</code>, <code>generation</code>, <code>restarts_in_window</code>,
+  <code>rss_bytes</code>, <code>memory_ceiling_bytes</code>, <code>nice</code>, <code>inflight</code>, <code>last_exit</code>, <code>last_incident</code>.</li>
+<li><strong>One resource owner</strong>: supported managed Core loaders reuse compatible resident weights for
+  the same canonical local artifact. Incompatible placements, engines or native profiles refuse
+  before allocating another copy; separate context/KV allocations do not imply duplicate weights.
+  This is process-local. Independently launched Core servers, external inference services, raw
+  engine constructors and arbitrary capability-plugin loaders are outside that admission contract.</li>
+<li><strong>What a restart loses</strong>: what the child held in memory (resident models, warmed again at once;
+  prompt caches; residency locks). Runs, sessions and the ledger are the gateway's and are untouched.</li>
+<li><strong>Cost</strong>: the hop adds about 0.1 ms p50 to a chat step on localhost (<code>scripts/bench_model_host_hop.py</code>;
+  budget 2 ms). The child is one more Python process with AbstractCore's imports.</li>
+<li><strong>Not yet in the child</strong> (backlog 0968): speech routes that call the voice library directly
+  (console voice preview, dictation), the embeddings index, and providers that tools build through the
+  session-route path. Generated media already runs in its own subprocesses.</li>
+</ul>
+<p>Evidence: <code>src/abstractgateway/model_host.py</code>, <code>src/abstractgateway/model_host_child.py</code>,
+<code>tests/test_model_host_rpc.py</code>, <code>tests/test_model_host_kill_e2e.py</code> (opt-in, <code>ABSTRACT_E2E_MODEL_HOST=1</code>).</p>
 <h2 id="split-mode-api-and-runner-in-two-processes-opt-in">Split mode: API and runner in two processes (opt-in)<a class="headerlink" href="#split-mode-api-and-runner-in-two-processes-opt-in" title="Permanent link">&para;</a></h2>
-<p>By default one <code>abstractgateway serve</code> process does everything. Split mode puts the runs and the
-model in their own process, so a long generation never shares a Python interpreter with the API
+<p>By default <code>abstractgateway serve</code> combines API and runner, with model execution in a supervised
+child. Split mode also separates the runner from the API, so a long runtime operation never shares a Python interpreter with the API
 (<code>/me</code>, the console, live streams). It is opt-in and not the default yet. Run these two commands
 with the same data dir (the runner first, or in either order):</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>runner<span class="w"> </span>--data-dir<span class="w"> </span>/path/to/data
@@ -3718,10 +3906,10 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <td>yes</td>
 </tr>
 <tr>
-<td>Text model: runs and the OpenAI-compatible <code>/v1</code></td>
-<td>yes</td>
-<td>no model loaded: <code>/v1</code> is forwarded to the runner</td>
-<td>yes, one copy</td>
+<td>Model execution and optional Core HTTP</td>
+<td>supervised child by default</td>
+<td>no model loaded: Gateway <code>/v1</code> is forwarded to the runner's execution owner</td>
+<td>supervised child by default; in-process only when explicitly chosen</td>
 </tr>
 <tr>
 <td>Mail watchers, feed polling, notification outbox</td>
@@ -3745,13 +3933,19 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 </table>
 <ul>
 <li><strong><code>/v1</code> in split mode.</strong> The API process checks the caller (key, Who can connect, Guest) as
-  usual, then forwards the request, streaming both ways, to a model host the runner process
-  serves on <code>127.0.0.1</code> (a port the system picks). The runner records its address in
+  usual, then forwards the request, streaming both ways, to the execution owner's optional
+  private Core listener on <code>127.0.0.1</code> (a port the system picks). Its owner records the address in
   <code>&lt;data dir&gt;/split/model_host.json</code> (mode 0600) with a secret made at each start; the model host
   refuses any request without it, so another program on the machine cannot use the port to skip
   the API's checks. No runner answering: <code>/v1</code> answers <code>503</code> with code <code>runner_unavailable</code>. The
   API process never loads the default text model (its runtime builds the model client at the
   first call instead of at boot).</li>
+<li><strong>Optional HTTP status.</strong> <code>GET /api/gateway/admin/core-endpoint</code> reads
+  <code>http_services</code> from <code>&lt;data dir&gt;/split/model_host_http.json</code> (atomic, mode <code>0600</code>,
+  no credentials). It checks the owner's PID and ignores stale status. With both
+  services disabled the file is removed after cleanup; an alive listener whose
+  stop failed stays visible as <code>stopping</code>. This status channel also works when
+  API and runner are separate processes.</li>
 <li><strong>Events.</strong> An event delivered by the API process reaches runs the runner process parked: the
   run store's event-wait and mailbox indexes re-read what another process changed before every
   lookup (at the latest 2 s after the change).</li>
@@ -3768,7 +3962,7 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
   Host and port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is configured, else
   <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.
@@ -3776,6 +3970,9 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
   environment variable.
   - <code>--no-runner</code>: serve the HTTP API only, next to <code>abstractgateway runner</code>
     (<a href="#split-mode-api-and-runner-in-two-processes-opt-in">split mode</a>).
+  - <code>--model-host process|in-process</code>: where the models run (default <code>process</code> on every OS,
+    <code>in-process</code> with <code>--reload</code>); <code>--model-host-memory-gb GB</code>, <code>--model-host-nice N</code>: the
+    child's limits (<a href="#model-host-the-models-run-in-a-supervised-child-process">model host</a>).
   - <code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with <code>--host 127.0.0.1</code>, a <code>--port</code> other than the configured one and
     <code>--print-token</code> is treated as a test gateway and shows no icon either.

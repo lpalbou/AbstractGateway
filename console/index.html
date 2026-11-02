@@ -665,6 +665,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -1400,7 +1427,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Models</td>
 <td><strong>Providers</strong></td>
-<td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Remote providers</strong>: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
+<td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Cloud providers</strong>: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, <strong>More settings</strong> for the base URL and allowed models), then custom OpenAI-compatible servers; then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
 </tr>
 <tr>
 <td>Models</td>
@@ -1415,7 +1442,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Models</td>
 <td><strong>Multimodal</strong></td>
-<td>capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route</td>
+<td>capability route defaults (text, every media modality and <strong>Decisions</strong>, <code>output.decision</code>), the text reasoning effort, the MTP (speculative decoding) default, and model weights per route</td>
 </tr>
 <tr>
 <td>System</td>
@@ -1465,7 +1492,10 @@ sign-in code</strong> requests a code and opens the code step in place
 "engine missing" with the install command, and the voice pickers say why a
 provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
-one under <strong>Providers</strong>.</p>
+one under <strong>Providers</strong>. The <strong>Decisions</strong> row (<code>output.decision</code>) offers the
+discovery catalog's decision models (AbstractCore's <code>decision</code> output modality,
+for example <code>mlx</code> / <code>jaredpalmer/kev-4b</code>); the setup guide's default-model step
+shows the same row (<a href="../api/#decisions">api.md</a>).</p>
 <p><strong>Edit multimodal capability</strong> (a route's <strong>Edit</strong>) sets the route's provider
 and model, an optional <strong>Base URL</strong> and <strong>Options</strong> (JSON); text routes add the
 reasoning effort and MTP, and <strong>Test</strong> sends a one-word probe. For voice output
@@ -2108,7 +2138,7 @@ list.</p>
 <ul>
 <li>The card header is one line: the model's name, organisation, parameter count
   and licence, its capabilities (Text, Thinking, Tools, Vision, Audio,
-  Embedding, Voice, Image, Video) as small tags, and a <strong>Starter</strong> badge for the
+  Embedding, Voice, Image, Video, Decision) as small tags, and a <strong>Starter</strong> badge for the
   models of the recommended starter set.</li>
 <li>The card body: one line per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
@@ -2129,7 +2159,11 @@ list.</p>
   them (MLX <code>-8bit</code> repositories, Ollama <code>-q8_0</code> tags, GGUF <code>Q8_0</code> files).
   Every build the catalog knows is listed; nothing is cut off.</li>
 </ul>
-<p>The filter bar above the cards:</p>
+<p>The filter bar above the cards is the kit's filter bar (abstractuic <code>AfFilterBar</code>): a first line with
+the Catalog / Hugging Face switch, the search box and <strong>Fits this computer</strong>, then one row per filter with
+its name in a fixed left column and its chips on the right (they wrap under the chips, never under the
+name). Every chip has the same size; its number is the small grey figure after the label. The setup
+guide's model step shows the same bar.</p>
 <ul>
 <li><strong>Search</strong> matches model names, organisations and artifact ids (every word
   must match). <strong>Escape</strong> clears it.</li>
@@ -2148,7 +2182,19 @@ list.</p>
   the Hub it says "Hugging Face could not be searched right now" (the raw
   reason sits behind <strong>Show details</strong>), and results the Hub only partly
   answered carry a warning. The query is part of the address:
-  <code>/console#catalog?hf=smollm</code>.</li>
+  <code>/console#catalog?hf=smollm</code>. Below the cards, a line says how many Hugging
+  Face results are shown and whether more exist. <strong>Show more results</strong> appends
+  the next page. An exact repo handle (<code>Qwen/Qwen3.5-9B</code>) lists that repo first,
+  then the builds of its name. When the Hub has no such repo, the line says so.
+  The catalog's own models that match the words are listed too.
+  In <strong>Catalog</strong> mode, a search of three characters or more also asks Hugging Face
+  once typing pauses. Its results come under <strong>From Hugging Face</strong>, below the
+  catalog's cards, with the same filters, count and <strong>Show more results</strong>.
+  Switching to <strong>Hugging Face</strong> mode then reuses that answer.</li>
+<li><strong>Every quant, always</strong>: each model lists every quantization its own repositories ship (from 1-bit to
+  BF16), each with its size and its fit on this computer. The quantization filter's <strong>All</strong> shows them all,
+  and <strong>4-bit</strong>, <strong>8-bit</strong> and <strong>Other</strong> filter them. The first load asks Hugging Face, and the answer is
+  cached for 24 hours. There is no separate switch.</li>
 <li><strong>Provider</strong>, <strong>Capability</strong> and <strong>Status</strong> (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).</li>
@@ -2235,13 +2281,29 @@ rest of the console keeps working.</p>
 <h3 id="apps-tab">Apps tab<a class="headerlink" href="#apps-tab" title="Permanent link">&para;</a></h3>
 <p>The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in <a href="../apps/">apps.md</a>). What a plain user sees on
-each card: the app's mark, name and status badge (Not installed, Stopped,
-Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
-description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height. Above
-the cards, one line names where the apps open: this browser's own address
-plus <code>/apps/</code> (for example <code>https://gateway.example.com/apps/…</code>), whatever
-address the browser used to reach the gateway.</p>
+each card: the app's illustration, its mark, name and status badge (Not
+installed, Stopped, Running, Installing, Stopped unexpectedly, Keeps
+crashing), a one-sentence description (two lines at most), and one
+row of launchers.
+Each launcher says where it opens: a globe for the web browser, a monitor for
+an app on the gateway's computer, <code>&gt;_</code> for a terminal. An app family is one
+card: the <strong>Assistant</strong> card holds <strong>Open in browser</strong> (the web Assistant)
+and <strong>Open on this Mac</strong> (the desktop Assistant). Its one status badge shows
+both, each with its icon (globe Running · monitor Stopped), and each part
+starts or stops its own Assistant; the primary button is the Assistant
+installed on this computer (the web one first); the desktop Assistant's notes
+sit beside its button, and on that card each Install says what it installs (<strong>Install browser app</strong>,
+<strong>Install desktop app</strong>). When the gateway cannot list its apps, the tab shows
+the reason only. The words and
+pictures come from the gateway's app registry (<a href="../apps/#registering-an-app">apps.md</a>).
+The button rows of the cards side by side are always at the same height. At
+the top right, <strong>Refresh</strong> (an icon button: it asks again which apps are
+installed and whether updates exist) sits beside the Apps settings gear. Apps
+open at this browser's own address plus <code>/apps/&lt;app&gt;/</code>, whatever address the
+browser used to reach the gateway. Node.js (what the browser apps run on) is a
+card with <strong>Install Node.js</strong> only when it is missing, while it installs, or
+after a failed install; when it is ready, <strong>Technical details</strong> show it as one
+quiet line ("Node.js 24.14.0 · found on this computer" and its path).</p>
 <table>
 <thead>
 <tr>
@@ -2264,11 +2326,11 @@ address the browser used to reach the gateway.</p>
 </tr>
 <tr>
 <td>installed and running</td>
-<td><strong>Open</strong> (a new tab at <code>/apps/&lt;app&gt;/</code>, already signed in)</td>
+<td><strong>Open in browser</strong> (a new tab at <code>/apps/&lt;app&gt;/</code>, already signed in)</td>
 </tr>
 <tr>
 <td>installed but stopped, or crashed</td>
-<td><strong>Open</strong> (starts it, then opens it); a crash also shows the reason, with <strong>Show details</strong></td>
+<td><strong>Open in browser</strong> (starts it, then opens it); a crash also shows the reason, with <strong>Show details</strong></td>
 </tr>
 </tbody>
 </table>
@@ -2285,7 +2347,7 @@ where it was started") and every badge for a user who is not an admin ("Only
 an admin can start or stop apps"). There is no separate Stop or Start button,
 not even under <strong>Technical details</strong>. The words come from the gateway
 (<code>status_control</code> on each row, <a href="../apps/#http-api">apps.md</a>).</p>
-<p>Code has a terminal version too. Next to Code's Open: <strong>Open in Terminal</strong>
+<p>Code has a terminal version too. Next to Code's <strong>Open in browser</strong>: <strong>Open in Terminal</strong>
 when the terminal version is installed and the browser is on the gateway
 machine (a new terminal window opens there, signed in). The plain view never
 installs the terminal version on its own: Code's Install installs both. When

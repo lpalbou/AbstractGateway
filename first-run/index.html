@@ -322,6 +322,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#1b-set-up-your-gateway-the-admin-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Set up your gateway: the admin password
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signing-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signing in
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2-the-first-run-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -376,6 +398,17 @@
     <span class="md-ellipsis">
       
         Where the data lives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#several-gateways-on-one-machine-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several gateways on one machine (instances)
       
     </span>
   </a>
@@ -546,6 +579,33 @@
     
   
     Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
   
 
     
@@ -1001,6 +1061,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#1b-set-up-your-gateway-the-admin-password" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. Set up your gateway: the admin password
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signing-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signing in
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#2-the-first-run-guide" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1055,6 +1137,17 @@
     <span class="md-ellipsis">
       
         Where the data lives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#several-gateways-on-one-machine-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Several gateways on one machine (instances)
       
     </span>
   </a>
@@ -1142,8 +1235,91 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
 <p>The admin token is printed just above the link, and kept in
 <code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (file mode <code>0600</code>). Start with
 <code>abstractgateway serve --no-print-token</code> to keep it out of the output.</p>
+<h2 id="1b-set-up-your-gateway-the-admin-password">1b. Set up your gateway: the admin password<a class="headerlink" href="#1b-set-up-your-gateway-the-admin-password" title="Permanent link">&para;</a></h2>
+<p>A fresh gateway (a new data folder) has an admin account but nobody holding a
+password for it. Open the console at the gateway's address, from this machine
+or any address the gateway accepts (a LAN address, Tailscale, a reverse
+proxy, Tailscale Funnel): instead of the sign-in form it shows <strong>Set up your
+gateway</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Your name</td>
+<td>The admin's display name in the console (default <code>admin</code>). You can sign in with it or with the account id <code>admin</code></td>
+</tr>
+<tr>
+<td>Admin password, Confirm</td>
+<td>At least 10 characters with at least 5 different ones, not the account name and not a well-known password. A few words make a good one</td>
+</tr>
+<tr>
+<td>Setup code</td>
+<td>The six words printed when the gateway was installed (see below)</td>
+</tr>
+<tr>
+<td>Remember this browser</td>
+<td>Keeps the session for 30 days instead of until the browser closes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Set up and sign in</strong> sets the password, signs this browser in as the admin
+and opens the first-run guide (section 2). From then on the same address shows
+the sign-in form, and the onboarding never comes back for this data folder.</p>
+<p><strong>The setup code.</strong> Until the admin password is set, whoever reaches the
+console first could set it, so the form always asks for the six-word setup
+code, from any browser. (The gateway cannot tell a browser on its own machine
+from a proxy that relays strangers without saying so, such as a minimal nginx
+<code>proxy_pass</code> or <code>tailscale funnel --tcp</code>.) Someone at the gateway's machine can
+skip the form with the one-time link of section 3, which needs no code. Print
+the code on the gateway's machine:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>claim<span class="w"> </span>--code
+moose<span class="w"> </span>bicycle<span class="w"> </span>honey<span class="w"> </span>camel<span class="w"> </span>ankle<span class="w"> </span>agent
+</code></pre></div>
+<p><code>abstractgateway service install</code> and <code>abstractgateway service enable</code> print it
+too, and so does the AbstractFramework installer's summary. Case and
+separators do not matter (<code>Moose-Bicycle-...</code> works). The code stops working
+once the password is set; <code>abstractgateway claim --code</code> then says the gateway
+is already set up.</p>
+<p><strong>What closes the onboarding.</strong> Setting the admin password here, or ANY admin
+sign-in (a one-time link from section 3, the admin token, a code sent by
+email), an admin setting the admin's password from the Accounts page, or an
+admin creating another account. When
+it closes, unused one-time links are deleted. A data folder that already had
+accounts when the gateway was upgraded to 0.19.0 is never "fresh": it keeps
+the sign-in form.</p>
+<p><strong>Limits.</strong> 5 wrong setup codes from one address, or 20 from all addresses
+together, lock the form for 15 minutes (the second lock never applies to a
+browser on the gateway's own machine). Every claim is logged with the
+client address (a warning log line, the audit log, and
+<code>&lt;data dir&gt;/auth/onboarding.json</code>, mode <code>0600</code>).</p>
+<h2 id="signing-in">Signing in<a class="headerlink" href="#signing-in" title="Permanent link">&para;</a></h2>
+<p>The sign-in form asks for <strong>Account</strong> and <strong>Password</strong>. <strong>Sign in with a
+token instead</strong> switches to the token (the admin token from section 1, or a
+token an admin gave you); tokens stay for apps and automation. A password is
+set:</p>
+<ul>
+<li>for the admin, by the onboarding above;</li>
+<li>for anyone, by an admin: <strong>Accounts</strong> &gt; <strong>Create user</strong> (optional
+  <strong>Password</strong> field), or the key button on an account's row (set, change or
+  remove);</li>
+<li>by each person for themselves: the key button on their own row (it asks the
+  current password once one is set).</li>
+</ul>
+<p>Setting, changing or removing a password signs that account's other browsers
+out. Ten wrong passwords from one address lock that address for 15 minutes;
+five wrong passwords in a row for one account from one address lock that
+address out of that account for 30 seconds, doubling up to 15 minutes; every
+20 for one account from all addresses lock it for 15 minutes, doubling up to
+24 hours, except for addresses that signed it in before. Every lock ends, and
+the account's token keeps working. See
+<a href="../security/#sign-in-passwords-tokens-and-the-first-run-window">security.md</a>.</p>
 <h2 id="2-the-first-run-guide">2. The first-run guide<a class="headerlink" href="#2-the-first-run-guide" title="Permanent link">&para;</a></h2>
-<p>The guide has five steps. Every step is optional:</p>
+<p>The guide has six steps. Every step is optional:</p>
 <table>
 <thead>
 <tr>
@@ -1161,12 +1337,16 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
 <td>The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an <strong>Install</strong> button. The confirmation shows the exact command before anything runs</td>
 </tr>
 <tr>
-<td>Default model</td>
-<td>The text model currently configured, <strong>Use recommended defaults</strong> (the same action as the Multimodal tab's <em>Apply recommended</em>: text, voice, transcription (speech input), images and video, where this computer can run them), a <strong>Download</strong> button for each recommended model that is missing, a card with the reason for each route this computer cannot run (<em>Not available here</em> for a recommendation, <em>Cannot run here</em> for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with <strong>Fits this computer</strong> on (one card per model, every 4-bit and 8-bit build, filters, <strong>Open in the Models tab</strong>). A downloaded text model's <strong>Use as default</strong> makes it the default text model</td>
+<td>Cloud providers</td>
+<td>One card per cloud provider AbstractCore supports (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: <code>GET /api/gateway/discovery/providers</code>, <code>local_provider: false</code>), each with the provider's mark, its connection state (key fingerprint only), an <strong>API key</strong> field and <strong>Check the key</strong>: "Key works · 48 models", or one sentence saying why not (the key was refused, the provider is limiting requests, it could not be reached). The key is checked first (<code>POST …/provider-endpoint-profiles/discover-models</code>, which stores nothing); only a key that works can be saved, and <strong>Save the key</strong> creates a NEW provider connection (<code>openai-key</code>, <code>openai-key-2</code>, … with <code>create_only</code>), never replacing one you have. The key is never shown again. The same cards are the Providers tab's <strong>Cloud providers</strong> section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step</td>
+</tr>
+<tr>
+<td>Default models</td>
+<td>Two views, <strong>Simple</strong> first. <strong>Simple</strong>: one <strong>Use recommended</strong> button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, <strong>Input</strong> (what it understands: Text, Image, Voice, Video, Files) and <strong>Output</strong> (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: <em>Not set</em> (with the recommended model's name when there is one), <em>Recommended</em> (the pick is in use), <em>Your choice</em>, or <em>Covered</em> (read by the text model). A badge opens a guided choice: the model recommended for this computer first (<strong>Use it</strong>, <strong>Use it and download</strong>), then <strong>Other models that fit</strong> (the catalog filtered to that capability, fits-this-computer on) and <strong>All engines and models…</strong> (the Multimodal route editor), and for text <strong>Or use an API key</strong> (any cloud provider of the Cloud providers step, with the same check: the key is checked first, then kept as a NEW provider connection, never replacing one you have). <strong>Advanced</strong>: one table row per capability with the engine and model ids, <strong>Use recommended</strong>, <strong>Download</strong> and <strong>Choose…</strong> per row, and <strong>Use recommended for all</strong>; below it the recommended downloads (<strong>Download all</strong>), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide</td>
 </tr>
 <tr>
 <td>Apps</td>
-<td>"Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop <strong>Assistant</strong>: name, status, one line of description and one row of buttons at the same height on every card: <strong>Install</strong> when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then <strong>Open</strong> (Open also starts a stopped app), plus <strong>Open in Terminal</strong> on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with <strong>Technical details</strong> (see <a href="../console/#apps-tab">console.md</a>)</td>
+<td>Shown once a default text model exists (until then the step says <strong>Choose a default text model first</strong> with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop <strong>Assistant</strong>: name, status, one line of description and one row of buttons at the same height on every card: <strong>Install</strong> when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then <strong>Open</strong> (Open also starts a stopped app), plus <strong>Open in Terminal</strong> on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with <strong>Technical details</strong> (see <a href="../console/#apps-tab">console.md</a>)</td>
 </tr>
 <tr>
 <td>Done</td>
@@ -1175,8 +1355,93 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
 </tbody>
 </table>
 <p><strong>What "recommended" means on this computer.</strong> AbstractCore picks the
-recommended text model; the gateway shows that pick and holds no list of its
-own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+recommended model for each capability (<code>recommended_models(host)</code>, see
+AbstractCore's <code>docs/recommended-models.md</code>); the gateway shows those picks and
+holds no list of its own.</p>
+<p>The rule per memory band. "Memory" is the GPU's memory on an NVIDIA computer
+and the unified memory on a Mac. The <strong>Today</strong> column is what AbstractCore
+answers now; the <strong>Target</strong> column is the operator's table (2026-10-28), which
+AbstractCore adopts once each pick is measured on real hardware (root backlog
+1072); until then the guide shows the <strong>Today</strong> pick.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Band</th>
+<th>Today (AbstractCore)</th>
+<th>Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Text</td>
+<td>Mac, below 24 GB</td>
+<td>Qwen3.5 9B, MLX 4-bit</td>
+<td>the 8–14B class, or a lower quant of Qwen3.8 27B that fits whole</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>Mac, 24 to 128 GB</td>
+<td>Qwen3.8 27B, MLX 4-bit (128 GB and up: Qwen3.8 Flash-Next)</td>
+<td>Qwen3.8 27B 4-bit on MLX (24–64 GB)</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>NVIDIA, 24 to 64 GB</td>
+<td>LM Studio <code>qwen/qwen3.5-9b@q4_k_m</code></td>
+<td>Qwen3.8 27B 4-bit: <code>unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M</code> (16.5 GB) on llama.cpp</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>NVIDIA, 16 GB</td>
+<td>LM Studio <code>qwen/qwen3.5-9b@q4_k_m</code></td>
+<td>Qwen3.8 27B <code>UD-Q3_K_XL</code> (13.1 GB, fits whole), or the 8–14B class</td>
+</tr>
+<tr>
+<td>Image (text to image, image to image)</td>
+<td>12 GB and up</td>
+<td>FLUX.2 klein 4B (MLX-Gen 8-bit on a Mac, Diffusers on NVIDIA)</td>
+<td>FLUX.2 klein 4B</td>
+</tr>
+<tr>
+<td>Voice out</td>
+<td>every computer</td>
+<td>Supertonic 3</td>
+<td>Supertonic 3; Qwen3-TTS when 8 GB are free and voice cloning is wanted</td>
+</tr>
+<tr>
+<td>Voice in</td>
+<td>every computer</td>
+<td>Whisper large-v3 (faster-whisper; an Apple silicon Mac with MLX: MLX Whisper)</td>
+<td>Whisper large-v3-turbo from 6 GB, else Whisper small</td>
+</tr>
+<tr>
+<td>Video</td>
+<td>Mac, where it fits (not on small-memory Macs)</td>
+<td>Wan2.2 TI2V 5B, MLX-Gen 8-bit</td>
+<td>Wan 2.2 TI2V 5B from 16 GB, 14B from 32 GB, MiniMax H3 from 64 GB</td>
+</tr>
+<tr>
+<td>Video</td>
+<td>NVIDIA</td>
+<td>none</td>
+<td>as above, on Diffusers (<code>Wan-AI/Wan2.2-TI2V-5B-Diffusers</code>, <code>Wan-AI/Wan2.2-T2V-A14B-Diffusers</code>)</td>
+</tr>
+<tr>
+<td>Music</td>
+<td>every computer</td>
+<td>none in the guide: AbstractCore's music recommendation is opt-in (ACE-Step 1.5 XL turbo, set it with Choose…)</td>
+<td>(no target given)</td>
+</tr>
+<tr>
+<td>3D, Embeddings, Rankers</td>
+<td>every computer</td>
+<td>none: Choose…</td>
+<td>(no target given)</td>
+</tr>
+</tbody>
+</table>
+<p>The Apple text tiers in detail: on a Mac with Apple silicon the pick is an MLX build chosen by the
 computer's memory:</p>
 <table>
 <thead>
@@ -1281,6 +1546,11 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span><span clas
 abstractgateway<span class="w"> </span>service<span class="w"> </span>disable<span class="w">      </span><span class="c1"># stop starting it at login (the running gateway keeps running)</span>
 abstractgateway<span class="w"> </span>service<span class="w"> </span>uninstall<span class="w">    </span><span class="c1"># stop and remove (your data is kept)</span>
 </code></pre></div>
+<p><code>service uninstall</code> returns only once the gateway and every process it started have exited: the entity
+loops, model downloads, managed processes, apps and the tray. Some of these run in their own session, so the
+service manager would not stop them. The command waits up to 20 s for them, then stops what is left
+(SIGTERM, then SIGKILL), and lists what it stopped. If a process survives, the command fails and names it.
+On Linux without a systemd user manager (XDG autostart), it stops the gateway itself.</p>
 <p>The desktop tray's <strong>Start AbstractGateway at login</strong> item is the same switch
 (<code>enable</code>/<code>disable</code>, shared module <code>abstractgateway.autostart</code>). <code>status</code>
 reports <code>broken</code> when a registration exists that would not start — the
@@ -1344,8 +1614,13 @@ enable</code> again to let the Network setting apply". <code>service enable</cod
   (<code>--no-claim</code> to skip).</li>
 <li><code>--dry-run</code> prints the files and commands without changing anything.
   <code>--no-start</code> registers the service without starting it now.</li>
-<li>On Linux, a user unit runs while you are logged in. To keep it running after
-  logout or start it at boot, run <code>loginctl enable-linger "$USER"</code> once.</li>
+<li>On Linux, a user unit runs while you are logged in. When lingering is off
+  (<code>loginctl show-user "$USER" -p Linger</code> answers <code>Linger=no</code>, the default),
+  <code>service install</code>, <code>service enable</code> and <code>service status</code> say so in one line:
+  "On a server, this service stops when you log out and does not start at boot
+  until you run once: sudo loginctl enable-linger <user>". The consoles' Start at
+  login switch shows the same sentence. The gateway never runs it for you (it
+  needs an administrator); <code>install.sh --server</code> does.</li>
 </ul>
 <h2 id="where-the-data-lives">Where the data lives<a class="headerlink" href="#where-the-data-lives" title="Permanent link">&para;</a></h2>
 <p>When <code>ABSTRACTGATEWAY_DATA_DIR</code> is not set, the gateway uses, in order:</p>
@@ -1360,6 +1635,59 @@ enable</code> again to let the Network setting apply". <code>service enable</cod
 <p><code>abstractgateway-config status</code> prints the folder and the reason it was
 chosen. <code>serve --data-dir &lt;dir&gt;</code> or <code>ABSTRACTGATEWAY_DATA_DIR</code> choose it
 explicitly.</p>
+<h2 id="several-gateways-on-one-machine-instances">Several gateways on one machine (instances)<a class="headerlink" href="#several-gateways-on-one-machine-instances" title="Permanent link">&para;</a></h2>
+<p>A second gateway for the same user on the same machine is a named INSTANCE. One name drives
+everything, and nothing is picked by hand:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>--instance<span class="w"> </span>fresh<span class="w"> </span>service<span class="w"> </span>install<span class="w"> </span>--port<span class="w"> </span><span class="m">8443</span><span class="w">   </span><span class="c1"># or: install.sh --server --instance fresh --port 8443</span>
+abstractgateway<span class="w"> </span>--instance<span class="w"> </span>fresh<span class="w"> </span>claim<span class="w"> </span>--code<span class="w">                  </span><span class="c1"># its setup code</span>
+abstractgateway<span class="w"> </span>--instance<span class="w"> </span>fresh<span class="w"> </span>service<span class="w"> </span>status
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Default instance</th>
+<th>Instance <code>fresh</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data folder</td>
+<td><code>~/.local/share/abstractgateway</code> (macOS: <code>~/Library/Application Support/AbstractGateway</code>)</td>
+<td>the same with <code>-fresh</code></td>
+</tr>
+<tr>
+<td>AbstractCore config (model routes, provider connections)</td>
+<td>AbstractCore's default</td>
+<td><code>&lt;data folder&gt;/core-config</code></td>
+</tr>
+<tr>
+<td>Gateway port (unless <code>--port</code> or the Network setting)</td>
+<td>8080</td>
+<td>8090 + its slot</td>
+</tr>
+<tr>
+<td>App ports (Code, Observer, ...)</td>
+<td>3001-3006, then 3100-3199</td>
+<td>3001+200×slot..., then 3100+200×slot..3199+200×slot</td>
+</tr>
+<tr>
+<td>Login service</td>
+<td><code>abstractgateway.service</code>, <code>ai.abstractframework.gateway</code></td>
+<td><code>abstractgateway-fresh.service</code>, <code>ai.abstractframework.gateway.fresh</code></td>
+</tr>
+<tr>
+<td>Console</td>
+<td>"AbstractGateway Console"</td>
+<td>"AbstractGateway Console · fresh", and the name in the sidebar</td>
+</tr>
+</tbody>
+</table>
+<p>The SLOT is assigned once per instance (the smallest free one, never two instances on one slot) and
+recorded in <code>~/.config/abstractgateway/instances.json</code>, so the app port blocks of two instances never
+collide. <code>ABSTRACTGATEWAY_INSTANCE=fresh</code> is the same as <code>--instance fresh</code> (the login service runs
+<code>abstractgateway --instance fresh serve</code>). A gateway lists and opens only its own apps: a running app
+another instance serves is never shown as this one's. <code>GET /api/gateway/about</code> carries <code>instance</code>.</p>
 <h2 id="exposing-the-gateway-beyond-this-machine">Exposing the gateway beyond this machine<a class="headerlink" href="#exposing-the-gateway-beyond-this-machine" title="Permanent link">&para;</a></h2>
 <p>Choose who can reach the gateway with the network setting:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>network<span class="w"> </span><span class="nb">set</span><span class="w"> </span>lan<span class="w">                            </span><span class="c1"># this machine + your local network</span>

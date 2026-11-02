@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -2065,25 +2092,54 @@ code. See <a href="../apps/">apps.md</a>.</p>
   end
   subgraph Server["Server or container"]
     API["abstractgateway serve --no-runner&lt;br/&gt;HTTP API, console, streams"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner&lt;br/&gt;runs, model, mail, feeds, push"] --- DD
+    Worker["abstractgateway runner&lt;br/&gt;runs, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --&gt; API
-    API --&gt;|"/v1 forwarded&lt;br/&gt;(127.0.0.1, per-start secret)"| ModelHost["Model host&lt;br/&gt;(in the runner process)"]
-    Worker --- ModelHost
+    API --&gt;|"optional Gateway /v1&lt;br/&gt;(private loopback + per-start secret)"| ModelHost["Supervised model-host child&lt;br/&gt;Core resources and optional HTTP"]
+    Worker --&gt;|"native execution RPC"| ModelHost
   end
 </code></pre></div>
+<div class="highlight"><pre><span></span><code>flowchart LR
+  Native["Native framework clients"] --&gt;|"run APIs / commands"| GW["Gateway + Runtime&lt;br/&gt;runs, ledger, auth, supervision"]
+  GW --&gt;|"native RPC: original schema data&lt;br/&gt;Unix socket or Windows named pipe"| Exec["Execution owner&lt;br/&gt;Core clients and validators"]
+  GW --&gt;|"replay views / SSE"| Native
+  Compat["Gateway /v1 clients&lt;br/&gt;Gateway API keys"] --&gt; Legacy["Optional Gateway /v1 admission"]
+  Legacy --&gt;|"private loopback + per-start secret"| PrivateHTTP["Optional private Core listener"]
+  Direct["Direct inference clients&lt;br/&gt;Core server token"] --&gt; DirectHTTP["Optional direct Core listener&lt;br/&gt;Core bind and auth"]
+  subgraph MH["One supervised model-host child"]
+    Exec --&gt; Resources["Core local model resources&lt;br/&gt;compatible sharing / conflict refusal"]
+    PrivateHTTP --&gt; Resources
+    DirectHTTP --&gt; Resources
+  end
+  GW -.-&gt;|"ping / bounded restart / incidents"| MH
+</code></pre></div>
 <ul>
-<li><strong>Single process</strong>: <code>abstractgateway serve</code> starts the HTTP API and the
-  runner. On a desktop session it also starts the tray helper, and it starts
-  the browser apps you enabled.</li>
+<li><strong>Combined API and runner</strong>: <code>abstractgateway serve</code> starts the HTTP API and the
+  runner, with model execution in a supervised child by default. On a desktop
+  session it also starts the tray helper and the browser apps you enabled.</li>
+<li><strong>Model host</strong> (ADR 0002,
+  <code>--model-host process</code>, the default on every OS): managed model loads and
+  Runtime-backed provider calls run in one child process the gateway supervises;
+  the runtime's LLM clients in the gateway are proxies with the same API, and
+  optional Gateway <code>/v1</code> is admitted by the gateway and served by the child.
+  Optional direct Core HTTP reaches Core's app with Core authentication, without
+  a Gateway run or Runtime orchestration. Both listeners share the execution
+  owner's resources; their startup and shutdown do not define native readiness.
+  A listener can fail or restart while native RPC remains available. A fatal
+  execution-owner crash costs
+  the requests in flight, is recorded in <code>&lt;data dir&gt;/incidents/</code>, and the child
+  is restarted; the gateway keeps answering, on Linux, macOS and Windows alike. Details: <a href="../configuration/#model-host-the-models-run-in-a-supervised-child-process">configuration.md</a>.</li>
 <li><strong>Split API and runner</strong> (opt-in): <code>abstractgateway runner --data-dir DIR</code>
   (worker) and <code>abstractgateway serve --no-runner --data-dir DIR</code> (API) share
   one data dir, so you can restart the API without pausing durable execution.
-  The runner process ticks every run, holds the one text model, and runs the
+  The runner process ticks every run, supervises the model-host child, and runs the
   mail watchers, feed polling, push dispatcher and bridges; the API process
   only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
-  <code>/v1</code> admits each request, then forwards it to a model host the runner
-  serves on <code>127.0.0.1</code> (address and per-start secret in
-  <code>&lt;data dir&gt;/split/model_host.json</code>), so the model is never loaded twice.
+  <code>/v1</code> admits each request, then forwards it to the optional private Core
+  listener in that owner on <code>127.0.0.1</code> (address and per-start secret in
+  <code>&lt;data dir&gt;/split/model_host.json</code>). An explicit <code>--model-host in-process</code>
+  keeps execution in the runner instead. Admin listener status comes from
+  <code>&lt;data dir&gt;/split/model_host_http.json</code>, an atomic, owner-only file containing
+  service states and URLs without credentials; readers check owner liveness.
   Live replies pass through <code>&lt;data dir&gt;/live/</code>; events the API delivers reach
   runs the runner parked (the run store's indexes refresh across processes).
   The full table of who does what: <a href="../configuration/#split-mode-api-and-runner-in-two-processes-opt-in">configuration.md</a>.</li>
@@ -2091,7 +2147,8 @@ code. See <a href="../apps/">apps.md</a>.</p>
   <a href="../deployment/">deployment.md</a>.</li>
 </ul>
 <p>Evidence: <code>src/abstractgateway/cli.py</code> (flags), <code>src/abstractgateway/runner.py</code>
-(lock file), <code>src/abstractgateway/split_mode.py</code> (model host, placement).</p>
+(lock file), <code>src/abstractgateway/split_mode.py</code> (model host, placement),
+<code>src/abstractgateway/model_host.py</code> (supervisor, proxy), <code>src/abstractgateway/model_host_child.py</code>.</p>
 <h2 id="security-model-summary">Security model (summary)<a class="headerlink" href="#security-model-summary" title="Permanent link">&para;</a></h2>
 <p><code>GatewaySecurityMiddleware</code> applies to paths starting with <code>/api/gateway</code>:</p>
 <ul>

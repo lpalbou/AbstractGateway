@@ -409,6 +409,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -834,10 +861,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#turn-it-on" class="md-nav__link">
+  <a href="#direct-core-serving-and-native-clients" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Turn it on
+        Direct Core serving and native clients
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#turn-on-gateway-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Turn on Gateway /v1
       
     </span>
   </a>
@@ -985,9 +1023,27 @@ SDK or tool that speaks the OpenAI API can use the models this gateway reaches
 OpenAI API page, valid at <code>/v1</code> only (see <a href="#api-keys">API keys</a>). One key can
 serve every app; separate keys are optional, for revoking one app without the
 others.
-There is no separate process or port: the API follows the gateway's <a href="../configuration/#network-exposure-localhost--local-network--internet">Network</a>
-setting, and AbstractCore answers each request behind it.</p>
-<h2 id="turn-it-on">Turn it on<a class="headerlink" href="#turn-it-on" title="Permanent link">&para;</a></h2>
+The public URL follows the gateway's <a href="../configuration/#network-exposure-localhost--local-network--internet">Network</a>
+setting. Gateway admits each request, then Core answers it in the execution
+owner, sharing local model resources with native run calls.</p>
+<h2 id="direct-core-serving-and-native-clients">Direct Core serving and native clients<a class="headerlink" href="#direct-core-serving-and-native-clients" title="Permanent link">&para;</a></h2>
+<p>Native framework clients call Gateway run APIs and consume replay views or
+streams. They do not need an OpenAI-compatible HTTP endpoint.</p>
+<p>You can also enable a <strong>direct AbstractCore listener</strong> for inference-only
+clients. An admin sends <code>{"direct_enabled": true}</code> to
+<code>POST /api/gateway/admin/core-endpoint</code> (false disables it). This is independent
+of the Gateway <code>/v1</code> switch, <code>enabled</code>. The direct listener uses Core's own
+<code>server.host</code> and <code>server.port</code> (default <code>127.0.0.1:8000</code>) and Core server token;
+Gateway account API keys, <em>Who can connect</em>, and Gateway's request log apply
+only to Gateway <code>/v1</code>. See <a href="https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md">Core's server guide</a>
+for its authentication and bind configuration.</p>
+<p>Direct requests reach Core's app without creating a Gateway run or passing
+through Runtime orchestration. Both optional listeners share the execution
+owner's resources, and stopping either listener leaves resident models in
+place. A failed listener does not block native RPC. Admin status exposes
+<code>http_services.legacy</code> and <code>http_services.direct</code>, each with <code>state</code>, <code>url</code>
+and <code>error</code>; configuration booleans alone do not confirm a listening port.</p>
+<h2 id="turn-on-gateway-v1">Turn on Gateway <code>/v1</code><a class="headerlink" href="#turn-on-gateway-v1" title="Permanent link">&para;</a></h2>
 <p>Open the web console, <strong>Models → OpenAI API</strong>. An admin sees five cards; any
 other account sees Status (running or not, the base URL), Connect your app
 (their own API keys), Docs and Recent requests (their own):</p>
@@ -1169,7 +1225,9 @@ reported for structured requests yet.</p>
 not part of the SDK checks): <code>POST /v1/responses</code>, <code>POST /v1/audio/speech</code>,
 <code>POST /v1/audio/transcriptions</code>, <code>POST /v1/audio/translations</code>,
 <code>POST /v1/images/generations</code>, <code>POST /v1/images/edits</code>,
-<code>POST /v1/images/variations</code>.</p>
+<code>POST /v1/images/variations</code>, <code>POST /v1/decisions</code> (AbstractCore's decision
+modality: body <code>{model, state, questions, truncate?}</code>, calibrated typed answers,
+no text; Guest may use it).</p>
 <p>Not yet: <code>response_format</code> together with <code>tools</code>, <code>text.format</code> on
 <code>/v1/responses</code>, <code>n</code> greater than 1, <code>logprobs</code>, <code>logit_bias</code> (each answers
 <code>400 unsupported_parameter</code> with the parameter named), and files, batches,
@@ -1332,7 +1390,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 <td>GET</td>
 <td><code>/api/gateway/openai-api</code></td>
 <td>any account</td>
-<td>status <code>gateway_openai_api_v1</code>: everyone <code>role</code>, <code>writable</code>, <code>enabled</code>, <code>running</code>, <code>base_url</code>, <code>key{own_token, user_id, named_keys, fingerprint, allowed}</code> (<code>named_keys</code>: true when the caller's account makes API keys, false for the operator's own token; <code>fingerprint</code>: first 12 hex digits of the gateway token's SHA-256, never the token), <code>docs</code>, <code>support</code>, <code>example_model</code> (a text model <code>/v1/models</code> lists; null when stopped), <code>owner_reveal</code> (may owners reveal their keys); an admin also <code>access</code>, <code>reach</code>, <code>reach_options[]</code>, <code>open_account</code>, <code>open_account_options[]</code>, <code>warnings[]</code>, <code>listener</code>, <code>tailscale</code>, <code>open_requests</code>, <code>legacy_base_url</code></td>
+<td>status <code>gateway_openai_api_v1</code>: everyone <code>role</code>, <code>writable</code>, <code>enabled</code>, <code>direct_enabled</code>, <code>running</code>, <code>base_url</code>, <code>key{own_token, user_id, named_keys, fingerprint, allowed}</code> (<code>named_keys</code>: true when the caller's account makes API keys, false for the operator's own token; <code>fingerprint</code>: first 12 hex digits of the gateway token's SHA-256, never the token), <code>docs</code>, <code>support</code>, <code>example_model</code> (a text model <code>/v1/models</code> lists; null when stopped), <code>owner_reveal</code> (may owners reveal their keys); an admin also <code>http_services{legacy, direct}</code> (<code>state</code>, <code>url</code>, <code>error</code> per service), <code>access</code>, <code>reach</code>, <code>reach_options[]</code>, <code>open_account</code>, <code>open_account_options[]</code>, <code>warnings[]</code>, <code>listener</code>, <code>tailscale</code>, <code>open_requests</code>, <code>legacy_base_url</code></td>
 </tr>
 <tr>
 <td>GET</td>
@@ -1392,7 +1450,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 <td>POST</td>
 <td><code>/api/gateway/admin/core-endpoint</code></td>
 <td>admin</td>
-<td><code>{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|&lt;user id&gt;, owner_reveal?: bool}</code> (<code>owner_reveal: false</code> erases every stored key copy: show-once); <code>409</code> with the reason when refused</td>
+<td><code>{enabled?: bool, direct_enabled?: bool, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|&lt;user id&gt;, owner_reveal?: bool}</code> (<code>owner_reveal: false</code> erases every stored key copy: show-once); <code>409</code> with the reason when refused</td>
 </tr>
 <tr>
 <td>PUT</td>

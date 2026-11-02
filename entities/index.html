@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -815,6 +842,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#live-conversation-during-a-visit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live conversation during a visit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#summoning" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1094,6 +1132,17 @@
     <span class="md-ellipsis">
       
         Drive ratios (cognition health)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#live-conversation-during-a-visit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live conversation during a visit
       
     </span>
   </a>
@@ -1463,6 +1512,71 @@ deliberately file-cheap and never opens a store; a cold home shows no
 field (absent ≠ zero), and <code>/cognition</code> always serves the block (and
 warms the home). The gateway console renders the two ratio bars in the
 entity Overview panel from the same <code>/cognition</code> read.</p>
+<h2 id="live-conversation-during-a-visit">Live conversation during a visit<a class="headerlink" href="#live-conversation-during-a-visit" title="Permanent link">&para;</a></h2>
+<p>Open <code>POST /api/gateway/entities/{name}/visit/open</code> with a stable <code>session_id</code> and
+optional <code>conversation: true</code> (a strict JSON boolean) to enable public updates and
+conversational questions. The mode is fixed before the first tick; rejoining an existing
+managed session with a conflicting mode is refused (422). Existing tool policy remains
+separate; <code>ask_user</code> is an interaction primitive in this mode even when external tools are off.</p>
+<p>Read <code>GET /api/gateway/entities/{name}/visit/{run_id}/state</code>. In conversational mode it adds:</p>
+<ul>
+<li><code>public_updates</code>: up to 64 explicit, safe actor updates with <code>id</code>, <code>text</code>, <code>run_id</code>,
+  <code>session_id</code>, <code>iteration</code> and <code>source_call_ids</code>.</li>
+<li><code>public_messages</code>: up to 64 accepted human corrections with <code>role: "user"</code>,
+  <code>kind: "guidance"</code>, <code>id</code>, <code>text</code>, <code>run_id</code>, <code>session_id</code>, <code>speaker</code> and
+  <code>guidance_status: "accepted"</code>.</li>
+<li><code>public_questions</code>: up to 64 canonical ASK_USER interaction messages: assistant
+  <code>question</code>, user <code>answer</code>, system <code>question_outcome</code> for expiry, and user
+  <code>retained_reply</code> with <code>reply_status: "retained"</code> and its reason. Question/answer rows retain
+  their actual <code>wait_key</code>; <code>question_id</code> comes from the original wait when available.
+  Expiry retains <code>question.outcome: "expired"</code>; retained replies keep the original question id.
+  The server selects only known ASK_USER sources and trusted host outcomes, screens diary/thinking
+  fences, and never serves generic home messages or reasoning as question history.</li>
+<li><code>public_updates_omitted</code>, <code>public_messages_omitted</code>, <code>public_questions_omitted</code>, <code>conversation_runs_omitted</code>:
+  explicit counts when this bounded view omits entries or descendants; the full ledger remains.
+  Question omissions include rows withheld by privacy-fence screening. Clients show a history
+  omission notice when any count is positive.</li>
+<li><code>pending_question</code>: null or the actual question wait, including its child <code>run_id</code> when
+  applicable, <code>wait_key</code>, prompt, choices, <code>allow_free_text</code>, <code>until</code> and <code>details.question</code>.
+  When present it is also the <code>pending_wait</code>. All pending waits carry their actual <code>run_id</code>.</li>
+</ul>
+<p>A permission <code>pending_wait.details.public_action</code>, when present, carries the actor’s
+explicit public explanation (<code>text</code>, <code>update_id</code>, <code>run_id</code>, <code>iteration</code>, <code>call_ids</code>).
+It is bound to the exact pending batch and narrowed when the session tool policy
+withholds actions. It grants no permission and does not prove execution. A missing
+explanation must not be reconstructed from private thoughts or another update.</p>
+<p>This is a participant-facing projection over the owned visit and verified descendants,
+bounded to 32 runs. Clients must not read the entity home's raw ledger or diary to render it.
+Explicit public events still undergo server-side diary/thinking-fence screening; an event
+marker alone does not make private content public.
+All three public message arrays retain canonical <code>order: [timestamp, run_id, ledger_seq]</code>
+and <code>published_at</code> (the same timestamp, from the record's end or start time). They are
+chronologically ordered before the 64-entry cap. Clients merge the arrays by this order;
+grouping all human input before actor updates would change the history.</p>
+<p>While the entity is working in its current turn, send
+<code>POST .../visit/{run_id}/guidance</code> with <code>{text: "quoted context and correction",
+display_text: "the person's original words"}</code>. <code>display_text</code> is optional; this authenticated
+human visit route uses <code>text</code> when it is absent. Display words must be nonblank and at most
+65,536 characters. The server derives the participant identity; clients cannot choose it.
+The response <code>{accepted: true, seq, run_id}</code> means durably queued, not adopted. Idle,
+paused or currently waiting visits refuse live guidance (409); send the next turn or answer
+the actual wait instead. Accepted corrections are recalled and attributed before the next
+reasoning boundary, with no additional model call for empty queues. Old-turn corrections
+remain retained instead of silently becoming instructions for a new turn.</p>
+<p>Answer a conversational question through <code>POST .../visit/{run_id}/answer</code> with
+<code>{wait_key: "question:&lt;id&gt;", response: "the person's words", target_run_id?: "&lt;actual child&gt;"}</code>.
+An omitted target selects the actual pending question; an explicit target must be a verified
+descendant in the same owned visit. Empty text, extra approval fields and tool-approval waits
+are refused; this route does not approve tools. It returns <code>{accepted, run_id, target_run_id}</code>
+with the refreshed safe conversation projection. Paused visits refuse answering without
+continuation. Late recognized replies are retained under Runtime's question contract and
+cannot answer a newer question. Essential questions have no deadline; timed clarifications
+apply only their predeclared safe fallback. See <a href="../api/#conversational-updates-questions-and-corrections">api.md</a>.</p>
+<p>Tool approvals keep their existing <code>/decision</code> route and exact pending key; they never time
+out into approval. A managed visit's authenticated owner is checked before these routes;
+wrong-owner requests do not disclose it. Generic run steering remains refused for these
+driver-owned visits. A Flow summoned work session is a separate ordinary Gateway run: it
+uses <code>/runs/{root}/view</code> and standard commands, not the driver visit routes above.</p>
 <h2 id="summoning">Summoning<a class="headerlink" href="#summoning" title="Permanent link">&para;</a></h2>
 <p>Summoning opens a work session <em>as</em> the entity:</p>
 <ol>

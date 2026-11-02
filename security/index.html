@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -886,6 +913,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sign-in-passwords-tokens-and-the-first-run-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sign-in: passwords, tokens and the first-run window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sign-in: passwords, tokens and the first-run window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-first-run-window-an-unclaimed-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The first-run window (an unclaimed gateway)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#origin-allowlist-browserorigin-defense" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1126,6 +1181,45 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-incidents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security incidents
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security incidents">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#2026-10-29-scratch-gateways-wrote-capability-defaults-into-the-operators-shared-core-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2026-10-29-abstractnotes-14-write-routes-had-no-authorization-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-10-29: AbstractNote's 14 write routes had no authorization decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1361,6 +1455,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sign-in-passwords-tokens-and-the-first-run-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sign-in: passwords, tokens and the first-run window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sign-in: passwords, tokens and the first-run window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-first-run-window-an-unclaimed-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The first-run window (an unclaimed gateway)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#origin-allowlist-browserorigin-defense" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1601,6 +1723,45 @@
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-incidents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security incidents
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security incidents">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#2026-10-29-scratch-gateways-wrote-capability-defaults-into-the-operators-shared-core-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2026-10-29-abstractnotes-14-write-routes-had-no-authorization-decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2026-10-29: AbstractNote's 14 write routes had no authorization decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2066,6 +2227,81 @@ workflow catalog:</p>
 <p>Catalog mutation routes are admin-only under
 <code>/api/gateway/admin/workflow-catalog/*</code>. User-visible catalog discovery is
 available at <code>GET /api/gateway/workflow-catalog</code>.</p>
+<h2 id="sign-in-passwords-tokens-and-the-first-run-window">Sign-in: passwords, tokens and the first-run window<a class="headerlink" href="#sign-in-passwords-tokens-and-the-first-run-window" title="Permanent link">&para;</a></h2>
+<p>Since 0.19.0 an account signs in with its <strong>account id and a password</strong> or with its
+<strong>gateway token</strong>; both open the same browser session (<code>POST /api/gateway/session/login</code>
+with <code>{user_id, password}</code> or <code>{user_id, token}</code>, exactly one of the two). Tokens stay
+for apps, scripts and the OpenAI-compatible API (<code>/v1</code> takes named API keys).</p>
+<p><strong>Password storage.</strong> The hash is on the account's registry record
+(<code>&lt;data dir&gt;/auth/users.json</code>, <code>password_hash</code>): <code>hashlib.scrypt</code> (N=2^16, r=8, p=1,
+16-byte salt, 32-byte key) in the self-describing form <code>scrypt$N$r$p$salt$key</code>, compared in
+constant time. No password is ever written, logged or returned. The strength rule: at least
+10 characters with at least 5 different ones, not built around the account name, not a
+well-known password.</p>
+<p><strong>Attempt limits</strong> (process-local; a restart clears them, like the token lockout below;
+every counter decays: refusals older than 15 minutes stop counting; an IPv6 address counts
+as its /64). Ten refused passwords from one address in 15 minutes lock that address for 15
+minutes. Five refused passwords in a row for one account FROM ONE ADDRESS lock that (account,
+address) pair for 30 seconds, doubling up to 15 minutes. Every 20 refused passwords for one
+account from all addresses within 15 minutes lock the account for 15 minutes, doubling at each
+further lock up to 24 hours (back to 15 minutes after a quiet 30 minutes past the last lock);
+an address that signed this account in during the last 30 days is not held by that lock, so a
+distributed guesser cannot lock the owner out. Counters are kept per hashed account name and
+never dropped while locked, so a flood of made-up names cannot reset them. Residual: the
+"signed in before" exemption is per address, so callers sharing the owner's address (a shared
+NAT, the same IPv6 /64) share it too and fall back to the per-address limits (never for a
+loopback address, which every caller behind a header-less proxy has).
+A lock answers 429 <code>too_many_attempts</code> with <code>retry_after_s</code>, even for the right password; the
+account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
+trust on (or behind a proxy that passes the header through), the address is the left-most
+<code>X-Forwarded-For</code> entry, which a client can vary; the per-account limit still holds. Every refusal is the same sentence (<code>password_refused</code>:
+"That account and password don't match.") whether the account is unknown, has no password,
+is deactivated or the password is wrong, and an unknown account costs the same scrypt time.</p>
+<p><strong>Sessions follow credentials.</strong> A browser session is bound to the account's credentials
+(token hash, and the password hash once one is set), and setting, changing or removing a
+password also deletes the account's other sessions at once (so none can revive when a
+credential returns to an earlier value). <code>PUT /me/password</code> and an admin's <code>PUT /admin/accounts/{id}/password</code>
+give the browser that made the change a fresh session.</p>
+<p><strong>Who sets passwords.</strong> Anyone signed in sets their own (<code>PUT /me/password</code>, current password
+required once one exists, under the attempt limits). Admins set or remove anyone's
+(<code>PUT|DELETE /admin/accounts/{id}/password</code>) and may give one at creation
+(<code>POST /admin/users</code> <code>password</code>). Entities never have a password. The last-admin rule is
+unchanged.</p>
+<p><strong>Where tokens come from (automation).</strong> <code>POST /api/gateway/admin/users</code> answers the new
+account's token once; an admin rotates another account's token with
+<code>PATCH /api/gateway/admin/users/{id}</code> <code>{"rotate_token": true}</code> (answered once); anyone rotates
+their own with <code>POST /api/gateway/me/token/rotate</code>. The bootstrap admin's token is in
+<code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (0600).</p>
+<h3 id="the-first-run-window-an-unclaimed-gateway">The first-run window (an unclaimed gateway)<a class="headerlink" href="#the-first-run-window-an-unclaimed-gateway" title="Permanent link">&para;</a></h3>
+<p>A fresh data folder (the bootstrap admin was just created, with a generated token, on an
+empty registry) is <strong>unclaimed</strong> until an admin signs in or the admin gets a password. While
+unclaimed, <code>GET /api/gateway/session/onboarding</code> (public) answers <code>unclaimed: true</code> and
+<code>POST /api/gateway/session/onboarding</code> sets the admin password and signs the browser in.
+That window is the risk, and it is fenced:</p>
+<ul>
+<li><strong>browser only</strong>: the POST needs an <code>Origin</code> header, and the security middleware has
+  already refused any Origin the gateway does not accept;</li>
+<li><strong>the setup code</strong> (six words from a list of 273, about 48 bits, stored in
+  <code>&lt;data dir&gt;/auth/onboarding.json</code>, 0600) is ALWAYS required. A gateway behind
+  <code>tailscale serve</code>/Funnel, a container's port mapping, a shared LAN, or a proxy that adds
+  no forwarding headers at all (a minimal nginx <code>proxy_pass</code>, <code>tailscale funnel --tcp</code>,
+  <code>ssh -R</code>) looks like a local caller to itself, so nothing about a request proves the person
+  is at the machine. (A first draft skipped the code for a loopback peer without forwarding
+  headers; the adversarial review took the gateway through a header-less proxy.) Someone at
+  the machine has the no-code path anyway: the one-time claim link;</li>
+<li><strong>limits</strong>: 5 refused setup codes per address and 20 across all addresses per 15 minutes
+  (then 429 for 15 minutes; the gateway-wide lock never applies to a loopback peer without
+  forwarding headers, so strangers cannot lock the machine's own browser out);</li>
+<li><strong>logged</strong>: a warning log line and the audit line's <code>onboarding</code> detail with the client
+  address, and <code>claimed_at / claimed_via / claimed_from</code> in <code>onboarding.json</code>;</li>
+<li><strong>closes for good</strong> on the first admin sign-in of any kind (password, token, one-time
+  link, email code), when the admin gets a password, or when an admin creates an account
+  (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
+  then. A data folder that was not fresh when 0.19.0 first ran never has the record, so an
+  upgrade never opens the window.</li>
+</ul>
+<p>The one-time claim link (<code>abstractgateway claim</code>) stays the loopback-only path: it is
+refused from any non-loopback peer or through a proxy.</p>
 <h2 id="origin-allowlist-browserorigin-defense">Origin allowlist (browser/origin defense)<a class="headerlink" href="#origin-allowlist-browserorigin-defense" title="Permanent link">&para;</a></h2>
 <p>If the request includes an <code>Origin</code> header, the middleware allows it only when
 it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
@@ -2584,6 +2820,69 @@ AbstractRuntime <code>workspace_scoped_tools.py</code> (<code>sandbox_stamp</cod
 <h2 id="openai-api">OpenAI API<a class="headerlink" href="#openai-api" title="Permanent link">&para;</a></h2>
 <p>The OpenAI-compatible API at <code>/v1</code> is stopped by default. In <strong>Protected</strong> mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at <code>/v1</code> only (anywhere under <code>/api/gateway/</code>, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (<code>openai_key_change</code>: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. <strong>Open</strong> mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. <strong>Who can connect</strong> filters on the client address (the socket peer, or <code>X-Forwarded-For</code> from a proxy on this machine or a trusted proxy); <strong>Anywhere</strong> requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (<code>base_url</code>, <code>api_key</code>, <code>provider</code>, <code>headers</code>, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read <code>[redacted]</code>), readable by an admin for every request and by each account for its own. See <a href="../openai-api/">openai-api.md</a>.</p>
 <p><strong>Owner reveal and its trade-off.</strong> By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (<code>POST /api/gateway/me/openai-keys/{fingerprint}/reveal</code>; anyone else, admins included, gets <code>403 not_owner</code>; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (<code>&lt;data dir&gt;/secrets/sealing.key</code>; the copies in <code>&lt;data dir&gt;/auth/openai_key_secrets/</code>), see <a href="#sealed-secrets-one-key-file-per-data-folder">Sealed secrets</a>. What that protects, honestly: a copy of the data folder without <code>secrets/</code> reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.</p>
+<h2 id="security-incidents">Security incidents<a class="headerlink" href="#security-incidents" title="Permanent link">&para;</a></h2>
+<p>Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
+found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).</p>
+<h3 id="2026-10-29-scratch-gateways-wrote-capability-defaults-into-the-operators-shared-core-store">2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store<a class="headerlink" href="#2026-10-29-scratch-gateways-wrote-capability-defaults-into-the-operators-shared-core-store" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>What happened</strong>: during the model-residency audit, two scratch gateways (started directly with their own data
+  dir, no <code>ABSTRACTCORE_CONFIG_DIR</code> / <code>ABSTRACTCORE_CONFIG_FILE</code> in their environment) answered the console's
+  <code>PUT /api/gateway/config/capability-defaults/{kind}/{modality}</code> and wrote the routes into THE Core store,
+  <code>~/.abstractcore/config/abstractcore.json</code> — the file the operator's own gateway on 8080 reads — not into their
+  scratch dir. The operator's <code>input.text</code> (endpoint:airelay / gpt-5.6-terra, reasoning minimal) and
+  <code>embedding.text</code> (lmstudio / text-embedding-qwen3-embedding-0.6b) rows were overwritten with the probe's models.</li>
+<li><strong>Effect</strong>: the operator's gateway kept its in-memory routes (it was never restarted or chatted with), so no
+  request was answered by the wrong model; a restart in that window would have booted on the probe's defaults.
+  Scope: the operator's own machine; nothing left it.</li>
+<li><strong>Why</strong>: by design the gateway ROOT is not a scope — an admin editing a default edits the source
+  (<code>core_config._scoped_core_config_path</code>), and the source is resolved by AbstractCore's own resolver
+  (<code>ABSTRACTCORE_CONFIG_FILE</code> / <code>ABSTRACTCORE_CONFIG_DIR</code>, else <code>~/.abstractcore/config/abstractcore.json</code>).
+  The instances runner derives <code>&lt;data dir&gt;/core-config</code> for the children it starts (<code>instances.py</code>), but a gateway
+  started by hand with a data dir and no <code>ABSTRACTCORE_*</code> variable shares the machine store with every other
+  gateway on the machine. The audit harness set neither variable for its first runs.</li>
+<li><strong>Found</strong>: 2026-10-29 ~14:00 by the auditor, reading the shared file after its own PUTs; reported to the lead.</li>
+<li><strong>Recovered</strong>: the two rows were put back through the gateway's own writer
+  (<code>core_config.save_gateway_capability_default</code>) at ~14:12 — <code>embedding.text</code> read back from the live 8080
+  gateway's in-memory route, <code>input.text</code> from the profile that holds the relay URL; verified against
+  <code>GET /api/gateway/config/capability-defaults</code> on 8080. Later probe runs set <code>ABSTRACTCORE_CONFIG_FILE</code> to a file
+  under their scratch dir and the shared store stayed untouched (checked after each run).</li>
+<li><strong>Decision</strong>: backlog 0979 — a gateway given a data dir never writes outside it: the Core config dir is derived
+  from the data dir by default (as the instances runner already does), the machine store is used only by a
+  gateway with no explicit data dir, and a test starts a gateway with a data dir, PUTs a capability default and
+  asserts the shared store is byte-identical. Rule for every seat until then: a scratch gateway is started with
+  <code>ABSTRACTCORE_CONFIG_FILE</code> (or <code>_DIR</code>) pointing inside its scratch dir.</li>
+</ul>
+<h3 id="2026-10-29-abstractnotes-14-write-routes-had-no-authorization-decision">2026-10-29: AbstractNote's 14 write routes had no authorization decision<a class="headerlink" href="#2026-10-29-abstractnotes-14-write-routes-had-no-authorization-decision" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Exposed</strong>: with <code>abstractnote</code> installed (every install profile; the operator's instances) the gateway mounts
+  <code>abstractnote.gateway.router</code> under <code>/api/gateway/note</code> (<code>abstractnote_seam.py</code>). Its 14 write routes
+  (<code>POST .../claims/{claim_id}/retract</code>, <code>.../communities/recompute</code>, <code>.../entities/normalize</code>,
+  <code>.../entities/{entity_id}/unmerge</code>, <code>.../insights/{note_id}/ack</code>, <code>.../notes/{note_id}/archive</code>,
+  <code>.../notes/{note_id}/redate</code>, <code>.../processor/ensure</code>, <code>.../queue/{note_id}/priority</code>, <code>.../queue/{note_id}/retry</code>,
+  <code>.../refile</code>, <code>.../review/{review_id}/confirm</code>, <code>.../tasks/{task_id}/close</code>, <code>PUT .../settings</code>) carried no
+  <code>GATEWAY_ROUTE_POLICIES</code> row and were not on the contract test's user-level allowlist.</li>
+<li><strong>Effect</strong>: no admin requirement applied, so every route was reachable by ANY signed-in principal (member or
+  admin); an anonymous caller got 401 as for every other write. Each handler resolves the caller's principal and
+  plane itself and acts on that plane's own notebook. In a plane of their own a member could only change their own
+  notebook. In a SHARED plane (several accounts bound to one runtime, or an entity's plane) twelve routes are
+  account-stamped, reversible knowledge edits; two act on the whole plane — <code>PUT /settings</code> (filing and answering
+  models, schedules) and <code>POST /processor/ensure</code> (archives automations another account may have created and
+  recreates them under the caller) — and a member could run them. Nothing was open to the unauthenticated.</li>
+<li><strong>Since</strong>: the seam mount (checkpoint 840af7e9, 2026-10-22) with abstractnote 0.2.0 (the routes exist since
+  2026-10-19). Gateway CI never installs abstractnote, so
+  <code>tests/test_gateway_route_authorization_contract.py::test_every_write_route_has_an_explicit_authorization_decision</code>
+  stayed green in CI and failed on every real install.</li>
+<li><strong>Found</strong>: 2026-10-29 by a worker running that test on a machine with abstractnote installed; confirmed by the
+  merge desk against the PyPI 0.2.0 wheel.</li>
+<li><strong>Decision</strong> (PR #55): all 14 recorded user-level with the reason above; no runtime behaviour changed. An admin row
+  would break the Note app for every member, so the shared-plane gate for <code>PUT /settings</code> and <code>POST /processor/ensure</code>
+  (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
+  backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).</li>
+<li><strong>Rule since</strong> (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today <code>abstractnote&gt;=0.2.0</code>, step "Install the seam packages") and
+  <code>tests/test_gateway_seams_mounted.py</code> fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.</li>
+</ul>
 
 
 

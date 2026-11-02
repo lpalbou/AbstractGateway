@@ -413,6 +413,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../engines-install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../model-downloads/" class="md-nav__link">
         
   
@@ -995,6 +1022,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#conversational-updates-questions-and-corrections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversational updates, questions and corrections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1152,6 +1190,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversation-read-receipts-apigatewaymesession-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversation read receipts (/api/gateway/me/session-reads)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1461,6 +1510,17 @@
     <span class="md-ellipsis">
       
         Voice library
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions
       
     </span>
   </a>
@@ -2282,6 +2342,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#conversational-updates-questions-and-corrections" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversational updates, questions and corrections
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#durable-commands-post-apigatewaycommands" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2439,6 +2510,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversation-read-receipts-apigatewaymesession-reads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversation read receipts (/api/gateway/me/session-reads)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2754,6 +2836,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3002,9 +3095,9 @@ serve:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>/api/gateway/session/login</code>, <code>/session/logout</code>, <code>/session/claim</code>, <code>/me</code></td>
-<td>browser sessions, one-time sign-in links, the current principal</td>
-<td><a href="../security/">security.md</a>, <a href="../first-run/">first-run.md</a></td>
+<td><code>/api/gateway/session/login</code> (<code>{user_id, password}</code> or <code>{user_id, token}</code>), <code>/session/logout</code>, <code>/session/claim</code>, <code>/session/onboarding</code>, <code>/me</code>, <code>/me/password</code>, <code>/admin/accounts/{id}/password</code></td>
+<td>browser sessions, password sign-in, first-run onboarding ("Set up your gateway"), one-time sign-in links, the current principal, passwords</td>
+<td><a href="../security/#sign-in-passwords-tokens-and-the-first-run-window">security.md</a>, <a href="../first-run/">first-run.md</a></td>
 </tr>
 <tr>
 <td><code>/api/gateway/admin/users</code>, <code>/admin/runtime-reservations</code></td>
@@ -3092,6 +3185,11 @@ serve:</p>
 <td><a href="../automations/">automations.md</a></td>
 </tr>
 <tr>
+<td><code>/api/gateway/runs/{run_id}/decisions</code></td>
+<td>one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run</td>
+<td><a href="#decisions">below</a></td>
+</tr>
+<tr>
 <td><code>/api/gateway/runs/{run_id}/view</code>, <code>/view/stream</code></td>
 <td>the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client)</td>
 <td><a href="#replay-view-runsrun_idview">below</a></td>
@@ -3129,6 +3227,13 @@ sent to any <code>/api/gateway/</code> route answers <code>401</code>
 Status and logs: <code>GET /api/gateway/openai-api[/logs]</code>; admin changes:
 <code>/api/gateway/admin/core-endpoint</code>. See <a href="../openai-api/">openai-api.md</a> for the
 supported surface, access settings and errors.</p>
+<p>The same admin settings route accepts <code>direct_enabled</code> (JSON boolean, default
+<code>false</code>) for a direct Core HTTP listener. It does not change Gateway <code>/v1</code>'s
+<code>enabled</code> setting. Admin status includes <code>http_services</code>: <code>legacy</code> and <code>direct</code>
+rows with <code>{state, url, error}</code>. The direct listener uses Core's server bind
+and token; it receives inference requests directly without Gateway run APIs
+or Runtime orchestration. Native run clients use neither HTTP inference
+surface. See <a href="../configuration/#openai-compatible-endpoint">endpoint configuration</a>.</p>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>By default, <code>/api/gateway/*</code> is protected by <code>GatewaySecurityMiddleware</code> (bearer token + origin allowlist).<br />
 See: <a href="../security/">security.md</a>.</p>
@@ -3893,10 +3998,14 @@ raw bytes or local paths:</p>
 <span class="w">  </span><span class="nt">"filename"</span><span class="p">:</span><span class="w"> </span><span class="s2">"input.png"</span>
 <span class="p">}</span>
 </code></pre></div>
-<p>Streamed read-aloud recordings use the logical <strong><code>voice/</code></strong> artifact space. Normal
+<p>Streamed read-aloud recordings use the logical <strong><code>voice/</code></strong> artifact space, and so does the
+recording of a spoken question: an upload whose client path is under the reserved
+<code>voice/dictation/</code> prefix is tagged <code>purpose: voice_dictation</code> and <code>artifact_space: voice</code>.
+Voice transport is how the conversation travelled, not an attachment of it: normal
 <code>GET /runs/{run_id}/artifacts</code> and <code>GET /sessions/{session_id}/artifacts</code> listings
-exclude these playback recordings; <code>include_voice=true</code> includes them. Filtering occurs
-before pagination and totals. Uploaded recordings and explicitly generated audio files
+exclude read-aloud audio and dictation recordings; <code>include_voice=true</code> includes them.
+AbstractRuntime's history bundle applies the same rule to session turns. Filtering occurs
+before pagination and totals. Other uploaded recordings and explicitly generated audio files
 remain in the normal listing. Existing streamed recordings are classified from their
 producer metadata without rewriting their saved artifact references.</p>
 <p><code>GET /sessions/{session_id}/artifacts</code> reads only that session's artifacts through the
@@ -4027,6 +4136,51 @@ their own routed runtime.</p>
 same basename, Gateway emits deterministic digest-suffixed aliases so the same
 public path string can round-trip through <code>/files/*</code>, artifact import/export,
 and Runtime file nodes.</p>
+<h2 id="conversational-updates-questions-and-corrections">Conversational updates, questions and corrections<a class="headerlink" href="#conversational-updates-questions-and-corrections" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/gateway/runs/start</code> accepts an optional strict JSON boolean <code>conversation</code>.
+<code>true</code> enables the actor's public updates and conversational questions before the first
+tick; absent or false preserves the existing presentation. It normalizes to
+<code>input_data._runtime.conversation: {enabled: true|false}</code> and inherits through supported
+agent/subworkflow composition. The equivalent input-data config must contain exactly
+<code>enabled</code> with a boolean value. <code>POST /entities/{name}/summon</code> accepts the same option for
+the ordinary Flow work-session lane.</p>
+<p>Render <code>/runs/{root}/view</code> messages with <code>kind: "public_update"</code> as actor-authored updates.
+They retain <code>id</code>, <code>text</code>, <code>run_id</code>, optional <code>session_id</code>, <code>iteration</code>, <code>source_call_ids</code>
+and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
+An actor's wording remains its statement, not independently verified evidence of completion.</p>
+<p>Conversational questions retain <code>waiting.prompt</code> and expose
+<code>waiting.details.question: {id, purpose: "conversation", importance, published_at, deadline, fallback}</code>.
+<code>importance: "essential"</code> has null deadline/fallback and waits indefinitely. A
+<code>clarification</code> carries its original absolute deadline and a safe fallback declared when
+the question was issued (120–300 seconds). Answer the actual run shown by the replay
+interaction, using its exact <code>question:&lt;id&gt;</code> wait key:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"command_id"</span><span class="p">:</span><span class="s2">"&lt;new UUID&gt;"</span><span class="p">,</span><span class="nt">"run_id"</span><span class="p">:</span><span class="s2">"&lt;question run&gt;"</span><span class="p">,</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"resume"</span><span class="p">,</span><span class="nt">"payload"</span><span class="p">:{</span><span class="nt">"wait_key"</span><span class="p">:</span><span class="s2">"question:&lt;id&gt;"</span><span class="p">,</span><span class="nt">"payload"</span><span class="p">:{</span><span class="nt">"response"</span><span class="p">:</span><span class="s2">"Inside, please."</span><span class="p">}}}</span>
+</code></pre></div>
+<p>Empty responses and approval payloads answer HTTP 422. At or after the server cutoff,
+expiry wins even before the due scan runs. The continuation contains <code>timed_out</code>, <code>fallback</code>
+and <code>question: {id, outcome: "expired"}</code> with no human <code>response</code>. Late recognized replies
+are durably retained and do not answer another question. Pause suppresses continuation while
+preserving the original deadline; after explicit resume an overdue question resolves first.
+Cancellation does not apply a fallback. This uses the existing runner and Runtime's
+single-writer/process-local arbitration, not a new scheduling service. Legacy ASK_USER,
+EVENT deadlines and tool approvals retain their existing behavior. Time passing grants no
+approval or permission. These facts do not implicitly request afterflow notifications.</p>
+<p>During ordinary task work, submit <code>inject_guidance</code> with
+<code>payload: {guidance: "context and the correction", display_text: "the person's original words"}</code>.
+<code>display_text</code> is optional, nonblank and at most 65,536 characters; only explicit display text
+becomes public human history. The server stamps its authenticated speaker. Replay exposes
+<code>role: "user", kind: "guidance", guidance_status: "accepted"</code> from reserved host receipts.
+Operational guidance without display text remains outside public human history. Acceptance
+means durably queued; the actor's later response is the evidence it considered or adopted the
+correction. Already performed work is not undone. If only the public-receipt append fails,
+the accepted sidecar source is retained and retried before consumption; the host reports a
+repair warning rather than a false refusal. Entity driver visits use their canonical owned
+visit routes described in <a href="../entities/#live-conversation-during-a-visit">entities.md</a>.</p>
+<p>The runner copies the authoritative command envelope's <code>command_id</code> to the optional
+<code>client_message_id</code> on the public human receipt and replay message. Use that field to reconcile
+pending task speech. The <code>/commands</code> acknowledgment sequence belongs to the command inbox;
+it is not the guidance sidecar sequence in <code>&lt;run_id&gt;:guidance:&lt;seq&gt;</code>. Distinct commands with
+identical words remain distinct messages. Payload-claimed correlation ids are ignored.</p>
 <h2 id="durable-commands-post-apigatewaycommands">Durable commands (<code>POST /api/gateway/commands</code>)<a class="headerlink" href="#durable-commands-post-apigatewaycommands" title="Permanent link">&para;</a></h2>
 <p>Commands are appended to a durable inbox and applied asynchronously by the runner.</p>
 <p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
@@ -4426,6 +4580,21 @@ Flow, the automation) and a copy-paste signed call are in
 <p>Evidence: <code>src/abstractgateway/routes/triggers.py</code> (<code>receive_webhook</code>),
 <code>src/abstractgateway/trigger_connections.py</code> (lookup across accounts, rate limit),
 AbstractRuntime <code>triggers/webhook.py</code> (verification, event mapping).</p>
+<h2 id="conversation-read-receipts-apigatewaymesession-reads">Conversation read receipts (<code>/api/gateway/me/session-reads</code>)<a class="headerlink" href="#conversation-read-receipts-apigatewaymesession-reads" title="Permanent link">&para;</a></h2>
+<p>Read receipts are scoped to the signed-in account and runtime. <code>GET</code> returns <code>{items,
+next_after, more}</code> in sequence order; use <code>after</code> for replay and <code>limit</code> (1–1000, default 200)
+for pagination. Repeated <code>run_id</code> parameters filter up to 100 visible turns.</p>
+<p><code>POST</code> accepts <code>{receipts: [{session_id, run_id, status}]}</code> (1–100 items), validates the entire
+batch, and returns its committed <code>items</code>. Status is <code>request</code>, <code>completed</code>, <code>failed</code> or
+<code>cancelled</code>. Only conversation turn roots in the caller's runtime are accepted; a terminal
+receipt must match the stored outcome (409 otherwise). Duplicate receipts return the original
+immutable event. Reading a request never acknowledges its later answer. Automation results
+continue to use their separate attention cursor.</p>
+<p>The append-only read ledger persists independently of execution ledgers and personal-event
+retention. An idempotent delivery projection emits <code>session.read</code> into the existing personal
+event stream. Clients refresh canonical receipts after this event and after reconnecting.
+Mark a revision only when the user consumes the loaded content, not when listing or replaying it.
+Clients must retain unread state on write failure; browser-local baselines are not read evidence.</p>
 <h2 id="your-event-stream-apigatewaymeevents">Your event stream (<code>/api/gateway/me/events</code>)<a class="headerlink" href="#your-event-stream-apigatewaymeevents" title="Permanent link">&para;</a></h2>
 <p>One ordered stream per person, <code>user:&lt;tenant&gt;:&lt;user&gt;</code>, holding what happened <strong>for you</strong> that is
 not a step of a run (a step stays in its run's ledger). Every client reads the same stream: a
@@ -4450,6 +4619,11 @@ event written twice (a retry, a repair after a crash) is stored once.</p>
 <td><code>run.started</code></td>
 <td><code>{run_id, session_id, origin}</code></td>
 <td>a run of a session (a person's run, an automation occurrence) is saved running; never a child run or an automation's controller</td>
+</tr>
+<tr>
+<td><code>session.read</code></td>
+<td><code>{sequence, session_id, run_id, status, at, event_id}</code></td>
+<td>a conversation revision was consumed; canonical receipt remains after event-stream pruning</td>
 </tr>
 <tr>
 <td><code>run.finished</code></td>
@@ -4701,7 +4875,9 @@ and <code>approve</code>; an explicit empty map disables all tools and <code>mod
 inherits the home's grants. Omit <code>tool_policy</code> to retain legacy visit behavior.
 These choices apply only to this visit and cannot widen the home's grants.</p>
 <p>Use the visit's <code>/state</code>, <code>/tool-policy</code> and <code>/decision</code> routes to read progress,
-change choices between turns and answer the exact pending approval. End through
+change choices between turns and answer the exact pending approval. Optional conversational
+updates, live correction and question answers use the separate <code>/guidance</code> and <code>/answer</code>
+routes in <a href="../entities/#live-conversation-during-a-visit">entities.md</a>. End through
 <code>POST .../visit/{run_id}/close</code> with <code>{"closed_by":"pause"}</code>; pending approval
 is cancelled without executing its tools. Managed visits are bound to their
 authenticated owner. <code>/entities/{name}/sessions</code> and <code>/visit/{run_id}/end</code>
@@ -4849,8 +5025,12 @@ loads the <code>abstractnote</code> workflows: see <a href="../apps/">apps.md</a
 <p>The capabilities payload includes package presence (<code>abstractruntime</code>,
 <code>abstractcore</code>, <code>abstractmemory</code>, <code>abstractvoice</code>, <code>abstractvision</code>), existing
 gateway helpers (<code>tools</code>, <code>visualflow</code>, <code>media</code>), memory-store readiness, and
-AbstractCore capability plugin status for <code>voice</code>, <code>audio</code>, <code>vision</code>, and
-<code>music</code>.</p>
+AbstractCore capability plugin status for <code>voice</code>, <code>audio</code>, <code>vision</code>,
+<code>music</code> and <code>decision</code>. The contracts (<code>contracts.common</code>, <code>flow_editor</code> and
+<code>assistant</code>) carry a <code>decision</code> descriptor beside <code>media</code>: the VisualFlow
+<code>decide</code> node (<code>workflow</code>) and the direct endpoint (<code>direct_endpoint</code>:
+<code>endpoint</code>, <code>openai_endpoint</code>, <code>capability_route</code>, <code>returns</code>), each with
+<code>available</code>; see <a href="#decisions">Decisions</a>.</p>
 <p>The route paths and contract descriptors are the stable part of this surface.
 Catalog routes also include a stable Gateway-owned envelope:</p>
 <ul>
@@ -5143,6 +5323,7 @@ and <code>turns[]</code> (<code>run_id</code>, <code>created_at</code>, <code>st
 - <code>POST /api/gateway/runs/{run_id}/videos/generate</code>
 - <code>POST /api/gateway/runs/{run_id}/videos/from_image</code>
 - <code>POST /api/gateway/runs/{run_id}/music/generate</code>
+- <code>POST /api/gateway/runs/{run_id}/decisions</code> (<a href="#decisions">below</a>)
 - <code>GET /api/gateway/voice/defaults</code>
 - <code>GET /api/gateway/voice/voices</code>
 - <code>GET /api/gateway/voice/languages</code>, <code>GET /api/gateway/voice/clones</code>, <code>GET /api/gateway/voice/clones/{voice_id}</code>, <code>GET /api/gateway/voice/compatibility</code>
@@ -5229,7 +5410,7 @@ Qwen3-TTS). <code>/voice/tts/stream</code> refuses <code>one_shot</code> (422): 
 returns JSON Lines stream events for progressive playback when discovery advertises
 <code>capabilities.contracts.assistant.voice.tts.streaming=true</code>; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal <code>done</code> event's <code>metrics</code> carry <code>ttfb_s</code>, <code>rtf</code>, <code>device</code> and, on the CPU, <code>device_reason</code>.</p>
-<p>Stream lines (JSON Lines): <code>runtime_start</code> (<code>run_id</code> = the run named in the path, <code>child_run_id</code> = the id the outcome will be recorded under, <code>schema: abstractruntime.tts_stream.start.v2</code>), engine events (<code>start</code>, <code>audio</code> with <code>sequence</code> and <code>audio_b64</code>), then one terminal line: <code>done</code> (with <code>audio_artifact</code> and <code>child_run_status</code>), <code>cancelled</code> or <code>error</code> (<code>error</code> = the sentence; <code>watchdog_timeout: true</code> when the engine went silent past <code>ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S</code>). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is <code>{"type": "queued", "message": "Waiting for the voice engine: …"}</code>; speech follows when the engine is free. A request past the voice synthesis bound (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) waits one second, then gets <code>503</code> "Read aloud is busy: N voice syntheses are already running on this gateway …".</p>
+<p>Stream lines (JSON Lines): <code>runtime_start</code> (<code>run_id</code> = the run named in the path, <code>child_run_id</code> = the id the outcome will be recorded under, <code>schema: abstractruntime.tts_stream.start.v2</code>), engine events (<code>start</code>, <code>audio</code> with <code>sequence</code> and <code>audio_b64</code>), then one terminal line: <code>done</code> (with <code>audio_artifact</code> and <code>child_run_status</code>), <code>cancelled</code> or <code>error</code> (<code>error</code> = the sentence; <code>watchdog_timeout: true</code> when the engine went silent past <code>ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S</code>). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is <code>{"type": "queued", "message": "Waiting for the voice engine: …"}</code>; speech follows when the engine is free. After 10 seconds without any other line, the stream writes <code>{"type": "keepalive", "ok": true, "request_id": …}</code>, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose <code>type</code> you do not know. The request's audit log line (<code>&lt;data dir&gt;/audit_log.jsonl</code>) carries <code>voice_stream</code>: <code>provider</code>, <code>model</code>, <code>voice</code>, <code>profile</code>, <code>text_chars</code>, <code>lines</code>, <code>audio_lines</code>, <code>audio_bytes</code>, <code>keepalives</code> and <code>ended</code> (<code>done</code>, <code>error</code>, <code>cancelled</code>, <code>watchdog</code> or <code>disconnected</code>). The entity route <code>POST /api/gateway/entities/{name}/voice/tts/stream</code> streams the same lines. A request past the voice synthesis bound (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) waits one second, then gets <code>503</code> "Read aloud is busy: N voice syntheses are already running on this gateway …".</p>
 <p>Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (<code>done</code>, or with <code>errors[0].code</code> <code>cancelled</code>/<code>stream_error</code>) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with <code>errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}</code>.</p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
@@ -5345,6 +5526,61 @@ from the music catalog routes, and treat the returned <code>child_run_id</code> 
   not a live microphone socket. They tell higher apps to capture locally and
   emit an event or upload the resulting audio artifact.</li>
 </ul>
+<h3 id="decisions">Decisions<a class="headerlink" href="#decisions" title="Permanent link">&para;</a></h3>
+<p>A decision is text in, calibrated typed answers out: a decision model (AbstractCore's
+<code>decision</code> output modality; models, question kinds and measured quality in AbstractCore's
+<a href="https://github.com/lpalbou/AbstractCore/blob/main/docs/decision-models.md">docs/decision-models.md</a>) reads a <code>state</code> and answers every named question in
+one pass. It generates no text and produces no artifact.</p>
+<p><code>POST /api/gateway/runs/{run_id}/decisions</code> runs one durable child run (<code>run_facade.decide</code>)
+under the run named in the path:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state</code> (required)</td>
+<td>the text the questions are about: a message, a document, a transcript</td>
+</tr>
+<tr>
+<td><code>questions</code> (required)</td>
+<td>named questions <code>{name: {type, instructions, criteria}}</code> with <code>type</code> <code>choice</code>, <code>noul</code> (yes/no) or <code>score</code>; shorthand: a yes/no sentence is a <code>noul</code> question, a list of option names a <code>choice</code></td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td><code>provider/model</code> (<code>mlx/jaredpalmer/kev-4b</code>, <code>huggingface/ggml-org/Kev-4B-GGUF:Q4_K_M</code>, <code>typesafe/jev-latest</code>) or a bare model id; without it the <code>output.decision</code> capability default answers</td>
+</tr>
+<tr>
+<td><code>truncate</code></td>
+<td>read only what fits the model's context instead of refusing an over-long state</td>
+</tr>
+<tr>
+<td><code>request_id</code></td>
+<td>optional idempotency key</td>
+</tr>
+</tbody>
+</table>
+<p>The answer carries <code>run_id</code>, <code>request_id</code>, <code>child_run_id</code>, <code>decision</code> (the System One body:
+<code>model</code>, <code>answers</code>, <code>usage</code>, <code>latency_ms</code>, and <code>truncated</code> when the state was cut) and
+<code>answers</code>, the same answers by question name: <code>choice</code> → <code>{type, choice, confidence,
+probabilities}</code>, <code>noul</code> → <code>{type, noul}</code> (the probability that the statement is true),
+<code>score</code> → <code>{type, score, confidence, legend, probabilities}</code>; plus the <code>provider</code> and <code>model</code>
+that answered. A refused decision answers <code>ok: false</code> with a <code>code</code>, like the media routes:
+<code>decision_unavailable</code> (the runtime exposes no decision facade), <code>decision_error</code> (the
+error sentence from the route or the model) or <code>decision_no_answers</code>. An empty <code>state</code> or no
+question answers 400.</p>
+<p>Thin clients discover the route from <code>capabilities.contracts.flow_editor.decision</code> or
+<code>capabilities.contracts.assistant.decision</code> (<code>direct_endpoint.available</code>; the same descriptor
+names the VisualFlow <code>decide</code> node under <code>workflow</code>). The model is the <code>output.decision</code>
+capability default (<a href="../configuration/#capability-defaults">configuration.md</a>); decision
+models are the catalog rows tagged <code>decision</code> (<a href="#models-and-engines">Models and engines</a>).
+Flows use the <code>decide</code> node (inputs <code>state</code>, <code>questions</code>, <code>model</code>, <code>truncate</code>; outputs
+<code>answers</code>, <code>decision</code>, <code>model</code>, <code>content</code>). The same models answer at the OpenAI door as
+<code>POST /v1/decisions</code> with the body <code>{model, state, questions, truncate?}</code>
+(<a href="../openai-api/">openai-api.md</a>).</p>
 <h2 id="kg-memory">KG memory<a class="headerlink" href="#kg-memory" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/gateway/kg/query</code> queries the configured AbstractMemory TripleStore (opened through the
 AbstractRuntime memory facade). For the graph (history, sources, reconstruction) see
@@ -5614,7 +5850,11 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 </tbody>
 </table>
 <p>Empty query values (<code>q=</code>, <code>engine=</code>) mean "no filter". <code>probe</code>, <code>fits</code> and
-<code>hub</code> accept <code>1</code>/<code>0</code> and <code>true</code>/<code>false</code>.</p>
+<code>hub</code> accept <code>1</code>/<code>0</code> and <code>true</code>/<code>false</code>. Decision models (AbstractCore's
+<code>decision</code> output modality: Kev, Lev, Laya) are the catalog rows tagged
+<code>decision</code> (<code>tag=decision</code>); their capability route is <code>output.decision</code>, and
+the console's Models page filters them with its <strong>Decision</strong> chip. See
+<a href="#decisions">Decisions</a>.</p>
 <p><strong>Catalog artifacts.</strong> <code>model_catalog_v1</code> is AbstractCore's payload, served
 unchanged (field reference: AbstractCore <code>docs/models.md</code>, "The catalog").
 Besides <code>quant</code> (the artifact's own label, lowercased, or <code>null</code>) and <code>bits</code>
