@@ -923,10 +923,14 @@ raw bytes or local paths:
 }
 ```
 
-Streamed read-aloud recordings use the logical **`voice/`** artifact space. Normal
+Streamed read-aloud recordings use the logical **`voice/`** artifact space, and so does the
+recording of a spoken question: an upload whose client path is under the reserved
+`voice/dictation/` prefix is tagged `purpose: voice_dictation` and `artifact_space: voice`.
+Voice transport is how the conversation travelled, not an attachment of it: normal
 `GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` listings
-exclude these playback recordings; `include_voice=true` includes them. Filtering occurs
-before pagination and totals. Uploaded recordings and explicitly generated audio files
+exclude read-aloud audio and dictation recordings; `include_voice=true` includes them.
+AbstractRuntime's history bundle applies the same rule to session turns. Filtering occurs
+before pagination and totals. Other uploaded recordings and explicitly generated audio files
 remain in the normal listing. Existing streamed recordings are classified from their
 producer metadata without rewriting their saved artifact references.
 
@@ -2217,7 +2221,7 @@ returns JSON Lines stream events for progressive playback when discovery adverti
 `capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal `done` event's `metrics` carry `ttfb_s`, `rtf`, `device` and, on the CPU, `device_reason`.
 
-Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
+Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. After 10 seconds without any other line, the stream writes `{"type": "keepalive", "ok": true, "request_id": …}`, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose `type` you do not know. The request's audit log line (`<data dir>/audit_log.jsonl`) carries `voice_stream`: `provider`, `model`, `voice`, `profile`, `text_chars`, `lines`, `audio_lines`, `audio_bytes`, `keepalives` and `ended` (`done`, `error`, `cancelled`, `watchdog` or `disconnected`). The entity route `POST /api/gateway/entities/{name}/voice/tts/stream` streams the same lines. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
 
 Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
 

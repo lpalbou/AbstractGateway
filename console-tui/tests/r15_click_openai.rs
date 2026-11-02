@@ -692,7 +692,7 @@ fn access_card_segments_and_pickers() {
     let s = h.turns(1);
     let y = s
         .lines()
-        .position(|l| l.trim().trim_end_matches(['┃', '│','█','▏',' ']).trim() == "Network")
+        .position(|l| l.trim().trim_end_matches(['┃', '│', '█', '▏', ' ']).trim() == "Network")
         .unwrap_or_else(|| panic!("Network button:\n{s}"));
     let x = s.lines().nth(y).unwrap().find("Network").unwrap() + 2;
     h.key(format!("\x1b[<0;{x};{}M\x1b[<0;{x};{}m", y + 1, y + 1).as_bytes());

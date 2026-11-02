@@ -76,3 +76,31 @@ def test_check_needs_a_fragment_when_src_changes(tmp_path: Path, monkeypatch, ca
     _git(repo, "commit", "-qm", "bad fragment")
     with pytest.raises(ValueError):
         cl.check("main")
+
+
+def test_check_accepts_the_release_pull_request_that_assembles_the_fragments(tmp_path: Path, monkeypatch, capsys) -> None:
+    repo = tmp_path / "repo"
+    src = cl.SOURCE_PREFIXES[0].rstrip("/")
+    (repo / src).mkdir(parents=True)
+    (repo / "changelog.d").mkdir()
+    (repo / src / "version.py").write_text('v = "0.1.0"\n')
+    (repo / "changelog.d" / "feature.md").write_text("### Added\n\n- **a feature**\n")
+    (repo / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-01-01\n\n### Added\n\n- old\n")
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "checkout", "-q", "-b", "release")
+    monkeypatch.setattr(cl, "ROOT", repo)
+    # Editing CHANGELOG.md by hand next to a src change is still refused.
+    (repo / src / "version.py").write_text('v = "0.2.0"\n')
+    (repo / "CHANGELOG.md").write_text((repo / "CHANGELOG.md").read_text().replace("## [Unreleased]\n", "## [Unreleased]\n\n- hand edit\n"))
+    _git(repo, "commit", "-qam", "hand edit")
+    assert cl.check("main") == 1
+    assert "CHANGELOG.md was edited" in capsys.readouterr().out
+    # The release step: assemble writes the dated section and deletes the fragments.
+    _git(repo, "checkout", "-q", "main", "--", "CHANGELOG.md")
+    cl.assemble("0.2.0", "2026-11-02", changelog=repo / "CHANGELOG.md", directory=repo / "changelog.d")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "release 0.2.0")
+    assert cl.check("main") == 0
+    assert "release assembly of 0.2.0" in capsys.readouterr().out

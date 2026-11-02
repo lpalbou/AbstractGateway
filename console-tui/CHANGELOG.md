@@ -1,6 +1,8 @@
 # Changelog — abstractgateway-console
 
 ## [Unreleased]
+
+## [0.17.0] - 2026-11-02
 ### Added
 - The Docs assistant uses the engine's shared ChatTranscript bubbles and measured
   Markdown layout, retaining the console's history, composer and Stop controls.
@@ -20,6 +22,14 @@
   address**. A pick fills the Name (unless you wrote your own) and the Feed address; a template (subreddit, YouTube
   channel, GitHub releases) asks for its one value, builds the address as you type and refuses a value of the wrong
   form beside Create (*Repository (owner/name): not the expected form (e.g. python/cpython).*).
+- **Triggers** (WORK, key **V**; root backlog 1041): the web console's Triggers page — your trigger connections
+  (Source, Name, Status, Last event; an Account column with **All accounts** for administrators), per row **Events**
+  (the 20 most recent events with their JSON; a webhook's address with Copy), **Test** (the result in the row's note)
+  and **Delete** (after the web's question); **New connection** renders the source's `connection_schema` and shows a
+  webhook's address and one-time signing secret once, with Copy. Same routes and words as the web page.
+- **Decision models in the model library and Default models.** A model whose task is `decision` (AbstractCore
+  2.32.0 decision models, `output.decision`) shows the **Decision** tag in the library, and the Default models route
+  for it reads *decision*.
 ### Changed
 - **Another mailbox: Read only or Read and write (the web's words).** My email → Mailboxes (your own page) lists your
   other mailboxes, one line each — *address · provider · state · Read only* or *· Read and write* — with an **Active**
@@ -48,12 +58,7 @@
   under Account → My email**, and the mailbox source is no longer offered in **New connection** ("What to listen
   to"). Settings show labels and help; a generated secret is never asked for; a new webhook shows the GitHub/Zapier
   recipe and a signed call (bash, `openssl`) with its real address and secret.
-### Added
-- **Triggers** (WORK, key **V**; root backlog 1041): the web console's Triggers page — your trigger connections
-  (Source, Name, Status, Last event; an Account column with **All accounts** for administrators), per row **Events**
-  (the 20 most recent events with their JSON; a webhook's address with Copy), **Test** (the result in the row's note)
-  and **Delete** (after the web's question); **New connection** renders the source's `connection_schema` and shows a
-  webhook's address and one-time signing secret once, with Copy. Same routes and words as the web page.
+- Builds on the published `abstracttui` 0.7.1 (with its `avatar` feature) and `abstractcore-console` 0.8.1.
 
 ## [0.16.0] - 2026-10-15
 The console is mouse-first and keyboard-complete. Every screen works with clicks alone — tabs, buttons, row

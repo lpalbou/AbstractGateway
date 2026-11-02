@@ -19,3 +19,4 @@ A fragment is Keep a Changelog markdown: one or more of `### Added`, `### Change
 - `python scripts/changelog.py preview` prints what the next release section will say.
 - Release: `python scripts/changelog.py assemble X.Y.Z` writes `## [X.Y.Z] - <date>` from every fragment
   (sections in Keep a Changelog order) and deletes the fragments; commit that with the version bump.
+  The release pull request (fragments deleted, a new `## [X.Y.Z] - <date>` section) passes the `changelog` check.
