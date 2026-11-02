@@ -413,16 +413,17 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
   `failed`, `archived`. `limit` is 1 to 200 (default 50).
 - Archived automations are left out of the list unless you ask for them:
   `archived_only=true` lists only archived ones (it cannot be combined with
-  `status`), or name `archived` in `status`. `paused_automations` and
-  `archived_automations` are how many of yours are paused and archived, on
-  every page, whatever the filter.
+  `status`), or name `archived` in `status`. `paused_automations_count` and
+  `archived_automations_count` are how many of yours are paused and archived,
+  on every page, whatever the filter (`archived_automations` is the same
+  count as `archived_automations_count`).
 - Read every page, following `next_cursor` until it is `null`.
   `changed_since` is refused (422 `unsupported_feature`); poll complete
   pages instead.
@@ -440,18 +441,20 @@ it again:
 
 Each row says where it belongs: `section` is `"active"`, `"paused"` or
 `"archived"`, and `last_activity_at` is the instant the order uses: the
-automation's last change (an occurrence started or finished, a pause or
-resume, a revision, an archive). Rows with the same instant are ordered by
+automation's last change. It moves whenever the automation itself changes (an
+occurrence started, retried or finished, a pause, resume, cancel or revision,
+an archive), never when someone reads it or marks its runs seen. Rows with the same instant are ordered by
 `automation_id`, descending. Older scheduled runs
 ([Legacy](#older-scheduled-runs-legacy)) are placed by the same rule.
 
 Apps show the active rows, then a **Paused** section folded by default and
-labelled like Archived (an icon, "Paused" and `paused_automations`); see the
+labelled like Archived (an icon, "Paused" and `paused_automations_count`); see the
 framework's ADR 0048.
 
 `next_cursor` continues this order where the page stopped. The order follows
-activity, so an automation that runs between two page reads moves up: an app
-that reads several pages keeps one row per `automation_id`. A cursor from an
+activity, so an automation that changes between two page reads may be served
+twice or not at all in that walk; the next refresh shows it. Refresh from the
+first page; never resume an old walk. A cursor from an
 earlier gateway (created-order `auto1:` cursors) is refused with 422
 `invalid_request` (`field: "cursor"`); start again from the first page.
 

@@ -1272,8 +1272,11 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     return {
         "items": items,
         "next_cursor": next_cursor,
+        # Counts, named `*_count` (a bundle route's `paused_automations` is a list of ids);
+        # `archived_automations` is the same count, kept for the clients that read it.
+        "paused_automations_count": counts["paused"],
+        "archived_automations_count": counts["archived"],
         "archived_automations": counts["archived"],
-        "paused_automations": counts["paused"],
     }
 
 
@@ -1320,7 +1323,7 @@ async def list_automations_route(
     cursor: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     changed_since: Optional[str] = Query(None, description="Not supported in v1 (422 unsupported_feature): poll full pages."),
-    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `archived_automations` and `paused_automations` (how many this principal has archived and paused)."),
+    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `paused_automations_count` and `archived_automations_count` (how many this principal has paused and archived; `archived_automations` is the same count)."),
 ) -> Dict[str, Any]:
     """Every automation of this principal as full pages, in the listing order
     (ADR 0048, `automation_order`): active ones first, then paused ones, each by
@@ -1328,7 +1331,7 @@ async def list_automations_route(
     `scheduled:*` roots are placed by the same rule (`legacy: true`). Archived
     automations are listed only with `archived_only=true` (or an explicit
     `status` naming `archived`). The answer counts this principal's paused
-    (`paused_automations`) and archived (`archived_automations`) automations on
+    (`paused_automations_count`) and archived (`archived_automations_count`) automations on
     every page. Identical concurrent requests share one
     computation; its answer is kept a few seconds, dropped by any change this
     gateway records (see `_ListMemo`)."""

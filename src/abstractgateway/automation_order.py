@@ -5,14 +5,15 @@ ONE rule, served to every client so none re-sorts by a rule of its own:
 - `section` says where a row is drawn: `"active"` (every automation that is neither paused nor
   archived: status `active`, `completed` or `failed`), `"paused"` or `"archived"`.
 - `last_activity_at` is the automation's last change as its controller run recorded it
-  (`updated_at`): an occurrence admitted or finished, a pause or resume, a revision, an archive.
+  (`updated_at`): it moves on every controller tick (an occurrence admitted or finished, a retry,
+  a pause, resume, cancel or revision, an archive), never on a read or a "seen" mark.
 - A listing is ordered by section (active, then paused, then archived), then by
   `last_activity_at`, newest first, then by `automation_id` (descending) so ties are stable.
 
 The keyset cursor names the last row of a page by that same key, so every page continues where
 the previous one stopped. The key is mutable (an automation that runs moves up), so a row that
-changes between two page reads can move across the boundary; a client that pages dedupes by
-`automation_id`.
+changes between two page reads may be served twice or not at all in that walk; the next refresh
+shows it. Clients refresh from the first page and never resume an old walk.
 """
 
 from __future__ import annotations

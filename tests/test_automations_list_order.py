@@ -137,7 +137,7 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     body = _listing(live)
     assert [s["automation_id"] for s in body["items"]] == [c, b, a]
     assert all(s["section"] == "active" and s["last_activity_at"] for s in body["items"])
-    assert body["paused_automations"] == 0 and body["archived_automations"] == 0
+    assert body["paused_automations_count"] == 0 and body["archived_automations_count"] == body["archived_automations"] == 0
 
     # A runs: its last activity is now the newest, it leads the list.
     _command(live, a, "automation.run_now", "run-a")
@@ -154,7 +154,7 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     wait_until(lambda: _status(live, c) == "paused" or None)
     body = _listing(live)
     assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(a, "active"), (b, "active"), (c, "paused")]
-    assert body["paused_automations"] == 1
+    assert body["paused_automations_count"] == 1
     paused_row = body["items"][-1]
     assert paused_row["status"] == "paused" and paused_row["last_activity_at"] >= body["items"][0]["last_activity_at"]
 
@@ -164,14 +164,14 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
 
     # `status=paused` is the paused section alone, same order and count.
     only_paused = _listing(live, "?status=paused")
-    assert [s["automation_id"] for s in only_paused["items"]] == [c] and only_paused["paused_automations"] == 1
+    assert [s["automation_id"] for s in only_paused["items"]] == [c] and only_paused["paused_automations_count"] == 1
 
     # Resumed, C is active again and its resume is the newest activity.
     _command(live, c, "automation.resume", "resume-c")
     wait_until(lambda: _status(live, c) == "active" or None)
     body = _listing(live)
     assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(c, "active"), (a, "active"), (b, "active")]
-    assert body["paused_automations"] == 0
+    assert body["paused_automations_count"] == 0
 
 
 def test_archived_rows_carry_their_section_and_a_foreign_cursor_is_refused(live: TestClient) -> None:
@@ -179,7 +179,7 @@ def test_archived_rows_carry_their_section_and_a_foreign_cursor_is_refused(live:
     _command(live, gone, "automation.archive", "arch")
     wait_until(lambda: _status(live, gone) == "archived" or None)
     body = _listing(live)
-    assert [s["automation_id"] for s in body["items"]] == [keep] and body["archived_automations"] == 1
+    assert [s["automation_id"] for s in body["items"]] == [keep] and body["archived_automations_count"] == body["archived_automations"] == 1
     arch = _listing(live, "?archived_only=true")
     assert [(s["automation_id"], s["section"]) for s in arch["items"]] == [(gone, "archived")]
     # A cursor of the earlier creation order (runtime `auto1:`) is refused, never misread.
