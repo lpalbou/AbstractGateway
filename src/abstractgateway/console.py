@@ -1717,10 +1717,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* The column header says Active: the switch keeps its accessible name, the visible label goes. */
 	    .users-active .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .kv-switch .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-	    /* Stay awake: its long feature label wraps inside the Manage gateway modal at phone width. */
-	    #gateway-host-awake-toggle, #gateway-host-awake-toggle .af-switch__label { white-space: normal; text-align: left; max-width: 100%; }
-	    #gateway-host-awake-row .af-switch__label, #gateway-host-awake-detail { word-break: normal; overflow-wrap: break-word; }
-	    #gateway-host-awake-detail { display: block; margin-top: 4px; }
 	    .users-active .af-switch__reason { display: block; max-width: 180px; margin-top: 2px; }
 	    .inline-state { margin: 0; min-height: 1.2em; color: var(--muted); font-size: var(--font-size-sm); font-weight: 400; }
 	    .inline-state.ok { color: var(--text); }
@@ -2762,9 +2758,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     runs, it is there. The only reasons it can be absent are
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
-	                <!-- Stay awake (keep_awake.py, GET /host/keep-awake): the state for everyone, the
-	                     switch for admins (written through the runtime-config door, applied live). -->
-	                <div id="gateway-host-awake-row" class="entity-kv"><span class="entity-kv-key">Stay awake</span><span class="entity-kv-val"><span id="gateway-host-awake-text" class="state-pill">…</span> <span id="gateway-host-awake-detail" class="muted"></span><button id="gateway-host-awake-toggle" type="button" role="switch" class="af-switch af-switch--sm hidden" aria-checked="false" style="display:flex; margin-top:6px; height:auto"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep this Mac awake while remote access is on</span></span></button><span id="gateway-host-awake-reason" class="muted" style="display:block"></span></span></div>
 	                <!-- R13.1: the previous process's last event-loop watchdog incident (admins; /host/runner last_hang). -->
 	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang" tabindex="0" data-af-tip=""></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
@@ -12642,49 +12635,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("gateway-host-update-log").textContent = [job.command ? "$ " + job.command.join(" ") : "", ...log, job.error ? "\\n" + job.error : ""].filter(Boolean).join("\\n");
 	      if (job.state === "failed") box.open = true;
 	    }
-	    // STAY AWAKE (keep_awake.py, contract gateway_keep_awake_v1): the gateway keeps this
-	    // Mac from idle-sleeping while remote access is on. The line says what is true now;
-	    // the switch (admins) is the saved setting, labelled by the feature.
-	    function renderKeepAwake(st, error) {
-	      const text = $("gateway-host-awake-text"); const btn = $("gateway-host-awake-toggle");
-	      if (!text || !btn) return;
-	      state.hostKeepAwake = st || null;
-	      const reason = $("gateway-host-awake-reason");
-	      btn.removeAttribute("aria-busy");
-	      if (!st) {
-	        text.textContent = "Not keeping awake"; text.className = "state-pill";
-	        $("gateway-host-awake-detail").textContent = error ? `State unavailable: ${error}` : "";
-	        btn.classList.add("hidden"); reason.textContent = "";
-	        return;
-	      }
-	      text.textContent = st.line; text.className = "state-pill " + (st.holding ? "ok" : st.state === "error" ? "error" : "");
-	      resourcesRunnerSummary();  // the Resources page's Gateway card says it too
-	      $("gateway-host-awake-detail").textContent = st.detail || "";
-	      const setting = st.setting || null;
-	      const admin = Boolean(state.principal && state.principal.admin);
-	      btn.classList.toggle("hidden", !(admin && st.supported && setting));
-	      if (!setting) { reason.textContent = ""; return; }
-	      btn.setAttribute("aria-checked", setting.value ? "true" : "false");
-	      const byFlag = setting.source === "flag";
-	      btn.disabled = byFlag;
-	      reason.textContent = byFlag ? `Set for this run by the launch flag --keep-awake ${setting.value ? "on" : "off"}; the switch applies once the gateway starts without it.` : "";
-	      btn.title = setting.value ? "On: while remote access is on, this Mac does not go to sleep on its own" : "Off: this Mac may sleep, and remote access stops while it sleeps";
-	    }
-	    async function toggleKeepAwake() {
-	      const st = state.hostKeepAwake; const btn = $("gateway-host-awake-toggle");
-	      if (!st || !st.setting || btn.disabled || btn.getAttribute("aria-busy") === "true") return;
-	      const on = !st.setting.value;
-	      btn.setAttribute("aria-checked", on ? "true" : "false");
-	      btn.setAttribute("aria-busy", "true");
-	      try {
-	        const out = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ keep_awake: on }) });
-	        renderKeepAwake(out.keep_awake_status || await api("/api/gateway/host/keep-awake"));
-	        _gwMsg(on ? "This Mac stays awake while remote access is on." : "This Mac may sleep again: remote access stops while it sleeps.", "ok");
-	      } catch (e) {
-	        renderKeepAwake(st);
-	        _gwMsg("Stay awake was not changed: " + String(e.message || e), "error");
-	      }
-	    }
 	    async function loadGatewayHost() {
 	      if (!state.principal) return;
 	      try {
@@ -12694,8 +12644,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch (e) {
 	        _gwMsg("Gateway state unavailable: " + String(e.message || e), "error");
 	      }
-	      try { renderKeepAwake(await api("/api/gateway/host/keep-awake")); }
-	      catch (e) { renderKeepAwake(null, String(e.message || e)); }
 	      if (state.principal && state.principal.admin) {
 	        $("gateway-host-login-row").classList.remove("hidden");
 	        loadStartAtLogin("gateway-host");
@@ -17415,7 +17363,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;
 	    $("gateway-host-login-toggle").onclick = () => toggleStartAtLogin("gateway-host");
-	    $("gateway-host-awake-toggle").onclick = toggleKeepAwake;
 	    $("gateway-host-quit").onclick = quitGateway;
 	    $("gateway-host-update-check").onclick = checkGatewayUpdate;
 	    $("gateway-host-update-start").onclick = startGatewayUpdate;

@@ -663,6 +663,10 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
         except (ValueError, OSError):
             _previous_sigterm = None
+    # While the gateway runs, the Mac does not idle-sleep (keep_awake.py).
+    from . import keep_awake
+
+    awake = keep_awake.hold()
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -679,6 +683,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         if _previous_sigterm is not None:
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(signal.SIGTERM, _previous_sigterm)
+        keep_awake.release(awake)
         tray.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
@@ -724,7 +729,7 @@ def _record_serve_stop() -> None:
 
 
 def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
-    """`serve --backlog-root PATH` / `--exec-runner on|off` / `--keep-awake on|off`.
+    """`serve --backlog-root PATH` / `--exec-runner on|off`.
 
     Validated like every other door (a refusal stops the start with the
     plain sentence), then recorded for this run under <data dir>/run/ so the
@@ -757,9 +762,6 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     raw_runner = getattr(args, "exec_runner", None)
     if raw_runner:
         values["backlog_exec_runner"] = str(raw_runner).strip().lower() == "on"
-    raw_awake = getattr(args, "keep_awake", None)
-    if raw_awake:
-        values["keep_awake"] = str(raw_awake).strip().lower() == "on"
     record_launch_settings(data_dir, values)
 
 
@@ -1028,18 +1030,6 @@ def main(argv: list[str] | None = None) -> None:
         choices=["on", "off"],
         help="Run queued backlog executions on this machine for this run (wins over the saved setting "
         "`abstractgateway config set backlog_exec_runner on|off`). Default: the saved setting, else off.",
-    )
-    serve.add_argument(
-        "--keep-awake",
-        default=None,
-        choices=["on", "off"],
-        dest="keep_awake",
-        help="Keep this Mac awake while remote access is on (the internet network exposure, or Tailscale Serve or "
-        "Funnel forwarding to this gateway): the gateway holds a macOS 'prevent idle sleep' assertion named "
-        "'AbstractGateway: remote access' while it runs. Sleeping the Mac yourself (Apple menu, the lid, the power "
-        "button) still sleeps it and the display still turns off. Wins over the saved setting (console Resources > "
-        "Gateway, `abstractgateway config set keep_awake on|off`) for this run. Default: the saved setting, else on. "
-        "Not available on Linux or Windows yet.",
     )
     serve.add_argument(
         "--gc-tuning",
@@ -1436,16 +1426,6 @@ def main(argv: list[str] | None = None) -> None:
                 _stderr(f"Desktop tray: not started ({_why}; pass --no-tray to say so explicitly)")
         record_serve_bind(_serve_data_dir, _bind)
         _apply_backlog_launch_flags(args, _serve_data_dir)
-        # Keep this Mac awake while remote access is on (keep_awake.py): the app's
-        # lifespan holds the assertion in the serving process.
-        from . import keep_awake
-        from .network_exposure import mode_for_bind
-
-        keep_awake.configure(
-            data_dir=_serve_data_dir,
-            port=int(_bind.port),
-            exposure=mode_for_bind(_bind.host, _bind.mode if _bind.mode != "localhost" else None),
-        )
         # The bind host decides host-safety defaults inside the app (engine
         # installs are allowed by default on a loopback bind, and otherwise
         # only for a caller on this machine).

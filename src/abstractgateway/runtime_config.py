@@ -1109,7 +1109,7 @@ BACKLOG_DEFAULT_DIRNAME = "backlog"
 BACKLOG_SUBPATH = ("docs", "backlog")
 BACKLOG_FOLDERS = ("planned", "proposed", "completed")
 _LAUNCH_SETTINGS_RELPATH = ("run", "launch-settings.json")
-_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner", "keep_awake")
+_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner")
 
 # Labels and help for the settings surfaces (console, Continuum, CLI) — one
 # row per knob so every door says the same thing.
@@ -1640,12 +1640,6 @@ def _write_agents_changes(
         stored.pop("agents", None)
 
 
-def _keep_awake_payload(data_dir: Path, stored: Dict[str, Any], launch: Dict[str, Any]) -> Dict[str, Any]:
-    from .keep_awake import resolve_setting
-
-    return resolve_setting(data_dir, stored=stored, launch=launch)
-
-
 def read_runtime_config(
     data_dir: Path,
     *,
@@ -1699,9 +1693,6 @@ def read_runtime_config(
         "operator_email": operator_email,
         "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
         "allow_engine_install": _allow_engine_install_payload(stored),
-        # Keep this Mac awake while remote access is on (flag > stored > on);
-        # the live state is GET /api/gateway/host/keep-awake.
-        "keep_awake": _keep_awake_payload(data_dir, stored, launch),
         # Read-only here: GET/POST /api/gateway/network is the door (auth and
         # acknowledgement refusals, addresses, restart story).
         "network": _network_payload(stored),
@@ -1857,7 +1848,7 @@ class RuntimeConfigError(ValueError):
 # _is_known_write_key). `desktop_tray` is known only to be refused in words.
 _WRITE_KEYS = frozenset({
     "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "executor", "operator_email", "stop_kill_switch_s",
-    "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny", "keep_awake",
+    "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny",
 })
 
 
@@ -2004,16 +1995,6 @@ def write_runtime_config(
             stored["workspace_builtin_deny"] = _strict_bool("workspace_builtin_deny", raw_bd)
             applied["workspace_builtin_deny"] = stored["workspace_builtin_deny"]
 
-    if "keep_awake" in changes:
-        # Keep this Mac awake while remote access is on (keep_awake.py). Clear = the default (on).
-        raw_awake = changes["keep_awake"]
-        if raw_awake is None or (isinstance(raw_awake, str) and not raw_awake.strip()):
-            stored.pop("keep_awake", None)
-            applied["keep_awake"] = None
-        else:
-            stored["keep_awake"] = _strict_bool("keep_awake", raw_awake)
-            applied["keep_awake"] = stored["keep_awake"]
-
     if "allow_engine_install" in changes:
         raw_allow = changes["allow_engine_install"]
         if raw_allow is None or (isinstance(raw_allow, str) and not raw_allow.strip()):
@@ -2031,7 +2012,7 @@ def write_runtime_config(
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
             "backlog_exec_runner, triage_repo_root, executor, operator_email, "
-            "stop_kill_switch_s, allow_engine_install, keep_awake, "
+            "stop_kill_switch_s, allow_engine_install, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
             + ", agents.default_workflow.<interface>, agents.streaming_default, skills.shelf)"
         )

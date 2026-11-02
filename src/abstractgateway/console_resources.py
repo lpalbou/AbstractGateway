@@ -347,9 +347,7 @@ RESOURCES_JS = r"""
       const runner=state.hostRunner, tray=state.hostTray;
       const text=runner?`${Number(runner.inflight_ticks)||0} workflow steps in flight · ${runner.paused?"Paused":"Running"}`:"Runner state unavailable";
       const incident=runner&&runner.last_hang;
-      // Stay awake (keep_awake.py): said plainly on the card; the switch is under Manage gateway.
-      const awake=state.hostKeepAwake;
-      const value=text+(incident?"\nRecovered from a hang · "+_gwFmtWhen(incident.at):"")+(awake&&awake.state!=="inactive"?"\n"+awake.line+(awake.holding?"":" · "+awake.detail):"");
+      const value=text+(incident?"\nRecovered from a hang · "+_gwFmtWhen(incident.at):"");
       if(el.textContent!==value)el.textContent=value;
       el.style.whiteSpace="pre-line";
     }

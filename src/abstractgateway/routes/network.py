@@ -100,11 +100,6 @@ async def network_status(
     browser = _browser_gateway_url(request)
     out["browser_url"] = browser
     out["browser_url_listed"] = any(str(a.get("url") or "").rstrip("/") == browser for a in (out.get("addresses") or []) if isinstance(a, dict))
-    # Whether this process keeps its Mac awake for remote access (GET /host/keep-awake,
-    # gateway_keep_awake_v1): the tray's Network/Connect menu shows its `line`.
-    from .. import keep_awake
-
-    out["keep_awake"] = keep_awake.controller().status()
     return out
 
 

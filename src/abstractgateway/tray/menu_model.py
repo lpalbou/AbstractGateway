@@ -400,7 +400,6 @@ class NetworkView:
     warnings: Tuple[str, ...] = ()
     copy_hint: Optional[str] = None
     busy: bool = False
-    keep_awake_line: Optional[str] = None  # `keep_awake.line` ("Staying awake for remote access" / "Not keeping awake")
 
 
 def parse_network(payload: Any) -> NetworkView:
@@ -427,16 +426,7 @@ def parse_network(payload: Any) -> NetworkView:
         addresses=tuple(addrs),
         warnings=tuple(str(w) for w in (payload.get("warnings") or []) if str(w).strip()),
         copy_hint=str(payload["copy_hint"]) if payload.get("copy_hint") else (addrs[0].url if addrs else None),
-        keep_awake_line=_keep_awake_line(payload.get("keep_awake")),
     )
-
-
-def _keep_awake_line(block: Any) -> Optional[str]:
-    """The gateway's own words for the Mac's sleep (keep_awake.py), or None on
-    a gateway without it / where it is not available."""
-    if not isinstance(block, dict) or block.get("state") in (None, "inactive", "unsupported") or not block.get("line"):
-        return None
-    return str(block["line"])
 
 
 #: Where an address reaches, by the gateway's `kind` (GET /network `addresses`).
@@ -829,8 +819,6 @@ def network_section(nv: NetworkView, *, reachable: bool) -> Node:
     eff = NETWORK_WORDS.get(str(nv.effective_mode or ""), str(nv.effective_mode or "unknown"))
     where = f"{nv.bind_host}:{nv.port}" if nv.bind_host and nv.port else (f"port {nv.port}" if nv.port else "")
     items.append(info(f"Now: {eff}" + (f" · {where}" if where else "")))
-    if nv.keep_awake_line:
-        items.append(info(nv.keep_awake_line))
     if nv.overridden_by_cli:
         items.append(info("Started with an explicit --host/--port: the setting below applies when started without them"))
     busy = nv.busy

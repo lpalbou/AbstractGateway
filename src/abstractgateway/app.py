@@ -48,15 +48,6 @@ async def _lifespan(_app: FastAPI):
     # The previous process's newest hang (R13.1): read once, shown by the
     # console's Resources page and the terminal console.
     loop_watchdog.load_last_incident()
-    # Keep this Mac awake while remote access is on (keep_awake.py): held by this
-    # process, released at shutdown, dropped by macOS if the process dies. Inert
-    # unless `serve` configured it.
-    try:
-        from . import keep_awake
-
-        keep_awake.start_configured()  # never blocks: the checks run on its own thread
-    except Exception:
-        pass
     # Worker pools by kind of work (gateway load 2026-10-26): light / heavy / watchers,
     # sized by `serve --pool-light/--pool-heavy/--pool-watchers` (work_pools.py).
     try:
@@ -95,12 +86,6 @@ async def _lifespan(_app: FastAPI):
         yield
     finally:
         loop_watchdog.stop_active()
-        try:
-            from . import keep_awake
-
-            keep_awake.stop_active()
-        except Exception:
-            pass
         try:
             from .apps_manager import stop_apps_on_shutdown
 
@@ -280,10 +265,6 @@ app.include_router(app_proxy_router)
 from .routes.network import router as network_router  # noqa: E402
 
 app.include_router(network_router, prefix="/api")
-# routes/keep_awake.py: GET /gateway/host/keep-awake (gateway_keep_awake_v1).
-from .routes.keep_awake import router as keep_awake_router  # noqa: E402
-
-app.include_router(keep_awake_router, prefix="/api")
 from .core_endpoint import CoreEndpoint, LegacyCoreRedirect  # noqa: E402
 from .routes.core_endpoint import router as core_endpoint_router  # noqa: E402
 from .routes.core_endpoint import user_router as openai_api_router  # noqa: E402

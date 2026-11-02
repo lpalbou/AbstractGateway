@@ -216,20 +216,6 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 - Behind a reverse proxy or tunnel, add its public origin with
   `abstractgateway network set --allowed-origins https://your.host`.
 
-### The phone or the watch cannot reach the gateway away from home
-
-- A Mac that sleeps cannot answer. Open the console's Resources page: the
-  Gateway card should read **Staying awake for remote access**.
-- **Not keeping awake — Remote access is off**: the gateway keeps the Mac
-  awake only with the `internet` exposure, or with Tailscale Serve or Funnel
-  forwarding to its port. Check `abstractgateway network status` and
-  `tailscale serve status`.
-- **Not keeping awake — Turned off**: switch **Keep this Mac awake while
-  remote access is on** back on (or `abstractgateway config set keep_awake on`).
-- A Mac you put to sleep yourself (Apple menu, the lid, the power button)
-  stays asleep until you wake it: that is on purpose.
-- See [Keep this Mac awake for remote access](./configuration.md#keep-this-mac-awake-for-remote-access).
-
 ## Workflows and runs
 
 ### `GET /api/gateway/bundles` returns no bundles
