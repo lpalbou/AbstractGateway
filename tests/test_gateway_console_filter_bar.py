@@ -57,10 +57,16 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert 'data-mc-fits="1"' in line and "Fits this computer" in line, (where, line)
     toggle_count = 1 if where == "setup guide" else 2
     assert line.count('role="switch"') == toggle_count and lead.count('role="switch"') == toggle_count, (where, lead)
-    # One row per facet: label first, in its own element (the fixed column), then the chips column.
+    # The two-row toolbar: Provider and Capability are the quick selects under the search line.
+    quick = re.search(r'<div class="mc-quick-filters" data-mc-part="quick">(.*?)</div>', lead, flags=re.S)
+    assert quick, (where, lead)
+    assert re.findall(r'<select data-mc-filter="(\w+)" aria-label="([^"]+)"[^>]*>', quick.group(1)) == [
+        ("provider", "Provider"), ("cap", "Capability")], (where, quick.group(1))
+    # The advanced Filters panel: one row per facet, label first, in its own element (the fixed
+    # column), then the chips column.
     facets = html[html.index('<div class="af-filterbar__facets"') :]
-    assert re.findall(r'data-af-facet-row="(\w+)"', facets) == ["quant", "provider", "cap", "status"], where
-    for facet, label in (("quant", "Quantization"), ("provider", "Provider"), ("cap", "Capability"), ("status", "Status")):
+    assert re.findall(r'data-af-facet-row="(\w+)"', facets) == ["kind", "quant"], where
+    for facet, label in (("kind", "Asset type"), ("quant", "Quantization")):
         row = f'role="group" aria-label="{label}" data-af-facet-row="{facet}"><span class="af-filterbar__label" aria-hidden="true">{label}</span><div class="af-filterbar__chips">'
         assert row in facets, (where, facet)
     # Every chip is the kit chip at the filter size; counts are the muted count element.

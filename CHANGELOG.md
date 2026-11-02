@@ -301,6 +301,9 @@ conversation updates and questions), and AbstractAgent 0.4.0 ignores it without 
 
 ### Fixed
 
+- **Read receipts on a fresh data folder never fail with "database is locked"** (`session_reads.py`). Concurrent
+  first `POST /api/gateway/me/session-reads` calls raced to switch the new receipt database to WAL, which SQLite
+  does not wait for; the switch now happens once per process under a lock.
 - **A stop signal stops the gateway in under a second, even with live streams open** (`shutdown_drain.py`). One
   open stream (the console's `/me/events/stream`, a run's ledger stream, the tray's polling) held a SIGTERM for the
   whole graceful-shutdown timeout (120 s), so supervisors and people killed the gateway first. Now the moment the

@@ -47,6 +47,22 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     assert process_role() == ROLE_COMBINED
 
 
+def _immediate_cli_stop_event(monkeypatch: pytest.MonkeyPatch, gateway_cli, event_cls) -> None:
+    """Make only the CLI's own stop event return at once.
+
+    `gateway_cli.threading` IS the threading module: patching its `Event` would give every Thread
+    created meanwhile (the optional Core HTTP listener thread) an already-set "started" flag
+    ("threads can only be started once"), and the role/env restore after it would never run.
+    """
+    import threading as _threading
+    import types as _types
+
+    cli_threading = _types.ModuleType("threading")
+    cli_threading.__dict__.update(_threading.__dict__)
+    cli_threading.Event = event_cls
+    monkeypatch.setattr(gateway_cli, "threading", cli_threading)
+
+
 @pytest.mark.basic
 def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import cli as gateway_cli
@@ -82,7 +98,7 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
             self._set = True
             return True
 
-    monkeypatch.setattr(gateway_cli.threading, "Event", _ImmediateEvent)
+    _immediate_cli_stop_event(monkeypatch, gateway_cli, _ImmediateEvent)
 
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
     # In-process models: this test is about the runner's env and lifecycle (the model host child is
@@ -287,7 +303,7 @@ def test_cli_runner_starts_the_model_host_before_its_runtimes(monkeypatch: pytes
         def wait(self, timeout: float | None = None) -> bool:  # noqa: ARG002
             return True
 
-    monkeypatch.setattr(gateway_cli.threading, "Event", _ImmediateEvent)
+    _immediate_cli_stop_event(monkeypatch, gateway_cli, _ImmediateEvent)
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
     gateway_cli.main(["runner", "--model-host", "process"])
     assert calls == ["model_host.start", "runner.start", "runner.stop", "model_host.stop"], calls

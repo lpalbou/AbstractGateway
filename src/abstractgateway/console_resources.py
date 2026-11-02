@@ -85,7 +85,7 @@ RESOURCES_CSS = r"""
   .res-legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 18px 0; }
   .res-legend button { background: transparent; border: 0; color: var(--text-secondary); min-height: 28px; padding: 0; font-size: var(--font-size-sm); font-weight: 400; }
   .res-legend button[aria-pressed="false"] { opacity: .6; text-decoration: line-through; }
-  .res-swatch { display: inline-block; width: 7px; height: 7px; border-radius: 2px; background: var(--info); margin-right: 6px; }
+  .res-swatch { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-sm); background: var(--info); margin-right: 6px; }
   .res-swatch.second { background: var(--success); }
   .res-chart { height: 225px; margin: 5px 12px 0; position: relative; touch-action: pan-y; }
   .res-chart svg { width: 100%; height: 100%; }
