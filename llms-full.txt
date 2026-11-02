@@ -7707,15 +7707,24 @@ slice of the text (AbstractVoice ADR 0009). With AbstractVoice as the voice engi
 {"type":"audio","sequence":2,"segment":1,"text_start":62,"text_end":140,"audio_b64":"UklGR…","sample_rate":24000}
 ```
 
-When a stream breaks (the connection drops, or an `error` line ends it), request the text again from
-`text_end` of the last `segment_end` you received (from the start when you received none), and discard the
-audio of the segment that had no `segment_end`. Offsets in the new stream index the new request's text.
-Because each segment is a whole synthesis, nothing is repeated or missed at the seam, whatever the engine
-samples on the second try. The resume unit is one segment: a base engine's sentence group, one Qwen3-TTS
-clone generation (a reply of up to 800 characters is one generation on Apple silicon), so a break inside a
-long segment repeats that segment from its start. Send plain text: an emphasis marker spanning two segments
-would leave its closing marker in the remaining text. Lines without `segment` (an engine that does not
-report segments) mean the whole request is one unit: retry it from the start.
+When a stream breaks (the connection drops, or an `error` line ends it):
+
+1. Keep, and play, all the audio you received.
+2. Request the text again from `text_end` of the last `segment_end` you received (from the start when you
+   received none). Offsets in the new stream index the new request's text.
+3. When the break fell inside a segment (audio arrived after the last `segment_end`), skip the first seconds
+   of the new stream's audio, as many as you already received of that unfinished segment.
+
+At a segment boundary the seam is exact: each segment is a whole synthesis of exactly its text, so no word
+is repeated or missed, whatever the engine samples on the second try. Inside a segment the seam is
+approximate: a sampling engine (Qwen3-TTS, cloned voices above all) speaks the same text with different
+timing, so the seam can land a few words early or late. Nothing is ever replayed whole. The seconds skip
+matters because a segment can be long: a segment is a base engine's sentence group, or one Qwen3-TTS clone
+generation, and on Apple silicon a clone reply of up to 800 characters is one generation (one voice per
+reply), so a 600-character piece is often a single segment. Send plain text: an emphasis marker spanning two
+segments would leave its closing marker in the remaining text. Lines without `segment` (an engine that does
+not report segments) mean the whole request is one segment: retry it from the start and skip the seconds
+received.
 
 Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
 

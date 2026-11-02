@@ -4,8 +4,9 @@
   With AbstractVoice's segment fields (AbstractVoice ADR 0009), every `audio` line carries `segment`, `text_start` and
   `text_end` (code-point offsets into the request `text`), a `segment_end` line follows each text segment's last
   audio, and `done` counts `segments`. After a break, request the text from `text_end` of the last `segment_end`
-  received and discard the audio of the segment that had no `segment_end`: no word is repeated or missed. The
-  gateway forwards the fields unchanged and the audit log's `voice_stream` counts `segments`.
+  received and skip the seconds already received of the unfinished segment: the seam is exact at a segment boundary
+  and within a few words inside a segment, never a replay. The gateway forwards the fields unchanged and the audit
+  log's `voice_stream` counts `segments`.
 
 ### Changed
 
