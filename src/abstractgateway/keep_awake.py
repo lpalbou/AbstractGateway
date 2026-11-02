@@ -52,11 +52,14 @@ def hold(platform: str = sys.platform) -> Optional[int]:
         kind = cf.CFStringCreateWithCString(None, ASSERTION_TYPE.encode(), _UTF8)
         name = cf.CFStringCreateWithCString(None, ASSERTION_NAME.encode(), _UTF8)
         try:
+            if not kind or not name:
+                raise RuntimeError("CoreFoundation could not build the assertion's strings")
             out = ctypes.c_uint32(0)
             rc = iokit.IOPMAssertionCreateWithName(kind, _LEVEL_ON, name, ctypes.byref(out))
         finally:
-            cf.CFRelease(kind)
-            cf.CFRelease(name)
+            for ref in (kind, name):
+                if ref:  # CFRelease(NULL) aborts the process
+                    cf.CFRelease(ref)
     except Exception as exc:  # noqa: BLE001 - never a reason not to serve
         _say(f"could not keep this Mac awake ({type(exc).__name__}: {exc})")
         return None
