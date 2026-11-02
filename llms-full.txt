@@ -3259,6 +3259,7 @@ Most-used:
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
   `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
   environment variable.
+  While the gateway runs, the Mac does not idle-sleep; closing the lid or choosing Sleep still sleeps it.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,

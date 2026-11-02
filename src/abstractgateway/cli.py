@@ -663,6 +663,10 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
         except (ValueError, OSError):
             _previous_sigterm = None
+    # While the gateway runs, the Mac does not idle-sleep (keep_awake.py).
+    from . import keep_awake
+
+    awake = keep_awake.hold()
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -679,6 +683,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         if _previous_sigterm is not None:
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(signal.SIGTERM, _previous_sigterm)
+        keep_awake.release(awake)
         tray.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
