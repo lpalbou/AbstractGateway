@@ -103,7 +103,9 @@ try {
   check(await vision.getAttribute('aria-label')==='Image input'&&(await vision.getAttribute('data-af-tip')).includes('Understands images')&&await vision.locator('svg').count()===1, `${theme}: native vision input has an explained eye icon`);
   const signals=await root.locator('.mc-card').first().locator('.mc-cap').evaluateAll(es=>Object.fromEntries(es.map(e=>[e.dataset.mcCap,{color:getComputedStyle(e).color,background:getComputedStyle(e).backgroundColor}])));
   check(new Set(['vision','thinking','tools'].map(k=>signals[k].color)).size===3&&signals.vision.background!=='rgba(0, 0, 0, 0)', `${theme}: vision, thinking and tools use distinct themed accents and soft discs`);
-  check(await root.locator('.mc-brand [data-brand="qwen"] svg image').count()===1&&await root.locator('.mc-brand [data-brand="meta"] svg image').count()===1, `${theme}: official manufacturer artwork renders beside titles without remote images`);
+  check(await root.locator('.mc-brand [data-brand="qwen"] svg image').count()===1, `${theme}: official manufacturer artwork renders beside titles without remote images`);
+  // Backlog 1100: Meta's logo needs its written permission; its name instead, no logo.
+  check(await root.locator('.mc-brand [data-brand="meta"] svg').count()===0&&(await root.locator('.mc-brand [data-brand="meta"].af-brand-mark--text').first().textContent())==='Meta', `${theme}: Meta shows its name badge, no logo`);
   check((await root.locator('article .mc-card__meta').nth(1).innerText()).trim()==='31B'&&(await root.locator('article .mc-card__meta').nth(1).getAttribute('data-af-tip')).includes('3.3B active'), `${theme}: total parameter count stays compact while active count is available on hover`);
   const mine=root.getByRole('switch',{name:'Downloaded',exact:true});
   check(!(await mine.isChecked()), `${theme}: quick downloaded filter starts off in Browse`);
@@ -296,7 +298,9 @@ try {
   await cloud.locator('[data-cloud-provider="ovh"]').waitFor();
   const wizIds=await cloud.locator('[data-cloud-provider]').evaluateAll(els=>els.map(e=>e.getAttribute('data-cloud-provider')));
   check(wizIds.slice(wizIds.indexOf('ovh')).join(',')===(wizIds.includes('systemone')?'ovh,openai-compatible,systemone':'ovh,openai-compatible'),`${theme}: brand cards, OVH, then the compatible cards last`);
-  for(const id of ['anthropic','openai','openrouter','portkey','ovh'])check(await cloud.locator(`[data-brand="${id}"] svg`).isVisible(),`${theme}: ${id} official artwork`);
+  for(const id of ['openai','openrouter'])check(await cloud.locator(`[data-brand="${id}"] svg`).isVisible(),`${theme}: ${id} official artwork`);
+  // Backlog 1100: brands awaiting written permission show their name, no logo.
+  for(const [id,name] of [['anthropic','Anthropic'],['portkey','Portkey'],['ovh','OVHcloud']])check(await cloud.locator(`[data-brand="${id}"] svg`).count()===0&&(await cloud.locator(`[data-brand="${id}"].af-brand-mark--text`).textContent())===name,`${theme}: ${id} name badge, no logo`);
   // Kit 0.9.12: simpler cards (ONE status, ONE button) and the fields in the Connect/Edit modal.
   check(await cloud.locator('[data-cloud-provider] input').count()===0,`${theme}: no field on a cloud card`);
   await cloud.locator('[data-cloud-provider="ovh"] button').click();

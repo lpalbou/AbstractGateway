@@ -339,7 +339,9 @@ if (scenario.name === "claim") {
   } else {
     for (const want of ['data-engine-card="ollama"', 'data-engine-card="mlx"', "Not installed", "Ready", 'data-engine-action="install"']) if (!engines.includes(want)) fail("engine cards missing " + want + ": " + engines);
     // Official marks from the kit (brand_icons.tsx), never the old two-letter badges.
-    for (const id of ["ollama", "mlx"]) if (!new RegExp('<span class="af-brand-mark" data-brand="' + id + '" role="img" aria-label="[^"]+"><svg viewBox=').test(engines)) fail("engine card " + id + " must show its official mark: " + engines.slice(0, 600));
+    if (!/<span class="af-brand-mark" data-brand="mlx" role="img" aria-label="[^"]+"><svg viewBox=/.test(engines)) fail("engine card mlx must show its official mark: " + engines.slice(0, 600));
+    // Backlog 1100: Ollama's logo needs its written permission; until then its name, no logo.
+    if (!/<span class="af-brand-mark af-brand-mark--text" data-brand="ollama" role="img" aria-label="[^"]+">Ollama<\/span>/.test(engines)) fail("engine card ollama must show its name badge, no logo: " + engines.slice(0, 600));
     if (/<span class="ui-mark" aria-hidden="true">(Ol|MLX)<\/span>/.test(engines)) fail("the two-letter engine badges are gone");
     // Install asks first, then POSTs a real (non-dry-run) job with CSRF.
     await context.engineAction("install", "ollama"); await settle(); await settle();
