@@ -286,6 +286,10 @@ runtime-config key (`network`); there is no environment variable for it.
   requirement stops being met (the environment changed), `serve` binds
   `127.0.0.1`, prints `[ERROR] Network exposure 'lan' cannot be applied: … Fix: …`
   and the status carries `effective.blocked_reason`.
+- **The Mac stays awake for remote access.** With `internet`, or with
+  Tailscale Serve or Funnel in front of a gateway on this Mac, the gateway
+  keeps the Mac from idle-sleeping so phones and watches can reach it. See
+  [Keep this Mac awake for remote access](#keep-this-mac-awake-for-remote-access).
 
 ### Reverse proxy: allowed origins and trust proxy
 
@@ -1054,6 +1058,68 @@ names which. There is no `desktop_tray` setting; a
 write to that key is refused with this explanation. `GET /api/health` carries `"paused": true` while paused (status
 stays `healthy`). Full description: [tray.md](./tray.md).
 
+### Keep this Mac awake for remote access
+
+Your phone and your watch reach the gateway from away only while its Mac is
+awake. While **remote access is on**, the gateway keeps the Mac from going to
+sleep on its own:
+
+- **Remote access is on** when the gateway was started with the `internet`
+  [network exposure](#network-exposure-localhost--local-network--internet), or
+  when Tailscale Serve or Funnel forwards to the gateway's port on this
+  machine (`tailscale serve status --json`, checked at start and every 60
+  seconds). The `lan` exposure alone is not remote access.
+- **Only idle sleep is prevented.** The gateway holds the macOS
+  `PreventUserIdleSystemSleep` assertion, the one `caffeinate -i` holds,
+  named `AbstractGateway: remote access` (`pmset -g assertions` lists it under
+  the gateway's process). Choosing **Sleep** in the Apple menu, closing the
+  lid without an external display, or pressing the power button still sleeps
+  the Mac, and the display still turns off. It applies on battery and on the
+  charger. After you wake the Mac, the gateway keeps it awake again.
+- **The gateway process holds it.** When the gateway stops, crashes or is
+  killed, macOS drops the assertion with the process. Nothing is installed and
+  no power setting is changed.
+
+| Key | Label | Default | Value |
+|---|---|---|---|
+| `keep_awake` | Keep this Mac awake while remote access is on | on | `on` / `off` |
+
+Where the value comes from: `abstractgateway serve --keep-awake on|off` for
+that run (source `flag`), else the saved setting (source `stored`), else on
+(source `default`). No environment variable is read.
+
+Change it with the **Keep this Mac awake while remote access is on** switch on
+the web console's Resources page (Gateway card, **Stay awake** row; admins),
+with `abstractgateway config set keep_awake on|off` (`config unset keep_awake`
+returns to the default), or through `POST /api/gateway/admin/runtime-config
+{"keep_awake": false}`. A change applies at once in the running gateway; the
+response carries the new state as `keep_awake_status`.
+
+`GET /api/gateway/host/keep-awake` (any signed-in user; contract
+`gateway_keep_awake_v1`) answers:
+
+| Field | Meaning |
+|---|---|
+| `state` | `awake` (holding), `off` (the setting is off), `no_remote_access`, `checking` (first check pending), `error` (macOS refused; retried at the next check), `unsupported` (this system), `inactive` (not started by `abstractgateway serve`) |
+| `holding` | whether the assertion is held now |
+| `line` | `Staying awake for remote access` or `Not keeping awake` |
+| `detail` | one plain sentence: why |
+| `setting` | `{value, source, key, label, help, flag, cli, stored_value?}` (`stored_value` under a launch flag) |
+| `remote_access` | `{on, via: internet \| tailscale_funnel \| tailscale_serve \| null, label}`; `on` is null when it was not checked (setting off, or unsupported) |
+| `supported`, `platform` | whether this system can hold it |
+| `assertion` | `{type: "PreventUserIdleSystemSleep", name: "AbstractGateway: remote access"}` |
+| `since`, `checked_at`, `interval_s`, `error` | when it was taken, the last check, the check interval, the last refusal |
+
+`GET /api/gateway/network` carries the same object as `keep_awake`; the desktop
+tray shows its `line` in the Connect (Network) menu.
+
+On Linux and Windows the gateway does not keep the machine awake yet: the
+state is `unsupported` and `serve` logs one line. Keep such a machine awake
+with its own power settings.
+
+Evidence: `src/abstractgateway/keep_awake.py`, `src/abstractgateway/routes/keep_awake.py`,
+`tests/test_keep_awake.py`.
+
 ### Runtime-scoped Core capability defaults
 
 In hosted user-auth mode, `GET /api/gateway/config/capability-defaults` returns
@@ -1673,12 +1739,12 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off] [--keep-awake on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
-  `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
-  environment variable.
+  `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index`, `--gc-tuning` and `--keep-awake`
+  have no environment variable.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,
@@ -1687,6 +1753,9 @@ Most-used:
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
     `--print-token` is treated as a test gateway and shows no icon either.
+  - `--keep-awake on|off`: keep this Mac awake while remote access is on, for this run; it wins
+    over the saved `keep_awake` setting (default on). See
+    [Keep this Mac awake for remote access](#keep-this-mac-awake-for-remote-access).
   - `--watchdog-seconds N` (default 30, `0` = off): a gateway whose event loop stays blocked for N
     seconds writes the blocked stacks to its log and exits with code 75 so its service manager
     restarts it; see [deployment.md](./deployment.md).

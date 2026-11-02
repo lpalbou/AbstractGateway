@@ -2901,6 +2901,23 @@ any authenticated principal; writes require an admin principal.
 
 - `POST /api/gateway/host/pause` (body `{"reason": "..."}` optional) and
   `POST /api/gateway/host/resume` — both answer the payload above.
+- `GET /api/gateway/host/keep-awake` — whether this gateway keeps its Mac
+  from idle-sleeping because remote access is on (`gateway_keep_awake_v1`;
+  fields in [configuration.md](./configuration.md#keep-this-mac-awake-for-remote-access)).
+  The setting is the runtime key `keep_awake`, written through
+  `POST /api/gateway/admin/runtime-config` (admin), whose response carries
+  the new state as `keep_awake_status`:
+
+```json
+{"schema": "gateway_keep_awake_v1", "state": "awake", "holding": true,
+ "line": "Staying awake for remote access",
+ "detail": "Remote access is on (Tailscale Funnel): this Mac does not go to sleep on its own. Sleeping it yourself still works.",
+ "setting": {"value": true, "source": "default", "key": "keep_awake", "...": "..."},
+ "remote_access": {"on": true, "via": "tailscale_funnel", "label": "Tailscale Funnel"},
+ "supported": true, "platform": "darwin",
+ "assertion": {"type": "PreventUserIdleSystemSleep", "name": "AbstractGateway: remote access"},
+ "since": "2026-11-02T21:06:21Z", "error": null, "checked_at": "2026-11-02T21:07:21Z", "interval_s": 60.0}
+```
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.

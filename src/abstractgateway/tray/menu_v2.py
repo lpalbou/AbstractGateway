@@ -439,6 +439,8 @@ def connect_section(inputs: MenuInputs, *, reachable: bool) -> Node:
         eff = mm.NETWORK_WORDS.get(str(nv.effective_mode or ""), str(nv.effective_mode or "unknown"))
         where = f"{nv.bind_host}:{nv.port}" if nv.bind_host and nv.port else (f"port {nv.port}" if nv.port else "")
         items.append(info(f"Now: {eff}" + (f" · {where}" if where else "")))
+        if nv.keep_awake_line:
+            items.append(info(nv.keep_awake_line))
         if nv.overridden_by_cli:
             items.append(info("Started with an explicit --host/--port: the choice below applies when started without them"))
     else:

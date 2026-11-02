@@ -87,7 +87,7 @@ Automations ▸       [Active (1)] ⏱ Daily digest · Every day at 09:00 · nex
 Models ▸            [Memory 40.6 GB of 128 GB (32%) · this gateway 10.9 GB] | [GPU 20% busy · Apple M5 Max] | [In memory (2) · 16.2 GB] | Eject Qwen3.6-27B-4bit (16.0 GB, MLX)… | Eject Qwen1.5-0.5B-Chat-4bit (249 MB, MLX)… | Eject All — frees 16.2 GB… | Load a Model ▸ | Show Activity Window… | Open Resources in Console…
 Apps ▸              Open Observer | Open Continuum | Install Code… | [Entity] | Install Flow… | [Installs unavailable now · Console → Apps] | Manage Apps in Console…
 ────────
-Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Addresses — click one to copy it] | http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name | [Who can reach it] | ● Localhost only | ○ Local network | ○ Internet… | Open Network in Console…
+Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Not keeping awake] | [Addresses — click one to copy it] | http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name | [Who can reach it] | ● Localhost only | ○ Local network | ○ Internet… | Open Network in Console…
 Settings ▸          ☑ Start at login | ☑ Warn when memory is almost full | ☐ Classic menu
 Help ▸              Documentation | Report a Problem… | Developer API Reference | Copy Console Link | Check for Updates… | About AbstractGateway…
 ────────
@@ -439,6 +439,9 @@ apply** appears (and the Network item says *restart required*). **Internet…**
 first shows what exposing the gateway means, with the gateway's own warnings,
 and posts only after you acknowledge it. A refusal (for example sign-in not
 set up for that mode) opens a dialog with the reason and the fix.
+Below **Now**, a line says whether the gateway keeps this Mac awake for remote
+access (**Staying awake for remote access** or **Not keeping awake**; see
+[configuration.md](./configuration.md#keep-this-mac-awake-for-remote-access)).
 
 A gateway without the network settings route says so in the Network submenu,
 and Addresses still offers the address the tray talks to.

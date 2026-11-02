@@ -1378,6 +1378,11 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
         from ..service import sync_backlog_exec_runner
 
         out["exec_runner"] = sync_backlog_exec_runner(data_dir=gateway_data_dir_from_env())
+    if "keep_awake" in (payload or {}):
+        # Live too: hold or release the Mac's idle-sleep assertion now.
+        from .. import keep_awake
+
+        out["keep_awake_status"] = await _off_the_event_loop(keep_awake.controller().refresh)
     return out
 
 
