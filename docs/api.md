@@ -1107,8 +1107,9 @@ agent/subworkflow composition. The equivalent input-data config must contain exa
 the ordinary Flow work-session lane.
 
 Render `/runs/{root}/view` messages with `kind: "public_update"` as actor-authored updates.
-They retain `id`, `text`, `run_id`, optional `session_id`, `iteration`, `source_call_ids`
-and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
+They retain `id`, `text`, `run_id`, optional `session_id`, `iteration`, `source_call_ids`,
+`update_kind` (`"finding"` for a fact or piece of evidence the actor established, otherwise
+`"progress"`, as typed by the actor) and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
 An actor's wording remains its statement, not independently verified evidence of completion.
 
 Conversational questions retain `waiting.prompt` and expose

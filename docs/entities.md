@@ -188,7 +188,8 @@ separate; `ask_user` is an interaction primitive in this mode even when external
 Read `GET /api/gateway/entities/{name}/visit/{run_id}/state`. In conversational mode it adds:
 
 - `public_updates`: up to 64 explicit, safe actor updates with `id`, `text`, `run_id`,
-  `session_id`, `iteration` and `source_call_ids`.
+  `session_id`, `iteration`, `source_call_ids` and `update_kind` (`"finding"` or `"progress"`,
+  as typed by the actor).
 - `public_messages`: up to 64 accepted human corrections with `role: "user"`,
   `kind: "guidance"`, `id`, `text`, `run_id`, `session_id`, `speaker` and
   `guidance_status: "accepted"`.
