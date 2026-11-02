@@ -295,3 +295,20 @@ def test_tray_network_menus_show_the_line(tmp_path: Path) -> None:
     # An older gateway (no block) or a system without it: no line at all.
     assert mm.parse_network({**payload, "keep_awake": None}).keep_awake_line is None
     assert mm.parse_network({**payload, "keep_awake": {"state": "unsupported", "line": "Not keeping awake"}}).keep_awake_line is None
+
+
+# ----------------------------------------------------------- the web console
+
+
+def test_console_says_it_on_the_card_and_offers_the_switch_to_admins() -> None:
+    """The Resources page's Gateway card is a summary (its rows move into Manage gateway):
+    the keep-awake line must reach the summary, the switch lives in the modal."""
+    from abstractgateway.console import gateway_console_html
+
+    html = gateway_console_html()
+    assert 'id="gateway-host-awake-toggle"' in html and "Keep this Mac awake while remote access is on" in html
+    assert 'api("/api/gateway/host/keep-awake")' in html
+    assert "JSON.stringify({ keep_awake: on })" in html  # the one settings door
+    assert "const awake=state.hostKeepAwake;" in html  # resourcesRunnerSummary shows the line on the card
+    render = html[html.index("function renderKeepAwake("):html.index("async function toggleKeepAwake(")]
+    assert "resourcesRunnerSummary();" in render  # a new state refreshes the card at once
