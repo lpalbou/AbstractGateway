@@ -20,7 +20,7 @@ to sleep ON ITS OWN, "unless a user specifically put the mac on sleep mode":
   this machine (`tailscale serve status --json`). The check runs at start and
   every 60 seconds, so turning Funnel on or off is followed within a minute.
 * The setting `keep_awake`, on by default: `serve --keep-awake on|off` for one
-  run > the saved setting (console Resources > Gateway > Stay awake, or
+  run > the saved setting (console Resources > Gateway > Manage gateway > Stay awake, or
   `abstractgateway config set keep_awake on|off`) > on. A saved change applies
   at once in the serving process (the settings door calls `refresh`) and
   within a minute when another process wrote the store.

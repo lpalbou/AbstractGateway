@@ -1717,6 +1717,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* The column header says Active: the switch keeps its accessible name, the visible label goes. */
 	    .users-active .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .kv-switch .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	    /* Stay awake: its long feature label wraps inside the Manage gateway modal at phone width. */
+	    #gateway-host-awake-toggle, #gateway-host-awake-toggle .af-switch__label { white-space: normal; text-align: left; max-width: 100%; }
+	    #gateway-host-awake-row .af-switch__label, #gateway-host-awake-detail { word-break: normal; overflow-wrap: break-word; }
+	    #gateway-host-awake-detail { display: block; margin-top: 4px; }
 	    .users-active .af-switch__reason { display: block; max-width: 180px; margin-top: 2px; }
 	    .inline-state { margin: 0; min-height: 1.2em; color: var(--muted); font-size: var(--font-size-sm); font-weight: 400; }
 	    .inline-state.ok { color: var(--text); }
@@ -2760,7 +2764,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
 	                <!-- Stay awake (keep_awake.py, GET /host/keep-awake): the state for everyone, the
 	                     switch for admins (written through the runtime-config door, applied live). -->
-	                <div id="gateway-host-awake-row" class="entity-kv"><span class="entity-kv-key">Stay awake</span><span class="entity-kv-val"><span id="gateway-host-awake-text" class="state-pill">…</span> <span id="gateway-host-awake-detail" class="muted"></span><button id="gateway-host-awake-toggle" type="button" role="switch" class="af-switch af-switch--sm hidden" aria-checked="false" style="display:flex; margin-top:6px"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep this Mac awake while remote access is on</span></span></button><span id="gateway-host-awake-reason" class="muted" style="display:block"></span></span></div>
+	                <div id="gateway-host-awake-row" class="entity-kv"><span class="entity-kv-key">Stay awake</span><span class="entity-kv-val"><span id="gateway-host-awake-text" class="state-pill">…</span> <span id="gateway-host-awake-detail" class="muted"></span><button id="gateway-host-awake-toggle" type="button" role="switch" class="af-switch af-switch--sm hidden" aria-checked="false" style="display:flex; margin-top:6px; height:auto"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep this Mac awake while remote access is on</span></span></button><span id="gateway-host-awake-reason" class="muted" style="display:block"></span></span></div>
 	                <!-- R13.1: the previous process's last event-loop watchdog incident (admins; /host/runner last_hang). -->
 	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang" tabindex="0" data-af-tip=""></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
@@ -12654,6 +12658,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        return;
 	      }
 	      text.textContent = st.line; text.className = "state-pill " + (st.holding ? "ok" : st.state === "error" ? "error" : "");
+	      resourcesRunnerSummary();  // the Resources page's Gateway card says it too
 	      $("gateway-host-awake-detail").textContent = st.detail || "";
 	      const setting = st.setting || null;
 	      const admin = Boolean(state.principal && state.principal.admin);

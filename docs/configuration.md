@@ -1089,7 +1089,7 @@ that run (source `flag`), else the saved setting (source `stored`), else on
 (source `default`). No environment variable is read.
 
 Change it with the **Keep this Mac awake while remote access is on** switch on
-the web console's Resources page (Gateway card, **Stay awake** row; admins),
+the web console's Resources page (Gateway card → **Manage gateway** → **Stay awake**; admins),
 with `abstractgateway config set keep_awake on|off` (`config unset keep_awake`
 returns to the default), or through `POST /api/gateway/admin/runtime-config
 {"keep_awake": false}`. A change applies at once in the running gateway; the
@@ -1110,8 +1110,10 @@ response carries the new state as `keep_awake_status`.
 | `assertion` | `{type: "PreventUserIdleSystemSleep", name: "AbstractGateway: remote access"}` |
 | `since`, `checked_at`, `interval_s`, `error` | when it was taken, the last check, the check interval, the last refusal |
 
-`GET /api/gateway/network` carries the same object as `keep_awake`; the desktop
-tray shows its `line` in the Connect (Network) menu.
+The Resources page's Gateway card shows the `line` (with the `detail` when it
+is not keeping the Mac awake) for every signed-in user. `GET /api/gateway/network`
+carries the same object as `keep_awake`; the desktop tray shows its `line` in the
+Connect (Network) menu.
 
 On Linux and Windows the gateway does not keep the machine awake yet: the
 state is `unsupported` and `serve` logs one line. Keep such a machine awake

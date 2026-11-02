@@ -10,11 +10,12 @@
   - The gateway process holds it itself (IOKit), so it ends when the gateway stops or crashes. Nothing is
     installed and no power setting is changed.
   - On by default. Turn it off with the **Keep this Mac awake while remote access is on** switch on the
-    console's Resources page (Gateway card, **Stay awake**), with `abstractgateway config set keep_awake off`,
+    console's Resources page (Gateway card → **Manage gateway** → **Stay awake**), with
+    `abstractgateway config set keep_awake off`,
     or for one run with `serve --keep-awake off`. A change applies at once; Tailscale Serve or Funnel turned
     on or off is noticed within a minute.
-  - The Gateway card reads **Staying awake for remote access** or **Not keeping awake**, with the reason. The
-    tray's Connect (Network) menu shows the same line.
+  - The Resources page's Gateway card reads **Staying awake for remote access** or **Not keeping awake**, with
+    the reason. The tray's Connect (Network) menu shows the same line.
   - `GET /api/gateway/host/keep-awake` (any signed-in user, contract `gateway_keep_awake_v1`) serves the
     state; `GET /api/gateway/network` carries it as `keep_awake`; `keep_awake` is a runtime setting
     (`POST /api/gateway/admin/runtime-config`, admin), whose response carries the new state as

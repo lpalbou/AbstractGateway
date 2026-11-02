@@ -219,8 +219,7 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 ### The phone or the watch cannot reach the gateway away from home
 
 - A Mac that sleeps cannot answer. Open the console's Resources page: the
-  Gateway card's **Stay awake** row should read **Staying awake for remote
-  access**.
+  Gateway card should read **Staying awake for remote access**.
 - **Not keeping awake — Remote access is off**: the gateway keeps the Mac
   awake only with the `internet` exposure, or with Tailscale Serve or Funnel
   forwarding to its port. Check `abstractgateway network status` and
