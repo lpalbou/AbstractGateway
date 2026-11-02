@@ -83,12 +83,12 @@ def test_engine_cards_draw_the_kit_marks_not_two_letter_badges() -> None:
 
 def test_brands_awaiting_written_permission_show_their_name_not_a_logo() -> None:
     # Operator ruling 2026-11-02 (AbstractFramework backlog 1100), read from the VENDORED bundle.
-    awaiting = ["anthropic", "ovh", "portkey", "ollama", "deepseek", "nvidia", "google", "meta", "microsoft"]
-    got = _kit_marks(awaiting + ["openai", "openrouter", "huggingface", "lmstudio", "mistral"])
+    awaiting = ["anthropic", "ovh", "portkey", "ollama", "deepseek", "nvidia", "google", "meta", "microsoft", "mistral"]
+    got = _kit_marks(awaiting + ["openai", "openrouter", "huggingface", "lmstudio"])
     for id_ in awaiting:
         html = got["marks"][id_]["html"]
         assert "af-brand-mark--text" in html and "<svg" not in html and "data:image" not in html, f"{id_}: {html[:200]}"
-    for id_ in ["openai", "openrouter", "huggingface", "lmstudio", "mistral"]:
+    for id_ in ["openai", "openrouter", "huggingface", "lmstudio"]:
         assert "<svg viewBox=" in got["marks"][id_]["html"], f"{id_}: its logo is allowed and must be shown"
 
 
@@ -96,4 +96,8 @@ def test_console_footer_carries_the_trademark_line() -> None:
     from abstractgateway.console import _CONSOLE_HTML_TEMPLATE
 
     line = "Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them."
-    assert _CONSOLE_HTML_TEMPLATE.count(f'<footer class="console-footer">{line}</footer>') == 1
+    footer = f'<footer class="console-footer">{line}</footer>'
+    # The signed-in console and the first-run guide (its engine and cloud steps draw provider marks).
+    assert _CONSOLE_HTML_TEMPLATE.count(footer) == 2
+    guide = _CONSOLE_HTML_TEMPLATE[_CONSOLE_HTML_TEMPLATE.index('id="first-run-wizard"'):_CONSOLE_HTML_TEMPLATE.index('class="first-run-footer"')]
+    assert footer in guide

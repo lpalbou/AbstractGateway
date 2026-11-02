@@ -3267,6 +3267,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
 	              <div id="first-run-done-body"></div>
 	            </section>
+	            <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	          </div>
 	        </div>
 	        <footer class="first-run-footer">
