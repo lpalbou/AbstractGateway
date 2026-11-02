@@ -944,7 +944,8 @@ def automation_submenu(a: AutomationRow, *, observer: bool, reachable: bool, obs
 def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...]:
     """**Sessions ▸**: Running (running, waiting-for-something and paused
     rows), Need attention (an approval or a question, only when there is
-    one), Scheduled (the automations, only when there are any), Recent (the
+    one), Scheduled (the automations, only when there are any; the paused ones
+    folded into **Paused (N) ▸**), Recent (the
     last 24 hours, at most `MENU_RECENT_ROWS` rows then ONE line naming the
     rest), and the console door. Every section header is an information
     line; nothing is hidden without saying so."""
@@ -965,13 +966,22 @@ def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...
             out.append(info(f"Need attention ({len(groups['attention'])})"))
             for row in groups["attention"]:
                 out.append(Node(run_row_label(row), children=run_submenu(row, observer=observer, reachable=reachable)))
-    scheduled = [a for a in snap.automations if a.status in {"active", "paused"}]
-    if scheduled or snap.automations_error:
+    # ADR 0048: the gateway's order; the paused ones folded into their own submenu.
+    standing = [a for a in snap.automations if a.status in {"active", "paused"}]
+    scheduled = [a for a in standing if a.section == "active"]
+    paused = [a for a in standing if a.section == "paused"]
+    if scheduled or paused or snap.automations_error:
         out.append(SEP)
-        if scheduled:
-            out.append(info(f"Scheduled ({len(scheduled)})"))
+        if scheduled or paused:
+            if scheduled:
+                out.append(info(f"Scheduled ({len(scheduled)})"))
             for a in scheduled:
                 out.append(Node(automation_row_label(a), children=automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+            if paused:
+                out.append(Node(f"Paused ({len(paused)})", children=tuple(
+                    Node(automation_row_label(a), children=automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path))
+                    for a in paused
+                )))
         else:
             out.append(info(middle_ellipsis(f"Scheduled unavailable: {snap.automations_error}", 80)))
     if not (snap.runs_error and not snap.runs):
