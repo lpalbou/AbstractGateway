@@ -9,6 +9,7 @@ A fragment is Keep a Changelog markdown: one or more `### Added` / `### Changed`
 `### Removed` / `### Fixed` / `### Security` headings, each followed by its entries.
 
     python scripts/changelog.py check [--base origin/main]   # CI: a PR touching src/ adds a fragment
+                                                             # (a release PR that assembles them passes)
     python scripts/changelog.py preview                      # the assembled section, printed
     python scripts/changelog.py assemble 0.18.1 [--date YYYY-MM-DD]
         # release step: writes `## [0.18.1] - <date>` under `## [Unreleased]` from every fragment,
@@ -106,10 +107,45 @@ def changed_files(base: str) -> Tuple[List[str], List[str]]:
     return _git("diff", "--name-only", mb, "HEAD"), _git("diff", "--name-only", "--diff-filter=A", mb, "HEAD")
 
 
+def _project_version(text: str) -> str:
+    m = re.search(r'(?ms)^\[project\]\s*$.*?^version\s*=\s*"([^"]+)"', text)
+    return m.group(1) if m else ""
+
+
+def release_assembly(base: str) -> List[str]:
+    """The version a release pull request assembles (else []): it deletes fragments, leaves none in
+    changelog.d/, and adds `## [<pyproject [project].version>] - <date>` to CHANGELOG.md, a section the
+    base did not have. A feature PR that deletes a fragment or adds some other heading is not one."""
+    def _git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout
+
+    mb = _git("merge-base", base, "HEAD").split()[0]
+    deleted = [p for p in _git("diff", "--name-only", "--diff-filter=D", mb, "HEAD").splitlines()
+               if p.startswith("changelog.d/") and p.endswith(".md") and not p.lower().endswith("readme.md")]
+    if not deleted or fragment_files(ROOT / "changelog.d"):
+        return []
+    version = _project_version((ROOT / "pyproject.toml").read_text(encoding="utf-8")) if (ROOT / "pyproject.toml").exists() else ""
+    if not version:
+        return []
+    try:
+        released_before = f"## [{version}] - " in _git("show", f"{mb}:CHANGELOG.md")
+    except subprocess.CalledProcessError:
+        released_before = False
+    diff = _git("diff", mb, "HEAD", "--", "CHANGELOG.md")
+    headings = re.findall(r"^\+## \[(\d+\.\d+\.\d+[^\]]*)\] - ", diff, flags=re.M)
+    return [version] if version in headings and not released_before else []
+
+
 def check(base: str) -> int:
     changed, added = changed_files(base)
     for f in [p for p in added if p.startswith("changelog.d/") and p.endswith(".md") and not p.lower().endswith("readme.md")]:
         parse((ROOT / f).read_text(encoding="utf-8"), name=f)  # a malformed fragment fails here
+    released = release_assembly(base)
+    if released:
+        # The release step (`assemble`) moves every fragment into a dated CHANGELOG.md section:
+        # the release pull request edits CHANGELOG.md and deletes fragments by design.
+        print(f"changelog: release assembly of {', '.join(released)} (fragments folded into CHANGELOG.md)")
+        return 0
     src = [p for p in changed if p.startswith(SOURCE_PREFIXES)]
     frags = [p for p in added if p.startswith("changelog.d/") and not p.lower().endswith("readme.md")]
     if "CHANGELOG.md" in changed and src and not frags:

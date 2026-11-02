@@ -93,11 +93,15 @@ dependencies = [
   # the agents' Python execution runs inside the run's command sandbox (round 12).
   # 0.3.19: ReAct repairs a rejected tool-call format (at most 2 retries per turn).
   # 0.4.0: the schedule_run builtin (SCHEDULE_RUN_TOOL) offered in the ReAct tool registry.
-  "abstractagent>=0.4.0",
+  # 0.5.0: ReAct honours `_runtime.conversation` (public conversation updates and
+  # questions), which entity visits and task starts set; 0.4.0 ignores it.
+  "abstractagent>=0.5.0",
   "AbstractMemory[lancedb]>=0.4.0",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
-  "abstractskill>=0.3.0",
+  # 0.3.4: the shelf it seeds carries the abstractframework-website skill and the
+  # current abstract-release skill.
+  "abstractskill>=0.3.4",
   "requests<3.0.0,>=2.32.5",
   "urllib3<3.0.0,>=2.5.0",
   "fastapi<1.0.0,>=0.136.0",
@@ -153,7 +157,7 @@ push-relay = [
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
   "AbstractRuntime[apple]>=0.16.0",
-  "abstractagent[apple]>=0.4.0",
+  "abstractagent[apple]>=0.5.0",
   "AbstractMemory[all-apple]>=0.4.0",
 ]
 
@@ -161,7 +165,7 @@ apple = [
 # Python installs and for the NVIDIA Docker image.
 gpu = [
   "AbstractRuntime[gpu]>=0.16.0",
-  "abstractagent[gpu]>=0.4.0",
+  "abstractagent[gpu]>=0.5.0",
   "AbstractMemory[all-gpu]>=0.4.0",
 ]
 dev = [

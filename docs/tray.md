@@ -112,7 +112,7 @@ updating, starting or not answering, and absent while it cannot be reached.
 Windows and Linux menus cannot hold a control in a row (a Win32 menu row is
 text, an AppIndicator menu is exported over DBus and drawn by the panel:
 label, icon, check mark), so there the header is three rows: `AbstractGateway
-0.18.0` (Linux: with the logo beside it, a `GtkImageMenuItem`), the subtitle,
+0.19.0` (Linux: with the logo beside it, a `GtkImageMenuItem`), the subtitle,
 and **☑ Running** — the switch as a check item: unticking pauses, ticking
 resumes, greyed while it cannot be told. macOS without a usable AppKit falls
 back to the same three rows, so the switch is never missing. Then the meters

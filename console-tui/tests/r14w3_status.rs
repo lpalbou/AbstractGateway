@@ -45,7 +45,7 @@ fn panel_text(s: &str) -> String {
             .iter()
             .take_while(|c| **c != '│' && **c != '┃')
             .collect();
-        out.push(rest.trim_end_matches(['█','▏',' ']).to_string());
+        out.push(rest.trim_end_matches(['█', '▏', ' ']).to_string());
     }
     out.join(" ")
         .split_whitespace()

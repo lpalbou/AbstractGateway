@@ -465,7 +465,7 @@ def test_catalog_has_a_video_category_and_labels_mlx_gen_for_video() -> None:
     source = _console_script()
     extra = "\n".join(_slice_line_const(source, n) for n in ("MC_CAPS", "MC_PROVIDER_LABEL"))
     out = _run(
-        ["mcRowCaps", "mcDefaultFilters", "mcParseHash", "mcProviderLabel"],
+        ["mcRowCaps", "mcDefaultFilters", "mcHfMode", "mcParseHash", "mcProviderLabel"],
         f"return [mcRowCaps({json.dumps(_VIDEO_ROW)}), mcParseHash('#catalog?cap=video').cap, mcProviderLabel('mlx-gen'),"
         " MC_CAPS.find((c) => c[0] === 'video'), mcRowCaps({ capabilities: { image_generation: true } })];",
         extra,
@@ -670,6 +670,11 @@ def test_catalog_use_as_default_sets_exactly_the_chosen_model(tmp_path: Path, mo
 const calls = [];
 const api = async (path, opts) => { calls.push({ path, method: opts && opts.method, body: opts && opts.body ? JSON.parse(opts.body) : null }); return { routes: [] }; };
 const servedModelId = (provider, artifact) => artifact;
+const downloadJobKey = (provider, artifact) => `${provider || ""}/${artifact || ""}`;
+const mcStore = { defaultBusy: new Set(), data: null, hub: { data: null } };
+const mcRowsOf = () => [];
+const mcArts = () => [];
+const document = { activeElement: null };
 const mcRender = () => {};
 const renderDefaults = async () => {};
 const $ = () => ({});

@@ -136,7 +136,11 @@ console.log("OK");
 def _run() -> subprocess.CompletedProcess:
     node = require_node()
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
-    harness = _HARNESS.replace("__SOURCE__", json.dumps("\n".join(scripts)))
+    # The Resources dashboard wiring needs a real DOM; it has its own real-browser suite (as in
+    # test_gateway_console_first_run.py).
+    source = "\n".join(scripts)
+    assert source.count("    initResourcesDashboard();") == 1
+    harness = _HARNESS.replace("__SOURCE__", json.dumps(source.replace("    initResourcesDashboard();", "    /* Resources wiring has its own real-browser suite. */")))
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:
         f.write(harness)
         path = f.name

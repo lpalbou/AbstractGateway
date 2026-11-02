@@ -253,7 +253,7 @@ async function fetch(path, options = {}) {
   if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") { textDefaultSet = true; return res(200, { ok: true }); }
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
-    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
+    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", route_provider: "lmstudio", route_model: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
   if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }] : [] });
@@ -601,8 +601,9 @@ if (scenario.name === "default-models") {
   await dmClick("first-run-head-actions", { dmMode: "advanced" });
   const html = el("first-run-default-models").innerHTML;
   const rows = (html.match(/data-dm-row="/g) || []).length;
-  if (rows !== 9) fail("expected 9 capability rows, got " + rows);
-  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
+  // Ten rows: AbstractCore 2.32.0 added the Decisions route (output.decision).
+  if (rows !== 10) fail("expected 10 capability rows, got " + rows);
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "Decisions", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
     if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
   }
   await dmClick("first-run-default-models", { dmUse: "input.text" });
@@ -628,7 +629,9 @@ if (scenario.name === "simple-mode") {
   let html = el("first-run-default-models").innerHTML;
   const ins = (html.match(/data-dm-badge="in-/g) || []).length;
   const outs = (html.match(/data-dm-badge="out-/g) || []).length;
-  if (ins !== 5 || outs !== 8) fail(`expected 5 input and 8 output badges, got ${ins} and ${outs}`);
+  // Nine output badges: AbstractCore 2.32.0 added Decisions (output.decision).
+  if (ins !== 5 || outs !== 9) fail(`expected 5 input and 9 output badges, got ${ins} and ${outs}`);
+  if (!html.includes('data-dm-badge="out-decision"')) fail("simple mode has no Decisions badge");
   for (const want of ["Use recommended", "Recommended for this computer", ">Input <", ">Output <", "Embeddings", "Rankers", "Files", "Qwen3.5 9B", "dm-badge--recommended", "dm-badge--covered", "dm-badge--none", "<svg"]) {
     if (!html.includes(want)) fail("simple mode missing " + want + ": " + html.slice(0, 1200));
   }

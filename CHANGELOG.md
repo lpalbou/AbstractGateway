@@ -10,6 +10,151 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-02
+
+AbstractGateway 0.18.0 was prepared on 2026-10-28 but never published to PyPI (the last published version
+is 0.17.2). Its changes, listed under [0.18.0] below, ship in 0.19.0 together with everything in this section.
+Requires AbstractCore 2.32.0, AbstractRuntime 0.16.0, AbstractAgent 0.5.0 and AbstractSkill 0.3.4. AbstractAgent 0.5.0
+is required, not optional: the gateway sets `_runtime.conversation` on entity visits and task starts (public
+conversation updates and questions), and AbstractAgent 0.4.0 ignores it without an error.
+
+### Added
+
+- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
+  server).
+  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
+    **Show more results** appends the next page.
+  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
+  - A catalog search of three characters or more also asks Hugging Face. Its results come under
+    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
+  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
+  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
+- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
+  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
+  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
+  bad before (OVH 2026-10-29).
+- **An installed browser app older than a release's pin is named**: the console's Apps card shows one readable
+  sentence ("Code 0.13.0 is older than the 0.13.2 that AbstractFramework 0.11.18 installs: update Code to get its
+  fixes.") and the gateway's boot log warns. Boot reads the last update check and never runs one. On the OVH test server an old Code showed a reopened conversation's
+  last turn only, with nothing saying the app was behind. The boot warning makes no network request: it reads this install's pins only from an answer an earlier request cached.
+- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
+  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
+  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
+  (8090 + slot), its own app port block (derived from a slot registered once in
+  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
+  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
+  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
+  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+- Resources now leads with CPU, RAM, GPU activity and data-volume capacity, real
+  browser-local activity charts, topology-aware memory capacity and contextual
+  inspectors. Unified accelerator heap is explicitly overlapping RAM; dedicated
+  CUDA VRAM uses device-wide total/free counters, separately from process usage.
+- The existing AbstractUIC themes, top-right docs/About/appearance/account widgets
+  and resource mutation handlers remain in place. Explanations use kit info
+  tooltips; Gateway management and memory details use kit modal binding.
+- Host state adds independently sampled CPU, storage, swap, disk and network
+  observations, with warm-up/reset/unsupported states instead of guessed zeros.
+  Sampling is shared, read-only and in-process; no new service or dependency is
+  installed. History is bounded to one hour/720 samples in the signed-in page.
+- **`GET /api/gateway/apps` returns `cards[]`** (`id`, `family`, `name`, `description`, `mark`,
+  `illustration_url`, `members`, `launchers[{app, kind}]`), and every row carries `mark`, `family` and
+  `illustration_url`; a desktop row's `desktop.open_label` names its launcher.
+- **`GET /console/assets/apps/<file>`** serves the card illustrations the registry declares (public like the
+  console page, immutable cache with a content-hash version query in the card's URL; any other name answers 404).
+- **Assistant (web) is a gateway app.** `abstractgateway apps`, the console's Apps page and the tray manage
+  `@abstractframework/assistant` (`assistant-web`, port 3008) like the other browser apps: install, start, stop
+  and open, with the gateway address passed by launch flags.
+- Task starts, Flow entity summons and canonical entity visits can opt into public actor updates and conversational questions with a strict `conversation` boolean.
+- Canonical visit state exposes safe public updates, durable accepted human messages, replayed question/answer/timeout/retained-reply history and the actual pending question; owned `/guidance` and `/answer` routes preserve participant attribution and the visit recall boundary without bypassing tool approvals. Canonical timestamps/order and explicit omission counts support chronological history across reconnects.
+- Explicit original human display text on ordinary guidance is projected into replay with server-stamped provenance and an acceptance status, separate from actor adoption.
+- The existing runner wakes timed clarification questions through Runtime's durable deadline indexes; essential questions remain indefinite and tool approvals never expire into permission.
+- The package agent skill documents these unreleased conversation routes and question semantics.
+- **Decisions: AbstractCore's `decision` output modality through the gateway** (AbstractCore 2.32.0,
+  AbstractRuntime 0.16.0). Text in, calibrated typed answers out (yes/no, choice, score with confidence),
+  no text generation, no artifact.
+  - `POST /v1/decisions` is served at the OpenAI API door (body `{model, state, questions, truncate?}`,
+    AbstractCore answers); Guest (Open mode, no key) may use it like chat and speech: model use, no tools.
+  - `POST /api/gateway/runs/{run_id}/decisions` body `{state, questions, model?, truncate?}` runs one
+    durable child run through `run_facade.decide` and answers the child run id with `decision` (the
+    System One body) and `answers`; a missing runtime facade or a refused decision answers
+    `ok: false` with `code` (`decision_unavailable`, `decision_error`, `decision_no_answers`) like the
+    media routes.
+  - `GET /discovery/capabilities` lists `decision` among the capability plugins and carries a
+    `decision` contract (`common`, `flow_editor`, `assistant`): the VisualFlow `decide` node and the
+    direct endpoint, beside `media`, not inside it.
+  - Console: the `output.decision` route offers the discovery catalog filtered on that route; the
+    Models page has a Decision capability filter (from the catalog row's `decision` tag or capability);
+    Decisions badges and rows on the first-run and advanced model pages; the tray lists the configured
+    decision model under Decision; the Rust console labels the route and the loaded-model task.
+  - Floors: `abstractcore>=2.32.0`, `AbstractRuntime>=0.16.0`.
+- **Device: GPU / CPU for the text embedding route** (operator ruling 2026-10-29: the embedding model's device is the
+  person's choice). The route editor of `embedding.*` routes has a Device control ("GPU when there is room (default)",
+  GPU, CPU) stored as the route's `options.device`, and says where the loaded embedder runs now and what it measured on
+  the GPU ("Now on the GPU (1.2 GB of GPU memory, measured).", or why it is on the CPU). The gateway passes the setting to
+  AbstractCore's embedding manager (`device=`).
+- **Setup guide: a Cloud providers step, and the same cards on the Providers tab** (operator finding 2026-10-29:
+  "where do I configure the cloud engines?"; the Local engines step only said "cloud providers only need an API key").
+  The guide has six steps; **Cloud providers** comes after Local engines: one card per cloud provider AbstractCore
+  supports (read from its registry: `GET /discovery/providers` rows with `local_provider: false`, today OpenAI,
+  Anthropic, OpenRouter and Portkey), an API-key field and **Check the key**: "Key works · 48 models" or one sentence
+  why not. The cards are the abstractuic kit's `CloudProviderCards` (islands `mountCloudProviderCards`, ui-kit 0.9.9),
+  mounted by the guide and by the Providers tab, whose **Remote providers** presets became **Cloud providers** (plus
+  the custom OpenAI-compatible preset). The Default models step's "Or use an API key" uses the same kit logic and
+  now lists every cloud provider, not only OpenAI and Anthropic.
+- **Official marks on the engine cards** (same finding). Ollama, LM Studio, MLX, llama.cpp, vLLM and Hugging Face show
+  their logo from the kit (islands `brandMarks`; each mark inlined with its source, licence and date) instead of the
+  two-letter badges. `tests/test_gateway_console_brand_marks.py` pins that every engine and every AbstractCore cloud
+  provider has a mark or a documented text fallback in the vendored bundle.
+- **The models run in a supervised child process** (ADR 0002, backlog 0967). `serve --model-host process`, the
+  default on every OS, moves every AbstractCore provider call, the model pool and the OpenAI-compatible `/v1` into one
+  child the gateway starts, pings, restarts (backoff, at most 5 restarts in 10 minutes) and kills above a memory
+  ceiling (`--model-host-memory-gb`, default 80 % of the machine's memory; `--model-host-nice`, default 5). A
+  llama.cpp abort, a KV cache that runs out or an out-of-memory kill costs the requests in flight, never the gateway:
+  the request fails within a second with a sentence naming the exit (status 424, not retried), `/api/health` keeps
+  answering and shows `model_host`, the child is back in about a second, and each crash writes
+  `<data dir>/incidents/model-host-<stamp>-<id>-<kind>.json` (schema `abstractgateway.incident.v1`). The runtime's
+  LLM clients in the gateway are proxies with the same API (live replies, Stop, summaries, residency and prompt
+  caches included); `/v1` is admitted by the gateway (key, Who can connect, Guest) and served by the child. The hop
+  adds about 0.1 ms p50 to a chat step (`scripts/bench_model_host_hop.py`, budget 2 ms). `--model-host in-process`
+  keeps one process anywhere. The split `runner`
+  takes the same flags. Not yet in the child: direct speech routes, the embeddings index, MCP client calls
+  (backlog 0968). See [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process).
+- **The Models row says what context a model reserved and why, and an admin sets it** (AbstractCore ADR 0010 point 8,
+  operator ruling 2026-10-29). The Context cell reads "131,072 of 262,144; limited by memory, 5 % buffer" or
+  "(set for this model)"; "Set context" stores a per-model context (`PUT /api/gateway/models/context`, AbstractCore's
+  `model_contexts`): loaded as is at the model's next load, refused with the readable sentence when it does not fit,
+  never shrunk; empty returns to the fit to memory. Rows carry `advertised_context_length` and `context_source`.
+  Needs AbstractCore with `abstractcore.config.model_contexts`.
+- **Models page: "Keep loaded" and refused loads (AbstractCore ADR 0010).** The lock toggle reads "Keep loaded" /
+  "Kept loaded" with the registry lock icon and a tooltip that says what it does (a kept model is never evicted to make room for another
+  model); the last load the fit check refused shows as an error line with its sentence ("X needs 13.7 GB but only
+  6.1 GB is free on the GPU (kept: ...). Choose a smaller model, for example ..."), from the runtime's residency
+  diagnostics (`refusals`).
+- Independent `direct_enabled` control for Core-owned HTTP serving with its own
+  bind and authentication, sharing the execution owner's model resources.
+  Existing Gateway `/v1` keys and the `enabled` setting retain their behavior.
+- An AbstractGateway agent skill for authenticated runs, canonical replay,
+  approvals and inference endpoint operation.
+- Account-wide conversation read receipts persist as immutable per-turn request/outcome events.
+  Clients replay them through `/api/gateway/me/session-reads`; `session.read` on the personal
+  event stream updates other clients. Receipts survive restart and stream retention, remain
+  isolated by principal/runtime, and do not modify workflow execution ledgers.
+- **"Update llama.cpp" on a model row a newer llama.cpp loads** (operator 2026-10-29: "all of them should be known
+  and supported"). A GGUF whose architecture the installed llama.cpp does not know but the newest llama-cpp-python
+  does (AbstractCore `llamacpp_update`, e.g. XHToken/Spark-X2.6-4B's `spark2_5` with llama-cpp-python 0.3.36) offers
+  one admin click that runs the engine installer's llama.cpp job and reloads the catalog; only a model no release
+  knows stays greyed with its sentence.
+- **Voice streams keep the line alive and say what they did** (ADR 0047). `POST
+  /api/gateway/runs/{run_id}/voice/tts/stream` (and the entity variant `POST /api/gateway/entities/{name}/voice/tts/stream`)
+  writes a `{"type": "keepalive", "ok": true, "request_id": ...}` line after 10 seconds without any other line, so
+  a client's idle timer measures the connection rather than the synthesis. Keep-alives never reset the watchdog:
+  it still ends the stream after the configured seconds of engine silence. Clients skip lines whose `type` they
+  do not know; a client that rejected unknown types must accept `keepalive`.
+- **The audit log records each voice stream.** The `/voice/tts/stream` audit entry carries a `voice_stream`
+  detail: the resolved provider, model, voice and profile, the text length, the lines, audio lines and audio
+  bytes sent, the keep-alives, and how the stream ended (`done`, `error`, `cancelled`, `watchdog` or
+  `disconnected`).
+
 ### Changed
 
 - **Only the machine's gateway service shows the tray icon** (operator ruling 2026-10-29: two icons on one Mac, a
@@ -26,9 +171,139 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   2026-10-29): its official `ollama-linux-<arch>.tar.zst` (SHA-256 checked) is unpacked into `~/.local` and served by
   a systemd user service on port 11434 (its program path quoted, so a home directory with a space works; a detached `ollama serve` without a user bus). The card no longer says
   "Install (administrator)"; without `zstd` it says why, with no administrator step.
+- **The console's app cards are one template, declared by the app registry** (`apps_manager.AppSpec`,
+  `apps_desktop.DesktopAppSpec`, docs/apps.md "Registering an app"). An entry declares its card: `description`
+  (one whole sentence, no longer cut to one line), `mark`, `illustration` (a 16:9 WebP under
+  `console_assets/apps/`) and an optional `family`. A card shows its illustration, mark, name, status badge,
+  description and one row of launchers derived from its members' kinds: **Open in browser** with a globe badge,
+  **Open on this Mac** (**Open on this computer** elsewhere) with a monitor badge, **Open in Terminal** with `>_`.
+- **The Assistant is one card with two launchers**: the web Assistant (`assistant-web`) and the desktop Assistant
+  (`assistant`) form the `assistant` family. Its one status badge shows both states, each with its launcher's
+  icon, and each part starts or stops its own Assistant; the primary button is the Assistant installed on this
+  computer (the web one first); the desktop Assistant's notes (another copy running, quit to run a new version)
+  sit beside its own button, and each Install says what it installs.
+- **The Apps tab's error state shows the reason only**: the console no longer carries its own list of apps.
+- **Node.js on the Apps tab is a card only when it needs you** (missing, installing, a failed install); ready, it
+  is one quiet line under **Technical details**. The Apps toolbar is one line at the top right: a **Refresh** icon
+  button and the settings gear. Every app card gives its description (one richer sentence per app) exactly two
+  lines, its illustration fades into the card, and the status badge is quieter.
+- Models catalog: a build that is in memory now shows a small "Loaded" badge (or "Kept loaded", with the lock icon, when it is kept). Its tooltip says who holds the model. Clicking it opens the Resources page, where the residency controls live (Keep loaded, Unload, Set context, refusal reasons): operator ruling 2026-10-29, Resources is memory management and the Models page stays the catalog. Read from the host snapshot the top bar already polls. A different quant of the same repository does not get the badge.
+- **No "Every quant" switch** (operator ruling 2026-10-29: it made no sense beside the quantization filter's "All").
+  The console's catalog and its Hugging Face searches always list every quant of every repo, the filter's chips count
+  the full set, and an old `#catalog?every=1` link opens the same view.
+- **Changelog entries are fragments** (`changelog.d/`, `scripts/changelog.py`). A pull request adds
+  `changelog.d/<pr-or-slug>.md` instead of editing `CHANGELOG.md`'s `[Unreleased]` section, which conflicted on every
+  merge of main; the release assembles the fragments (`python scripts/changelog.py assemble X.Y.Z`) and CI fails a pull
+  request that changes `src/` without one. The `[Unreleased]` section as of 2026-10-29 is the first fragment.
+- **The console's top bar shows the kit's one account widget** (`console_ui.py` `topBarIslandProps()`, `console.py`
+  `renderAccount`). Signed in, the right end of the top bar is the same control as in the other apps: a person icon,
+  the account name and a status light. Its menu shows "Signed in as …", the gateway address, Copy user id and
+  Disconnect. The console passes `identity: "menu"` and its own `GET /api/gateway/me` body (`connection.me`) to the
+  kit island. The "Signed in as" text beside the connection pill is gone. About stays the console's own dialog for
+  now, because it carries the update controls (backlog 0976).
+- **The vendored kit islands are ui-kit 0.9.6** (AbstractUIC 0.8.5; `console_islands.py`, and the theme provenance in
+  `console_themes.py`), regenerated from the released tag. Before this, they were 0.9.4 (backlog 0974).
+- **The console's entity Talk panel uses the shared chat composer** (`console.py`, `console_ui.py`).
+  The visit message field is now the AbstractUIC `mountChatComposer` island, the same rounded multiline
+  composer as the Sandbox and Docs chats, in place of the plain `<textarea>` and Send button. Enter sends,
+  Shift+Enter starts a new line, the field stays disabled until a visit is open, a send in flight cannot be
+  repeated, a failed send keeps the draft, and a reply that arrives after the visit changed is dropped. The
+  console refuses to start with a clear error when the vendored bundle lacks `mountChatComposer`.
+- The vendored console islands bundle (`console_islands.py`) now carries `@abstractframework/ui-kit` 0.9.11.
+- **Engine installation contract** (ADR 0003, `docs/engines-install.md`: every engine on every OS in one table).
+  Engines are installed once per computer under the gateway's service account and shared by every user; no install
+  starts a compiler: every native package of AbstractCore's settings is wheels-only (`--only-binary`), an install of a
+  setting that includes `llama-cpp-python` names its prebuilt wheel (a Hugging Face install on the OVH server started
+  building llama.cpp from source), and llama.cpp no longer falls back to a source build or asks for a compiler or the
+  Apple tools: a host without a prebuilt build gets one sentence and no Install button. Ollama on Linux is always its
+  release archive under the service account, also when the gateway runs as root (never `curl | sh`); its card no
+  longer says "for this account". Updates are atomic: a Python engine whose install or load check fails gets its
+  changed packages put back to their previous versions, and Ollama's archive and the macOS apps are unpacked or
+  copied beside the installed ones and swapped in.
+- **Engines are installed by the gateway's administrator, once per computer** (operator ruling 2026-10-29). Every user
+  shares them, so the console's Engines tab and the terminal console's Local providers have no "Allow engine
+  installs" switch. An account that is not an admin reads "An administrator installs engines for this computer."
+  The refused-install message and the network note name the CLI (`abstractgateway-config set allow_engine_install
+  on`) for the gateway's operator.
+- **Provider connections: `create_only`, and key checks that never echo the key** (`routes/gateway.py`,
+  `provider_endpoint_profiles.py`). `POST /config/provider-endpoint-profiles` takes `create_only: true`: an existing
+  id answers 409 `connection_exists` and is left unchanged (decided under the store lock). `POST
+  …/discover-models` redacts the submitted key, its 8-character prefix and suffix, and any provider-masked echo
+  (`sk-abcd****1234`, as OpenAI's 401 quotes it) from `error` and from a 502 detail, and adds `error_kind` (`auth`,
+  `rate_limited`, `unreachable`, `other`, `no_models`) when no model is listed. Tests:
+  `tests/test_gateway_cloud_provider_key_check.py`.
+- **Console islands re-vendored to ui-kit 0.9.9** (kit PR pending release; re-sync from the released tag before
+  merge).
+- **A Hugging Face search lists every quant** (operator ruling, 2026-10-29: "this is a Hugging Face search, it should
+  show what's available, period"). The Hugging Face tab, and the Hugging Face results beside a catalog search, always
+  ask with `extended=true`: every quant of every matching repo, as the Catalog tab does.
+- **The model host is the default on macOS and Windows too** (operator ruling 2026-10-29: "BUILD FOR ALL OS ... we must
+  be consistent across OS"). `serve` runs the models in the supervised child on Linux, macOS and Windows; `in-process`
+  only with `--reload` or when chosen. On a Mac MLX and Metal run in the child (measured with Qwen3.6-27B-4bit and the
+  tray running: `kill -9` mid-chat fails the chat in 0.11 s with the sentence, `/api/health` 200 throughout, the child
+  back in 0.77 s, warm chats as fast as in-process); the child warms its imports after it reports ready. On Windows the
+  child runs without a console window (named-pipe transport); a CI job (`model-host-windows`) runs its life cycle there.
+- **The Models page's filters are one compact, aligned bar: the kit's filter bar** (operator design finding
+  2026-10-29; abstractuic ui-kit backlog 0074). The first line holds the Catalog / Hugging Face switch, the search
+  box and **Fits this computer**; then one row per filter (Quantization, Provider, Capability, Status) with its name
+  in a fixed left column and its chips on the right, wrapping under the chips, never under the name. Every chip
+  has the same size (no 44 px ovals on phones: the hit area grows invisibly) and its count is small grey text.
+  There is no "Every quant" switch on any tab (operator ruling, #79). The setup guide's
+  model step shows the same bar. Until an abstractuic release carries the bar, the console serves a verbatim copy
+  of the kit's `af-filterbar` CSS and a verbatim port of its markup functions, both pinned by tests against the
+  kit.
+- **The Models page is a compact library.** Each model is one compact card with its capability icons
+  aligned on the right, a visible recommendation badge, the download and fit status inline, and icon actions
+  for management; explanations use the kit's accessible tooltips. Builds default to 4-bit, the header
+  discloses the available versions, and full models are the default view (adapters and components are typed
+  cards, managed from the advanced filters; returning from an adapter link keeps the Downloaded scope). The
+  catalogue paints the curated models first and fills in version details afterwards, and concurrent catalogue
+  and inventory reads share one request without keeping a stale answer. A two-row toolbar exposes provider
+  and capability, a quick Downloaded filter and fit filtering, and machine names and filters stay readable on
+  phone-width screens.
+- **The memory inspector is a set of compact, topology-aware cards**, and Accounts keeps every action inside
+  its responsive row.
+- **The console's app cards show the selected illustration set** for Observer, Continuum, Entity, Code, Flow,
+  Note and the Assistant.
+- The console islands bundle follows AbstractUIC ui-kit 0.9.12: cloud provider cards (status only in the
+  badge, model counts on every connected card, compatible endpoint cards last), the docs assistant's
+  dictation and read-aloud, and the avatar cue defaults.
+- **The tray menu is redesigned** (operator 2026-11-01: "not user friendly, not organised, repetitive";
+  `tray/menu_v2.py`, docs/tray.md). It reads top to bottom in the order a person thinks: a header — on macOS a
+  native row (`tray/header_mac.py`, `tray/logo.py`): the AbstractFramework logo, the name, what the machine is doing
+  in words (`2 conversations running · 1 needs you · 1 model loaded`) and a switch that is ON while conversations run
+  and OFF while the gateway is paused (the gateway-wide pause); Windows and Linux, whose menus cannot hold a
+  control, show the name (Linux with the logo beside it, `tray/header_gtk.py`), the subtitle and a `☑ Running` check
+  row that is the same switch; there is no Pause row anywhere —,
+  the meters as percentages, the two doors (**Open Console**, **Open Assistant** promoted
+  from Apps ▸), **Needs you** — every approval or question as its own top-level row with Show and approve… / Deny /
+  Open in Observer (at most three, then one line for the rest) —, then **Conversations ▸** (Running, Need attention, Recent), **Automations ▸** (Active, Paused, the Observer
+  page — automations are standing orders, not conversations), **Models ▸** (memory first: the full meters, one
+  **Eject X (size, engine)…** row per loaded model, **Eject All — frees N…**, then Load a Model, the Activity window
+  and the Resources tab), **Apps ▸**,
+  **Connect ▸** (Addresses ▸ and Network ▸ merged: where it answers now, the addresses to copy, who can reach it,
+  the restart that applies it), **Settings ▸** (Start at login, Warn when memory is almost full, Classic menu),
+  **Help ▸** (links, Copy Console Link, Check for Updates… while no update is known, About), and the lifecycle rows
+  (an update's state while one applies, Restart…, Quit AbstractGateway…). The product name is on
+  the header and on Quit only. Same `Node` model, same action tuples and handlers as before: every classic action is still
+  produced (`tests/test_gateway_tray_menu_v2.py`), `flat_menu` applies, nothing is dropped.
+- **The classic menu is kept whole for a roll-back** (`menu_model.py`, untouched): **Settings ▸ Classic menu**
+  (remembered in `<data_dir>/tray/prefs.json` `menu_style`; the classic menu's **Help ▸ New menu** is the way back),
+  or `abstractgateway serve --tray-menu classic|v2` for one run (the flag wins over the preference).
+- **The engine installer's llama.cpp is 0.3.36 on Linux and Windows** (it knows spark2_5), and on an NVIDIA host it
+  installs the CUDA build matching PyTorch's CUDA (cu125 for CUDA 12, cu130 for CUDA 13; `--reinstall-package` so a
+  CPU build of the same version is replaced) instead of the CPU wheel, which dropped GPU offload. Apple Silicon
+  stays on 0.3.28: the 0.3.36 Metal wheel fails its zip CRC (`lib/cmake/ggml/ggml-config.cmake`), like 0.3.32-0.3.35.
+- **A spoken question's recording is voice transport, not an attachment** (ADR 0047). An upload under the
+  reserved `voice/dictation/` client path is tagged `purpose: voice_dictation` and `artifact_space: voice`.
+  The session artifacts listings hide every voice transport kind (read-aloud audio and dictation) unless
+  `include_voice=true`, matching AbstractRuntime's history bundle rule.
 
 ### Fixed
 
+- **Read receipts on a fresh data folder never fail with "database is locked"** (`session_reads.py`). Concurrent
+  first `POST /api/gateway/me/session-reads` calls raced to switch the new receipt database to WAL, which SQLite
+  does not wait for; the switch now happens once per process under a lock.
 - **A stop signal stops the gateway in under a second, even with live streams open** (`shutdown_drain.py`). One
   open stream (the console's `/me/events/stream`, a run's ledger stream, the tray's polling) held a SIGTERM for the
   whole graceful-shutdown timeout (120 s), so supervisors and people killed the gateway first. Now the moment the
@@ -60,7 +335,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
     before the click.
   - Synthesis never checks, and the voice lists already offer only downloaded voices.
-
 - **Saving an automation that now runs a waiting run's tools continues that run, from any client** (operator QA
   2026-10-29). The operator set a waiting automation to "Run without asking" in the web console and saved; the run
   stayed "waiting for you".
@@ -73,20 +347,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   - A wait still partly blocked stays; `still_asks` names its tools.
   - Only the automation's owner answers its waits this way; a revision by someone else (an admin acting in another
     owner's plane) leaves them.
-- **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
-  8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
-  so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
-  usual port is now left out when its page names another gateway (`gateway_url`) or its command line runs another
-  data dir's app support; this gateway starts its own copy on a free port and opens it signed in (the one-time
-  hand-over). Apps of the dev stack that name no gateway are listed as before.
-- **A voice can be the default only once its model is downloaded** (operator ruling 2026-10-29; backlog 0955
-  closed as rejected and replaced by this rule).
-  - Setting the default voice to a local model whose weights are not on disk is refused when it is chosen: 409
-    with the sentence ("The voice model supertonic-3 (401 MB) is not downloaded on this computer yet, so it cannot
-    be the default voice…") as a plain `detail`, and the download action under `error`.
-  - The console's capability dialog shows that sentence with a **Download (401 MB)** button. Nothing downloads
-    before the click.
-  - Synthesis never checks, and the voice lists already offer only downloaded voices.
 - **A gateway lists only its own apps** (operator P0, 2026-10-29). A second gateway on the same machine (port
   8443 next to 8080) listed the other gateway's running apps as "Started outside the gateway" and opened them,
   so the app asked to sign in to the OTHER gateway with a token ("Invalid Gateway user token"). An app found on a
@@ -110,7 +370,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   runtime client is labelled so ("kept in memory: ... still in use by runtime client
   70a5b844f350" is gone, ADR 0043). Needs AbstractRuntime with `residency_owner_label` /
   `held_by` and AbstractCore 2.31.1 for the KV figures; older ones show what they report.
-
 - **The Models page names a GPU's memory and the computer's memory separately** (operator QA 2026-10-28, item e). A
   server with a 16 GB GPU and 26 GB of RAM read "28.7 GB memory · models up to 16.1 GB". It now reads "Quadro RTX 5000
   · 16.1 GB VRAM · 28.7 GB RAM". The model ceiling is shown only when it differs from the VRAM; unified memory is one
@@ -141,7 +400,6 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   two apart, so the floor check now also refuses by version, naming the installed and required versions; a source
   checkout without metadata is not refused. Fixed in AbstractRuntime 0.15.3 (lpalbou/AbstractRuntime#21, released
   2026-10-29).
-
 - **Route authorization contract covers AbstractNote's 14 write routes.** With `abstractnote` installed (every
   install profile; the operator's instances) the gateway mounts `abstractnote.gateway.router` under
   `/api/gateway/note`, and `tests/test_gateway_route_authorization_contract.py` failed on main: 14 write routes
@@ -158,60 +416,92 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
     file nor that read belongs to the tail.
   - Both stay live: opening the ledger is counted (checked in the test), and a tail that opens the file on an idle
     poll fails it (mutation-checked).
-
-### Added
-
-- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
-  server).
-  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
-    **Show more results** appends the next page.
-  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
-  - A catalog search of three characters or more also asks Hugging Face. Its results come under
-    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
-  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
-  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
-- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
-  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
-  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
-  bad before (OVH 2026-10-29).
-
-- **An installed browser app older than a release's pin is named**: the console's Apps card shows one readable
-  sentence ("Code 0.13.0 is older than the 0.13.2 that AbstractFramework 0.11.18 installs: update Code to get its
-  fixes.") and the gateway's boot log warns. Boot reads the last update check and never runs one. On the OVH test server an old Code showed a reopened conversation's
-  last turn only, with nothing saying the app was behind. The boot warning makes no network request: it reads this install's pins only from an answer an earlier request cached.
-
-- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
-  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
-  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
-  (8090 + slot), its own app port block (derived from a slot registered once in
-  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
-  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
-  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
-  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
-- **The console's Hugging Face search pages, counts, and sits beside the catalog** (operator QA on the release-test
-  server).
-  - Below the Hugging Face cards, a line says how many results are shown and whether more exist.
-    **Show more results** appends the next page.
-  - An exact handle (`Qwen/Qwen3.5-9B`) lists that repo first. When the Hub has no such repo, the line says so.
-  - A catalog search of three characters or more also asks Hugging Face. Its results come under
-    **From Hugging Face**, below the catalog's cards, and Hugging Face mode reuses that answer.
-  - `GET /api/gateway/models/catalog` gains `hub_page` and `hub_page_size`, passed through only when given.
-  - Needs AbstractCore with backlog 0864 (`hub.search`) and AbstractRuntime with its facade passthrough.
-- **A health incident record**: when `/api/health` moves to "degraded" (a failed boot, stopped background workers, a
-  degraded runner), one record is written to `<data dir>/incidents/health-<UTC stamp>.json` with the reasons in words
-  and the health body (one per transition, at most one a minute). Nothing on disk said when or why a gateway turned
-  bad before (OVH 2026-10-29).
-
-- **Gateway instances: several self-contained gateways on one machine** (operator, 2026-10-29).
-  `abstractgateway --instance NAME <command>` (or `ABSTRACTGATEWAY_INSTANCE`) selects a named instance with its
-  own data folder (`-NAME`), its own AbstractCore config (`<data folder>/core-config`), its own default port
-  (8090 + slot), its own app port block (derived from a slot registered once in
-  `~/.config/abstractgateway/instances.json`, so two instances never collide), its own login service
-  (`abstractgateway-NAME.service`, `ai.abstractframework.gateway.NAME`; the unit runs
-  `abstractgateway --instance NAME serve`), and its name in the console (tab title, sidebar) and in
-  `GET /about` (`instance`). `abstractgateway-config` takes `--instance` too. The default instance is unchanged.
+- **`abstractgateway service uninstall` waits for the whole gateway process tree** (backlog 0934). It captures the
+  gateway's processes before launchd or systemd stops the serve process: the recorded serve and app pids, this
+  data folder's app watcher, and every descendant, including the children started in their own session (entity
+  loops, model downloads, managed processes, apps, the tray). It waits up to 20 s for them to exit, then sends
+  SIGTERM, then SIGKILL, and says what it stopped. It fails, naming the process, when one survives. On Linux
+  XDG autostart, where no service manager stops the gateway, it stops the gateway itself. `--dry-run` shows the
+  step, and `service disable` still stops nothing. On Linux the processes are read from procfs (whole command
+  lines); elsewhere `ps -ww`, never cut to the terminal width.
+- **CI covers the seam routes** (backlog 0972). Gateway CI installs every package a seam mounts (today
+  `abstractnote>=0.2.0`), so the route authorization contract walks AbstractNote's routes on every run;
+  `tests/test_gateway_seams_mounted.py` fails when a seam package drops out of the CI install. Tests keep their gateways
+  as on an install without the seam's workflows unless marked `note_workflows` (the workflows' LLM nodes made every
+  test gateway warm a default model), and a developer's `*_API_KEY` variables never reach a test.
+- **A GGUF this computer's llama.cpp cannot load is never offered for download or as the default** (backlog 0973,
+  AbstractCore 0867/0868). The catalog card shows a greyed **Download** or **Use as default**, with the reason as
+  its tooltip ("This computer's llama.cpp (llama-cpp-python 0.3.16) cannot load the spark2_5 architecture. Update
+  llama-cpp-python, or choose another model."). The same applies to a downloaded model outside the catalog. The flag
+  comes from the catalog artifact (the Hub's architecture) or from the downloaded row.
+- Preserve the assistant’s explicitly bound public explanation through entity conversation
+  permission requests, narrowing it to the actual permitted batch. No permission policy changes.
+- **Hugging Face results list every quant** (OVH 8443, 2026-10-29). The console asked Hugging Face without
+  `extended=true`, so the exact repo `unsloth/Qwen3.8-27B-GGUF` showed 2 of its 24 quants. Every hub search now asks
+  with `extended=true`.
+- **TypeSafe (Jev) and System One connections save** (Providers → Connect). The key check passed, then Save
+  answered "Not saved: Unsupported provider family 'typesafe'": the root store is AbstractCore's
+  `provider_profiles`, whose validator kept its own list of eight families. AbstractCore now derives the
+  accepted families from its provider registry (every provider reached over HTTP), so a `typesafe` connection
+  (key, no base URL) and a `systemone` one (base URL, key optional) are created, listed as connected, edited
+  (PUT) and removed (DELETE) like the others, and `endpoint:<id>` routes them with the stored key and URL. A
+  bogus family is still refused, naming the accepted ones. Needs the AbstractCore release with
+  `ProviderRegistry.endpoint_provider_families`. Tests: `tests/test_gateway_provider_endpoint_profiles.py`
+  (typesafe and systemone create/update/delete, families follow the registry).
+- **The Default models step opens in Simple mode at once** (operator, 2026-10-29). The step first drew the older layout
+  ("Checking the recommended starter models…", "Or choose any model that fits this computer", the catalog search) and
+  switched to Simple mode a few seconds later. It now paints Simple mode first: a skeleton of the hero and the capability
+  badges ("Reading what this computer can run…", each badge "Checking…") until the recommendations load. The Simple /
+  Advanced switch moves onto the step's header line, right of the title, so the content starts higher. On a phone it
+  sits under the title.
+- **A gateway-side generation uses the model the runtime already holds** (R2 of the 2026-10-29 residency audit). The
+  sandbox, a run summary and entity chat each built a client of their own per request, and each loaded its own copy
+  of the weights: on a Mac with MLX, one warm-up, one chat and four concurrent sandbox calls left seven instances of
+  the model in the model host child. They now borrow the principal's runtime pool for the call (`_provider` and
+  `_model` per call, with only a `base_url`/`api_key` that differ from the pool's own), so the child holds one
+  instance however many requests run at once. A host without a runtime pool builds its own client as before. In
+  `--model-host process` mode the gateway's embeddings client is built in the child too, so no model loads in the
+  gateway process. The gateway and runtime add no lock: concurrency on one weights object stays with Core.
+  `tests/test_model_host_real_model_e2e.py` (opt-in, `ABSTRACT_E2E_MODEL_HOST_REAL_MODEL=<provider>:<model>`) boots
+  a real gateway on a cached model, runs a chat and N concurrent requests, kills the child, chats again, and asserts
+  one build of the model per child and one weights holder in `/api/gateway/models/loaded` at each phase.
+- **The guided choice offers only models this computer can run** (OVH 8443, 2026-10-29). The setup guide's "Other
+  models that fit" listed Ollama models on a server without Ollama, and picking one would set a route that cannot
+  answer. The list now keeps only models whose engine is installed here (the engine inventory, the 0958 rule; a GGUF
+  runs on llama.cpp). While the inventory loads it says "Checking the engines on this computer…". Each row names its
+  engine readably ("llama.cpp", "Ollama"), never "HuggingFace (huggingface)".
+- "Update llama.cpp" never leaves the engine broken. The new wheel is downloaded into a staging folder and loaded there first (version, GPU offload, `libggml-cuda` on a CUDA build). Only a wheel that passes replaces the installed one, and it replaces llama.cpp alone (`--no-deps`). If the installed copy then fails the same check, the previous version is put back. An update never builds from source and never asks for a compiler. A refused or failed update keeps the card Ready and shows why in one sentence (before, the OVH server showed "Needs a prerequisite ... a C/C++ compiler" over a working engine).
+- Engine install texts say "for this computer", because the gateway's service account serves every user. "For this account" is gone from the Ollama notes, the macOS location choice and the administrator reasons.
+- "Update llama.cpp" on a Linux NVIDIA server now installs the CUDA wheel (the engine installer detects the GPU with `nvidia-smi -L`, as the root installer does) and updates llama.cpp alone (`--no-deps`), instead of re-resolving AbstractCore's gpu setting, which built stable-diffusion-cpp-python from source and failed without a C compiler.
+- A CUDA llama.cpp wheel that installs but carries no libggml-cuda library or reports no GPU offload now fails the job with a readable sentence (before, it was only a warning in the log, and the CPU build stayed in place silently).
+- **After a model host restart the next chat answers** (pass three on the OVH box, 2026-10-29). The restarted child
+  rebuilt every client it had held: gateway-side clients (a run summary, the sandbox, entity chat) loaded the model as
+  instances of their own, and the runtime's pool was rebuilt with its boot-time default and then switched, asking for
+  a second copy of the 9B model that the residency failsafe refused ("needs 7.5 GB but only 5.8 GB free"); chat
+  failed after every restart until someone unloaded. Now only the runtimes' pool clients are rebuilt at once, with
+  their current default as their identity (the switch is not replayed), and a gateway-side client is rebuilt by its
+  next call, after the pool holds the model. `tests/test_model_host_restart_chat_e2e.py` boots a real gateway, sets
+  the default, chats, kills the child, chats again, and checks the new child built the model no more often than the
+  first and nothing else.
+- **Resources reports unified memory only with evidence.** An MPS backend counts as unified memory only when
+  the same host reports Apple Silicon hardware; otherwise its device counter is shown as "GPU memory" with an
+  unreported topology.
+- Native model-host readiness and structured run calls work independently of
+  optional HTTP listeners. Request-encoding failures are nonretryable and carry
+  run/step correlation where available.
+- Optional listener shutdown failures remain visible, and unchanged listener
+  status is not repeatedly written to disk.
+- **Updating llama.cpp never replaces a GPU build by the CPU wheel, nor llama.cpp under a loaded model.** On an
+  NVIDIA host the CUDA build comes from PyTorch's CUDA or, failing that, from the installed llama.cpp's own CUDA
+  runtime; when neither has one the update is refused with the sentence ("This computer has an NVIDIA GPU, but
+  neither the gateway's PyTorch nor its llama.cpp has a CUDA build ..."). `POST /engines/llamacpp/install` refuses
+  with "Unload <model> first: llama.cpp cannot be updated while it holds a model." while a GGUF is resident
+  (in-process or in the model host child). After the update the model host child is restarted so the new llama.cpp
+  takes effect, and the result says so.
 
 ## [0.18.0] - 2026-10-28
+
+Not published to PyPI: these changes ship in [0.19.0].
 
 A fresh install can be set up from a browser on any machine: first-run onboarding with an admin
 password, and password sign-in next to tokens. New routes, additive fields; no route removed, no

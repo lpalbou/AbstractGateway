@@ -9,9 +9,15 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Switching a fresh database to WAL takes an exclusive lock that SQLite does not wait for (the
+# busy timeout does not apply): concurrent first connections of this process could fail with
+# "database is locked". The mode persists in the file, so it is set once, under this lock.
+_INIT_LOCK = threading.Lock()
 
 
 class SessionReadLedger:
@@ -24,7 +30,18 @@ class SessionReadLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=15)
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")
+        try:
+            with _INIT_LOCK:
+                if str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                    db.execute("PRAGMA journal_mode=WAL")
+                self._create_schema(db)
+        except BaseException:
+            db.close()
+            raise
+        return db
+
+    @staticmethod
+    def _create_schema(db: sqlite3.Connection) -> None:
         db.execute("""CREATE TABLE IF NOT EXISTS read_events (
             sequence INTEGER PRIMARY KEY AUTOINCREMENT,
             tenant TEXT NOT NULL, user TEXT NOT NULL,
@@ -35,7 +52,6 @@ class SessionReadLedger:
         # Clients ask for receipts of only the visible run ids. Keep that lookup
         # proportional to the sidebar's runs rather than the account's history.
         db.execute("CREATE INDEX IF NOT EXISTS reads_principal_run ON read_events(tenant,user,run_id,sequence)")
-        return db
 
     @staticmethod
     def _wire(row: sqlite3.Row) -> dict[str, Any]:

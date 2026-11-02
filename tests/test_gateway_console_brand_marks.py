@@ -55,13 +55,19 @@ def test_every_engine_and_cloud_provider_has_an_official_mark_or_a_documented_fa
     for id_ in ids:
         info = got["marks"][id_]["info"]
         html = got["marks"][id_]["html"]
-        assert info["kind"] in {"icon", "text"}, f"{id_}: no mark and no documented fallback ({info})"
+        # icon: an official mark; text: a documented text fallback; glyph (kit 0.9.12): a protocol, not a
+        # brand (System One-compatible endpoints), drawn with the kit's neutral glyph and its documented reason.
+        assert info["kind"] in {"icon", "text", "glyph"}, f"{id_}: no mark and no documented fallback ({info})"
         if info["kind"] == "icon":
             icon = info["icon"]
             for field in ("source", "terms", "licence", "retrieved"):
                 assert icon.get(field), f"{id_}: the mark has no {field}"
             assert html.startswith(f'<span class="af-brand-mark" data-brand="{id_}"') and "<svg viewBox=" in html
             assert "http" not in icon["body"], f"{id_}: a mark must not reference any host"
+        elif info["kind"] == "glyph":
+            fb = info["fallback"]
+            assert fb["glyph"] and len(fb["reason"]) >= 20, f"{id_}: a glyph fallback needs its glyph and its reason"
+            assert "af-brand-mark--glyph" in html and "<svg " in html and "http" not in html
         else:
             fb = info["fallback"]
             assert fb["text"] and len(fb["reason"]) >= 20, f"{id_}: a text fallback needs its reason"

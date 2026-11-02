@@ -27,7 +27,17 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.2** ([CHANGELOG](CHANGELOG.md)): the console's app manager installs
+**What's new in 0.19.0** ([CHANGELOG](CHANGELOG.md#0190---2026-11-02); it also ships the
+changes prepared as 0.18.0, which was not published): a fresh gateway is set up from the
+browser with an admin password, and accounts sign in with a password or a token; the models
+run in a supervised model host process on every OS; decisions (`POST /v1/decisions`,
+`POST /api/gateway/runs/{run_id}/decisions`) over AbstractCore 2.32.0's decision models;
+several self-contained gateway instances on one machine; the redesigned Models library,
+Resources page and tray menu; Assistant (web) as a managed app; voice streams that send
+keep-alive lines and record what they did in the audit log; and dictation recordings kept out
+of conversation attachments. It requires AbstractCore 2.32.0, AbstractRuntime 0.16.0 and AbstractAgent 0.5.0.
+
+**What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
 never installed by itself); `network status` reports the user auth a loopback gateway
 turned on itself.
