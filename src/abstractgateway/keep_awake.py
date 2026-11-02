@@ -32,7 +32,7 @@ releasing it when remote access goes off is one call, not a child to kill.
 
 Other systems: not implemented. The equivalents are `systemd-inhibit
 --what=idle` (Linux) and `SetThreadExecutionState(ES_CONTINUOUS |
-ES_SYSTEM_REQUIRED)` (Windows), tracked by root backlog 1100. There the status
+ES_SYSTEM_REQUIRED)` (Windows), tracked by root backlog 1101. There the status
 says "Not keeping awake: not available on this system", and `serve` logs it
 once.
 """
