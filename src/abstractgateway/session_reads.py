@@ -30,10 +30,14 @@ class SessionReadLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=15)
         db.row_factory = sqlite3.Row
-        with _INIT_LOCK:
-            if str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
-                db.execute("PRAGMA journal_mode=WAL")
-            self._create_schema(db)
+        try:
+            with _INIT_LOCK:
+                if str(db.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                    db.execute("PRAGMA journal_mode=WAL")
+                self._create_schema(db)
+        except BaseException:
+            db.close()
+            raise
         return db
 
     @staticmethod
