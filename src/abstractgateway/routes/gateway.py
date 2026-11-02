@@ -6667,11 +6667,13 @@ def _artifact_rows_from_store_search(
     if not callable(search_fn) or post_filter_needed:
         if post_filter_needed:
             warnings.append("query_or_scope_requires_gateway_post_filter")
+        from ..voice_artifacts import is_voice_transport
+
         rows = _artifact_search_candidates(store, scope=scope0, session_id=session_id, run_id=run_id)
         rows = [
             item
             for item in rows
-            if (include_voice or item.tags.get("purpose") != "voice_playback") and _artifact_matches_filters(
+            if (include_voice or not is_voice_transport(item.tags)) and _artifact_matches_filters(
                 item,
                 query=query0,
                 modality=modality,
@@ -13053,8 +13055,16 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 
 
 @router.post("/runs/{run_id}/voice/tts/stream")
-async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingResponse:
-    """Stream Runtime-owned TTS events as JSON Lines."""
+async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) -> StreamingResponse:
+    """Stream Runtime-owned TTS events as JSON Lines.
+
+    The audit entry (written by the security middleware after the body has
+    finished) carries `voice_stream`: the resolved provider/model/voice plus
+    the lines, audio bytes and keep-alives sent and how the stream ended
+    (done / error / watchdog / disconnected) — filled in place by the body
+    into `request.state.audit_detail` (2026-11-01 watch incident: the audit
+    showed only "200, 253 s").
+    """
     if getattr(req, "one_shot", None):
         # AbstractCore renders a one-shot take whole; a stream would deliver it in pieces.
         raise HTTPException(status_code=422, detail="one_shot is not available on the streamed route; use POST /runs/{run_id}/voice/tts.")
@@ -13159,7 +13169,21 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     # R13.1: bounded admission, engine setup and event pulling strictly off
     # the event loop, a "queued" line when the engine is busy, an idle
     # watchdog line, clean-up even when the client leaves (voice_stream.py).
-    from ..voice_stream import open_voice_stream
+    from ..voice_stream import new_stream_stats, open_voice_stream
+
+    # One dict object: the body fills the counters while it streams, the
+    # security middleware reads request.state.audit_detail after the body.
+    stream_stats = new_stream_stats()
+    stream_stats.update(
+        {
+            "provider": provider_name,
+            "model": model_name,
+            "voice": voice_name,
+            "profile": profile_name,
+            "text_chars": len(text),
+        }
+    )
+    request.state.audit_detail = {"voice_stream": stream_stats}
 
     return await open_voice_stream(
         setup=lambda: stream_voice(parent_run_id, text=text, output=output_spec, params=params),
@@ -13179,6 +13203,7 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
             ),
         ),
         encode=_voice_stream_jsonl,
+        stats=stream_stats,
     )
 
 
@@ -31207,6 +31232,11 @@ async def attachments_upload(
 
     # Prefix client uploads to avoid collisions with server workspace virtual paths.
     handle = _normalize_client_source_path(source_path, filename_final)
+    # A spoken question's recording (the reserved voice/dictation/ path) is voice
+    # transport, never an attachment of the conversation (ADR 0047): stamp it so
+    # every default listing and the history bundle hide it like read-aloud audio.
+    from ..voice_artifacts import dictation_tags
+
     stored = _store_session_artifact(
         svc=svc,
         session_id=sid,
@@ -31217,6 +31247,7 @@ async def attachments_upload(
         source="upload",
         source_path=handle,
         kind="attachment",
+        extra_tags=dictation_tags(handle) or None,
     )
     return {**stored, "attachment": stored.get("artifact")}
 

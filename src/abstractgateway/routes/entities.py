@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..work_pools import off_loop
@@ -5474,14 +5474,15 @@ async def entity_voice_tts(name: str, req: "GatewayVoiceTTSRequest") -> Dict[str
 
 
 @router.post("/{name}/voice/tts/stream")
-async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest"):
+async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest", request: Request):
     """Streaming twin of the entity TTS lane — same resolution, same
     delegation; `X-Voice-Source` rides the response headers (the JSONL
-    stream body is the generic route's, byte-unchanged)."""
+    stream body is the generic route's, byte-unchanged). `request` carries
+    the audit detail the generic route fills (voice_stream counters)."""
     from .gateway import voice_tts_stream
 
     manifest, tts_req, scope, source = _entity_tts_request(name, req)
-    response = await voice_tts_stream(scope, tts_req)
+    response = await voice_tts_stream(scope, tts_req, request)
     try:
         response.headers["X-Voice-Source"] = source
         response.headers["X-Entity"] = manifest.slug
