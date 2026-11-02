@@ -31,8 +31,9 @@ runs next to a generating model. The rules this module implements:
   records the synthesis as cancelled) and the permit returns when the engine
   thread is done.
 - ``stats`` (optional, the caller's dict) is filled in place with what the
-  stream did — lines, audio lines/bytes, keep-alives and how it ended — so
-  the route can hand it to the audit log, which is written after the body.
+  stream did — lines, audio lines/bytes, whole text segments, keep-alives and
+  how it ended — so the route can hand it to the audit log, which is written
+  after the body.
 """
 
 from __future__ import annotations
@@ -113,7 +114,7 @@ def _close_quietly(events: Any) -> None:
 
 def new_stream_stats() -> Dict[str, Any]:
     """The counters ``open_voice_stream`` fills (a fresh dict; pass it as ``stats``)."""
-    return {"lines": 0, "audio_lines": 0, "audio_bytes": 0, "keepalives": 0, "ended": None}
+    return {"lines": 0, "audio_lines": 0, "audio_bytes": 0, "segments": 0, "keepalives": 0, "ended": None}
 
 
 async def open_voice_stream(
@@ -193,6 +194,8 @@ async def open_voice_stream(
                 counters["audio_bytes"] += int(size or 0)
             except Exception:
                 pass
+        elif kind == "segment_end":
+            counters["segments"] += 1  # text segments delivered whole (abstractvoice ADR 0009)
         elif kind == "keepalive":
             counters["keepalives"] += 1
         elif kind in ("done", "error", "cancelled"):
