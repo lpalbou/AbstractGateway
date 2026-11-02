@@ -56,7 +56,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from . import menu_model as mm
 from .menu_model import SEP, MenuInputs, Node, info
-from .sampler import Snapshot, fmt_bytes, fmt_pct
+from .sampler import AutomationRow, Snapshot, fmt_bytes, fmt_pct
 
 STYLE = "v2"
 CLASSIC = "classic"
@@ -297,28 +297,32 @@ def conversations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
 
 def automations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
     """**Automations ▸** — the standing orders (`GET /automations`): Active
-    (`⏱ <title> · Every day at 09:00 · next …`) and Paused, each row with the
-    classic submenu (Open in Observer, Run now, Pause / Resume), then the
-    Automations page in Observer. Nothing is computed by the tray: the
-    trigger words and the next run are the gateway's."""
+    (`⏱ <title> · Every day at 09:00 · next …`), then **Paused (N) ▸**, a
+    folded submenu (ADR 0048), each row with the classic submenu (Open in
+    Observer, Run now, Pause / Resume), then the Automations page in Observer.
+    Nothing is computed by the tray: the order, the sections, the trigger words
+    and the next run are the gateway's."""
     reachable = snap.reachable
-    active = [a for a in snap.automations if a.status == "active"]
-    paused = [a for a in snap.automations if a.status == "paused"]
+    # The standing ones (active or paused), split by the served section (ADR 0048).
+    standing = [a for a in snap.automations if a.status in {"active", "paused"}]
+    active = [a for a in standing if a.section == "active"]
+    paused = [a for a in standing if a.section == "paused"]
     out: List[Node] = []
     if snap.automations_error and not (active or paused):
         out += [info("Automation list unavailable"), info(mm.middle_ellipsis(str(snap.automations_error), 60))]
     elif not (active or paused):
         out.append(info("No automations yet"))
+
+    def row(a: AutomationRow) -> Node:
+        return Node(mm.automation_row_label(a), children=mm.automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path))
+
     if active:
         out.append(info(f"Active ({len(active)})"))
-        for a in active:
-            out.append(Node(mm.automation_row_label(a), children=mm.automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+        out.extend(row(a) for a in active)
     if paused:
         if active:
             out.append(SEP)
-        out.append(info(f"Paused ({len(paused)})"))
-        for a in paused:
-            out.append(Node(mm.automation_row_label(a), children=mm.automation_submenu(a, observer=observer, reachable=reachable, observer_path=snap.observer_automations_path)))
+        out.append(Node(f"Paused ({len(paused)})", children=tuple(row(a) for a in paused)))
     out.append(SEP)
     out.append(Node("Open Automations in Observer", ("open_automations_observer",), enabled=bool(observer and reachable and snap.observer_automations_path)))
     return tuple(out)

@@ -6677,7 +6677,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours. Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `paused_automations` and `archived_automations` count yours. Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -6724,6 +6724,12 @@ nothing: the session's runs, ledgers and artifacts stay, and
 | `POST /api/gateway/sessions/{session_id}/unarchive` | `{session_id, archived: false, archived_at: null, archived_by: null, changed}` |
 | `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions of the listed `kind` you have archived) |
 | `GET /api/gateway/runs?root_only=true&archived_only=true` | only the turns of archived sessions, each with `archived: true` |
+
+**Order.** Turn listings come most recently updated first, so an app that folds the rows by
+`session_id` lists the session with the latest activity first, and a new turn in an older
+session moves it to the top. Apps show that order as served, with archived sessions in their
+own Archived section (the framework's ADR 0048; automations follow the same rule, see
+[Listing order](docs/automations.md#listing-order)).
 
 **Session purpose (`kind`).** A session is a `conversation` (the default) or a
 `docs` chat (a Docs assistant conversation). `POST /api/gateway/runs/start`
@@ -11724,19 +11730,47 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}`, newest first |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations, archived_automations}`, in the [listing order](#listing-order) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
   `failed`, `archived`. `limit` is 1 to 200 (default 50).
 - Archived automations are left out of the list unless you ask for them:
   `archived_only=true` lists only archived ones (it cannot be combined with
-  `status`), or name `archived` in `status`. `archived_automations` is how
-  many of yours are archived, on every page.
-- Read every page, following `next_cursor` until it is `null`: older
-  scheduled runs ([Legacy](#older-scheduled-runs-legacy)) come on the last
-  page. `changed_since` is refused (422 `unsupported_feature`); poll complete
+  `status`), or name `archived` in `status`. `paused_automations` and
+  `archived_automations` are how many of yours are paused and archived, on
+  every page, whatever the filter.
+- Read every page, following `next_cursor` until it is `null`.
+  `changed_since` is refused (422 `unsupported_feature`); poll complete
   pages instead.
+
+### Listing order
+
+The gateway serves the list in the order every app draws it, so no app sorts
+it again:
+
+1. **Active first.** Every automation that is neither paused nor archived
+   (status `active`, `completed` or `failed`), most recent activity first.
+2. **Then paused**, most recent activity first.
+3. Archived automations are their own listing (`archived_only=true`), most
+   recent activity first.
+
+Each row says where it belongs: `section` is `"active"`, `"paused"` or
+`"archived"`, and `last_activity_at` is the instant the order uses: the
+automation's last change (an occurrence started or finished, a pause or
+resume, a revision, an archive). Rows with the same instant are ordered by
+`automation_id`, descending. Older scheduled runs
+([Legacy](#older-scheduled-runs-legacy)) are placed by the same rule.
+
+Apps show the active rows, then a **Paused** section folded by default and
+labelled like Archived (an icon, "Paused" and `paused_automations`); see the
+framework's ADR 0048.
+
+`next_cursor` continues this order where the page stopped. The order follows
+activity, so an automation that runs between two page reads moves up: an app
+that reads several pages keeps one row per `automation_id`. A cursor from an
+earlier gateway (created-order `auto1:` cursors) is refused with 422
+`invalid_request` (`field: "cursor"`); start again from the first page.
 
 `AutomationSummary`:
 
@@ -11758,6 +11792,8 @@ for a trigger with no clock time (manual, email).
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
+ "section": "active",                 // active | paused | archived (Listing order)
+ "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 ```
@@ -12088,7 +12124,7 @@ independent automation's occurrences have `session_kind: "occurrence"`.
 
 Schedules created with `POST /api/gateway/runs/schedule`
 ([api.md](docs/api.md#2b-schedule-a-run-bundle-mode)) are not converted. They
-appear on the last page of `GET /api/gateway/automations` with `legacy: true`,
+appear in `GET /api/gateway/automations`, placed by the [listing order](#listing-order), with `legacy: true`,
 `revision: null` and `capabilities: ["legacy"]`, and keep their own controls
 (`pause`, `resume`, `cancel` through `POST /api/gateway/commands`).
 

@@ -175,7 +175,7 @@ def test_the_meters_line_is_percentages_and_models_leads_with_memory() -> None:
 
 
 def test_automations_are_their_own_section_and_conversations_keep_only_conversations() -> None:
-    paused = AutomationRow("a2", "Inbox triage", "paused", schedule_text="", capabilities=("run_now", "resume"), trigger_text="When mail arrives in me@example.org")
+    paused = AutomationRow("a2", "Inbox triage", "paused", schedule_text="", capabilities=("run_now", "resume"), trigger_text="When mail arrives in me@example.org", section="paused")
     nodes = v2.build_menu(_inputs(snap=_snap(runs=(RUNNING, DONE), automations=(DAILY, paused), observer_automations_path="/apps/observer/#automations")))
     autos = _sub(nodes, "Automations")
     labels = _labels(autos)
@@ -183,9 +183,10 @@ def test_automations_are_their_own_section_and_conversations_keep_only_conversat
         "Active (1)",
         "⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00",
         "Paused (1)",
-        "⏸ Inbox triage · paused · When mail arrives in me@example.org",
         "Open Automations in Observer",
     ]
+    # ADR 0048: the paused ones are folded into their own submenu, in the gateway's order.
+    assert _labels(_sub(autos, "Paused (1)")) == ["⏸ Inbox triage · paused · When mail arrives in me@example.org"]
     daily = _sub(autos, "⏱ Daily digest · Every day at 09:00 · next Fri 17 Oct 09:00")
     assert [n.label for n in daily] == ["Active · Every day at 09:00 · next Fri 17 Oct 09:00", "Open in Observer", "Run now", "Pause"]
     assert daily[2].action == ("auto_run_now", "a1")

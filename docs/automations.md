@@ -413,19 +413,47 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}`, newest first |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations, archived_automations}`, in the [listing order](#listing-order) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
   `failed`, `archived`. `limit` is 1 to 200 (default 50).
 - Archived automations are left out of the list unless you ask for them:
   `archived_only=true` lists only archived ones (it cannot be combined with
-  `status`), or name `archived` in `status`. `archived_automations` is how
-  many of yours are archived, on every page.
-- Read every page, following `next_cursor` until it is `null`: older
-  scheduled runs ([Legacy](#older-scheduled-runs-legacy)) come on the last
-  page. `changed_since` is refused (422 `unsupported_feature`); poll complete
+  `status`), or name `archived` in `status`. `paused_automations` and
+  `archived_automations` are how many of yours are paused and archived, on
+  every page, whatever the filter.
+- Read every page, following `next_cursor` until it is `null`.
+  `changed_since` is refused (422 `unsupported_feature`); poll complete
   pages instead.
+
+### Listing order
+
+The gateway serves the list in the order every app draws it, so no app sorts
+it again:
+
+1. **Active first.** Every automation that is neither paused nor archived
+   (status `active`, `completed` or `failed`), most recent activity first.
+2. **Then paused**, most recent activity first.
+3. Archived automations are their own listing (`archived_only=true`), most
+   recent activity first.
+
+Each row says where it belongs: `section` is `"active"`, `"paused"` or
+`"archived"`, and `last_activity_at` is the instant the order uses: the
+automation's last change (an occurrence started or finished, a pause or
+resume, a revision, an archive). Rows with the same instant are ordered by
+`automation_id`, descending. Older scheduled runs
+([Legacy](#older-scheduled-runs-legacy)) are placed by the same rule.
+
+Apps show the active rows, then a **Paused** section folded by default and
+labelled like Archived (an icon, "Paused" and `paused_automations`); see the
+framework's ADR 0048.
+
+`next_cursor` continues this order where the page stopped. The order follows
+activity, so an automation that runs between two page reads moves up: an app
+that reads several pages keeps one row per `automation_id`. A cursor from an
+earlier gateway (created-order `auto1:` cursors) is refused with 422
+`invalid_request` (`field: "cursor"`); start again from the first page.
 
 `AutomationSummary`:
 
@@ -447,6 +475,8 @@ for a trigger with no clock time (manual, email).
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
+ "section": "active",                 // active | paused | archived (Listing order)
+ "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 ```
@@ -777,7 +807,7 @@ independent automation's occurrences have `session_kind: "occurrence"`.
 
 Schedules created with `POST /api/gateway/runs/schedule`
 ([api.md](./api.md#2b-schedule-a-run-bundle-mode)) are not converted. They
-appear on the last page of `GET /api/gateway/automations` with `legacy: true`,
+appear in `GET /api/gateway/automations`, placed by the [listing order](#listing-order), with `legacy: true`,
 `revision: null` and `capabilities: ["legacy"]`, and keep their own controls
 (`pause`, `resume`, `cancel` through `POST /api/gateway/commands`).
 
