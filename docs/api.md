@@ -2227,7 +2227,36 @@ returns JSON Lines stream events for progressive playback when discovery adverti
 `capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal `done` event's `metrics` carry `ttfb_s`, `rtf`, `device` and, on the CPU, `device_reason`.
 
-Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. After 10 seconds without any other line, the stream writes `{"type": "keepalive", "ok": true, "request_id": …}`, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose `type` you do not know. The request's audit log line (`<data dir>/audit_log.jsonl`) carries `voice_stream`: `provider`, `model`, `voice`, `profile`, `text_chars`, `lines`, `audio_lines`, `audio_bytes`, `keepalives` and `ended` (`done`, `error`, `cancelled`, `watchdog` or `disconnected`). The entity route `POST /api/gateway/entities/{name}/voice/tts/stream` streams the same lines. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
+Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`, `segment_end`; see [Resuming a broken stream](#resuming-a-broken-stream)), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. After 10 seconds without any other line, the stream writes `{"type": "keepalive", "ok": true, "request_id": …}`, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose `type` you do not know. The request's audit log line (`<data dir>/audit_log.jsonl`) carries `voice_stream`: `provider`, `model`, `voice`, `profile`, `text_chars`, `lines`, `audio_lines`, `audio_bytes`, `segments` (`segment_end` lines sent), `keepalives` and `ended` (`done`, `error`, `cancelled`, `watchdog` or `disconnected`). The entity route `POST /api/gateway/entities/{name}/voice/tts/stream` streams the same lines. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
+
+#### Resuming a broken stream
+
+The engine speaks the text as a sequence of text segments, each one independent synthesis of exactly its
+slice of the text (AbstractVoice ADR 0009). With AbstractVoice as the voice engine:
+
+- every `audio` line carries `segment` (from 0) and that segment's `text_start` / `text_end`: offsets
+  `[start, end)` into the request `text` exactly as you sent it, counted in Unicode code points (Swift
+  `text.unicodeScalars`, JavaScript `Array.from(text)`, Python `str` indexes). All the lines of one segment
+  (audio is sent in slices of at most 2 s) share them;
+- after a segment's last audio comes `{"type": "segment_end", "schema": "abstractvoice.tts_stream.segment_end.v1", "segment": k, "text_start": s, "text_end": e}`;
+- `done` carries `segments`, the number of segments ended.
+
+```json
+{"type":"audio","sequence":0,"segment":0,"text_start":0,"text_end":61,"audio_b64":"UklGR…","sample_rate":24000}
+{"type":"audio","sequence":1,"segment":0,"text_start":0,"text_end":61,"audio_b64":"UklGR…","sample_rate":24000}
+{"type":"segment_end","segment":0,"text_start":0,"text_end":61}
+{"type":"audio","sequence":2,"segment":1,"text_start":62,"text_end":140,"audio_b64":"UklGR…","sample_rate":24000}
+```
+
+When a stream breaks (the connection drops, or an `error` line ends it), request the text again from
+`text_end` of the last `segment_end` you received (from the start when you received none), and discard the
+audio of the segment that had no `segment_end`. Offsets in the new stream index the new request's text.
+Because each segment is a whole synthesis, nothing is repeated or missed at the seam, whatever the engine
+samples on the second try. The resume unit is one segment: a base engine's sentence group, one Qwen3-TTS
+clone generation (a reply of up to 800 characters is one generation on Apple silicon), so a break inside a
+long segment repeats that segment from its start. Send plain text: an emphasis marker spanning two segments
+would leave its closing marker in the remaining text. Lines without `segment` (an engine that does not
+report segments) mean the whole request is one unit: retry it from the start.
 
 Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
 

@@ -13087,8 +13087,10 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) 
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
 
     request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
-    text = str(getattr(req, "text", "") or "").strip()
-    if not text:
+    # The text goes to the engine exactly as sent: the stream's segment offsets
+    # (`text_start`/`text_end`) index the client's own text (resume after a break).
+    text = str(getattr(req, "text", "") or "")
+    if not text.strip():
         raise HTTPException(status_code=400, detail="text is required")
 
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
