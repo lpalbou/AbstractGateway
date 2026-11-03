@@ -55,6 +55,7 @@ fn candidate(id: &str, label: &str, dark: bool) -> ThemeCandidate {
         label: label.into(),
         dark,
         tokens: t,
+        ground_intent: Vec::new(),
     }
 }
 

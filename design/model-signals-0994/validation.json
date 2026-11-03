@@ -1,0 +1,121 @@
+{
+  "gateway_commits": [
+    "9fd6038a",
+    "b3908d01"
+  ],
+  "shared_kit_commit": "4d0347e",
+  "checks": {
+    "wide_regression_initial_passed": 63,
+    "initial_failures": "2: hidden native switch click in browser harness and old unfiltered count expectation; corrected",
+    "catalog_browser_sync_gate_passed": 33,
+    "final_narrow_header_gate_passed": 7,
+    "browser": {
+      "checks": 162,
+      "failures": []
+    },
+    "brand_checks": 492,
+    "tooltip_checks": 42,
+    "top_bar_checks": 32,
+    "css_balance": true,
+    "theme_token_blocks": 21,
+    "strict_contrast_named_themes": 20
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "dimensions": {
+          "card": 195,
+          "header": 45,
+          "rows": [
+            44,
+            44,
+            44
+          ],
+          "columns": 2
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "twoColumns": true,
+          "headerCapabilities": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "rightAlignedCapabilities": true,
+          "fitsDefaultOn": true,
+          "signalOrder": true,
+          "officialQwenMark": true,
+          "visionInput": true,
+          "signalColours": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "fitOffInLink": true,
+          "fitOffSurvivesReload": true,
+          "fitOnRestored": true,
+          "downloadedShowsAll": true,
+          "browseRestoresFit": true,
+          "mobileFits": true,
+          "noteDeploymentPreserved": true
+        },
+        "tooltip": {
+          "background": "rgb(22, 33, 62)",
+          "text": "rgb(238, 238, 238)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      },
+      {
+        "theme": "light",
+        "dimensions": {
+          "card": 195,
+          "header": 45,
+          "rows": [
+            44,
+            44,
+            44
+          ],
+          "columns": 2
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "twoColumns": true,
+          "headerCapabilities": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "rightAlignedCapabilities": true,
+          "fitsDefaultOn": true,
+          "signalOrder": true,
+          "officialQwenMark": true,
+          "visionInput": true,
+          "signalColours": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "fitOffInLink": true,
+          "fitOffSurvivesReload": true,
+          "fitOnRestored": true,
+          "downloadedShowsAll": true,
+          "browseRestoresFit": true,
+          "mobileFits": true,
+          "noteDeploymentPreserved": true
+        },
+        "tooltip": {
+          "background": "rgb(255, 255, 255)",
+          "text": "rgb(15, 23, 42)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      }
+    ],
+    "errors": [],
+    "managementWrites": []
+  }
+}

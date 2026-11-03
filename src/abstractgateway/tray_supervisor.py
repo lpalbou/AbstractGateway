@@ -164,12 +164,73 @@ def display_available(*, platform: str = sys.platform, env: Optional[Mapping[str
     return False, f"unsupported platform {platform}"
 
 
+_service_launch_marker: Optional[str] = None
+
+
+def mark_service_launch(how: str) -> None:
+    """The service launcher (`python -m abstractgateway.os_service launch`, the Windows Run entry and
+    the XDG autostart entry) says this process is the machine's gateway service."""
+    global _service_launch_marker
+    _service_launch_marker = str(how)
+
+
+def _read_proc_cgroup() -> str:
+    try:
+        with open("/proc/self/cgroup", "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def service_launch(*, platform: str = sys.platform, env: Optional[Mapping[str, str]] = None,
+                   cgroup_text: Optional[str] = None) -> Optional[str]:
+    """How this process was started as the machine's gateway service, or None (a terminal, a test,
+    an e2e harness, a script). Facts only, read from the launch itself:
+
+    - macOS: launchd sets XPC_SERVICE_NAME to the job's label: our LaunchAgent's label;
+    - Linux: systemd puts the process in its unit's cgroup: our user unit;
+    - Windows Run entry and XDG autostart: the service launcher marks it (`mark_service_launch`).
+
+    A relaunch from the tray or console keeps all three (same environment, same cgroup, and the
+    launcher's `--tray` is on the relaunched command line)."""
+    from .os_service import launchd_label, systemd_unit
+
+    if _service_launch_marker:
+        return _service_launch_marker
+    env = os.environ if env is None else env
+    if platform == "darwin":
+        # This instance's label (`ai.abstractframework.gateway`, `...gateway.NAME`: instances.py).
+        label = launchd_label()
+        if str(env.get("XPC_SERVICE_NAME") or "").strip() == label:
+            return f"launchd ({label})"
+        return None
+    if str(platform).startswith("linux"):
+        unit = systemd_unit()  # `abstractgateway.service`, `abstractgateway-NAME.service`
+        text = _read_proc_cgroup() if cgroup_text is None else cgroup_text
+        for line in text.splitlines():
+            if line.rstrip().endswith("/" + unit):
+                return f"systemd ({unit})"
+    return None
+
+
+def _instance_name() -> str:
+    from .instances import current_instance
+
+    return current_instance()
+
+
+NOT_SERVICE_HINT = ("only the machine's gateway service shows the icon (started at login by "
+                    "`abstractgateway service install` or the installer); pass --tray to show it for this one")
+
+
 def tray_decision(
     *,
     reload: bool = False,
     runner_only: bool = False,
     no_tray: bool = False,
     no_tray_reason: Optional[str] = None,
+    tray: bool = False,
+    service: Optional[str] = None,
     platform: str = sys.platform,
     env: Optional[Mapping[str, str]] = None,
     dependencies: Optional[tuple[bool, Optional[str]]] = None,
@@ -193,6 +254,10 @@ def tray_decision(
         return TrayDecision(False, "no_tray_flag", "started with --no-tray")
     if reload:
         return TrayDecision(False, "dev_reload", "`serve --reload` re-imports the app in a child that never runs main(); start without --reload")
+    if not tray and not service:
+        # Operator ruling 2026-10-29 (two icons on one desktop: a scratch gateway's beside the
+        # service's): a `serve` from a terminal, a test or a harness never puts an icon up.
+        return TrayDecision(False, "not_service", NOT_SERVICE_HINT)
     ok, problem = display_available(platform=platform, env=env, probes=probes)
     if not ok:
         return TrayDecision(False, "headless", problem)
@@ -338,6 +403,8 @@ class TraySupervisor:
                 "data_dir": str(data_dir),
                 "version": str(version),
                 "console_path": "/console",
+                # A named instance's icon says which gateway it is (instances.py).
+                "instance": _instance_name(),
                 **(extra or {}),
             }
             cmd = [_child_python(), "-m", "abstractgateway.tray", "--parent-pid", str(os.getpid())]
@@ -468,9 +535,9 @@ _serve_context: Dict[str, Any] = {}
 
 def record_serve_context(
     *, base_url: str, data_dir: Path, version: str, reload: bool, runner_only: bool, no_tray: bool = False,
-    no_tray_reason: Optional[str] = None,
+    no_tray_reason: Optional[str] = None, tray: bool = False, service: Optional[str] = None,
 ) -> None:
-    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only), "no_tray": bool(no_tray), "no_tray_reason": no_tray_reason})
+    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only), "no_tray": bool(no_tray), "no_tray_reason": no_tray_reason, "tray": bool(tray), "service": service})
 
 
 def hermetic_start_reason(*, cli_host: Optional[str], cli_port: Optional[int], print_token: Optional[bool], configured_port: int) -> Optional[str]:
@@ -499,7 +566,7 @@ def tray_overview() -> Dict[str, Any]:
     if it were started now. No setting: there is none."""
     ctx = serve_context()
     if ctx:
-        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")), no_tray_reason=ctx.get("no_tray_reason"))
+        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")), no_tray_reason=ctx.get("no_tray_reason"), tray=bool(ctx.get("tray")), service=ctx.get("service"))
     else:
         decision = TrayDecision(False, "not_serving", "this process was not started by `abstractgateway serve`")
     deps_ok, deps_problem = tray_dependencies_available()

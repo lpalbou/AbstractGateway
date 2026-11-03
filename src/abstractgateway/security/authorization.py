@@ -173,6 +173,9 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             "/api/gateway/models/download",
             "/api/gateway/models/lock",
             "/api/gateway/models/unlock",
+            # The context a model is LOADED with, for everyone on the machine (AbstractCore
+            # ADR 0010 point 8): the same operator class as lock/unlock.
+            "/api/gateway/models/context",
             # Deleting weights frees (or destroys) someone else's disk on the
             # shared host: the same operator class as download.
             "/api/gateway/models/delete",

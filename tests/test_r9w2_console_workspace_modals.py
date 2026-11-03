@@ -86,5 +86,8 @@ def test_icon_buttons_use_the_kit_tooltip_never_a_native_title(html: str) -> Non
         assert "data-af-tip=" in tag and " title=" not in tag, tag
     # Round 16: the OpenAI API page's eye (the token as key) is gone; a named key's Revoke carries a kit tip.
     assert re.search(r'data-oai-revoke="\$\{esc\(fp\)\}" data-af-tip="Revoke this key: apps using it stop working at once"', html)
-    trash = js[js.index("function mcDeleteButton(") : js.index("}", js.index('data-mc-action="delete-ask"', js.index("function mcDeleteButton(")))]
-    assert "data-af-tip" in trash and "title=" not in trash
+    # The model trash is one of the catalog's icon actions: mcIconButton draws them all with a kit tip.
+    trash = js[js.index("function mcDeleteButton(") : js.index("\n    }", js.index("function mcDeleteButton("))]
+    assert 'mcIconButton("delete-ask", "trash", "Delete",' in trash and "title=" not in trash
+    icon = js[js.index("function mcIconButton(") : js.index("\n    }", js.index("function mcIconButton("))]
+    assert 'data-af-tip="${esc(tip || label)}"' in icon and "title=" not in icon

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
+from ..automation_order import automation_section
 from .client import GatewayClient
 
 HISTORY_SAMPLES = 120  # 2 minutes at 1 Hz
@@ -124,6 +125,13 @@ class AutomationRow:
     # The trigger of ANY automation in words (`trigger_text`): "When Python news has a new item",
     # "By hand", the schedule sentence. Older gateways serve only `schedule_text`.
     trigger_text: str = ""
+    # Where the row is drawn (ADR 0048): "active" | "paused" | "archived", as served; a gateway
+    # that serves none is placed by its status, the same rule (`automation_order`).
+    section: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.section:
+            object.__setattr__(self, "section", automation_section(self.status))
 
 
 @dataclass(frozen=True)
@@ -429,7 +437,8 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
 
 def automation_rows_from_listing(payload: Any) -> List[AutomationRow]:
     """`GET /automations` items → the Scheduled rows, in the gateway's order
-    (newest first). The schedule words are taken as served, never computed."""
+    (ADR 0048: active ones, then paused ones, each by last activity). The
+    schedule words and the section are taken as served, never computed."""
     if not isinstance(payload, dict):
         return []
     items = payload.get("items")
@@ -453,6 +462,7 @@ def automation_rows_from_listing(payload: Any) -> List[AutomationRow]:
                 next_run_local=str(item["next_run_local"]) if item.get("next_run_local") else None,
                 capabilities=tuple(str(c) for c in caps) if isinstance(caps, list) else (),
                 legacy=item.get("legacy") is True,
+                section=str(item.get("section") or "").strip().lower(),
             )
         )
     return rows

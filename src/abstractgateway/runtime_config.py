@@ -704,7 +704,7 @@ def _network_payload(stored: Dict[str, Any], env: Optional[Any] = None) -> Dict[
             port = validate_port(raw.get("port"))
         except NetworkSettingError:
             out["invalid_port"] = raw.get("port")
-    out.update({"port": port, "port_source": "stored"} if port is not None else {"port": DEFAULT_PORT, "port_source": "default"})
+    out.update({"port": port, "port_source": "stored"} if port is not None else {"port": _instance_port(), "port_source": "default"})
     ack = raw.get("internet_acknowledged")
     out["internet_acknowledged"] = dict(ack) if isinstance(ack, dict) and out["mode"] == "internet" else None
     out["bind_host"] = out.get("default_bind_host") or MODE_BIND_HOST[out["mode"]]
@@ -740,6 +740,12 @@ def _network_payload(stored: Dict[str, Any], env: Optional[Any] = None) -> Dict[
         out["trust_proxy"] = False
         out["trust_proxy_source"] = "default"
     return out
+
+
+def _instance_port() -> int:
+    from .instances import gateway_port
+
+    return gateway_port()
 
 
 def resolve_network_setting(data_dir: Path, *, env: Optional[Any] = None) -> Dict[str, Any]:

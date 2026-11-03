@@ -23,6 +23,7 @@ import tempfile
 import pytest
 from node_requirement import require_node
 
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_catalog import CATALOG_JS
 from abstractgateway.console_ui import CONSOLE_UI_JS
 from test_gateway_console_catalog import _catalog
@@ -45,13 +46,14 @@ const ctx = vm.createContext({
   state: { principal: { admin: __ADMIN__ }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
-  ICONS: { trash: '<svg data-icon="trash"></svg>' },
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter','text','brain','tool','eye','waveform','embedding','mic','image','video'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   downloadJobKey: (p, a) => `${p || ""}/${a || ""}`,
   servedModelId: (p, a) => a,
   trackDownloadJob: () => {},
   api: async (path, opts) => {
     const body = (opts && opts.body) ? JSON.parse(opts.body) : null;
     calls.push({ path, body });
+    // Catalogue reads local facts; every build remains inspectable via disclosure.
     if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
     if (path === "/api/gateway/models/installed") return { schema: "models_installed_v1", rows: [], errors: {} };
     if (path === "/api/gateway/models/delete-download") {
@@ -72,25 +74,35 @@ const ctx = vm.createContext({
     return {};
   },
 });
+vm.runInContext(__ISLANDS__, ctx);
+ctx.window.AfConsoleIslands = ctx.AfConsoleIslands;
 vm.runInContext(source, ctx);
 const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 1)); };
 const click = (action, a) => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: action, provider: a.provider, artifact: a.artifact } } : null) } });
 const row = (a) => {
   const key = `${a.provider}/${a.artifact}`;
   const chunk = root.innerHTML.split('<li class="mc-art').find((c) => c.includes(`data-mc-art="${key}"`)) || "";
-  return chunk.split("</li>")[0];
+  // Build details can contain a native notes list: find the outer row's closing li.
+  let depth=1;
+  for (const m of chunk.matchAll(/<\/?li\b[^>]*>/g)) {
+    depth += m[0].startsWith('</') ? -1 : 1;
+    if (!depth) return chunk.slice(0,m.index);
+  }
+  return chunk;
 };
 const deletes = () => calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => c.body);
 const out = {};
-vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false })`, Object.assign(ctx, { ROOT: root }));
+vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false, filters: {quant: "all"} })`, Object.assign(ctx, { ROOT: root }));
 await settle();
+// Per-build deletion controls are inspected through the real disclosure handler.
+for(const r of FIXTURE.rows) if(r.artifacts.length>1) root.onclick({target:{closest:sel=>sel==="[data-mc-action]"?{disabled:false,dataset:{mcAction:"versions",mcVersionKey:`catalog:${r.id}`}}:null}});
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
-out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete" data-af-tip="Delete [^"]+ from this computer \(files only\)">(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<\/button>/g) || []).length;
+out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete"[^>]*><svg data-icon="trash"><\/svg><\/button>/g) || []).length;
 out.disabledButtons = (html.match(/data-mc-action="delete-ask"[^>]*disabled/g) || []).length;
 const A = __TARGET__;
 const L = __LMS__;
-out.installedBefore = row(A).includes(">Downloaded<");
+out.installedBefore = row(A).includes('aria-label="Downloaded"');
 // Ask, then Keep: nothing deleted.
 click("delete-ask", A); await settle();
 out.askConfirm = row(A);
@@ -114,7 +126,7 @@ console.log(JSON.stringify(out));
 def _run(fixture: dict, target: dict, lms: dict, admin: bool = True, js: str | None = None, stale: bool = False) -> dict:
     node = require_node()
     harness = (
-        _HARNESS.replace("__SOURCE__", json.dumps(js if js is not None else CONSOLE_UI_JS + CATALOG_JS))
+        _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS)).replace("__SOURCE__", json.dumps(js if js is not None else CONSOLE_UI_JS + CATALOG_JS))
         .replace("__FIXTURE__", json.dumps(fixture))
         .replace("__TARGET__", json.dumps(target))
         .replace("__LMS__", json.dumps(lms))
@@ -165,7 +177,7 @@ def test_confirm_states_the_size_then_deletes_and_the_row_turns_not_downloaded()
     # Two dry runs (ask, ask again) and no real delete before a deliberate answer.
     assert out["afterFastClick"] == [dict(target, dry_run=True), dict(target, dry_run=True)]
     assert out["deletes"][-1] == dict(target, dry_run=False)
-    assert ">Not downloaded<" in out["afterDelete"]
+    assert 'aria-label="Download"' in out["afterDelete"] and 'aria-label="Downloaded"' not in out["afterDelete"]
     assert 'data-mc-action="download"' in out["afterDelete"]
     assert 'data-mc-action="delete-ask"' not in out["afterDelete"]
     assert "Download deleted. 351 MB freed." in out["afterDelete"]
@@ -184,4 +196,4 @@ def test_the_engines_answer_wins_when_the_reload_still_reports_the_files() -> No
     cat, target, lms = _fixture()
     out = _run(cat, target, lms, stale=True)
     # The catalog reload after the delete still says installed: drawn installed.
-    assert ">Downloaded<" in out["afterDelete"] and 'data-mc-action="delete-ask"' in out["afterDelete"]
+    assert 'aria-label="Downloaded"' in out["afterDelete"] and 'data-mc-action="delete-ask"' in out["afterDelete"]

@@ -1,10 +1,21 @@
 # Apps
 
-The six browser apps (Observer, Continuum, Code, Entity, Flow Editor and Note) can be
+The seven browser apps (Observer, Continuum, Code, Entity, Flow Editor, Note and Assistant web) can be
 installed, started, stopped and updated from the gateway: from the console's
 Apps page, from the HTTP API below, or with `abstractgateway apps`. Nobody has
 to open a terminal or install Node.js by hand. The Apps page also lists the
 desktop app, the **Assistant** (see [The Assistant](#the-assistant-a-desktop-app)).
+
+**Assistant (web)** uses catalog id `assistant-web`, npm package
+`@abstractframework/assistant` and port 3008. On the console's Apps page it shares
+ONE **Assistant** card with the desktop Assistant (`assistant`): **Open in browser**
+opens the web app, **Open on this Mac** (**Open on this computer** on other systems)
+opens the desktop one, and the card's status badge is the installed one's (see [Registering an app](#registering-an-app)). In the tray it
+is **Apps → Assistant (web)**. The gateway signs you in through its one-time handover
+and serves it at `<gateway>/apps/assistant-web/`; the two are separate apps, each with
+its own install, version and status. The web package is currently a private
+preview: this checkout can build and install it locally; registry installation
+requires its first npm release.
 
 **Note** (`@abstractframework/note`, port 3006) is the AbstractNote web app: capture
 anything, see how it connects and how it changed over time. Its server side is the
@@ -17,14 +28,19 @@ loads the `abstractnote` workflows as framework bundles. Without the package the
 be installed and started, but every `/api/gateway/note/` request answers 404 and the
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 
-On a card, a plain user sees one button for the state the app is in:
+A card shows the app's illustration, its mark, name and status badge, its
+description (two lines at most) and one row of launchers. Each launcher says
+where it opens: a globe for the web browser (**Open in browser**), a monitor for
+an app on the gateway's computer (**Open on this Mac**), `>_` for a terminal
+(**Open in Terminal**). On a card, a plain user sees one button for the state
+the app is in:
 
 | State | Buttons |
 |---|---|
 | Not installed | **Install** |
 | Installing | a progress bar (one row per part, e.g. "Code in the browser" and "Code in the terminal") and **Cancel** |
-| Installed (running or not) | **Open**, and **Open in Terminal** right beside it when the app's terminal version is installed |
-| A newer version is published | **Update to x.y.z** beside **Open** (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it") |
+| Installed (running or not) | **Open in browser**, and **Open in Terminal** right beside it when the app's terminal version is installed |
+| A newer version is published | **Update to x.y.z** beside **Open in browser** (an admin; its tooltip: "Install the newest Flow Editor (0.8.0); a running app restarts on it") |
 | Failed | the reason, **Show details**, and **Install** again |
 
 The status badge beside the name is the start/stop control, one click as
@@ -50,6 +66,78 @@ terminal console say the same words.
 
 Show log, versions, addresses and commands are under **Technical details**.
 
+## Registering an app
+
+Every app the Apps page shows is one entry of the gateway's app registry:
+`APPS` in `apps_manager.py` (browser apps, `AppSpec`) and `DESKTOP_APPS` in
+`apps_desktop.py` (desktop apps, `DesktopAppSpec`). Besides what the gateway
+needs to install and run the app (package, port, cookie prefix, page title),
+an entry declares its card. The console holds no per-app words or pictures:
+it renders what the registry declares.
+
+| Field | What it is |
+|---|---|
+| `name` | The app's name (the card title, unless a family names the card). |
+| `description` | One complete sentence in plain language, at most 92 characters: what the app is for. Every card gives it exactly two lines, so the cards of a row line up. |
+| `mark` | The two letters of the card's mark tile. |
+| `illustration` | A file name under `src/abstractgateway/console_assets/apps/` (16:9 WebP, 768×432), or `None`. |
+| `family` | Optional. Apps of one family share ONE card; `APP_FAMILIES` in `apps_manager.py` gives the family's card title. |
+
+The Assistant's two entries, for example:
+
+```python
+AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant",
+        "Chat or talk with the Assistant, in the browser or on this Mac, with voice and approvals.",
+        STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant",
+        mark="As", illustration="assistant.webp", family="assistant")
+
+ASSISTANT = DesktopAppSpec(id="assistant", name="Assistant", package="abstractassistant",
+                           script="abstractassistant", bundle="AbstractAssistant.app",
+                           description="A menu-bar assistant: chat or talk hands-free.",
+                           mark="As", illustration="assistant.webp", family="assistant")
+
+APP_FAMILIES = {"assistant": "Assistant"}
+```
+
+**Cards.** `GET /api/gateway/apps` returns `cards[]` next to the rows: one card
+per family, else one per app, in registry order. A family card's description,
+mark and illustration are its browser app's. Its primary button belongs to
+its lead: the first member installed on this computer, the browser app first
+(the browser app when none is installed), so the card's headline describes
+what you have. Its ONE status badge shows every member's state in member
+order, each part with its launcher's icon (globe, monitor): "Running ·
+Stopped", read out as "Browser: Running. This Mac: Stopped."; each part is
+that member's start/stop control. Every other member's notes (another copy
+running, quit to run a new version, why no version is shown) sit beside its
+own launcher; each member's technical details
+sit under its own label (**Browser app**, **Desktop app**). Without `family`,
+each app has a card of its own.
+
+**Launchers** follow from the members' kinds, in member order:
+
+| Member | Launcher | Badge |
+|---|---|---|
+| a browser app (`kind: "web"`) | **Open in browser** (or the app's first-run action, such as **Create your first entity**) | globe |
+| a desktop app (`kind: "desktop"`) | **Open on this Mac**, or **Open on this computer** on Windows and Linux | monitor |
+| a terminal version (an `interfaces[]` entry of kind `tui`) | **Open in Terminal** | `>_` |
+
+The lead's launcher is the primary button; the other launchers are quiet
+buttons beside it. On a card with one app, a missing app shows **Install**; on
+a family card every Install says what it installs (**Install browser app**,
+**Install desktop app**).
+
+**Illustrations.** Put the file in `src/abstractgateway/console_assets/apps/`
+(it ships in the package with the rest of `src/abstractgateway/`) and name it
+in the entry. Several entries may name one file (the two Assistants share
+`assistant.webp`). The gateway serves it at `/console/assets/apps/<file>`, without a
+sign-in like the console page itself, and only for a file name the registry
+declares (WebP, PNG, JPEG or AVIF; never SVG): any other name answers 404. The
+card's URL carries a version query (`?v=…`, from the file's content) and the
+answer is cached as immutable, so a replaced file shows on the next page load. A registered file
+that is not there yet gives no URL: the card shows its mark. When at least one
+card of the page has an illustration, a card without one shows its mark in
+the illustration's place, so the rows stay aligned.
+
 ## Updates
 
 **Install follows the release.** A gateway set up by the AbstractFramework installer records its
@@ -70,7 +158,7 @@ the npm registry (`dist-tags.latest`), the Assistant from PyPI
 npm registry, PyPI and GitHub (the terminal apps' releases): an answer is
 reused for 10 minutes, a failure for 1 minute, then the registry is asked
 again, so a version published while the gateway runs shows up within 10
-minutes without a restart (**Check again** asks the gateway at once, still
+minutes without a restart (**Refresh** on the Apps page asks the gateway at once, still
 through that cache). `update_available` is true when that version is newer
 than the installed one (semantic versions, prereleases before their release).
 
@@ -153,7 +241,7 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
-  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006.
+  Continuum 3002, Code 3003, Entity 3004, Flow 3005, Note 3006, Assistant web 3008.
 
 ## Apps are served through the gateway
 
@@ -213,10 +301,10 @@ paths, the identity header) is the app-server kit's contract:
 An app can also run without the gateway having started it: the framework's
 development stack (`scripts/start-local.sh`), `npx @abstractframework/observer`,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3006, then 3000 and 3007) for their start
+usual ports on this machine (3001-3006 and 3008, then 3000 and 3007) for their start
 page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
-"AbstractFlow", "AbstractNote"). None of the apps has an address that says who it is without
+"AbstractFlow", "AbstractNote", "AbstractAssistant"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
 local request per port (half a second at most, all ports at once, remembered
 for 5 seconds). The version is read from the `package.json` of the program
@@ -522,9 +610,11 @@ admin token on a loopback URL.
 
 AbstractAssistant (PyPI `abstractassistant`) is the framework's desktop
 companion: a menu-bar app with a chat palette and hands-free voice
-conversations. It is a Python app, not a browser app, so its card
+conversations. It is a Python app, not a browser app, so its row
 (`kind: "desktop"`, id `assistant`, after the browser apps) has no address
-or port. The full `abstractframework` install already includes it, in the same
+or port. On the Apps page it is the second launcher of the **Assistant** card
+(family `assistant`, with the web Assistant): its state is the monitor part of
+the card's badge, and its notes sit beside **Open on this Mac**. The full `abstractframework` install already includes it, in the same
 Python environment as the gateway; a gateway-only install may not.
 
 - **Found by presence** (nothing is imported or started to find it): the
@@ -615,7 +705,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); every row has `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `status_control {label, tone, busy, action, enabled, tip}` — the status badge for THIS caller: `action` `stop` or `launch` is what a click posts, `enabled` false with `tip` as the reason, `tip` null for a plain pill (the badge table at the top of this page) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason, open_label, other_running, restart_note, started_by_gateway, source_checkout, checkout_path, version_reason, latest_error}`); `cards[]` `{id, family, name, description, mark, illustration_url, members, launchers[{app, kind}]}` (see [Registering an app](#registering-an-app)); every row has `description`, `mark`, `family` and `illustration_url` (null until the file exists), and `latest_version`, `update_available`, `update_label` and `update_tip` (see [Updates](#updates)) and `status_control {label, tone, busy, action, enabled, tip}` — the status badge for THIS caller: `action` `stop` or `launch` is what a click posts, `enabled` false with `tip` as the reason, `tip` null for a plain pill (the badge table at the top of this page) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry, PyPI and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job (without `version`: the release's pinned version, see "Updates"): Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. For `assistant`: `abstractassistant==<version>` from PyPI with the gateway's pins; the Assistant this gateway opened reopens signed in as the caller, any other running Assistant is left alone ("Quit it and open it again to run x.y.z"). A row started outside the gateway has no `update` action. |

@@ -19,6 +19,10 @@ Without the package every function answers "nothing" and the gateway behaves exa
 No function here raises: a package that is installed but broken is logged once and treated as
 absent, a binding failure answers on every tool call, a packing failure leaves the workflows out.
 The import is attempted once and its outcome logged once.
+
+A seam is covered by CI or it is not shipped (backlog 0972): gateway CI installs `abstractnote`
+("Install the seam packages"), so the route authorization contract walks these routes on every run;
+`tests/test_gateway_seams_mounted.py` fails when the package drops out of that install step.
 """
 
 from __future__ import annotations

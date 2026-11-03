@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import signal
@@ -12,7 +13,7 @@ import sys
 import urllib.parse
 import copy
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 
 def _stderr(line: str) -> None:
@@ -57,7 +58,25 @@ def _resolve_default_console_level() -> int:
     return logging.ERROR
 
 
-def _exit_now_if_nondaemon_stragglers() -> None:
+def _pending_exit_code() -> int:
+    """The exit code of the exception propagating through a `finally` (0 when
+    none): a SystemExit keeps its code (uvicorn's STARTUP_FAILURE = 3 for a port
+    in use), any other exception is 1. The straggler belt exits with it, so a
+    supervisor (systemd `Restart=on-failure`) sees a failure as a failure."""
+    exc = sys.exc_info()[1]
+    if exc is None:
+        return 0
+    if isinstance(exc, SystemExit):
+        code = exc.code
+        if code is None:
+            return 0
+        return code if isinstance(code, int) else 1
+    if isinstance(exc, KeyboardInterrupt):
+        return 0
+    return 1
+
+
+def _exit_now_if_nondaemon_stragglers(exit_code: int = 0) -> None:
     """Exit the process hard when non-daemon threads survive shutdown.
 
     Lifespan shutdown has already run by the time this is called, so every
@@ -65,8 +84,11 @@ def _exit_now_if_nondaemon_stragglers() -> None:
     proves some subsystem forgot to stop it (or marked it non-daemon by
     accident). Without this belt the interpreter joins those threads at
     exit FOREVER and the operator's TERM becomes a SIGKILL. We log names +
-    full stacks (the forensics the root fix needs), then _exit(0) — the
-    shutdown itself completed.
+    full stacks (the forensics the root fix needs), then _exit(exit_code):
+    the shutdown itself completed, but a gateway that failed (a port in use)
+    must not exit 0 — systemd's Restart=on-failure would then never retry
+    (OVH 2026-10-28: the unit gave up at 17:52 and an unsupervised gateway
+    held the port until the host went down).
     """
     try:
         stragglers = [
@@ -91,7 +113,7 @@ def _exit_now_if_nondaemon_stragglers() -> None:
             pass
     except Exception:
         pass
-    os._exit(0)
+    os._exit(int(exit_code))
 
 
 def _uvicorn_log_level(console_level: int) -> str:
@@ -170,6 +192,27 @@ def _build_uvicorn_log_config(*, uvicorn, silence_gpu_metrics_access_log: bool) 
     return log_config
 
 
+def _stderr_is_a_service_log() -> bool:
+    """stderr is captured by a service manager's log.
+
+    systemd: JOURNAL_STREAM names the journal stream's `device:inode`, and it counts only when
+    fd 2 IS that stream. A child of a unit inherits the variable with its stderr piped elsewhere
+    (a CI runner's job, a shell started from a unit), and its stderr is a terminal or a pipe.
+    INVOCATION_ID is set for every process of a unit, so it is not read. launchd: XPC_SERVICE_NAME
+    names an agent (not "0", the value a Terminal session has, nor an `application.` app)."""
+    stream = str(os.environ.get("JOURNAL_STREAM") or "").strip()
+    if stream:
+        try:
+            dev, ino = (int(x) for x in stream.split(":", 1))
+            st = os.fstat(2)
+            if (st.st_dev, st.st_ino) == (dev, ino):
+                return True
+        except (ValueError, OSError):
+            pass
+    xpc = str(os.environ.get("XPC_SERVICE_NAME") or "").strip()
+    return bool(xpc) and xpc != "0" and not xpc.startswith("application.")
+
+
 def _is_loopback_host(host: str) -> bool:
     h = str(host or "").strip().lower()
     return h in {"127.0.0.1", "::1", "localhost"}
@@ -220,7 +263,12 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None, prin
     token = str(payload.get("token") or "").strip()
     if print_token is None:
         # Legacy alias kept for existing service configs; the flag is the documented switch.
-        print_token = _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or _is_loopback_host(host)
+        # On a loopback bind the token is printed for the person at the
+        # terminal — never into a service log (systemd's journal keeps it:
+        # OVH 2026-10-29 found the admin token in `journalctl`).
+        print_token = _env_truthy("ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN") or (
+            _is_loopback_host(host) and not _stderr_is_a_service_log()
+        )
     can_print_raw_token = bool(token) and bool(print_token)
 
     _stderr("Gateway user auth: enabled.")
@@ -479,7 +527,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     """
     from . import host_control
     from .self_update import installed_version
-    from .tray_supervisor import get_tray_supervisor, record_serve_context, tray_decision
+    from .tray_supervisor import get_tray_supervisor, record_serve_context, service_launch, tray_decision
     from .users import gateway_data_dir_from_env
 
     data_dir = gateway_data_dir_from_env()
@@ -490,6 +538,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False,
         no_tray=bool(getattr(args, "no_tray", False)),
         no_tray_reason=getattr(args, "no_tray_reason", None),
+        tray=bool(getattr(args, "tray", False)),
+        service=service_launch(),
     )
 
     if reload:
@@ -523,6 +573,9 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     wd_flag = getattr(args, "watchdog_seconds", None)
     wd_limit = loop_watchdog.DEFAULT_WATCHDOG_SECONDS if wd_flag is None else float(wd_flag)
     loop_watchdog.configure(wd_limit, incident_dir=Path(data_dir) / "incidents")
+    from . import health_incidents
+
+    health_incidents.configure(Path(data_dir) / "incidents")
     if loop_watchdog.configured_limit_s() is None:
         _stderr("Event-loop watchdog: off (--watchdog-seconds 0); a hung gateway is not restarted")
     else:
@@ -562,7 +615,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
     # `tray_decision` is only what this machine can or cannot do.
-    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)), no_tray_reason=getattr(args, "no_tray_reason", None))
+    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)), no_tray_reason=getattr(args, "no_tray_reason", None), tray=bool(getattr(args, "tray", False)), service=service_launch())
     if decision.start:
         # Spawn AFTER the listener is bound (a second `serve` on a busy port
         # must never point a tray at the FIRST gateway with the wrong token
@@ -572,7 +625,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         def _start_tray_when_bound() -> None:
             if not _wait_until_bound(server):
                 return
-            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision)
+            extra = {"menu_style": str(args.tray_menu)} if getattr(args, "tray_menu", None) else None
+            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision, extra=extra)
             if st.get("running"):
                 _stderr(f"Desktop tray: started (pid {st.get('pid')}); console at {base_url}/console")
             else:
@@ -585,6 +639,34 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         hint = f": {decision.hint}" if decision.hint else ""
         _stderr(f"Desktop tray: not started ({decision.reason}{hint})")
 
+    # Bounded stop (2026-10-29, shutdown_drain.py): the moment uvicorn takes a stop signal, live
+    # streams are told their client left; and the SIGTERM uvicorn re-raises once it has drained
+    # lands on a handler here, so a requested stop exits 0 instead of dying with 143.
+    from . import shutdown_drain
+
+    shutdown_drain.reset()
+    _uvicorn_handle_exit = getattr(server, "handle_exit", None)  # a test double may have none
+
+    def _handle_exit(sig: int, frame: Any) -> None:
+        try:
+            name = signal.Signals(sig).name
+        except (ValueError, TypeError):
+            name = str(sig)
+        shutdown_drain.begin(name)
+        _uvicorn_handle_exit(sig, frame)
+
+    if callable(_uvicorn_handle_exit):
+        server.handle_exit = _handle_exit
+    _previous_sigterm = None
+    if hasattr(signal, "SIGTERM") and threading.current_thread() is threading.main_thread():
+        try:
+            _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
+        except (ValueError, OSError):
+            _previous_sigterm = None
+    # While the gateway runs, the Mac does not idle-sleep (keep_awake.py).
+    from . import keep_awake
+
+    awake = keep_awake.hold()
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -598,6 +680,10 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         host_control.clear_requests()
         raise
     finally:
+        if _previous_sigterm is not None:
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signal.SIGTERM, _previous_sigterm)
+        keep_awake.release(awake)
         tray.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
@@ -748,6 +834,67 @@ def _push_relay_help() -> str:
     return FLAG_HELP.replace("%", "%%")
 
 
+def _add_model_host_args(p: argparse.ArgumentParser) -> None:
+    """`--model-host` and its limits (ADR 0002), on `serve` and on the split `runner`."""
+    p.add_argument(
+        "--model-host",
+        default=None,
+        choices=["process", "in-process"],
+        dest="model_host",
+        help="Where the models run (ADR 0002). `process`: in a child process the gateway starts, watches and restarts, "
+        "so a provider crash, a native abort or a memory blow-up costs the requests in flight, never the gateway; "
+        "every crash is recorded in <data dir>/incidents. `in-process`: in the gateway process itself. Default: "
+        "process on every OS; in-process only with --reload (the app runs in uvicorn's reloader child). "
+        "There is no environment variable.",
+    )
+    p.add_argument(
+        "--model-host-memory-gb",
+        type=float,
+        default=None,
+        dest="model_host_memory_gb",
+        metavar="GB",
+        help="Kill and restart the model host when its resident memory passes GB (recorded as an incident). "
+        "Default: 80%% of this machine's memory. 0 turns the ceiling off.",
+    )
+    p.add_argument(
+        "--model-host-nice",
+        type=int,
+        default=None,
+        dest="model_host_nice",
+        metavar="N",
+        help="Scheduling niceness of the model host (POSIX; default 5): the gateway answers first when inference "
+        "uses every CPU. 0 runs it at the gateway's priority.",
+    )
+
+
+def _start_model_host(args: argparse.Namespace, *, data_dir: Any, process_label: str) -> Optional[str]:
+    """Resolve `--model-host` and start the child in the `process` mode. Returns the line for the
+    boot banner, or None when nothing was started."""
+    from pathlib import Path as _Path
+
+    from . import model_host
+
+    data_dir = _Path(data_dir)
+    chosen = model_host.set_mode(getattr(args, "model_host", None), source=f"{process_label} --model-host")
+    if chosen != model_host.MODE_PROCESS:
+        return f"[INFO] model host: in-process (models run in this process; {model_host.mode_source()})"
+    gb = getattr(args, "model_host_memory_gb", None)
+    if gb is None:
+        ceiling = model_host.default_memory_ceiling_bytes()
+    else:
+        ceiling = int(float(gb) * 1e9) if float(gb) > 0 else None
+    nice = getattr(args, "model_host_nice", None)
+    sup = model_host.start(data_dir, memory_ceiling_bytes=ceiling,
+                           nice=model_host.DEFAULT_NICE if nice is None else int(nice), process_label=process_label)
+    snap = sup.snapshot()
+    limit = f"{ceiling / 1e9:.1f} GB" if ceiling else "none"
+    if snap.get("state") == "up":
+        return (f"[INFO] model host: models run in child process {snap.get('pid')} (memory ceiling {limit}, "
+                f"nice {sup.nice}); a crash there is restarted and recorded in {data_dir / 'incidents'}")
+    return (f"[ERROR] model host: the child process did not start ({snap.get('last_error')}); model requests fail "
+            f"until it does (it is retried with backoff). Log: {sup.log_path}")
+
+
 def main(argv: list[str] | None = None) -> None:
     from .stdio_safety import hide_child_consoles, safe_stdio
 
@@ -756,6 +903,11 @@ def main(argv: list[str] | None = None) -> None:
     console_level = _resolve_default_console_level()
     _configure_console_logging(console_level)
     argv = list(argv) if argv is not None else sys.argv[1:]
+    # `--instance NAME` (instances.py): a self-contained gateway of its own on this machine (data dir,
+    # AbstractCore config, app ports, service unit). Exported for every reader and child process.
+    from .instances import apply_instance_arg
+
+    argv = apply_instance_arg(argv)
     # `abstractgateway --update` / `--console`: the spellings the operator asked for, the
     # same verbs as `update` / `console` (so --help lists them with the other commands).
     if argv[:1] in (["--update"], ["--console"]):
@@ -806,8 +958,24 @@ def main(argv: list[str] | None = None) -> None:
         "--no-tray",
         action="store_true",
         dest="no_tray",
-        help="Do not show the menu bar / tray icon for this run (a test or scratch gateway next to your usual one). "
-        "Without it the icon is shown whenever this computer can hold one.",
+        help="Do not show the menu bar / tray icon for this run. Only the machine's gateway service (started by "
+        "launchd, systemd or the login entry that `abstractgateway service install` writes) shows it anyway.",
+    )
+    serve.add_argument(
+        "--tray",
+        action="store_true",
+        dest="tray",
+        help="Show the menu bar / tray icon for this run although it was not started as the machine's gateway "
+        "service (a `serve` from a terminal, a test or a script shows none).",
+    )
+    serve.add_argument(
+        "--tray-menu",
+        choices=["v2", "classic"],
+        default=None,
+        dest="tray_menu",
+        help="Which menu the tray icon shows for this run: the redesigned menu (v2, the default) or the previous "
+        "layout (classic). Without the flag, <data dir>/tray/prefs.json `menu_style` decides (Settings ▸ Classic "
+        "menu / Help ▸ New menu write it).",
     )
     serve.add_argument(
         "--watchdog-seconds",
@@ -842,6 +1010,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Split mode (opt-in): serve the HTTP API only. Runs, the model, mail, feeds, push and bridges run in "
         "`abstractgateway runner` (same data dir), and /v1 is forwarded to it. See docs/configuration.md.",
     )
+    _add_model_host_args(serve)
     serve.add_argument(
         "--data-dir",
         default=None,
@@ -935,6 +1104,7 @@ def main(argv: list[str] | None = None) -> None:
         type=_push_relay_arg,
         help="Same as `serve --push-relay`, for the split runner process (it sends the pushes).",
     )
+    _add_model_host_args(runner)
 
     push_relay = sub.add_parser(
         "push-relay",
@@ -1128,8 +1298,17 @@ def main(argv: list[str] | None = None) -> None:
         from .host_paths import apply_data_dir_default, describe_resolution
 
         _data_dir_resolution = apply_data_dir_default()
+        from .instances import apply_instance_env
+
+        _instance = apply_instance_env(_data_dir_resolution.path)
         if args.cmd == "serve":
             _stderr(describe_resolution(_data_dir_resolution))
+            if _instance:
+                _stderr(
+                    f"Gateway instance: {_instance['name']} (slot {_instance['slot']}; apps on ports "
+                    f"{_instance['app_ports'][0]}-{_instance['app_ports'][1]}, then {_instance['app_port_range'][0]}-"
+                    f"{_instance['app_port_range'][1]}; AbstractCore config {_instance['core_config_dir']}; unit {_instance['systemd_unit']})"
+                )
 
     if args.cmd == "models":
         from .models_engines_cli import MODELS_VERBS, run_models_verb
@@ -1158,6 +1337,8 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(run_network_command(args))
 
+    if args.cmd == "serve" and getattr(args, "tray", False) and getattr(args, "no_tray", False):
+        parser.error("--tray and --no-tray contradict each other")
     if args.cmd == "serve":
         # ------------------------------------------------------------------
         # ONE STORE (operator ruling 2026-08-01). A legacy Gateway-scoped
@@ -1400,14 +1581,17 @@ def main(argv: list[str] | None = None) -> None:
             run_kwargs["log_level"] = _uvicorn_log_level(int(console_level))
 
             # Bounded graceful shutdown (resilience wave 2026-07-21, adversary
-            # P1-4): without this, a wedged in-flight request or a hung
-            # lifespan-shutdown step holds SIGTERM forever and the supervisor
-            # must SIGKILL. 120s covers the runner drain (30s) + bounded
-            # entity close_all (60s) with margin.
+            # P1-4; 2026-10-29 shutdown_drain.py): how long requests in flight
+            # may finish after a stop signal before uvicorn cancels them. Live
+            # streams end at once (EndStreamsOnShutdown); the lifespan steps
+            # after it (runner drain, entity homes) carry their own bounds, so
+            # this budget is for requests only: 10 s.
+            from .shutdown_drain import REQUEST_DRAIN_S
+
             try:
-                shutdown_s = int(str(os.getenv("ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S") or "120").strip())
+                shutdown_s = int(str(os.getenv("ABSTRACTGATEWAY_GRACEFUL_SHUTDOWN_S") or REQUEST_DRAIN_S).strip())
             except ValueError:
-                shutdown_s = 120
+                shutdown_s = REQUEST_DRAIN_S
             if shutdown_s > 0:
                 run_kwargs["timeout_graceful_shutdown"] = shutdown_s
 
@@ -1419,8 +1603,22 @@ def main(argv: list[str] | None = None) -> None:
                 run_kwargs["log_config"] = log_config
 
             _record_serve_start(args)
+            # ADR 0002: the model host child (not in the split API process, which holds no model,
+            # nor under --reload, whose app runs in uvicorn's reloader child).
+            if bool(getattr(args, "no_runner", False)):
+                pass
+            elif bool(getattr(args, "reload", False)):
+                if getattr(args, "model_host", None) == "process":
+                    _stderr("[WARN] --model-host process is ignored with --reload: the models run in the reloader's child")
+            else:
+                _line = _start_model_host(args, data_dir=_serve_data_dir, process_label="serve")
+                if _line:
+                    _stderr(_line)
             _serve_with_host_controls(uvicorn=uvicorn, args=args, run_kwargs=run_kwargs, argv=list(argv if argv is not None else sys.argv[1:]))
         finally:
+            from . import model_host as _model_host
+
+            _model_host.stop()
             _record_serve_stop()
             _clear_backlog_launch_flags(_serve_data_dir)
             if prev_runner_env is None:
@@ -1447,8 +1645,17 @@ def main(argv: list[str] | None = None) -> None:
             # SIGKILLs" class (stage logging in _stop_gateway_service_instance
             # covers the bounded-but-silent class). Lifespan shutdown already
             # ran, so nothing durable is at risk: name the stragglers, dump
-            # every stack for the root fix, then exit hard.
-            _exit_now_if_nondaemon_stragglers()
+            # every stack for the root fix, then exit hard — with the code of
+            # whatever is propagating (a failed start is not a clean stop).
+            exit_code = _pending_exit_code()
+            try:
+                from . import work_pools as _work_pools
+
+                # The off-loop pools' idle workers are not stragglers: stop them first.
+                _work_pools.shutdown_all(timeout_s=2.0)
+            except Exception:  # noqa: BLE001 - the belt below still runs
+                pass
+            _exit_now_if_nondaemon_stragglers(exit_code)
         return
 
     if args.cmd == "push-relay":
@@ -1487,19 +1694,29 @@ def main(argv: list[str] | None = None) -> None:
             # Some platforms (or embedded interpreters) may not support signals.
             pass
 
-        start_gateway_runner()
         # Split mode's model host: the API process forwards /v1 here (loopback, address recorded in
-        # <data dir>/split/model_host.json), so the text model is loaded in this process only.
-        from .split_mode import ModelHost
+        # <data dir>/split/model_host.json), so the text model is loaded in this process only, or,
+        # with --model-host process (ADR 0002), in this process's child. Started before the runner
+        # builds its runtimes, so they send their model work there.
+        from .model_host_http import OptionalHTTP
         from .users import gateway_data_dir_from_env
 
         model_host = None
-        try:
-            model_host = ModelHost(gateway_data_dir_from_env()).start()
-            _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is on {model_host.url}")
-        except Exception as exc:  # noqa: BLE001 - runs still tick; /v1 on the API answers 503 runner_unavailable
-            _stderr(f"[ERROR] split mode: the model host did not start ({type(exc).__name__}: {exc}); "
-                    "the OpenAI API (/v1) answers 503 until the runner is restarted")
+        from . import model_host as _model_host
+
+        _line = _start_model_host(args, data_dir=gateway_data_dir_from_env(), process_label="runner")
+        if _line:
+            _stderr(_line)
+        start_gateway_runner()
+        if _model_host.active():
+            # The child serves Core's app and records its address; the API process forwards there.
+            _sup = _model_host.supervisor()
+            _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is the child "
+                    f"process {_sup.pid if _sup else '?'}")
+        else:
+            model_host = OptionalHTTP(gateway_data_dir_from_env())
+            model_host.start()
+            _stderr(f"[INFO] split mode: runner process {os.getpid()}; optional Core HTTP listeners follow endpoint settings")
         try:
             while not stop.is_set():
                 stop.wait(0.5)
@@ -1507,6 +1724,7 @@ def main(argv: list[str] | None = None) -> None:
             if model_host is not None:
                 model_host.stop()
             stop_gateway_runner()
+            _model_host.stop()
             if prev_runner_env is None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:

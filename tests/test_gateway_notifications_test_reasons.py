@@ -41,6 +41,13 @@ def test_no_mailbox_and_paused_mailbox(gateway, imap, smtp) -> None:
     assert smtp.messages == []
 
 
+def _local_at(resets_at: str) -> str:
+    """A served `resets_at` as the message words it: the gateway's local "hh:mm", "tomorrow at hh:mm"."""
+    resets = datetime.datetime.fromisoformat(resets_at).astimezone()
+    hhmm = resets.strftime("%H:%M")
+    return hhmm if resets.date() == datetime.date.today() else f"tomorrow at {hhmm}"
+
+
 def test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind(gateway, imap, smtp) -> None:
     from abstractgateway.mail.accounts import account_store
     from abstractgateway.mail.notifications import NotificationOutbox
@@ -54,11 +61,7 @@ def test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind(ga
     assert body["sent"] is False and body["reason_code"] == "rate_limited"
     limit = body["limit"]
     assert limit["window"] == "hour" and limit["limit"] == 1 and limit["used"] == 1
-    resets = datetime.datetime.fromisoformat(limit["resets_at"])
-    hhmm = resets.astimezone().strftime("%H:%M")  # the gateway's local time
-    local_day = resets.astimezone().date()
-    expected_at = hhmm if local_day == datetime.date.today() else f"tomorrow at {hhmm}"
-    assert body["message"] == f"Not sent: hourly limit reached (1 of 1 this hour) — resets at {expected_at}."
+    assert body["message"] == f"Not sent: hourly limit reached (1 of 1 this hour) — resets at {_local_at(limit['resets_at'])}."
 
     # The row keeps why it waits and when it goes; the outbox summary explains it later.
     row = next(r for r in NotificationOutbox(plane_of("alice")).rows(state="queued"))
@@ -67,9 +70,11 @@ def test_hourly_limit_names_the_numbers_and_the_reset_time_then_queues_behind(ga
     assert summary["rate_limited"]["count"] == 1 and summary["rate_limited"]["resets_at"]
 
     # A third click waits behind the second.
+    # Its time is read from ITS OWN answer (`limit.resets_at`), never from the second click's or a
+    # clock read here: the two answers may fall either side of a minute (CI 3.13, 07:24 vs 07:25).
     body = c.post(TEST, headers=gateway["alice"]).json()
     assert body["reason_code"] == "queued_behind" and body["queued_behind"] == 1
-    assert body["message"] == f"Queued behind 1 earlier notification; they go out when the limit resets at {expected_at}."
+    assert body["message"] == f"Queued behind 1 earlier notification; they go out when the limit resets at {_local_at(body['limit']['resets_at'])}."
     assert len(smtp.messages) == 1
 
 

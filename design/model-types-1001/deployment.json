@@ -1,0 +1,26 @@
+{
+  "before": {
+    "status": "healthy",
+    "model_inflight": 0,
+    "runner_inflight": 0
+  },
+  "response": {
+    "ok": true,
+    "restart": true,
+    "requested_by": "default/admin",
+    "reason": "Deploy Core 0876 and Gateway 1001: models-only catalogue and advanced adapter management"
+  },
+  "final_restart": {
+    "before": {
+      "status": "healthy",
+      "model_inflight": 0,
+      "runner_inflight": 0
+    },
+    "response": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Finalize Gateway 1001 Downloaded model-scope restoration after adapter deep links"
+    }
+  }
+}

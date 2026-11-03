@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from abstractcore.exceptions import ModelNotDownloadedError
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 _BACKEND_CLASS_NAMES = {
@@ -364,21 +365,21 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
 # operator could not tell what to do).
 _EMBEDDER_NOTICES: set = set()
 _EMBEDDER_NOTICES_LOCK = threading.Lock()
-_NOT_CACHED_RE = re.compile(r"Embedding model '([^']+)' is not in the local Hugging Face cache")
 
 
 def embedder_unavailable_sentence(exc: BaseException) -> str:
-    """The one readable sentence for a gateway whose embeddings cannot load."""
-    text = str(exc or "")
-    m = _NOT_CACHED_RE.search(text)
-    if m:
-        repo = m.group(1)
+    """The one readable sentence for a gateway whose embeddings cannot load.
+
+    A model that is not downloaded is AbstractCore's typed `ModelNotDownloadedError`: its `model`
+    and `provider` attributes name what to download (the message wording is not a contract)."""
+    if isinstance(exc, ModelNotDownloadedError):
         return (
-            f"Semantic memory search is off: the text embedding model {repo} is not downloaded. "
-            "Download it from the console (Models, Defaults, Text Embeddings, Download) or run "
-            f"`abstractcore models download huggingface {repo}`; structured memory keeps working."
+            f"Semantic memory search is off: the text embedding model {exc.model} is not downloaded. "
+            "Download it from the console (Multimodal, Embeddings, Download) or run "
+            f"`abstractcore models download {exc.provider} {exc.model}`; structured memory keeps working."
         )
-    first = text.strip().splitlines()[0] if text.strip() else type(exc).__name__
+    text = str(exc or "").strip()
+    first = text.splitlines()[0] if text else type(exc).__name__
     return f"Semantic memory search is off: the text embedding model could not be loaded ({first[:300]})."
 
 

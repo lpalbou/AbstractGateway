@@ -508,7 +508,9 @@ def local_gateway(data_dir: Optional[Path] = None) -> Dict[str, Any]:
     setting = resolve_network_setting(data_dir)
     if setting.get("port_source") == "stored":
         return {"url": browser_base_url(str(setting.get("bind_host") or ""), int(setting["port"])), "source": "network_setting", "serve": rec}
-    return {"url": browser_base_url("127.0.0.1", 8080), "source": "default", "serve": rec}
+    from .instances import gateway_port
+
+    return {"url": browser_base_url("127.0.0.1", gateway_port()), "source": "default", "serve": rec}
 
 
 def port_is_free(host: str, port: int) -> bool:

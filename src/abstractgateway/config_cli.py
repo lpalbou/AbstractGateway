@@ -864,8 +864,10 @@ def main(argv: list[str] | None = None) -> None:
     # Same data dir as `serve` would use from here (env, ./runtime in a
     # checkout, else the per-OS user data dir), exported for this process.
     from .host_paths import apply_data_dir_default
+    from .instances import apply_instance_arg, apply_instance_env
 
-    apply_data_dir_default()
+    argv = apply_instance_arg(list(argv) if argv is not None else sys.argv[1:])
+    apply_instance_env(apply_data_dir_default().path)
     parser = build_parser()
     args = parser.parse_args(argv)
     if not getattr(args, "cmd", None):

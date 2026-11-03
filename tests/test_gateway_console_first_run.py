@@ -73,14 +73,37 @@ def test_wizard_dom_contract_is_present() -> None:
         assert f"function {fn}(" in html
     assert "/api/gateway/session/claim" in html
     assert "/api/gateway/host/first-run" in html
+    # The apps step renders the gateway's registry (overview cards[]): the page
+    # carries no app list of its own, not even for the error fallback.
+    assert "FIRST_RUN_APPS" not in html
     for pkg in ("flow", "code", "observer", "continuum", "entity"):
-        assert f"@abstractframework/{pkg}" in html
+        assert f"@abstractframework/{pkg}" not in html
 
 
 _HARNESS = r"""
 import vm from "node:vm";
 const source = __SOURCE__;
 const scenario = __SCENARIO__;
+// The REAL vendored kit bundle (console_islands.py), evaluated on its own: the console's key flows
+// call its cloudProviders logic and its brandMarks. The React mounts are recorded stubs (no DOM).
+const islandsCtx = vm.createContext({ console });
+islandsCtx.globalThis = islandsCtx;
+islandsCtx.window = islandsCtx;
+vm.runInContext(__ISLANDS__, islandsCtx);
+const kitLib = islandsCtx.AfConsoleIslands;
+const cloudMounts = [];
+const kitIslands = {
+  cloudProviders: kitLib.cloudProviders,
+  filterBarFacetsHtml: kitLib.filterBarFacetsHtml,
+  filterBarScopeButtonsHtml: kitLib.filterBarScopeButtonsHtml,
+  brandMarks: kitLib.brandMarks,
+  tooltipAttributes: kitLib.tooltipAttributes,
+  mountCloudProviderCards(el, props) {
+    const rec = { id: el.id, props, updates: 0, unmounted: 0 };
+    cloudMounts.push(rec);
+    return { update(p) { rec.props = p; rec.updates += 1; }, unmount() { rec.unmounted += 1; } };
+  },
+};
 
 class Element {
   constructor(id) {
@@ -133,6 +156,29 @@ async function fetch(path, options = {}) {
     loggedIn = true; document.cookie = "abstractgateway_csrf=agcsrf_wizard";
     return res(200, Object.assign({ ok: true, claimed: true, principal: { admin: true } }, scenario.createdBy ? { claim: { created_by: scenario.createdBy } } : {}));
   }
+  if (path === "/api/gateway/config/provider-endpoint-profiles" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    return res(200, { ok: true, profile: { id: body.id, provider_family: body.provider_family, display_name: body.display_name } });
+  }
+  if (path === "/api/gateway/config/provider-endpoint-profiles/discover-models") return res(200, { ok: true, models: ["claude-small", "claude-large"] });
+  if (path.startsWith("/api/gateway/models/download/") && method === "GET") {
+    const child = { job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 40 };
+    return res(200, path.endsWith("/grp_1") ? { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 40, children: [child] } : child);
+  }
+  if (path === "/api/gateway/models/download" && method === "POST") {
+    const body = JSON.parse(String(options.body || "{}"));
+    if (body.recommended) return res(200, { group: { job_id: "grp_1", kind: "download_group", status: "running", state: "downloading", percent: 10,
+      children: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] },
+      jobs: [{ job_id: "dl_1", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "running", state: "downloading", percent: 10 }] });
+    return res(200, { job: { job_id: `dl_${body.artifact}`, provider: body.provider, artifact: body.artifact, status: "running", state: "downloading" } });
+  }
+  if (path === "/api/gateway/config/capability-defaults/apply-recommended") {
+    // AbstractCore's report rows (plan_recommended_capability_defaults): `key`, `action`
+    // (apply | overwrite | already | kept | unavailable | cleared), `changed`, before/after.
+    const action = scenario.applyAction || "apply";
+    return res(200, { applied_recommended: { routes: [{ key: "input.text", action, changed: action === "apply",
+      before: action === "kept" ? { provider: "ollama", model: "llama3.2:3b" } : {}, after: { provider: "lmstudio", model: "qwen/qwen3.5-9b@4bit" } }] } });
+  }
   if (path === "/api/gateway/session/login" && method === "POST") { loggedIn = true; return res(200, { ok: true, principal: { user_id: "admin", admin: true } }); }
   if (path === "/api/gateway/session/onboarding" && method === "GET") return res(200, scenario.onboarding || { unclaimed: false });
   if (path === "/api/gateway/session/onboarding" && method === "POST") {
@@ -180,7 +226,11 @@ async function fetch(path, options = {}) {
       : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
       : { label: "Not installed", tone: "muted", busy: false, action: null, enabled: false, tip: null };
     const row = (id, pkg, extra) => { const r = Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {}); r.status_control = badgeOf(r); return r; };
-    return res(200, { ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
+    // One card per row (apps_manager.app_cards for apps of no family).
+    const cardsOf = (rows) => rows.map((r) => ({ id: r.id, family: null, name: r.name, description: r.id + " in one sentence.", mark: r.id.slice(0, 2), illustration_url: null, members: [r.id],
+      launchers: [{ app: r.id, kind: r.kind === "desktop" ? "desktop" : "browser" }].concat((r.interfaces || []).filter((i) => i.kind === "tui").map(() => ({ app: r.id, kind: "terminal" }))) }));
+    const withCards = (body) => Object.assign(body, { cards: cardsOf(body.apps) });
+    return res(200, withCards({ ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
       console_tui: { kind: "tui", installed: false, install_available: false, install_method: "cargo", install_command: "cargo install abstractgateway-console", command: "abstractgateway-console --url http://127.0.0.1:18080" }, apps: [
       row("flow", "@abstractframework/flow", { install_available: true, install_blocked_reason: null, actions: ["install"] }),
       row("code", "@abstractframework/code", { installed: true, version: "0.4.2", running: true, status: "running", actions: ["open", "stop", "logs"], url: "http://127.0.0.1:3002/", interfaces: [{ kind: "web" }, { kind: "tui", installed: true, version: "0.5.0", launch_available: true, command: "abstractcode --gateway http://127.0.0.1:18080" }] }),
@@ -188,12 +238,14 @@ async function fetch(path, options = {}) {
       row("continuum", "@abstractframework/continuum"),
       row("entity", "@abstractframework/entity"),
       row("assistant", "abstractassistant", { kind: "desktop", name: "Assistant", installed: true, version: "0.5.0", status: "stopped", actions: ["open"], interfaces: [], desktop: { location: "/Applications/AbstractAssistant.app", launch_command: "open -a /Applications/AbstractAssistant.app", launch_available: true, launch_blocked: null } }),
-    ] });
+    ] }));
   }
   if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
   if (path === "/api/gateway/apps/jobs/app-1") return res(200, { ok: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "succeeded", percent: 100, message: "Flow is running" } });
-  if (path === "/api/gateway/models/catalog") {
+  // The Models catalog asks every quant (operator ruling 2026-10-29: no "Every quant" switch); the
+  // defaults dialog reads the plain catalog for its recommendation.
+  if (path === "/api/gateway/models/catalog?hub=true&extended=true" || path === "/api/gateway/models/catalog") {
     if (scenario.catalogFail) return res(501, { detail: { message: scenario.catalogFail } });
     return res(200, CATALOG);
   }
@@ -201,15 +253,22 @@ async function fetch(path, options = {}) {
   if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") { textDefaultSet = true; return res(200, { ok: true }); }
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
-    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
+    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", route_provider: "lmstudio", route_model: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
-  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: "qwen/qwen3.5-9b" }] : [] });
+  if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }] : [] });
   if (path === "/api/gateway/admin/users" && method === "POST") return res(409, { detail: { reason_code: "user_accounts_off_admin_only", message: "This gateway runs with user accounts off, so a non-admin account could not sign in here." } });
   if (path === "/api/gateway/admin/users") return res(200, { users: [] });
   if (path === "/api/gateway/admin/runtime-reservations") return res(200, { runtime_reservations: [] });
-  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: [] });
-  if (path === "/api/gateway/discovery/providers") return res(200, { items: [] });
+  if (path === "/api/gateway/config/provider-endpoint-profiles") return res(200, { profiles: (scenario.existingProfiles || []).map((id) => ({ id })) });
+  // AbstractCore's registry as the gateway serves it: the cloud providers are local_provider false.
+  if (path === "/api/gateway/discovery/providers") return res(200, { items: [
+    { name: "anthropic", display_name: "Anthropic", local_provider: false },
+    { name: "lmstudio", display_name: "LMStudio", local_provider: true },
+    { name: "openai", display_name: "OpenAI", local_provider: false },
+    { name: "openrouter", display_name: "OpenRouter", local_provider: false },
+    { name: "portkey", display_name: "Portkey", local_provider: false },
+  ] });
   return res(200, {});
 }
 // AbstractCore's model_catalog_v1 (with W1's quant_class): one text model
@@ -239,7 +298,7 @@ const coreLib = {
     return { kind, refresh() { rec.refreshed += 1; }, unmount() { rec.unmounted += 1; } };
   },
 };
-const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib } : {};
+const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib, AfConsoleIslands: kitIslands } : { AfConsoleIslands: kitIslands };
 const context = vm.createContext({
   // Web Crypto, as in every browser (randomId: DESIGN §11).
   crypto: globalThis.crypto,
@@ -279,6 +338,11 @@ if (scenario.name === "claim") {
     for (const want of scenario.enginesWant) if (!engines.includes(want)) fail("engines failure view missing " + want + ": " + engines);
   } else {
     for (const want of ['data-engine-card="ollama"', 'data-engine-card="mlx"', "Not installed", "Ready", 'data-engine-action="install"']) if (!engines.includes(want)) fail("engine cards missing " + want + ": " + engines);
+    // Official marks from the kit (brand_icons.tsx), never the old two-letter badges.
+    if (!/<span class="af-brand-mark" data-brand="mlx" role="img" aria-label="[^"]+"><svg viewBox=/.test(engines)) fail("engine card mlx must show its official mark: " + engines.slice(0, 600));
+    // Backlog 1100: Ollama's logo needs its written permission; until then its name, no logo.
+    if (!/<span class="af-brand-mark af-brand-mark--text" data-brand="ollama" role="img" aria-label="[^"]+">Ollama<\/span>/.test(engines)) fail("engine card ollama must show its name badge, no logo: " + engines.slice(0, 600));
+    if (/<span class="ui-mark" aria-hidden="true">(Ol|MLX)<\/span>/.test(engines)) fail("the two-letter engine badges are gone");
     // Install asks first, then POSTs a real (non-dry-run) job with CSRF.
     await context.engineAction("install", "ollama"); await settle(); await settle();
     const confirmHtml = el("first-run-engines-body").innerHTML;
@@ -304,6 +368,21 @@ if (scenario.name === "claim") {
     if (!after.includes("Try again")) fail("a failed install offers Try again");
   }
 
+  // Cloud providers: its own step, the kit's cards (the same island as the Providers tab).
+  context.firstRunStep(1); await settle();
+  if (hidden("first-run-step-cloud") || !hidden("first-run-step-engines")) fail("the Cloud providers step did not open after Local engines");
+  if (el("first-run-step-title").textContent !== "Cloud providers") fail("cloud step title: " + el("first-run-step-title").textContent);
+  if (el("first-run-kicker").textContent !== "Step 3 of 6") fail("cloud step kicker: " + el("first-run-kicker").textContent);
+  const cm = cloudMounts.find((m) => m.id === "first-run-cloud-body");
+  if (!cm) fail("the cloud provider cards were not mounted in the guide: " + JSON.stringify(cloudMounts.map((m) => m.id)));
+  if (cm.props.base !== "/api/gateway" || cm.props.scope !== "gateway" || cm.props.heading !== false || typeof cm.props.onSaved !== "function") fail("guide cards props: " + JSON.stringify(cm.props));
+  // The cards' request is the console's api(): JSON body, CSRF header.
+  const reqBefore = calls.length;
+  await cm.props.request("/api/gateway/config/provider-endpoint-profiles/discover-models", { method: "POST", body: { provider_family: "openrouter", api_key: "sk-or-check" } });
+  const rq = calls.slice(reqBefore).find((c) => c.path.endsWith("/discover-models"));
+  if (!rq || rq.method !== "POST" || rq.csrf !== "agcsrf_wizard" || JSON.parse(rq.body).provider_family !== "openrouter") fail("the cards' request must be the console api with CSRF: " + JSON.stringify(rq));
+  if (calls.slice(reqBefore).some((c) => c.method === "POST" && c.path === "/api/gateway/config/provider-endpoint-profiles")) fail("checking a key stored a connection");
+
   context.firstRunStep(1); await settle();
   const model = el("first-run-model-recommended").innerHTML;
   for (const want of ["qwen/qwen3.5-9b@4bit", "Not downloaded", "Use recommended defaults", "first-run-download"]) if (!model.includes(want)) fail("model step missing " + want + ": " + model);
@@ -311,11 +390,13 @@ if (scenario.name === "claim") {
   // AbstractCore's table, whatever the screens' state).
   if (mounts.some((x) => x.id === "first-run-model-catalog")) fail("the model step must show the catalog cards, not mount AbstractCore's table");
   const cat = el("first-run-model-catalog").innerHTML;
+  // test_gateway_console_filter_bar.py reads both catalogs' markup (the guide's here, the Models tab's below).
+  if (scenario.dumpCatalogs) console.log("CATALOG guide " + JSON.stringify(cat));
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
-    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "mlx-community/Qwen3.5-9B-8bit", "8-bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
-    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16"]) if (cat.includes(gone)) fail("the guide presets Fits this computer; " + gone + " is too large and must be hidden: " + cat);
+    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "Recommended", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
+    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16", "mlx-community/Qwen3.5-9B-8bit"]) if (cat.includes(gone)) fail("the guide defaults to 4-bit and presets Fits this computer; unexpected version " + gone);
     if (cat.includes("<table")) fail("the catalog is cards, not a table");
     if (cat.includes("does not report quant_class")) fail("a catalog WITH quant_class must not show the missing-field notice");
     // "Use as default" on the downloaded text model PUTs the text route with
@@ -328,7 +409,7 @@ if (scenario.name === "claim") {
     const body = JSON.parse(put.body);
     if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Use as default body wrong: " + put.body);
     if (put.csrf !== "agcsrf_wizard") fail("Use as default PUT carried no CSRF header");
-    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Use as default");
+    if (!el("first-run-message").textContent.includes("Default text model set to Qwen3.5 9B")) fail("no readable confirmation after Use as default");
   }
 
   context.firstRunStep(1); await settle();
@@ -339,7 +420,8 @@ if (scenario.name === "claim") {
   // details off: no Stop, no Show log, no versions, no commands.
   if (!apps.includes('class="ui-card-grid is-aligned"')) fail("the apps grid must pin the action rows (is-aligned): " + apps);
   for (const gone of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "npx @abstractframework/", "Version 0.4.2", "Open it with the Open button", "Also runs in your terminal", "abstractcode --gateway"]) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
-  if (!apps.includes("http://127.0.0.1:18080")) fail("apps step did not name the gateway URL");
+  // One toolbar line, no explanatory sentence: the refresh icon button (and the settings gear).
+  if (apps.includes("Apps open in your browser") || !apps.includes('data-app-action="refresh" aria-label="Refresh"')) fail("the apps toolbar must be the refresh icon button only: " + apps);
   if (apps.includes("nodejs.org")) fail("apps step must not send people to nodejs.org");
   for (const want of ['data-app-action="install"', ">Install</button>", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway", 'data-app-card="assistant"', 'data-app-action="desktop-open"']) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
   // Mission LL: ONE Install (it installs the terminal app too), never
@@ -350,8 +432,8 @@ if (scenario.name === "claim") {
   if (cards.length !== 6) fail("six app cards expected (five browser apps + the Assistant): " + cards.length);
   if (!cards[5].includes('data-app-card="assistant"')) fail("the Assistant comes after the five browser apps: " + cards[5]);
   for (const c of cards) {
-    const at = ["ui-card__head", "ui-card__blurb is-oneline", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
-    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be head / one line / body / action row / technical, in that order: " + c);
+    const at = ["ui-app-card__art", "ui-card__head", "ui-card__blurb", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
+    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be illustration / head / description / body / action row / technical, in that order: " + c);
     const row = c.slice(c.indexOf('class="ui-card__actions"'), c.indexOf('class="ui-card__tech"'));
     if ((row.match(/is-primary/g) || []).length !== 1) fail("one primary action per card: " + row);
   }
@@ -400,10 +482,18 @@ if (scenario.name === "claim") {
     if (mounts.some((x) => x.kind === "models")) fail("the Models tab must not mount AbstractCore's Models screen: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
     if (mounts.some((x) => x.id === "engines-core-root")) fail("the Providers tab renders engine cards, it must not mount AbstractCore's table");
     if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Providers tab shows no local provider cards: " + el("engines-core-root").innerHTML);
+    // The Providers tab's Cloud providers: the SAME kit cards as the guide, plus "More settings"
+    // (the connection editor); the guide's copy was unmounted when the guide closed.
+    const tabCards = cloudMounts.find((m) => m.id === "cloud-providers-root");
+    if (!tabCards) fail("the Providers tab did not mount the cloud provider cards: " + JSON.stringify(cloudMounts.map((m) => m.id)));
+    if (tabCards.props.base !== "/api/gateway" || typeof tabCards.props.onConfigure !== "function" || tabCards.props.heading !== false) fail("Providers tab cards props: " + JSON.stringify(tabCards.props));
+    const guideCards = cloudMounts.find((m) => m.id === "first-run-cloud-body");
+    if (guideCards && guideCards.unmounted !== 1) fail("the guide's cards were not unmounted when the guide closed");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
-    if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
+    if (scenario.dumpCatalogs) console.log("CATALOG tab " + JSON.stringify(el("catalog-cards-root").innerHTML));
+    if (el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"') || !el("catalog-cards-root").innerHTML.includes('data-mc-fits="1" checked')) fail("the Models tab defaults to Fits this computer");
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
     el("tab-button-catalog").onclick(); await settle();
@@ -505,6 +595,153 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+const dmClick = async (boxId, dataset) => { el(boxId).onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
+if (scenario.name === "default-models") {
+  // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
+  context.firstRunGoto("model"); await settle();
+  if (!el("first-run-default-models").innerHTML.includes('data-dm-badge="in-text"')) fail("the step must open in Simple mode");
+  await dmClick("first-run-head-actions", { dmMode: "advanced" });
+  const html = el("first-run-default-models").innerHTML;
+  const rows = (html.match(/data-dm-row="/g) || []).length;
+  // Ten rows: AbstractCore 2.32.0 added the Decisions route (output.decision).
+  if (rows !== 10) fail("expected 10 capability rows, got " + rows);
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "Decisions", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
+    if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
+  }
+  await dmClick("first-run-default-models", { dmUse: "input.text" });
+  const put = calls.find((c) => c.method === "PUT" && c.path === "/api/gateway/config/capability-defaults/input/text");
+  if (!put) fail("Use recommended did not set the text route");
+  const pb = JSON.parse(put.body);
+  // Review 1069: the previous model's base URL and reasoning effort are cleared, never carried over.
+  if (pb.provider !== "lmstudio" || pb.model !== "qwen/qwen3.5-9b@4bit" || pb.base_url !== "" || pb.reasoning !== "") fail("Use recommended body: " + put.body);
+  if (calls.some((c) => c.method === "PUT" && c.path.endsWith("/output/text"))) fail("output.text is derived from input.text: one write only");
+}
+if (scenario.name === "simple-mode") {
+  // 1069 Simple mode (default): one Use recommended, then capability badges in readable names.
+  // Operator 2026-10-29: the step's FIRST paint is Simple mode (a skeleton while the recommendations
+  // load), never the older layout ("Checking the recommended starter models…", the catalog search).
+  context.firstRunGoto("model");
+  const first = el("first-run-default-models").innerHTML;
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("the first paint is not Simple mode: the older layout shows until the data loads");
+  if (!first.includes("Reading what this computer can run") || !first.includes("dm-badge--loading")) fail("no Simple-mode skeleton while loading: " + first.slice(0, 400));
+  await settle();
+  // The Simple / Advanced switch sits on the step's header line, not in the step body.
+  if (!el("first-run-head-actions").innerHTML.includes('data-dm-mode="advanced"')) fail("the Simple / Advanced switch is not on the header line");
+  if (el("first-run-default-models").innerHTML.includes("data-dm-mode")) fail("the Simple / Advanced switch is still in the step body");
+  let html = el("first-run-default-models").innerHTML;
+  const ins = (html.match(/data-dm-badge="in-/g) || []).length;
+  const outs = (html.match(/data-dm-badge="out-/g) || []).length;
+  // Nine output badges: AbstractCore 2.32.0 added Decisions (output.decision).
+  if (ins !== 5 || outs !== 9) fail(`expected 5 input and 9 output badges, got ${ins} and ${outs}`);
+  if (!html.includes('data-dm-badge="out-decision"')) fail("simple mode has no Decisions badge");
+  for (const want of ["Use recommended", "Recommended for this computer", ">Input <", ">Output <", "Embeddings", "Rankers", "Files", "Qwen3.5 9B", "dm-badge--recommended", "dm-badge--covered", "dm-badge--none", "<svg"]) {
+    if (!html.includes(want)) fail("simple mode missing " + want + ": " + html.slice(0, 1200));
+  }
+  const badges = html.slice(html.indexOf('class="dm-groups"'));
+  if (/qwen\//.test(badges) || /@4bit/.test(badges)) fail("a badge shows a model id (ADR 0043: readable names only)");
+  if (!String(el("first-run-model-body").className).includes("dm-simple")) fail("Simple mode must hide the tables and catalog below");
+  // A download repaints the Multimodal table too, which queries its own rows: this scenario's fake
+  // elements answer selector queries with nothing (each scenario runs in its own process).
+  Element.prototype.querySelectorAll = function () { return []; };
+  Element.prototype.querySelector = function (sel) { return new Element(`q:${sel}`); };
+  // The one button: recommended routes without force, then the recommended downloads as one job.
+  await dmClick("first-run-default-models", { dmRecommended: "1" });
+  const apply = calls.find((c) => c.path.endsWith("/apply-recommended"));
+  if (!apply || JSON.parse(apply.body).force !== false) fail("Use recommended must keep the person's own choices (force false): " + (apply && apply.body));
+  const said = el("first-run-message").textContent;
+  if (/input\.text|lmstudio|qwen\//.test(said)) fail("Simple mode's message shows route keys or model ids (ADR 0043): " + said);
+  if (scenario.applyAction === "kept") {
+    // Review 1069: the route you configured differently is kept, and its recommended model is NOT downloaded.
+    if (calls.some((c) => c.path === "/api/gateway/models/download" && c.method === "POST")) fail("a kept route's recommended model was downloaded");
+    if (!/kept/.test(said)) fail("the message does not say your choice is kept: " + said);
+    console.log("OK");
+    process.exit(0);
+  }
+  const dl = calls.find((c) => c.path === "/api/gateway/models/download" && c.method === "POST");
+  if (!dl || JSON.parse(dl.body).recommended !== true) fail("Use recommended did not start the recommended downloads");
+  html = el("first-run-default-models").innerHTML;
+  if (!html.includes("data-dl-group=") || !html.includes("ui-dl-child")) fail("no per-download progress after Use recommended. message: " + el("first-run-message").textContent + " / dl calls: " + JSON.stringify(calls.filter((c) => c.path.includes("/models/download")).map((c) => [c.method, c.path])));
+  // Guided choice: recommended first, other models that fit, an API key (text).
+  await dmClick("first-run-default-models", { dmBadge: "in-text" });
+  if (String(el("dm-choice-backdrop").className).includes("hidden")) fail("the badge did not open its choice");
+  let choice = el("dm-choice-body").innerHTML;
+  for (const want of ["Recommended for this computer", "Other models that fit", "Qwen3.5 9B", 'data-dmc="use-other"', "All engines and models…", "Or use an API key"]) {
+    if (!choice.includes(want)) fail("guided choice missing " + want + ": " + choice.slice(0, 900));
+  }
+  if (choice.includes("Big Model")) fail("a model that does not fit this computer is offered");
+  // A half-typed key survives the catalog's re-render (review 1069).
+  // A real browser rebuilds the input when the body's HTML is replaced: the fake does too.
+  const bodyEl = el("dm-choice-body");
+  let bodyHtml = bodyEl.innerHTML;
+  Object.defineProperty(bodyEl, "innerHTML", { configurable: true, get() { return bodyHtml; }, set(v) { bodyHtml = v; el("dm-key-value").value = ""; } });
+  el("dm-key-value").value = "sk-half";
+  vm.runInContext("renderDmChoice()", context);
+  if (el("dm-key-value").value !== "sk-half") fail("a re-render wiped the half-typed API key");
+  // One Escape closes one layer: the dialog, never the guide below it.
+  if (!vm.runInContext("typeof dmUi.release === 'function'", context)) fail("the choice dialog is not bound as a modal (bindModal: focus trap, Escape, focus back)");
+  // Review 1069: a covered input (the grid copies the text model onto it) reads Covered; Ollama tags
+  // stay distinct; GGUF is no embeddings model; output.video needs text-to-video.
+  const checks = vm.runInContext(`(() => {
+    const savedDefaults = state.defaults, savedCatalog = dmUi.catalog;
+    state.defaults = savedDefaults.concat([{ key: "input.image", kind: "input", modality: "image", provider: "lmstudio", model: "qwen/qwen3.5-9b", covered_by: "input.text" }]);
+    const covered = dmState(dmCapById("in-image")).kind;
+    dmUi.catalog = { rows: [
+      { id: "e", display_name: "E", capabilities: { embedding: true }, artifacts: [{ provider: "huggingface", artifact: "x/E-GGUF:Q4_K_M" }, { provider: "huggingface", artifact: "x/E" }] },
+      { id: "v", display_name: "V", capabilities: { video_generation: true, text_to_video: false, image_to_video: true }, artifacts: [{ provider: "diffusers", artifact: "v/i2v" }] },
+    ] };
+    const emb = dmOtherModels(dmCapById("out-embeddings")).map((o) => o.artifact);
+    const vid = dmOtherModels(dmCapById("out-video")).length;
+    state.defaults = savedDefaults; dmUi.catalog = savedCatalog;
+    return { covered, emb, vid, ollamaSame: dmReadableName("ollama", "qwen3:8b") === dmReadableName("ollama", "qwen3:14b") };
+  })()`, context);
+  if (checks.covered !== "covered") fail("a covered input reads " + checks.covered + ", not Covered");
+  if (checks.emb.length !== 1 || checks.emb[0] !== "x/E") fail("embeddings offered a GGUF artifact: " + JSON.stringify(checks.emb));
+  if (checks.vid !== 0) fail("output.video offered an image-to-video-only model");
+  if (checks.ollamaSame) fail("two Ollama tags read the same name");
+  // OVH 8443 (2026-10-29): "Other models that fit" offered Ollama models with Ollama not installed, and
+  // engine rows read "HuggingFace (huggingface)". Only models whose engine is installed here (the 0958
+  // rule), each under its engine's readable name.
+  const eng = vm.runInContext(`(() => {
+    const savedCatalog = dmUi.catalog, savedEngines = engineStore.data;
+    engineStore.data = { schema: "gateway_engines_v2", engines: [
+      { id: "ollama", name: "Ollama", installed: false }, { id: "llamacpp", name: "llama.cpp", installed: true },
+      { id: "huggingface", name: "Hugging Face (transformers)", installed: true } ] };
+    state.providerLabels.set("huggingface", "HuggingFace (huggingface)");
+    dmUi.catalog = { rows: [{ id: "q4b", display_name: "Qwen3 4B", capabilities: { text: true }, artifacts: [
+      { provider: "ollama", artifact: "qwen3:4b", fit: { verdict: "fits" } },
+      { provider: "huggingface", artifact: "unsloth/Qwen3-4B-GGUF:Q4_K_M", fit: { verdict: "fits" } } ] }] };
+    const offered = dmOtherModels(dmCapById("out-text")).map((o) => o.provider + "|" + o.artifact);
+    renderDmChoice();
+    const html = $("dm-choice-body").innerHTML;
+    engineStore.data = null;
+    const unknown = dmOtherModels(dmCapById("out-text"));
+    dmUi.catalog = savedCatalog; engineStore.data = savedEngines;
+    return { offered, html, unknown };
+  })()`, context);
+  if (JSON.stringify(eng.offered) !== JSON.stringify(["huggingface|unsloth/Qwen3-4B-GGUF:Q4_K_M"])) fail("a model on an engine that is not installed is offered: " + JSON.stringify(eng.offered));
+  if (eng.html.includes("(huggingface)") || !eng.html.includes("llama.cpp")) fail("engine rows must read their readable name only: " + eng.html.slice(0, 900));
+  if (eng.unknown !== null) fail("with the engine inventory unknown, nothing is offered as installed");
+  // The key is checked before anything is stored, and an existing connection is never overwritten.
+  el("dm-key-family").value = "anthropic";
+  el("dm-key-value").value = "sk-ant-test-key";
+  await dmClick("dm-choice-body", { dmc: "key-check" });
+  const disc = calls.find((c) => c.path.endsWith("/discover-models"));
+  const db = JSON.parse(disc.body);
+  if (db.provider_family !== "anthropic" || db.api_key !== "sk-ant-test-key" || db.profile_id) fail("the key must be checked as a draft: " + disc.body);
+  if (calls.some((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST")) fail("a connection was stored before the key was checked");
+  choice = el("dm-choice-body").innerHTML;
+  if (!choice.includes("claude-large")) fail("the key's models are not offered");
+  el("dm-key-model").value = "claude-large";
+  const before = calls.length;
+  await dmClick("dm-choice-body", { dmc: "key-use" });
+  const prof = calls.slice(before).find((c) => c.path === "/api/gateway/config/provider-endpoint-profiles" && c.method === "POST");
+  const pp = JSON.parse(prof.body);
+  if (pp.id !== "anthropic-key-2" || pp.base_url !== "" || pp.api_key !== "sk-ant-test-key") fail("existing connection must not be overwritten (expected anthropic-key-2): " + prof.body);
+  const puts = calls.slice(before).filter((c) => c.method === "PUT" && /capability-defaults\/(input|output)\/text$/.test(c.path));
+  if (puts.length !== 1 || !puts[0].path.endsWith("/input/text")) fail("one write to input/text expected: " + JSON.stringify(puts.map((c) => c.path)));
+  const tb = JSON.parse(puts[0].body);
+  if (tb.provider !== "endpoint:anthropic-key-2" || tb.model !== "claude-large" || tb.base_url !== "" || tb.reasoning !== "") fail("text route body: " + puts[0].body);
+}
 if (scenario.name === "apps-gate") {
   // No default text model yet: the Apps step proposes no app and points back to the model step.
   await context.openFirstRunWizard("apps"); await settle();
@@ -552,8 +789,11 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
         tag = re.search(r'<[^>]*\bid="%s"[^>]*>' % re.escape(element_id), html)
         cls = re.search(r'\bclass="([^"]*)"', tag.group(0)) if tag else None
         classes[element_id] = cls.group(1) if cls else ""
+    from abstractgateway.console_islands import ISLANDS_JS
+
     harness = (
-        _HARNESS.replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts).replace("    initResourcesDashboard();", "    /* Resources wiring has its own real-browser suite. */")))
         .replace("__SCENARIO__", json.dumps(scenario))
         .replace("__CLASSES__", json.dumps(classes))
     )
@@ -570,6 +810,27 @@ def test_unclaimed_gateway_shows_onboarding_signs_in_and_opens_the_guide(require
                   "password_rule": "At least 10 characters.", "password_min_length": 10}
     result = _run({"name": "onboarding", "hash": "", "completed": False, "coreStub": True,
                    "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_simple_mode_badges_recommended_flow_and_guided_choice() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"]})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_use_recommended_keeps_your_route_and_does_not_download_its_recommendation() -> None:
+    result = _run({"name": "simple-mode", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "existingProfiles": ["anthropic-key"], "applyAction": "kept"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+def test_default_models_step_lists_every_capability_and_sets_them() -> None:
+    result = _run({"name": "default-models", "hash": "", "completed": False, "coreStub": True, "loggedIn": True, "textDefault": True,
+                   "textModel": "qwen/qwen3.5-4b"})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 

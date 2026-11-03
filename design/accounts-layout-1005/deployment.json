@@ -1,0 +1,17 @@
+{
+  "before": {
+    "healthy": true,
+    "model_inflight": 0,
+    "runner_inflight": 0
+  },
+  "response": {
+    "ok": true,
+    "restart": true,
+    "requested_by": "default/admin",
+    "reason": "Deploy Accounts action containment fix (1005)"
+  },
+  "after": {
+    "healthy": true,
+    "new_layout_served": true
+  }
+}

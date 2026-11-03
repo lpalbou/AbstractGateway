@@ -39,11 +39,12 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.15.0` (the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.30.0` (mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `AbstractRuntime>=0.16.0` (decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
-- `abstractagent>=0.4.0` (the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
+- `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.4.0` (the memory graph, `abstractmemory.graph`)
+- `abstractskill>=0.3.4` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`)
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
@@ -487,6 +488,31 @@ The OpenAI-compatible API is served at `http://<gateway>/v1` and managed on the
 console's **OpenAI API** page. See [openai-api.md](./openai-api.md) for what it
 supports, the access settings, the request log and its admin API.
 
+There are two independent optional HTTP surfaces:
+
+| Surface | Switch in `config/core_endpoint.json` | Address and credentials |
+|---|---|---|
+| Gateway `/v1` compatibility API | `enabled` (default `false`) | Gateway listener and account API keys; Gateway admission and request log |
+| Direct AbstractCore HTTP service | `direct_enabled` (default `false`) | Core's `server.host` / `server.port` (default `127.0.0.1:8000`) and Core's own server authentication |
+
+An admin changes either switch through `POST /api/gateway/admin/core-endpoint`;
+send JSON booleans, for example `{"direct_enabled": true}`. Changing one
+switch leaves the other unchanged. Core owns the direct service's configuration
+and tokens; see [Core server configuration](https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md).
+Gateway account API keys and its *Who can connect* setting govern Gateway
+`/v1`, not the direct Core listener.
+
+The execution owner starts and stops these listeners without restarting its
+model pool. Native runs use the Gateway run APIs, Runtime and native RPC;
+they do not require either HTTP surface. With both switches off, execution
+readiness does not start an HTTP listener or prepare a server token. An HTTP
+startup failure leaves native execution available. Admin status includes
+`http_services` with each service's `state`, `url` and `error`; inspect this
+before assuming an enabled service is listening. Failed cleanup stays
+`stopping` until its listener actually stops. Service recovery uses bounded
+backoff; after its restart limit, correct the cause and toggle that service
+off and on to retry.
+
 ## Two entry points, one store
 
 AbstractCore (low level) and AbstractGateway (high level) are the two entry
@@ -537,9 +563,9 @@ definition. Use distinct ids across the two unless you intend that.
 The Gateway is a full CRUD surface over AbstractCore's per-modality
 provider/model defaults (configure, surface, live-refresh) and keeps **zero**
 local storage. Every read hits Core's manager and every write goes through
-Core's setter, so configuring a default here configures Core's default, for text
-and for every media modality: image, video, voice (TTS), voice input (STT),
-sound, music, 3D.
+Core's setter, so configuring a default here configures Core's default, for text,
+for every media modality: image, video, voice (TTS), voice input (STT),
+sound, music, 3D, and for decisions (`output.decision`).
 
 **Where it is stored.** A JSON file under key `capability_defaults.routes`:
 `~/.abstractcore/config/abstractcore.json` normally, or the Gateway-scoped
@@ -554,13 +580,17 @@ reports both as `config_file` / `gateway_config_file` / `principal_config_file`)
 | `output.video[.text_to_video\|.image_to_video]` | video generation |
 | `output.voice` / `input.voice` | TTS **and voice cloning** / STT |
 | `output.music` / `output.sound` | music / sound-effect generation |
+| `output.decision` | decisions: yes/no, choice and score answers about a text, from a decision model such as `mlx` / `jaredpalmer/kev-4b` ([api.md](./api.md#decisions)) |
 | `output.scene3d[.text_to_scene3d\|.image_to_scene3d]` | 3D scene generation |
 | `input.image` / `input.video` / `input.sound` / `input.music` | understanding (covered by `input.text` when that model is multimodal) |
 
 The task→route mapping is stated once, in AbstractCore's capability-defaults
 module, and every layer reads it from there. A `.task` suffix is only valid for
-the tasks Core persists; `tts`, `stt`, `music_generation` and
-`sound_generation` resolve at the modality cell.
+the tasks Core persists; `tts`, `stt`, `music_generation`, `sound_generation`
+and `decision` resolve at the modality cell. `output.decision` is set like any
+other route: `PUT /api/gateway/config/capability-defaults/output/decision`,
+the console's Multimodal page, or
+`abstractcore config set-default output.decision --provider mlx --model jaredpalmer/kev-4b`.
 
 CRUD: `GET /api/gateway/config/capability-defaults` (full grid — configured,
 derived and unset rows, each naming its source),
@@ -1094,8 +1124,8 @@ question resolves through the canonical generation task
 (`output.image.text_to_image`) before falling back to `output.image`, so the
 backend Gateway advertises is always the backend it will execute.
 
-`output.voice`, `output.sound` and `output.music` have no task rows; their
-modality row is the primary key, not a fallback.
+`output.voice`, `output.sound`, `output.music` and `output.decision` have no
+task rows; their modality row is the primary key, not a fallback.
 
 In the Multimodal Capabilities grid the task rows are indented beneath their
 modality row, and a modality row that is unset while every task row beneath it
@@ -1487,7 +1517,7 @@ does not implicitly install them.
 - `ABSTRACTGATEWAY_VOICE_TTS_ENGINE` / `ABSTRACTGATEWAY_VOICE_STT_ENGINE`: Gateway-scoped voice engine settings. The `ABSTRACTVOICE_*` names are also accepted by the lower package.
 - `ABSTRACTGATEWAY_VOICE_TTS_MODEL` / `ABSTRACTGATEWAY_VOICE_STT_MODEL`: Gateway-scoped TTS/STT model defaults.
 - `ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL` / `ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY`: remote voice endpoint used by AbstractVoice.
-- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, and `music`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
+- `GET /api/gateway/discovery/capabilities`: reports installed packages plus AbstractCore capability plugins for `voice`, `audio`, `vision`, `music` and `decision`; also returns `capabilities.contracts.version=1` with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music/decision endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls
 - `GET /api/gateway/voice/voices`: proxies AbstractCore `/v1/audio/voices` when `ABSTRACTCORE_SERVER_BASE_URL` is configured; otherwise returns static Gateway/env voice descriptors.
 - `GET /api/gateway/audio/speech/models`: proxies AbstractCore `/v1/audio/speech/models` when configured.
 - `GET /api/gateway/audio/transcriptions/models`: proxies AbstractCore `/v1/audio/transcriptions/models` when configured.
@@ -1502,6 +1532,7 @@ does not implicitly install them.
 - `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients. `task: "text_to_audio"` makes a sound effect. `seconds` is the clip length (`duration_s` is accepted as the same value; two different values answer 400, a value that is not a number between 0 and 3600 answers 422); without it a sound effect is 5 seconds and music keeps the backend default (30 seconds for Stable Audio 3), and the model's own maximum applies (120 seconds for the Stable Audio 3 small checkpoints). `music_model` selects the checkpoint that runs.
+- `POST /api/gateway/runs/{run_id}/decisions`: creates a durable Runtime child run for one calibrated decision and returns its `decision` body and `answers` in the response (no artifact). `state` and `questions` are required; `model` (`provider/model`) and `truncate` are passed through only when the client supplies them, and without `model` the `output.decision` default answers. See [api.md](./api.md#decisions).
 
 Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 `event_name=abstract.progress`. Thin clients should stream the returned
@@ -1517,10 +1548,78 @@ Core catalog proxy settings:
   This is separate from Gateway auth.
 - `ABSTRACTGATEWAY_CORE_CATALOG_TIMEOUT_S`: catalog proxy timeout (default `3.0` seconds).
 
+## Model host: the models run in a supervised child process
+
+ADR 0002 (`docs/adr/0002_inference_and_public_endpoints_run_outside_the_gateway_process.md` in the repository). With
+`--model-host process` (the default on every OS), Runtime-backed provider calls use one child
+process the gateway starts, watches and restarts. That owner holds the managed model pool.
+A provider crash, a native abort in llama.cpp, a KV cache that runs out or a
+memory blow-up costs the requests in flight, never the gateway: sign-in, the console, sessions and
+`/api/health` keep answering.
+
+```bash
+abstractgateway serve                         # every OS: --model-host process
+abstractgateway serve --model-host in-process # everything in one process (development, --reload)
+```
+
+| Work | gateway process | model host child |
+|---|---|---|
+| Accounts, sign-in, routes, console, live streams, `/api/health` | yes | no |
+| Run stores, ledger, run ticking, tools, mail, push, bridges | yes | no |
+| Managed provider calls and model loads (runs, run summaries, Ask on a run, the console sandbox, entity chat) | no: a proxy with the same API | yes |
+| Optional Gateway `/v1` | admits it (key, Who can connect, Guest, request log), then forwards it | serves it through a private Core listener, sharing model resources |
+| Optional direct Core HTTP | admin lifecycle control only | Core serves requests directly with its own token and bind |
+
+- **The default**: `process` on Linux, macOS and Windows (one behaviour on every OS: MLX and Metal run in
+  the child on a Mac; on Windows the transport is a named pipe and the child has no console window).
+  `in-process` only with `--reload` or when chosen. A gateway embedded without the CLI (tests) is in-process.
+  `serve --no-runner` (the split API process) holds no model and starts no child; the split `runner`
+  takes the same flags and starts the child itself.
+- **Limits**: `--model-host-memory-gb GB` kills and restarts the child when its resident memory passes
+  GB (default 80 % of this machine's memory; `0` turns it off); `--model-host-nice N` (default 5) lets
+  the gateway answer first when inference uses every CPU. No environment variable.
+- **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
+  after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
+  10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
+  restarts. The child exits when the gateway does (its stdin closes), so it never outlives it.
+- **Readiness and progress**: readiness means the authenticated native RPC connection is available,
+  independently of optional HTTP. A ping confirms process responsiveness, not progress of a
+  particular inference. An ordinary provider error fails its request without restarting a healthy
+  child; deterministic request-encoding or schema-preparation errors fail without retries.
+- **A request when the child dies** fails within a second: "The model host (the process that runs the
+  models) stopped while answering (killed by signal 9 (SIGKILL)). The gateway is fine and is restarting
+  it; send the message again in a few seconds." (status 424, not retried automatically: the request may
+  be what crashed it). A request while it restarts fails at once with status 503 (retried by the
+  runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.
+- **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
+  (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
+  `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,
+  `memory_ceiling_bytes`, `inflight` (method, effective provider/model and available run, step,
+  request, node, workflow, effect-idempotency and attempt identifiers), `restart` (`will_restart`,
+  `backoff_s`, `restarts_in_window`) and `log_tail`. The child's log is `<data dir>/logs/model-host.log`.
+- **Health**: `GET /api/health` carries `model_host`: `mode`, `state` (`starting`, `up`, `restarting`,
+  `failed`, `stopped`; `in-process` in that mode), `pid`, `generation`, `restarts_in_window`,
+  `rss_bytes`, `memory_ceiling_bytes`, `nice`, `inflight`, `last_exit`, `last_incident`.
+- **One resource owner**: supported managed Core loaders reuse compatible resident weights for
+  the same canonical local artifact. Incompatible placements, engines or native profiles refuse
+  before allocating another copy; separate context/KV allocations do not imply duplicate weights.
+  This is process-local. Independently launched Core servers, external inference services, raw
+  engine constructors and arbitrary capability-plugin loaders are outside that admission contract.
+- **What a restart loses**: what the child held in memory (resident models, warmed again at once;
+  prompt caches; residency locks). Runs, sessions and the ledger are the gateway's and are untouched.
+- **Cost**: the hop adds about 0.1 ms p50 to a chat step on localhost (`scripts/bench_model_host_hop.py`;
+  budget 2 ms). The child is one more Python process with AbstractCore's imports.
+- **Not yet in the child** (backlog 0968): speech routes that call the voice library directly
+  (console voice preview, dictation), the embeddings index, and providers that tools build through the
+  session-route path. Generated media already runs in its own subprocesses.
+
+Evidence: `src/abstractgateway/model_host.py`, `src/abstractgateway/model_host_child.py`,
+`tests/test_model_host_rpc.py`, `tests/test_model_host_kill_e2e.py` (opt-in, `ABSTRACT_E2E_MODEL_HOST=1`).
+
 ## Split mode: API and runner in two processes (opt-in)
 
-By default one `abstractgateway serve` process does everything. Split mode puts the runs and the
-model in their own process, so a long generation never shares a Python interpreter with the API
+By default `abstractgateway serve` combines API and runner, with model execution in a supervised
+child. Split mode also separates the runner from the API, so a long runtime operation never shares a Python interpreter with the API
 (`/me`, the console, live streams). It is opt-in and not the default yet. Run these two commands
 with the same data dir (the runner first, or in either order):
 
@@ -1536,19 +1635,25 @@ Both take their usual flags (`runner` takes `--data-dir`, `--unsandboxed-command
 |---|---|---|---|
 | HTTP API, console, apps, live streams, `/api/health` | yes | yes | no |
 | Run ticking: starts, waits, commands, schedules (every account's plane) | yes | no: it creates runs and queues commands | yes |
-| Text model: runs and the OpenAI-compatible `/v1` | yes | no model loaded: `/v1` is forwarded to the runner | yes, one copy |
+| Model execution and optional Core HTTP | supervised child by default | no model loaded: Gateway `/v1` is forwarded to the runner's execution owner | supervised child by default; in-process only when explicitly chosen |
 | Mail watchers, feed polling, notification outbox | yes | no | yes |
 | Push dispatcher (watch and iPhone alerts) | yes | no | yes |
 | Telegram and agora bridges | yes | no | yes |
 
 - **`/v1` in split mode.** The API process checks the caller (key, Who can connect, Guest) as
-  usual, then forwards the request, streaming both ways, to a model host the runner process
-  serves on `127.0.0.1` (a port the system picks). The runner records its address in
+  usual, then forwards the request, streaming both ways, to the execution owner's optional
+  private Core listener on `127.0.0.1` (a port the system picks). Its owner records the address in
   `<data dir>/split/model_host.json` (mode 0600) with a secret made at each start; the model host
   refuses any request without it, so another program on the machine cannot use the port to skip
   the API's checks. No runner answering: `/v1` answers `503` with code `runner_unavailable`. The
   API process never loads the default text model (its runtime builds the model client at the
   first call instead of at boot).
+- **Optional HTTP status.** `GET /api/gateway/admin/core-endpoint` reads
+  `http_services` from `<data dir>/split/model_host_http.json` (atomic, mode `0600`,
+  no credentials). It checks the owner's PID and ignores stale status. With both
+  services disabled the file is removed after cleanup; an alive listener whose
+  stop failed stays visible as `stopping`. This status channel also works when
+  API and runner are separate processes.
 - **Events.** An event delivered by the API process reaches runs the runner process parked: the
   run store's event-wait and mailbox indexes re-read what another process changed before every
   lookup (at the latest 2 s after the change).
@@ -1568,14 +1673,18 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
   `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
   environment variable.
+  While the gateway runs, the Mac does not idle-sleep; closing the lid or choosing Sleep still sleeps it.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
+  - `--model-host process|in-process`: where the models run (default `process` on every OS,
+    `in-process` with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
+    child's limits ([model host](#model-host-the-models-run-in-a-supervised-child-process)).
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
     `--print-token` is treated as a test gateway and shows no icon either.

@@ -12,10 +12,32 @@ The API key is one of your account's **API keys**: named keys you make on the
 OpenAI API page, valid at `/v1` only (see [API keys](#api-keys)). One key can
 serve every app; separate keys are optional, for revoking one app without the
 others.
-There is no separate process or port: the API follows the gateway's [Network](./configuration.md#network-exposure-localhost--local-network--internet)
-setting, and AbstractCore answers each request behind it.
+The public URL follows the gateway's [Network](./configuration.md#network-exposure-localhost--local-network--internet)
+setting. Gateway admits each request, then Core answers it in the execution
+owner, sharing local model resources with native run calls.
 
-## Turn it on
+## Direct Core serving and native clients
+
+Native framework clients call Gateway run APIs and consume replay views or
+streams. They do not need an OpenAI-compatible HTTP endpoint.
+
+You can also enable a **direct AbstractCore listener** for inference-only
+clients. An admin sends `{"direct_enabled": true}` to
+`POST /api/gateway/admin/core-endpoint` (false disables it). This is independent
+of the Gateway `/v1` switch, `enabled`. The direct listener uses Core's own
+`server.host` and `server.port` (default `127.0.0.1:8000`) and Core server token;
+Gateway account API keys, *Who can connect*, and Gateway's request log apply
+only to Gateway `/v1`. See [Core's server guide](https://github.com/lpalbou/AbstractCore/blob/main/docs/server.md)
+for its authentication and bind configuration.
+
+Direct requests reach Core's app without creating a Gateway run or passing
+through Runtime orchestration. Both optional listeners share the execution
+owner's resources, and stopping either listener leaves resident models in
+place. A failed listener does not block native RPC. Admin status exposes
+`http_services.legacy` and `http_services.direct`, each with `state`, `url`
+and `error`; configuration booleans alone do not confirm a listening port.
+
+## Turn on Gateway `/v1`
 
 Open the web console, **Models → OpenAI API**. An admin sees five cards; any
 other account sees Status (running or not, the base URL), Connect your app
@@ -196,7 +218,9 @@ Also served when an engine for the capability is set up (AbstractCore answers;
 not part of the SDK checks): `POST /v1/responses`, `POST /v1/audio/speech`,
 `POST /v1/audio/transcriptions`, `POST /v1/audio/translations`,
 `POST /v1/images/generations`, `POST /v1/images/edits`,
-`POST /v1/images/variations`.
+`POST /v1/images/variations`, `POST /v1/decisions` (AbstractCore's decision
+modality: body `{model, state, questions, truncate?}`, calibrated typed answers,
+no text; Guest may use it).
 
 Not yet: `response_format` together with `tools`, `text.format` on
 `/v1/responses`, `n` greater than 1, `logprobs`, `logit_bias` (each answers
@@ -309,7 +333,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped), `owner_reveal` (may owners reveal their keys); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `direct_enabled`, `running`, `base_url`, `key{own_token, user_id, named_keys, fingerprint, allowed}` (`named_keys`: true when the caller's account makes API keys, false for the operator's own token; `fingerprint`: first 12 hex digits of the gateway token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped), `owner_reveal` (may owners reveal their keys); an admin also `http_services{legacy, direct}` (`state`, `url`, `error` per service), `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
 | GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, key_label, key_fingerprint, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
 | GET | `/api/gateway/openai-api/logs/{request_id}` | any account | `{row{..., request, response, user_agent}}`, the recorded request and response (redacted); someone else's id answers 404 for a non-admin |
 | GET | `/api/gateway/me/openai-keys` | any account | `{account, keys[{label, fingerprint, created_at, created_by, last_used_at, last_client, revealable}]}`, never a key; `409 no_account` for the operator's own token |
@@ -319,7 +343,7 @@ anyone else, their own. The log shares the audit log's rotation and retention
 | GET | `/api/gateway/admin/accounts/{id}/openai-keys` | admin | that account's keys (same items) |
 | DELETE | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}` | admin | revokes one of that account's keys at once |
 | POST | `/api/gateway/admin/accounts/{id}/openai-keys/{fingerprint}/reveal` | admin | always `403 not_owner`: only a key's owner reveals it |
-| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>, owner_reveal?: bool}` (`owner_reveal: false` erases every stored key copy: show-once); `409` with the reason when refused |
+| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?: bool, direct_enabled?: bool, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>, owner_reveal?: bool}` (`owner_reveal: false` erases every stored key copy: show-once); `409` with the reason when refused |
 | PUT | `/api/gateway/admin/accounts/{id}/openai-api` | admin | `{enabled}`: the account's OpenAI API switch; answers the account row (`openai_api`) |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
 | POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |

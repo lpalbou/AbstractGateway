@@ -1,0 +1,64 @@
+{
+  "themes": [
+    {
+      "theme": "dark",
+      "checks": {
+        "oneLine": true,
+        "badgeLocation": true,
+        "recommendedFits": true,
+        "disclosure": true,
+        "collapsed": true,
+        "oneLine390": true,
+        "viewport390": true,
+        "scrollable390": true,
+        "oneLine320": true,
+        "viewport320": true,
+        "scrollable320": true,
+        "localOnly": true,
+        "healthy": true
+      },
+      "heights": [
+        45,
+        45,
+        45,
+        45,
+        45,
+        45
+      ]
+    },
+    {
+      "theme": "light",
+      "checks": {
+        "oneLine": true,
+        "badgeLocation": true,
+        "recommendedFits": true,
+        "disclosure": true,
+        "collapsed": true,
+        "oneLine390": true,
+        "viewport390": true,
+        "scrollable390": true,
+        "oneLine320": true,
+        "viewport320": true,
+        "scrollable320": true,
+        "localOnly": true,
+        "healthy": true
+      },
+      "heights": [
+        45,
+        45,
+        45,
+        45,
+        45,
+        45
+      ]
+    }
+  ],
+  "errors": [],
+  "writes": [],
+  "touch": {
+    "oneLine": true,
+    "disclosure": true,
+    "viewport": true,
+    "localOnly": true
+  }
+}
