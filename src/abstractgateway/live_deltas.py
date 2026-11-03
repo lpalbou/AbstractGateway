@@ -116,7 +116,8 @@ _role_lock = threading.Lock()
 #         `decide` flow node.
 # 0.17.0: `EffectInterrupted` (a gateway stop interrupts a run: runner.py, model_host.py), and the
 #         discovery facade's `ModelNotDownloadedError` (memory_store.py).
-ABSTRACTRUNTIME_FLOOR = "0.17.0"
+# 0.18.0: `set_model_idle_unload` / `set_model_residency_locks` on the host facade (kept_models.py).
+ABSTRACTRUNTIME_FLOOR = "0.18.0"
 
 
 def _installed_runtime_version() -> str:
