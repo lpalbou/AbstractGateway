@@ -21,3 +21,7 @@
   in the token and the wait slept until the next registration or setting change. The token is now taken
   before the pass reads, like the registration and setting tokens (backlog 1009). Pinned by
   `test_an_append_from_another_process_during_a_pass_is_not_missed`.
+- **MCP connection test: a server that never answers is always reported as "did not answer initialize
+  within N seconds".** The MCP client's own request timeout equalled the test's deadline, so it could fire
+  first and the Settings sentence became "request timed out after 1.0s"; it is now a backstop set 2 s past
+  the deadline (`CLIENT_TIMEOUT_GRACE_S`).
