@@ -39,7 +39,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.16.0` (decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.17.0` (a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -1737,13 +1737,18 @@ Most-used:
   model and the `/v1` model host, mail, feeds, push, bridges)
 - `abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]`:
   run the stateless Apple push relay with your own key (extra `push-relay`; [push.md](./push.md#run-your-own-relay))
-- `scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a checkout): the
-  load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It builds a synthetic
-  data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50 automations, no real data),
-  starts a hermetic gateway on it (`--no-tray`, scratch home, empty environment, outbound network refused,
-  paused) and fails when a p99 goes over its bound (`/me` 50 ms, `/triggers/connections` 100 ms, session
-  artifacts 100 ms, `/runs?limit=20` 200 ms, `/automations` 500 ms), a probe answers anything but 200, or
-  CPU at rest over 2 minutes goes over `--cpu-max` (default 5% of a core, 10% on CI runners)
+- `scripts/perf/ci.sh [--enforce] [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]` (from a
+  checkout): the load test CI runs on pull requests and every night (`.github/workflows/perf.yml`). It
+  builds a synthetic data folder (`scripts/perf/make_fixture.py`: 10k runs, 100k artifacts, 50
+  automations, no real data), starts a hermetic gateway on it (`--no-tray`, scratch home, empty
+  environment, outbound network refused, paused) and measures each probe's p99 against its limit (`/me`
+  50 ms, `/triggers/connections` 100 ms, session artifacts 100 ms, `/runs?limit=20` 200 ms,
+  `/automations` 500 ms) and CPU at rest over 2 minutes against `--cpu-max` (default 5% of a core, 10% on
+  CI runners). Without `--enforce` an exceeded limit is reported (printed, and written to the GitHub job
+  summary) and the script exits 0; with `--enforce` it fails the run. A probe that answers anything but
+  200, or a gateway that does not boot, fails in both modes. Pull requests run it without `--enforce`;
+  the nightly and manual runs pass `--enforce`, so a shared runner's slow minute never turns a pull
+  request red (root ADR 0050, rule 5: no wall-clock gate on the default path)
 - `abstractgateway network status|set|addresses|restart`: who can reach the
   gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
 - `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
