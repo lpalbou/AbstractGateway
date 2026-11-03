@@ -27,14 +27,17 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.20.0** ([CHANGELOG](CHANGELOG.md)): one card per cloud provider (a saved
-key no longer shows as a second card), shorter setup-guide copy with one Connect or Edit
-button per cloud card, OVH AI Endpoints and any OpenAI-compatible endpoint; provider names
-shown as text badges until each owner approves its logo, with a trademark line in the
-console; automations listed active first, then paused; the Mac stays awake while the gateway
-runs; the menu-bar icon lists automation runs under Automations, not Conversations; each
-resident model's Resources row shows its slot pool; read-aloud streams that resume exactly
-after a break; and a started run that keeps its workflow snapshot.
+**What's new in 0.20.0** ([CHANGELOG](CHANGELOG.md#0200---2026-11-04)): models nobody uses
+are unloaded after 60 minutes (change it on the Models page or with `serve --model-idle-unload
+MINUTES`; 0 never unloads), and a model you keep loaded stays loaded, even after a restart; each
+loaded model says when it unloads. Stopping or restarting the gateway never fails a run any more:
+the run waits and carries on at the next start. One card per cloud provider (Anthropic no longer
+shows twice), shorter setup-guide copy with one Connect or Edit button per card, OVH AI Endpoints
+and any OpenAI-compatible endpoint; provider names shown as text badges until each owner approves
+its logo. Automations are listed active first, then paused. The Mac stays awake while the gateway
+runs. The Resources page shows each loaded model's slot pool. When the default embedding model is
+not downloaded yet, the log says so in one sentence naming the model and where to download it.
+Read-aloud resumes exactly where a broken stream stopped.
 
 **What's new in 0.19.0** ([CHANGELOG](CHANGELOG.md#0190---2026-11-02); it also ships the
 changes prepared as 0.18.0, which was not published): a fresh gateway is set up from the
