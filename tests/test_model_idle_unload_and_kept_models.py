@@ -140,17 +140,31 @@ def test_the_policy_sends_minutes_as_seconds_and_the_whole_kept_list(tmp_path: P
     assert facade.calls[0] == ("idle", 0)  # 0 = never unloads
 
 
-def test_a_runtime_without_the_setters_fails_loudly(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """Called directly, never `if hasattr`: a runtime older than 0.18 raises, and the boot/settings
-    thread logs it at ERROR naming the runtime it needs."""
+class _OnlyIdleSetter:
+    def set_model_idle_unload(self, seconds: Any) -> None:
+        return None
+
+
+class _OnlyLocksSetter:
+    def set_model_residency_locks(self, locks: Any) -> None:
+        return None
+
+
+@pytest.mark.parametrize("facade_cls, missing", [(_OnlyLocksSetter, "set_model_idle_unload"),
+                                                 (_OnlyIdleSetter, "set_model_residency_locks")])
+def test_a_runtime_without_either_setter_fails_loudly(tmp_path: Path, caplog: pytest.LogCaptureFixture, facade_cls, missing) -> None:
+    """Called directly, never `if hasattr`: a runtime without EITHER setter (older than 0.18) raises, and
+    the boot/settings thread logs it at ERROR naming the runtime it needs and the missing method. One
+    facade per setter, so a hedge on either one alone turns this red."""
     from abstractgateway.kept_models import RUNTIME_NEEDED, apply_in_background, apply_model_policy
 
-    with pytest.raises(AttributeError):
-        apply_model_policy(tmp_path, object(), why="a test")
+    with pytest.raises(AttributeError, match=missing):
+        apply_model_policy(tmp_path, facade_cls(), why="a test")
     with caplog.at_level("ERROR", logger="abstractgateway.kept_models"):
-        apply_in_background("a test", data_dir=tmp_path, facade_getter=object).join(timeout=30)
+        apply_in_background("a test", data_dir=tmp_path, facade_getter=facade_cls).join(timeout=30)
     errors = [r for r in caplog.records if r.levelname == "ERROR"]
     assert len(errors) == 1 and RUNTIME_NEEDED in errors[0].getMessage() and errors[0].exc_info
+    assert missing in str(errors[0].exc_info[1])
 
 
 class _RefusingFacade:
@@ -372,6 +386,7 @@ assert logging.getLogger().level >= logging.WARNING, logging.getLogger().level  
 # AbstractCore's idle-unload logger, by its name (`process_residency._idle_log` in Core 2.34).
 logging.getLogger("abstractcore.residency").info("unloaded mlx-community/m after 3 min idle; freed 0.2 GB")
 logging.getLogger("abstractcore.other").info("an INFO line of another AbstractCore logger")
+print("propagate=" + str(logging.getLogger("abstractcore.residency").propagate))
 """
 
 
@@ -390,3 +405,59 @@ def test_the_idle_unload_line_reaches_the_model_host_log(tmp_path: Path) -> None
     assert len(lines) == 1, out.stderr[-3000:]
     assert "INFO abstractcore.residency: unloaded mlx-community/m after 3 min idle; freed 0.2 GB" in lines[0]
     assert "an INFO line of another AbstractCore logger" not in out.stderr + out.stdout
+    assert "propagate=False" in out.stdout  # never written twice, whatever the root logger does
+
+
+# ------------------------------------------------------------------ the model host's replay names a failed kept model
+
+
+def test_a_replayed_lock_that_fails_to_load_is_named_at_error(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """At boot the gateway's apply reaches the model host before its child exists, and after every child restart
+    the proxy replays the recorded `set_*` calls; nobody reads those answers. The runtime refuses in the answer
+    (`ok: false`, one `results` row per model), so the replay itself names each failed model at ERROR."""
+    from abstractgateway import model_host as mh
+
+    answers = {
+        "set_model_residency_locks": {"ok": False, "locks": [{"provider": "mlx", "model": "kept"}], "results": [
+            {"provider": "mlx", "model": "kept", "action": "kept", "ok": True, "error": None},
+            {"provider": "mlx", "model": "gone", "action": "load_failed", "ok": False, "error": "model_not_downloaded"}]},
+        "set_model_idle_unload": {"ok": True, "operation": "set_model_idle_unload", "idle_unload_s": 3600.0},
+    }
+
+    class FakeExchange:
+        def __init__(self, host: Any, owner: Any, msg: tuple, **_kw: Any) -> None:
+            self.msg = msg
+
+        def run(self, **_kw: Any) -> Any:
+            if self.msg[0] == "new":
+                return {"attrs": {}}
+            if self.msg[0] == "call":
+                return answers.get(self.msg[2])
+            return {}
+
+    class FakeHost:
+        generation = 1
+
+        def generation_alive(self) -> bool:
+            return True
+
+        def _register(self, client: Any) -> None:
+            pass
+
+        def _drop_later(self, client_id: str) -> None:
+            pass
+
+        def await_requested_restart(self) -> None:
+            pass
+
+    monkeypatch.setattr(mh, "_Exchange", FakeExchange)
+    client = mh.ModelHostClient(FakeHost(), kind="multi", ctor={"provider": "mlx", "model": "kept"})
+    # Before the child is built: recorded, answered None (the boot path).
+    assert client._mh_call("set_model_idle_unload", (3600,), {}) is None
+    assert client._mh_call("set_model_residency_locks", ([{"provider": "mlx", "model": "kept"}, {"provider": "mlx", "model": "gone"}],), {}) is None
+    with caplog.at_level("ERROR", logger="abstractgateway.model_host"):
+        client._mh_ensure()
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1, errors
+    assert "mlx/gone" in errors[0] and "load_failed" in errors[0] and "model_not_downloaded" in errors[0]
+    assert "set_model_residency_locks" in client._mh_setters  # still replayed at the next restart

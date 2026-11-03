@@ -103,7 +103,7 @@ def forget_kept(data_dir: Path, provider: Any, model: Any, base_url: Any = None)
 
 def _log_refusals(name: str, answer: Any, why: str) -> None:
     """The runtime's answer, read as its contract says: `None` = recorded by the model host for the
-    child's (re)build (applied and checked there); otherwise a dict whose `ok: false` is a refusal,
+    child's (re)build (its refusals are logged by that replay, `model_host._log_replayed_refusal`); otherwise a dict whose `ok: false` is a refusal,
     and, for the locks, one `results` row per model with its own `ok`."""
     if answer is None:
         return
