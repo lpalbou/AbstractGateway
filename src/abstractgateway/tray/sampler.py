@@ -108,6 +108,11 @@ class RunRow:
     # shown, never commanded.
     commandable: bool = True
     plane: str = ""
+    # The runtime's attribution of the run (GET /host/runs `session_kind`,
+    # abstractruntime run_attribution.py): chat | discussion = a conversation,
+    # automation | occurrence = an automation's run (`automation_id` names it).
+    session_kind: str = ""
+    automation_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -427,6 +432,8 @@ def run_rows_from_listing(payload: Any, *, now: Optional[float] = None, window_s
                 wait_run_id=(str(wait.get("run_id")).strip() or None) if wait.get("run_id") else None,
                 commandable=plane == caller_plane,
                 plane=plane,
+                session_kind=str(item.get("session_kind") or "").strip().lower(),
+                automation_id=str(item.get("automation_id") or "").strip() or None,
             )
         )
     order = {"running": 0, "waiting": 1}

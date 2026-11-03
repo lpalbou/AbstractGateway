@@ -30239,8 +30239,11 @@ async def host_runs(
     what the person typed cut at 60 chars, `workflow` = the workflow name) and,
     for a waiting row, `wait` = `{kind: tool_approval | ask_user | paused |
     event | other, summary, tool, wait_key, run_id}` where `run_id` is the run
-    that HOLDS the wait (a sub-run's approval belongs to its parent row). The
-    payload's `caller_plane` names the plane the caller's `POST /commands`
+    that HOLDS the wait (a sub-run's approval belongs to its parent row).
+    `session_kind` and `automation_id` are the runtime's attribution
+    (`run_attribution.py`): `automation` / `occurrence` = an automation's run,
+    which the tray lists under Automations, `chat` / `discussion` = a
+    conversation. The payload's `caller_plane` names the plane the caller's `POST /commands`
     reach (`plane` of each row says where it lives): a desktop tray greys
     Pause / Stop / approve on every other plane's row.
     """
