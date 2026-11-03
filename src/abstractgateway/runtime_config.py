@@ -1109,7 +1109,7 @@ BACKLOG_DEFAULT_DIRNAME = "backlog"
 BACKLOG_SUBPATH = ("docs", "backlog")
 BACKLOG_FOLDERS = ("planned", "proposed", "completed")
 _LAUNCH_SETTINGS_RELPATH = ("run", "launch-settings.json")
-_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner")
+_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner", "model_idle_unload_minutes")
 
 # Labels and help for the settings surfaces (console, Continuum, CLI) — one
 # row per knob so every door says the same thing.
@@ -1141,6 +1141,77 @@ BACKLOG_SETTINGS: List[Dict[str, Any]] = [
     },
 ]
 _BACKLOG_SETTINGS_BY_KEY: Dict[str, Dict[str, Any]] = {row["key"]: row for row in BACKLOG_SETTINGS}
+
+# ---- Models: idle unload and the kept-loaded locks (root backlog 1115) -------
+#
+# Idle unload (operator rulings 2026-11-03): a loaded model no call has used for N minutes is
+# unloaded; default 60, 0 = never; `serve --model-idle-unload MINUTES` > stored
+# `models.idle_unload_minutes` > 60. No environment variable. The mechanism is AbstractCore's
+# (the runtime relays the number); the gateway owns the setting.
+#
+# Kept loaded (the Keep loaded lock, AbstractCore ADR 0010): a kept model never unloads, and the
+# lock PERSISTS: `models.kept_loaded` records every lock the gateway set, so a gateway restart or
+# a model-host restart loads and locks it again (`kept_models.py`). Written only by the lock
+# routes, never by the settings door.
+MODEL_IDLE_UNLOAD_KEY = "models.idle_unload_minutes"
+MODEL_IDLE_UNLOAD_LAUNCH_KEY = "model_idle_unload_minutes"
+MODEL_IDLE_UNLOAD_DEFAULT_MINUTES = 60
+MODEL_IDLE_UNLOAD_MAX_MINUTES = 7 * 24 * 60
+MODEL_KEPT_LOADED_KEY = "models.kept_loaded"
+MODEL_IDLE_UNLOAD_SETTING: Dict[str, Any] = {
+    "key": MODEL_IDLE_UNLOAD_KEY,
+    "label": "Unload unused models after (minutes)",
+    "help": "A loaded model that no request has used for this many minutes is unloaded from memory; the next "
+            "request loads it again. 0 never unloads. A model kept loaded never unloads.",
+    "flag": "--model-idle-unload MINUTES",
+    "cli": "abstractgateway config set models.idle_unload_minutes MINUTES",
+    "default": MODEL_IDLE_UNLOAD_DEFAULT_MINUTES,
+}
+
+
+def parse_idle_unload_minutes(raw: Any) -> int:
+    """Whole minutes, 0 (never) to one week; anything else refuses in words."""
+    if isinstance(raw, bool):
+        raise RuntimeConfigError(f"{MODEL_IDLE_UNLOAD_KEY} is a whole number of minutes (got {raw!r})")
+    text = str(raw if raw is not None else "").strip()
+    try:
+        value = int(text) if not isinstance(raw, (int, float)) else int(raw)
+    except (TypeError, ValueError):
+        raise RuntimeConfigError(f"{MODEL_IDLE_UNLOAD_KEY} is a whole number of minutes, 0 for never (got {raw!r})") from None
+    if isinstance(raw, float) and raw != int(raw):
+        raise RuntimeConfigError(f"{MODEL_IDLE_UNLOAD_KEY} is a whole number of minutes (got {raw!r})")
+    if value < 0 or value > MODEL_IDLE_UNLOAD_MAX_MINUTES:
+        raise RuntimeConfigError(
+            f"{MODEL_IDLE_UNLOAD_KEY} is between 0 (never) and {MODEL_IDLE_UNLOAD_MAX_MINUTES} minutes (got {raw!r})"
+        )
+    return value
+
+
+def resolve_model_idle_unload(
+    data_dir: Path, *, stored: Optional[Dict[str, Any]] = None, launch: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """{value (minutes, 0 = never), source: flag|stored|default[, stored_value]}: flag > stored > 60."""
+    if stored is None:
+        stored = _read_store(Path(data_dir))
+    if launch is None:
+        launch = read_launch_settings(Path(data_dir))
+    saved = stored.get(MODEL_IDLE_UNLOAD_KEY)
+    out: Dict[str, Any]
+    if launch.get(MODEL_IDLE_UNLOAD_LAUNCH_KEY) is not None:
+        out = {"value": int(launch[MODEL_IDLE_UNLOAD_LAUNCH_KEY]), "source": "flag"}
+        if saved is not None:
+            out["stored_value"] = int(saved)  # saved, applies once the flag is gone
+    elif saved is not None:
+        out = {"value": int(saved), "source": "stored"}
+    else:
+        out = {"value": MODEL_IDLE_UNLOAD_DEFAULT_MINUTES, "source": "default"}
+    return out
+
+
+def _model_idle_unload_payload(data_dir: Path, stored: Dict[str, Any], launch: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(resolve_model_idle_unload(data_dir, stored=stored, launch=launch))
+    out.update({k: v for k, v in MODEL_IDLE_UNLOAD_SETTING.items()})
+    return out
 
 
 def _strict_bool(key: str, raw: Any) -> bool:
@@ -1692,6 +1763,7 @@ def read_runtime_config(
         "executors": executor_registry(),
         "operator_email": operator_email,
         "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
+        MODEL_IDLE_UNLOAD_KEY: _model_idle_unload_payload(data_dir, stored, launch),
         "allow_engine_install": _allow_engine_install_payload(stored),
         # Read-only here: GET/POST /api/gateway/network is the door (auth and
         # acknowledgement refusals, addresses, restart story).
@@ -1848,7 +1920,7 @@ class RuntimeConfigError(ValueError):
 # _is_known_write_key). `desktop_tray` is known only to be refused in words.
 _WRITE_KEYS = frozenset({
     "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "executor", "operator_email", "stop_kill_switch_s",
-    "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny",
+    "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny", MODEL_IDLE_UNLOAD_KEY,
 })
 
 
@@ -1986,6 +2058,15 @@ def write_runtime_config(
             stored["stop_kill_switch_s"] = seconds
             applied["stop_kill_switch_s"] = seconds
 
+    if MODEL_IDLE_UNLOAD_KEY in changes:
+        raw_m = changes[MODEL_IDLE_UNLOAD_KEY]
+        if raw_m is None or str(raw_m).strip() == "":
+            stored.pop(MODEL_IDLE_UNLOAD_KEY, None)  # clear = the default (60 minutes)
+            applied[MODEL_IDLE_UNLOAD_KEY] = None
+        else:
+            stored[MODEL_IDLE_UNLOAD_KEY] = parse_idle_unload_minutes(raw_m)
+            applied[MODEL_IDLE_UNLOAD_KEY] = stored[MODEL_IDLE_UNLOAD_KEY]
+
     if "workspace_builtin_deny" in changes:
         raw_bd = changes["workspace_builtin_deny"]
         if raw_bd is None or (isinstance(raw_bd, str) and not raw_bd.strip()):
@@ -2012,7 +2093,7 @@ def write_runtime_config(
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
             "backlog_exec_runner, triage_repo_root, executor, operator_email, "
-            "stop_kill_switch_s, allow_engine_install, "
+            "stop_kill_switch_s, allow_engine_install, models.idle_unload_minutes, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
             + ", agents.default_workflow.<interface>, agents.streaming_default, skills.shelf)"
         )

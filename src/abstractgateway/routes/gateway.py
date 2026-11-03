@@ -1378,6 +1378,9 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
         from ..service import sync_backlog_exec_runner
 
         out["exec_runner"] = sync_backlog_exec_runner(data_dir=gateway_data_dir_from_env())
+    if "models.idle_unload_minutes" in (payload or {}):
+        # Live: the runtime gets the new idle-unload seconds now (root backlog 1115).
+        _apply_model_policy("the idle-unload setting changed")
     return out
 
 
@@ -27332,6 +27335,12 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "slot_refusal_reason": _row_v1_str(record, "slot_refusal_reason"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
+        # Idle unload (root backlog 1115; AbstractCore `resident_model_states`, relayed by the
+        # runtime): when this model unloads if nothing uses it (null: locked, in use, or idle unload
+        # off), whether a call uses it now, and who keeps it loaded. As reported, never computed here.
+        "idle_unload_at": _row_v1_str(record, "idle_unload_at"),
+        "in_use": _row_v1_bool(record, "in_use"),
+        "locked_by": _row_v1_str_list(record, "locked_by"),
         # Additive-optional fields (lock/modality/calibration wave); null =
         # the runtime did not report it, never false/empty by guess.
         "locked": _row_v1_bool(record, "locked"),
@@ -28889,6 +28898,55 @@ async def capability_defaults_task_delete(kind: str, modality: str, task: str) -
     return _apply_capability_defaults_to_live_runtime(svc)
 
 
+def _kept_target(body: Dict[str, Any], out: Any) -> Dict[str, Any]:
+    """{provider, model, base_url?} a lock/unlock/unload acted on: the runtime's answer first, then
+    the request, then the runtime id (`local:<task>:<provider>:<model>`)."""
+    out = out if isinstance(out, dict) else {}
+    provider = str(out.get("provider") or body.get("provider") or "").strip()
+    model = str(out.get("model") or body.get("model") or "").strip()
+    rid = str(out.get("runtime_id") or body.get("runtime_id") or "").strip()
+    if (not provider or not model) and rid.count(":") >= 3:
+        _, _, rid_provider, rid_model = rid.split(":", 3)
+        provider = provider or rid_provider
+        model = model or rid_model
+    return {"provider": provider, "model": model, "base_url": body.get("base_url")}
+
+
+def _remember_kept_model(body: Dict[str, Any], out: Any) -> None:
+    """A lock the runtime confirmed is recorded, so a restart loads and locks the model again (1115)."""
+    from ..kept_models import remember_kept
+
+    t = _kept_target(body, out)
+    try:
+        if remember_kept(gateway_data_dir_from_env(), t["provider"], t["model"], t.get("base_url")):
+            _apply_model_policy("a model was kept loaded")
+    except Exception:  # noqa: BLE001 - the lock holds in this process; the record is reported missing
+        logger.warning("kept loaded: could not record the lock on %s/%s", t["provider"], t["model"], exc_info=True)
+
+
+def _apply_model_policy(why: str) -> None:
+    """The runtime gets the full kept-loaded list and the idle-unload seconds again (root backlog
+    1115), off the request (it may cross into the model host)."""
+    from ..kept_models import apply_in_background
+
+    apply_in_background(why)
+
+
+def _forget_kept_model(body: Dict[str, Any], out: Any) -> None:
+    from ..kept_models import forget_kept
+
+    t = _kept_target(body, out)
+    try:
+        if forget_kept(gateway_data_dir_from_env(), t["provider"], t["model"], t.get("base_url")):
+            _apply_model_policy("a model was released from Keep loaded")
+    except Exception:  # noqa: BLE001
+        logger.warning("kept loaded: could not remove the record of %s/%s", t["provider"], t["model"], exc_info=True)
+
+
+def _residency_ok(out: Any) -> bool:
+    return isinstance(out, dict) and out.get("ok") is not False and out.get("success") is not False
+
+
 @router.post("/models/load")
 async def model_residency_load(request: Request, req: _GatewayModelResidencyLoadRequest) -> Dict[str, Any]:
     _ = request
@@ -28927,6 +28985,8 @@ async def model_residency_load(request: Request, req: _GatewayModelResidencyLoad
             unavailable_code="model_residency_unavailable",
             error_code="model_residency_error",
         )
+        if _residency_ok(out["lock"]):
+            _remember_kept_model(body, out["lock"])
     return out
 
 
@@ -28946,6 +29006,9 @@ async def model_residency_unload(request: Request, req: _GatewayModelResidencyUn
         ),
         operation="unload",
     )
+    if body.get("force") and _residency_ok(out):
+        # An explicit forced unload of a kept model ends its keep: a restart must not load it again.
+        _forget_kept_model(body, out)
     if _model_residency_locked_refusal(out):
         # A locked-model refusal is the ONE unload failure clients must
         # distinguish (offer force / point at unlock), so it gets a real
@@ -28958,28 +29021,38 @@ async def model_residency_unload(request: Request, req: _GatewayModelResidencyUn
 
 @router.post("/models/lock")
 async def model_residency_lock(request: Request, req: _GatewayModelResidencyLockRequest) -> Dict[str, Any]:
-    """Pin a resident model against unload (and provider-side eviction when supported)."""
+    """Pin a resident model against unload and idle unload (and provider-side eviction when
+    supported). A confirmed lock is recorded in the gateway's settings (`models.kept_loaded`): after
+    a gateway or model-host restart the model is loaded and locked again (root backlog 1115)."""
     _ = request
-    return _gateway_host_facade_payload_call(
+    body = _model_dump_excluding_none(req)
+    out = _gateway_host_facade_payload_call(
         method_name="lock_model_residency",
         operation="lock",
-        payload=_model_dump_excluding_none(req),
+        payload=body,
         unavailable_code="model_residency_unavailable",
         error_code="model_residency_error",
     )
+    if _residency_ok(out):
+        _remember_kept_model(body, out)
+    return out
 
 
 @router.post("/models/unlock")
 async def model_residency_unlock(request: Request, req: _GatewayModelResidencyLockRequest) -> Dict[str, Any]:
-    """Release a model-residency lock set through /models/lock."""
+    """Release a model-residency lock set through /models/lock. The gateway's record of the lock is
+    removed whatever the runtime answers (a kept model that no longer loads is released too)."""
     _ = request
-    return _gateway_host_facade_payload_call(
+    body = _model_dump_excluding_none(req)
+    out = _gateway_host_facade_payload_call(
         method_name="unlock_model_residency",
         operation="unlock",
-        payload=_model_dump_excluding_none(req),
+        payload=body,
         unavailable_code="model_residency_unavailable",
         error_code="model_residency_error",
     )
+    _forget_kept_model(body, out)
+    return out
 
 
 class _GatewayModelContextRequest(BaseModel):

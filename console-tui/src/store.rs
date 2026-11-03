@@ -2304,6 +2304,11 @@ pub struct ModelRow {
     pub host_name: Option<String>,
     pub loaded_at: Option<String>,
     pub last_used_at: Option<String>,
+    /// Idle unload (root backlog 1115), as the runtime reports it (AbstractCore
+    /// `resident_model_states`): when this model unloads if nothing uses it (None: locked, in use,
+    /// or idle unload off) and who keeps it loaded.
+    pub idle_unload_at: Option<String>,
+    pub locked_by: Vec<String>,
 }
 
 impl ModelRow {
@@ -2332,7 +2337,54 @@ impl ModelRow {
             host_name: s(v, "host_name"),
             loaded_at: s(v, "loaded_at"),
             last_used_at: s(v, "last_used_at"),
+            idle_unload_at: s(v, "idle_unload_at"),
+            locked_by: str_list(v, "locked_by"),
         }
+    }
+
+    /// The web console's `idleUnloadLine`: one plain line from what the runtime reports, empty when
+    /// it reports nothing ("Kept loaded: never unloads", "Unused for 12 min, unloads in 48 min").
+    pub fn idle_unload_line(&self, now_epoch: i64) -> String {
+        if self.resident != Some(true) {
+            return String::new();
+        }
+        if !self.locked_by.is_empty() || self.locked == Some(true) {
+            return "Kept loaded: never unloads".into();
+        }
+        let mins = |secs: i64| {
+            let m = (secs.max(0) as f64 / 60.0).round() as i64;
+            if m < 60 {
+                format!("{m} min")
+            } else {
+                format!("{} h {:02} min", m / 60, m % 60)
+            }
+        };
+        let at = self
+            .idle_unload_at
+            .as_deref()
+            .and_then(crate::localtime::parse_iso_epoch);
+        let used = self
+            .last_used_at
+            .as_deref()
+            .and_then(crate::localtime::parse_iso_epoch);
+        if let Some(at) = at {
+            let left = at - now_epoch;
+            let when = if left > 0 {
+                format!("unloads in {}", mins(left))
+            } else {
+                "unloads now".into()
+            };
+            return match used {
+                Some(u) => format!("Unused for {}, {when}", mins(now_epoch - u)),
+                None => {
+                    let mut c = when.chars();
+                    c.next()
+                        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                        .unwrap_or_default()
+                }
+            };
+        }
+        String::new()
     }
 
     /// THE DISPLAY-SIZE COALESCE, shared by every surface that prints a
@@ -4639,6 +4691,42 @@ mod tests {
         };
         assert_eq!(vram.display_size(), Some((20, false)));
         assert_eq!(ModelRow::default().display_size(), None);
+    }
+
+    /// Idle unload (root backlog 1115): the same plain line as the web console, from what the
+    /// runtime reports; nothing when it reports nothing.
+    #[test]
+    fn idle_unload_line_says_what_the_runtime_reports() {
+        let now = crate::localtime::parse_iso_epoch("2026-11-03T10:00:00+00:00").unwrap();
+        let resident = |f: &dyn Fn(&mut ModelRow)| {
+            let mut r = ModelRow {
+                resident: Some(true),
+                ..ModelRow::default()
+            };
+            f(&mut r);
+            r.idle_unload_line(now)
+        };
+        assert_eq!(
+            resident(&|r| {
+                r.last_used_at = Some("2026-11-03T09:48:00+00:00".into());
+                r.idle_unload_at = Some("2026-11-03T10:48:00+00:00".into());
+            }),
+            "Unused for 12 min, unloads in 48 min"
+        );
+        assert_eq!(
+            resident(&|r| r.locked_by = vec!["admin".into()]),
+            "Kept loaded: never unloads"
+        );
+        assert_eq!(
+            resident(&|r| r.idle_unload_at = Some("2026-11-03T11:30:00+00:00".into())),
+            "Unloads in 1 h 30 min"
+        );
+        assert_eq!(resident(&|_| {}), "");
+        let cold = ModelRow {
+            locked_by: vec!["admin".into()],
+            ..ModelRow::default()
+        };
+        assert_eq!(cold.idle_unload_line(now), "");
     }
 
     /// BINARY math, BINARY labels, every tier. The math was always `/1024`

@@ -762,6 +762,17 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     raw_runner = getattr(args, "exec_runner", None)
     if raw_runner:
         values["backlog_exec_runner"] = str(raw_runner).strip().lower() == "on"
+    raw_idle = getattr(args, "model_idle_unload", None)
+    if raw_idle is not None:
+        from .runtime_config import MODEL_IDLE_UNLOAD_LAUNCH_KEY, parse_idle_unload_minutes
+
+        try:
+            values[MODEL_IDLE_UNLOAD_LAUNCH_KEY] = parse_idle_unload_minutes(raw_idle)
+        except RuntimeConfigError as exc:
+            raise SystemExit(f"Refusing to start: --model-idle-unload: {exc}")
+        minutes = values[MODEL_IDLE_UNLOAD_LAUNCH_KEY]
+        _stderr("Idle unload: " + ("off for this run (--model-idle-unload 0)" if not minutes
+                                   else f"models unused for {minutes} min are unloaded (--model-idle-unload, for this run)"))
     record_launch_settings(data_dir, values)
 
 
@@ -1023,6 +1034,17 @@ def main(argv: list[str] | None = None) -> None:
         help="Backlog folder for this run: a folder containing docs/backlog (Continuum's Board and Backlog read it). "
         "Wins over the saved setting (`abstractgateway config set triage_repo_root PATH`) until the gateway stops. "
         "Default: the saved setting, else the gateway's own folder <data dir>/backlog, created on first use.",
+    )
+    serve.add_argument(
+        "--model-idle-unload",
+        type=int,
+        default=None,
+        dest="model_idle_unload",
+        metavar="MINUTES",
+        help="Unload a model no request has used for MINUTES; the next request loads it again. 0 never unloads; "
+        "a model kept loaded never unloads. Wins over the saved setting (`abstractgateway config set "
+        "models.idle_unload_minutes MINUTES`) until the gateway stops. Default: the saved setting, else 60. "
+        "There is no environment variable.",
     )
     serve.add_argument(
         "--exec-runner",
