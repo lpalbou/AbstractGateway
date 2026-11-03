@@ -1621,7 +1621,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.16.0` (decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.17.0` (a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -3173,6 +3173,11 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   it; send the message again in a few seconds." (status 424, not retried automatically: the request may
   be what crashed it). A request while it restarts fails at once with status 503 (retried by the
   runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.
+- **A stop the gateway asked for is not a failure** (backlog 1103): when the gateway stops or restarts
+  (a signal, the tray or console Restart, an update, a network change) or restarts the child on purpose
+  (a llama.cpp update), a request in flight is interrupted. The run stays running at its last durable step
+  and the call is sent again when the gateway is back: no retry used, no incident, no notification. Once a
+  stop begins no new workflow step starts; a request made during a requested restart waits for the new child.
 - **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
   (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
   `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,
@@ -14432,8 +14437,10 @@ conversation continues.
 
 On Linux, macOS and Windows, models run in a child process by default (`--model-host process`, see
 [configuration.md](docs/configuration.md#model-host-the-models-run-in-a-supervised-child-process)). That
-child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
-kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. The gateway kept running
+child died on its own during the request: a native crash in an engine (llama.cpp, transformers), an
+out-of-memory kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. (Stopping or
+restarting the gateway never causes this sentence: a run in flight is interrupted and continues when the
+gateway is back.) The gateway kept running
 and restarted it. Inspect the failed run before resubmitting any request with side effects;
 an in-flight request is not automatically replayed. The cause is in the incident file the sentence names
 (`<data dir>/incidents/model-host-*.json`: `kind`, `signal`, `rss_bytes_last`, `inflight`, `log_tail`)

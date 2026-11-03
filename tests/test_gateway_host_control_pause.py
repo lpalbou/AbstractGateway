@@ -174,7 +174,16 @@ def test_tick_run_passes_the_host_step_gate_only_to_runtimes_that_accept_it() ->
     gated = _GatedRuntime()
     runner, _ = _runner(gated, [_Run("r1")])
     runner._tick_run("r1")
-    assert gated.calls and gated.calls[0]["step_gate"] is host_control.step_gate
+    # The runner's gate: the host's (pause, a stop that began) and the runner's own stop (backlog 1103).
+    gate = gated.calls[0]["step_gate"] if gated.calls else None
+    assert gate is not None and gate.__func__ is GatewayRunner._step_gate and gate() is True
+    host_control.pause(by="test")
+    try:
+        assert gate() is False
+    finally:
+        host_control.resume(by="test")
+    runner._stop.set()
+    assert gate() is False
 
     legacy = _LegacyRuntime()
     runner2, _ = _runner(legacy, [_Run("r2")])

@@ -63,6 +63,8 @@ no MCP endpoint of its own (it is an MCP client).
    over it the child is killed); the child runs at `nice +5` (`--model-host-nice`) so the gateway
    answers first when inference saturates the CPUs; the child exits when the gateway's end of its
    stdin closes (the gateway died), so it never outlives it.
+   When a stop begins, no new workflow step starts (the step gate closes); the drain waits only
+   for the step each run is executing.
 6. **Every unexpected exit is an incident** (0943's record, minimal): one file
    `<data dir>/incidents/model-host-<stamp>-<kind>.json`, schema `abstractgateway.incident.v1`,
    kind `exit`, `memory_ceiling`, `unresponsive` or `gave_up`, with the exit code or signal, the
@@ -70,10 +72,18 @@ no MCP endpoint of its own (it is an MCP client).
    decision and the tail of the child's log (`<data dir>/logs/model-host.log`). `/api/health`
    carries the newest one.
 7. **Failures are request failures.** A provider exception (KV full, a GGUF error) fails that
-   request with the provider's own error. The child dying during a request fails it within a
-   second with a sentence naming the exit ("The model host stopped while answering (killed by
-   signal 9) ...; send the message again in a few seconds"), status 424, not retried
-   automatically: the request may be what crashed it, and a retry would feed a crash loop. 424 is
+   request with the provider's own error. The child dying **on its own** during a request (a
+   crash, the memory ceiling, unresponsive) fails it within a second with a sentence naming the
+   exit ("The model host stopped while answering (killed by signal 9) ...; send the message again
+   in a few seconds"), status 424, not retried automatically: the request may be what crashed it,
+   and a retry would feed a crash loop. **A stop the gateway or the operator requested is not a
+   failure.** When the gateway stops or restarts (a signal, the tray or console Restart, an update,
+   a network change) or restarts the child on purpose (a llama.cpp update), a request in flight is
+   *interrupted*: the proxy raises the runtime's `EffectInterrupted`, the runtime records no
+   terminal step, the run stays running, and it continues from its last durable step when the
+   gateway is back. The model call is sent again; no retry is consumed, no incident is written,
+   nothing is notified (backlog 1103). The decision comes from the supervisor's own stop and
+   requested-kill flags, never from the exit's wording. 424 is
    used only when the process died; a broken connection to a child that is still running, or a
    request while the child is restarting, fails at once with status 503 (retryable).
 8. **Modes.** `serve --model-host process|in-process` (also on `runner`). Default: `process` on
@@ -134,6 +144,11 @@ no MCP endpoint of its own (it is an MCP client).
   --model-host process`, a chat killed with `kill -9` on the child: `/api/health` stays 200, the
   run fails with the sentence within 5 s, an incident file exists, the child restarts, the next
   run completes.
+- `tests/test_host_stop_interrupts_runs.py`: a stop or a requested restart interrupts the request in
+  flight (`EffectInterrupted`, no incident), a kill for the child's own fault still fails it with 424
+  and an incident, the step gate closes once a stop begins, and the runner leaves an interrupted run
+  RUNNING. `tests/test_host_stop_interrupts_runs_e2e.py` (opt-in like the kill test): SIGTERM on a real
+  `serve` mid-call, then a new start: no FAILED record, the call re-sent as attempt 1, the run completes.
 - Review refuses a provider call or a model load added to gateway code outside the clients the
   model host proxies.
 
