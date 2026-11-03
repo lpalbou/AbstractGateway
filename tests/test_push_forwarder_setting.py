@@ -187,3 +187,43 @@ def test_a_split_runner_sees_the_settings_file_move(tmp_path: Path) -> None:
             _wait(lambda: d.relay is None, timeout=5)
         finally:
             d.stop()
+
+
+def test_a_setting_saved_between_the_read_and_the_wait_is_not_missed(tmp_path: Path) -> None:
+    """Backlog 0966 (CI flake of the test above): the dispatcher read the setting, then started its wait with a
+    token taken THEN; a save landing between the two (the test thread saved "off" right after the relay call,
+    while the dispatcher was still finishing that pass) was already in the token and the wait never ended.
+    Here both windows are hit on purpose: a save right after the idle read, and one right after a pass."""
+    plane = tmp_path / "plane"
+    stream = stream_for(plane, "default", "alice")
+    DeviceStore(plane, tmp_path).put(principal="default:alice", device_id="aw1", token=TOKEN_A, topic=WATCH_TOPIC,
+                                     env="sandbox", app="watch", reg=REG, name=None)
+    with FakeRelay() as relay:
+        d = PushDispatcher(plane_dir=plane, root_dir=tmp_path, stream=stream, relay_url=None,
+                           resolve_relay=lambda: push_settings.push_relay_url(tmp_path),
+                           settings_token=lambda: push_settings.settings_change_token(tmp_path), poll_when_idle=True)
+        real_resolve, real_tick = d.resolve_relay, d.tick
+        saves = {"on": False, "off": False}
+
+        def resolve_then_save_on():
+            url = real_resolve()
+            if not saves["on"]:
+                saves["on"] = True
+                push_settings.save_forwarder(tmp_path, "url", relay.url)  # after the read, before the park
+            return url
+
+        def tick_then_save_off(*a, **k):
+            out = real_tick(*a, **k)
+            if relay.calls and not saves["off"]:
+                saves["off"] = True
+                push_settings.save_forwarder(tmp_path, "off")  # after the pass, before its wait
+            return out
+
+        d.resolve_relay, d.tick = resolve_then_save_on, tick_then_save_off
+        d.start()
+        try:
+            _wait(lambda: d.relay_url == relay.url, timeout=8)
+            _approval_reaches(stream, relay, 1)
+            _wait(lambda: d.relay is None, timeout=8)
+        finally:
+            d.stop()

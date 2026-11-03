@@ -1247,7 +1247,9 @@ moose bicycle honey camel ankle agent
 ```
 
 `abstractgateway service install` and `abstractgateway service enable` print it
-too, and so does the AbstractFramework installer's summary. Case and
+too. The AbstractFramework installer's summary shows it when the installer did not
+open the console in a browser for you, and under **This server** with `--server`;
+`abstractgateway serve` never prints it (its output often lands in a service log). Case and
 separators do not matter (`Moose-Bicycle-...` works). The code stops working
 once the password is set; `abstractgateway claim --code` then says the gateway
 is already set up.
@@ -1297,7 +1299,7 @@ The guide has six steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Cloud providers | One card per cloud provider AbstractCore supports (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: `GET /api/gateway/discovery/providers`, `local_provider: false`), each with the provider's mark, its connection state (key fingerprint only), an **API key** field and **Check the key**: "Key works · 48 models", or one sentence saying why not (the key was refused, the provider is limiting requests, it could not be reached). The key is checked first (`POST …/provider-endpoint-profiles/discover-models`, which stores nothing); only a key that works can be saved, and **Save the key** creates a NEW provider connection (`openai-key`, `openai-key-2`, … with `create_only`), never replacing one you have. The key is never shown again. The same cards are the Providers tab's **Cloud providers** section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step |
+| Cloud providers | "Paste a provider's API key to use its models; the key stays on this gateway." One card per cloud provider AbstractCore supports natively (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: `GET /api/gateway/discovery/providers`, `local_provider: false`), then **OVH AI Endpoints** (an OpenAI-compatible service with its base URL preset) and **OpenAI-compatible endpoint** (Name, Base URL, API key: Mistral, Groq, Together, Fireworks, DeepSeek, xAI, Google… through their /v1 URLs; AbstractCore's `openai-compatible` provider). Each card shows the provider's mark or name, its status ("Not connected", or "Connected · 48 models") and ONE button: **Connect**, or **Edit** when it is connected. Both open a dialog with the API key field, **Test connection** and **Save**. Test connection checks the key (`POST …/provider-endpoint-profiles/discover-models`, which stores nothing): "Key works · 48 models", or the reason (the key was refused, the provider is limiting requests, it could not be reached). Nothing is stored untested. Connect saves a NEW provider connection (`openai-key`, `openai-key-2`, …, `create_only`), never replacing one you have; Edit replaces that connection's key in place and offers **Disconnect**. The key is never shown again; Edit shows its fingerprint only. The same cards are the Providers tab's **Cloud providers** section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step |
 | Default models | Two views, **Simple** first. **Simple**: one **Use recommended** button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, **Input** (what it understands: Text, Image, Voice, Video, Files) and **Output** (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: *Not set* (with the recommended model's name when there is one), *Recommended* (the pick is in use), *Your choice*, or *Covered* (read by the text model). A badge opens a guided choice: the model recommended for this computer first (**Use it**, **Use it and download**), then **Other models that fit** (the catalog filtered to that capability, fits-this-computer on) and **All engines and models…** (the Multimodal route editor), and for text **Or use an API key** (any cloud provider of the Cloud providers step, with the same check: the key is checked first, then kept as a NEW provider connection, never replacing one you have). **Advanced**: one table row per capability with the engine and model ids, **Use recommended**, **Download** and **Choose…** per row, and **Use recommended for all**; below it the recommended downloads (**Download all**), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide |
 | Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
@@ -4664,9 +4666,14 @@ every console tab with a *Resume* button.
 ## Conversations
 
 **Conversations ▸** is the machine's work as a person sees it. A row is a
-**conversation** — a conversation turn or an automation's occurrence, never a
-sub-run or an automation's controller — under its **title**: the automation's
-name for an occurrence, else the first line of what the person typed (cut at
+**conversation** turn — never a sub-run, an automation's controller or an
+automation's occurrence. An automation's run is listed under **Automations ▸ ·
+Running (N)** instead, with the same row and submenu: the runtime tags every run
+with a `session_kind` (`chat` / `discussion` = a conversation, `automation` /
+`occurrence` = an automation's run; `GET /host/runs` serves it on each row) and
+the menu sorts by that tag alone. A wake that runs in its caller's conversation
+is tagged `chat` and stays a conversation. A row reads under its **title**: the
+automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as
 `title` with `title_source`; the Observer's cards use the same text). The list
 is **host-wide**, not per-principal: memory, GPU and loaded models on this menu
@@ -4700,7 +4707,9 @@ each under an information line, nothing hidden without saying so:
   full arguments from `GET /host/runs/{run_id}/wait`). `🟡 <title> · a
   question`: the question, one line; free-text answers stay in the clients
   (the Assistant, Code, the console).
-- **Automations ▸** (its own item under Conversations ▸) — the automations
+- **Automations ▸** (its own item under Conversations ▸) — first **Running
+  (N)**, the automations' active runs (the rows above, shown only when one
+  runs), then the automations
   (`GET /automations`) under **Active (N)** and **Paused (N)**: `⏱
   <automation title> · Every day at 09:00 · next Fri 17 Oct 09:00`, `⏱
   <title> · When Python news has a new item` — the trigger in the gateway's
@@ -5565,7 +5574,13 @@ console presents them as provider connections.
   update or delete a profile.
 
 Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
-providers such as `endpoint:office-vllm`. Model discovery through
+providers such as `endpoint:office-vllm`. Each such row carries
+`provider_endpoint_profile` (the profile, key as a fingerprint only) and its
+`provider_family`, also when AbstractCore lists the same profile (profiles live in
+Core's `provider_profiles`); a registry provider row (`anthropic`, `openai`, ...)
+never carries it. That marker is how a client tells a saved connection from a
+provider: the console's cloud provider cards show one card per provider, never a
+second card for its connection. Model discovery through
 `GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
 fixed profile allowlist or the live endpoint model catalog.
 
@@ -8408,9 +8423,12 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
-  updated_epoch, observer_path}], count, active_count, has_more, planes,
-  skipped_entity_planes?, warnings?}`. Items are TURN ROOTS (the runtime's
+  activity, role, session_kind, automation_id, created_at, updated_at,
+  ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
+  active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
+  automation's run, `chat` / `discussion` = a conversation); the tray lists
+  the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
   `is_turn_root`: parent-less runs that are not automation controllers, plus
   automation occurrences), in this order: every active root first —
   `activity: "running"` (the root or any run below it is running), then
@@ -8836,7 +8854,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
-| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Cloud providers**: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, **More settings** for the base URL and allowed models), then custom OpenAI-compatible servers; then the **Available Providers** table ([below](#models-and-local-providers)) |
+| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Cloud providers**: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports natively, OVH AI Endpoints, and any other OpenAI-compatible endpoint; one button per card, **Connect** or **Edit**, opening a dialog that tests the key before anything is stored; Connect saves a new connection, Edit replaces that connection's key or disconnects it; keys shown as fingerprints), then **Advanced connection** (the full connection editor: allowed models, a server on your network); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your named API keys (New key, Reveal, Copy, Revoke); Authentication, who may reveal keys and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults (text, every media modality and **Decisions**, `output.decision`), the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
@@ -12995,19 +13013,25 @@ and the Runtime-owned provider/tool stack together.
 
 ## Published image
 
-Release images are published to GHCR. The default image is the light,
-portable server image:
+Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
+
+| Tag | Image | Platforms |
+|---|---|---|
+| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1
+docker pull ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the `-gpu` tag of your
+version exists before you pin it:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:gpu-latest
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -13565,19 +13589,25 @@ sees any content. See [docs/push.md](docs/push.md).
 
 ## Docker server
 
-Release images are published to GHCR. The default image is the light,
-portable server image:
+Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
+
+| Tag | Image | Platforms |
+|---|---|---|
+| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1
+docker pull ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the `-gpu` tag of your
+version exists before you pin it:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:gpu-latest
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -14154,7 +14184,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.13.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:gpu-latest` (or `<version>-gpu`, linux/amd64 only) with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

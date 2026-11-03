@@ -20733,12 +20733,28 @@ async def discovery_providers(
                 if isinstance(name, str) and name.strip():
                     items.append(dict(p))
 
-    known_provider_names = {str(item.get("name") or "").strip().lower() for item in items if isinstance(item.get("name"), str)}
+    # A saved connection lives in Core's provider_profiles (the 2026-08-01 ruling), so AbstractCore
+    # ALSO lists it, as a bare `endpoint:<id>` row. That row must carry the connection's fields
+    # (`provider_endpoint_profile` above all): clients tell a connection from a provider by that
+    # marker, and the kit's cloud provider cards drew a second "Anthropic (API key)" card from the
+    # bare row (2026-11-03). Only virtual rows are merged: a configured built-in (`anthropic` with
+    # a key in Core's config) stays the registry row, which IS the provider.
+    by_name = {str(item.get("name") or "").strip().lower(): item for item in items if isinstance(item.get("name"), str)}
     for item in endpoint_items:
         name = str(item.get("name") or "").strip()
-        if name and name.lower() not in known_provider_names:
+        if not name:
+            continue
+        row = by_name.get(name.lower())
+        if row is None:
             items.append(item)
-            known_provider_names.add(name.lower())
+            by_name[name.lower()] = item
+        elif item.get("virtual") is True:
+            for key, value in item.items():
+                if key == "models":
+                    if not row.get("models") and value:
+                        row["models"] = value
+                elif key == "display_name" or key not in row:
+                    row[key] = value
 
     if include_models:
         # Bulk-route contract fix (code-tui c4235): endpoint-profile items
@@ -27307,6 +27323,13 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
         "context_source": _row_v1_str(record, "context_source"),
         "memory_buffer": record.get("memory_buffer") if isinstance(record.get("memory_buffer"), (int, float)) and not isinstance(record.get("memory_buffer"), bool) else None,
+        # The model's slot pool (core ADR 0011): generations running / waiting on the one weights
+        # instance, the bound, and why another slot is not built (OVH 8080 pass four).
+        "slots": _row_v1_int(record, "slots"),
+        "slots_max": _row_v1_int(record, "slots_max"),
+        "active": _row_v1_int(record, "active"),
+        "queued": _row_v1_int(record, "queued"),
+        "slot_refusal_reason": _row_v1_str(record, "slot_refusal_reason"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =
@@ -30223,8 +30246,11 @@ async def host_runs(
     what the person typed cut at 60 chars, `workflow` = the workflow name) and,
     for a waiting row, `wait` = `{kind: tool_approval | ask_user | paused |
     event | other, summary, tool, wait_key, run_id}` where `run_id` is the run
-    that HOLDS the wait (a sub-run's approval belongs to its parent row). The
-    payload's `caller_plane` names the plane the caller's `POST /commands`
+    that HOLDS the wait (a sub-run's approval belongs to its parent row).
+    `session_kind` and `automation_id` are the runtime's attribution
+    (`run_attribution.py`): `automation` / `occurrence` = an automation's run,
+    which the tray lists under Automations, `chat` / `discussion` = a
+    conversation. The payload's `caller_plane` names the plane the caller's `POST /commands`
     reach (`plane` of each row says where it lives): a desktop tray greys
     Pause / Stop / approve on every other plane's row.
     """

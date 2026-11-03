@@ -161,6 +161,17 @@ def workflow_menu_name(workflow_id: str) -> str:
     return name if len(name) <= 34 else name[:33] + "…"
 
 
+# The session kinds of an automation's runs (abstractruntime run_attribution.py,
+# `SESSION_KINDS`): every other kind (chat, discussion) is a conversation.
+AUTOMATION_SESSION_KINDS = frozenset({"automation", "occurrence"})
+
+
+def is_automation_run(row: RunRow) -> bool:
+    """An automation's run, by the gateway's `session_kind` tag — never by its
+    title, workflow or id."""
+    return row.session_kind in AUTOMATION_SESSION_KINDS
+
+
 def run_group(row: RunRow) -> str:
     """running | attention | paused | done — the Sessions section a row sits
     in. Only an approval or a question is "attention": an event, timer, job
@@ -944,15 +955,19 @@ def automation_submenu(a: AutomationRow, *, observer: bool, reachable: bool, obs
 def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...]:
     """**Sessions ▸**: Running (running, waiting-for-something and paused
     rows), Need attention (an approval or a question, only when there is
-    one), Scheduled (the automations, only when there are any; the paused ones
-    folded into **Paused (N) ▸**), Recent (the
+    one), Automations running (an automation's active runs, by the gateway's
+    `session_kind`; never listed as conversations), Scheduled (the automations,
+    only when there are any; the paused ones folded into **Paused (N) ▸**),
+    Recent (the
     last 24 hours, at most `MENU_RECENT_ROWS` rows then ONE line naming the
     rest), and the console door. Every section header is an information
     line; nothing is hidden without saying so."""
     reachable = snap.reachable
     groups: Dict[str, List[RunRow]] = {"running": [], "attention": [], "paused": [], "done": []}
     for row in snap.runs:
-        groups[run_group(row)].append(row)
+        if not is_automation_run(row):
+            groups[run_group(row)].append(row)
+    automation_runs = [r for r in snap.runs if is_automation_run(r) and run_group(r) != "done"]
     out: List[Node] = []
     if snap.runs_error and not snap.runs:
         out += [info("Conversation list unavailable"), info(middle_ellipsis(str(snap.runs_error), 60))]
@@ -970,6 +985,11 @@ def sessions_items(snap: Snapshot, *, observer: bool = False) -> Tuple[Node, ...
     standing = [a for a in snap.automations if a.status in {"active", "paused"}]
     scheduled = [a for a in standing if a.section == "active"]
     paused = [a for a in standing if a.section == "paused"]
+    if automation_runs:
+        out.append(SEP)
+        out.append(info(f"Automations running ({len(automation_runs)})"))
+        for row in automation_runs:
+            out.append(Node(run_row_label(row), children=run_submenu(row, observer=observer, reachable=reachable)))
     if scheduled or paused or snap.automations_error:
         out.append(SEP)
         if scheduled or paused:

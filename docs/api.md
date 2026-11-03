@@ -105,7 +105,13 @@ console presents them as provider connections.
   update or delete a profile.
 
 Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
-providers such as `endpoint:office-vllm`. Model discovery through
+providers such as `endpoint:office-vllm`. Each such row carries
+`provider_endpoint_profile` (the profile, key as a fingerprint only) and its
+`provider_family`, also when AbstractCore lists the same profile (profiles live in
+Core's `provider_profiles`); a registry provider row (`anthropic`, `openai`, ...)
+never carries it. That marker is how a client tells a saved connection from a
+provider: the console's cloud provider cards show one card per provider, never a
+second card for its connection. Model discovery through
 `GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
 fixed profile allowlist or the live endpoint model catalog.
 
@@ -2948,9 +2954,12 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
-  updated_epoch, observer_path}], count, active_count, has_more, planes,
-  skipped_entity_planes?, warnings?}`. Items are TURN ROOTS (the runtime's
+  activity, role, session_kind, automation_id, created_at, updated_at,
+  ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
+  active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
+  automation's run, `chat` / `discussion` = a conversation); the tray lists
+  the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
   `is_turn_root`: parent-less runs that are not automation controllers, plus
   automation occurrences), in this order: every active root first —
   `activity: "running"` (the root or any run below it is running), then
