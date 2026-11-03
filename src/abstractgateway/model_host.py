@@ -1473,11 +1473,12 @@ class ModelHostSupervisor:
             last_exit = dict(self.last_exit or {}) if recorded else {}
             incident = dict(self.last_incident or {}) if recorded else {}
         what = last_exit.get("description") or "the connection broke"
-        where = f"<data dir>/incidents/{incident['file']}" if incident.get("file") else "<data dir>/incidents"
+        # Name the incident file only when one was written for THIS exit (never a folder that may not exist).
+        recorded_here = incident.get("file") and incident.get("generation") == generation
+        where = f" The incident is recorded in <data dir>/incidents/{incident['file']}." if recorded_here else ""
         return ModelHostCrashed(
             f"The model host (the process that runs the models) stopped while {during} ({what}). "
-            f"The gateway is fine and is restarting it; send the message again in a few seconds. "
-            f"The incident is recorded in {where}.")
+            f"The gateway is fine and is restarting it; send the message again in a few seconds.{where}")
 
     # -- reporting
     def snapshot(self) -> Dict[str, Any]:

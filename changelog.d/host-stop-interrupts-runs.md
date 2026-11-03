@@ -14,6 +14,7 @@
   - the shutdown line says "runner drain TIMED OUT (…): N run(s) interrupted; they continue at the next start" instead
     of "done" when runs were still executing;
   - a model host that dies on its own (a crash, the memory ceiling, unresponsive) still fails the request with 424
-    and an incident.
+    and an incident; its sentence names the incident file only when one was written for that exit (it used to
+    point at `<data dir>/incidents` even when nothing had been recorded).
 
   Needs the AbstractRuntime release that adds `EffectInterrupted`.
