@@ -13,8 +13,10 @@ Operator rulings 2026-11-03:
   restart, and the gateway sends it again after its own start.
 
 Both setters are sent after the gateway starts (`apply_in_background`) and again after every
-change (the settings door, the lock routes). A runtime without them is reported at ERROR with the
-version that has them; nothing is silently ignored.
+change (the settings door, the lock routes). They are called directly: a runtime without them
+(older than 0.18) raises, and the failure is logged at ERROR with the version that has them; a
+refusal in the runtime's answer (`ok: false`, a kept model that could not load) is logged at ERROR
+too. Nothing is silently ignored.
 """
 
 from __future__ import annotations
@@ -99,29 +101,38 @@ def forget_kept(data_dir: Path, provider: Any, model: Any, base_url: Any = None)
     return True
 
 
+def _log_refusals(name: str, answer: Any, why: str) -> None:
+    """The runtime's answer, read as its contract says: `None` = recorded by the model host for the
+    child's (re)build (applied and checked there); otherwise a dict whose `ok: false` is a refusal,
+    and, for the locks, one `results` row per model with its own `ok`."""
+    if answer is None:
+        return
+    if not isinstance(answer, dict):
+        raise TypeError(f"{name} answered {type(answer).__name__}, not a dict")
+    if answer.get("ok") is False and not answer.get("results"):
+        logger.error("model policy: %s refused by the runtime (%s): %s", name, why, answer.get("error") or answer)
+    for row in answer.get("results") or []:
+        if isinstance(row, dict) and row.get("ok") is False:
+            logger.error("model policy: %s/%s could not be kept loaded (%s, %s): %s", row.get("provider"),
+                         row.get("model"), row.get("action"), why, row.get("error"))
+
+
 def apply_model_policy(data_dir: Path, facade: Any, *, why: str) -> Dict[str, Any]:
-    """Send the idle-unload seconds and the kept-loaded locks to the runtime facade. Returns what was
-    sent per setter (`{"idle_unload_s": ..., "locks": [...], "missing": [...]}`); never raises."""
+    """Send the idle-unload seconds and the kept-loaded locks to the runtime host facade
+    (AbstractRuntime >= 0.18: `set_model_idle_unload(seconds)`, `set_model_residency_locks(locks)`).
+    Called directly: a facade without them raises (AttributeError), never skipped. Returns what was
+    sent and the runtime's answers."""
     minutes = int(resolve_model_idle_unload(Path(data_dir))["value"])
     seconds = minutes * 60
     locks = kept_models(Path(data_dir))
-    report: Dict[str, Any] = {"idle_unload_s": seconds, "locks": locks, "missing": []}
     with _APPLY_LOCK:
-        for name, value in ((IDLE_SETTER, seconds), (LOCKS_SETTER, locks)):
-            fn = getattr(facade, name, None) if facade is not None else None
-            if not callable(fn):
-                report["missing"].append(name)
-                logger.error("model policy: the runtime has no %s (needs %s); %s is not applied (%s)", name,
-                             RUNTIME_NEEDED, "idle unload" if name == IDLE_SETTER else "Keep loaded across restarts", why)
-                continue
-            try:
-                fn(value)
-            except Exception as exc:  # noqa: BLE001 - logged with the setting it concerns
-                report.setdefault("errors", {})[name] = str(exc)
-                logger.error("model policy: %s refused by the runtime (%s): %s", name, why, exc)
+        idle_answer = facade.set_model_idle_unload(seconds)
+        _log_refusals(IDLE_SETTER, idle_answer, why)
+        locks_answer = facade.set_model_residency_locks([{"provider": t["provider"], "model": t["model"]} for t in locks])
+        _log_refusals(LOCKS_SETTER, locks_answer, why)
     logger.info("model policy applied after %s: idle unload %s, %d model(s) kept loaded", why,
                 f"{minutes} min" if minutes else "off", len(locks))
-    return report
+    return {"idle_unload_s": seconds, "locks": locks, "answers": {IDLE_SETTER: idle_answer, LOCKS_SETTER: locks_answer}}
 
 
 def apply_in_background(why: str, *, data_dir: Optional[Path] = None,
@@ -140,7 +151,10 @@ def apply_in_background(why: str, *, data_dir: Optional[Path] = None,
             if err or facade is None:
                 logger.error("model policy: no runtime host facade (%s); idle unload and Keep loaded are not applied", err)
                 return
-        apply_model_policy(Path(data_dir) if data_dir is not None else gateway_data_dir_from_env(), facade, why=why)
+        try:
+            apply_model_policy(Path(data_dir) if data_dir is not None else gateway_data_dir_from_env(), facade, why=why)
+        except Exception:  # noqa: BLE001 - a daemon thread: the failure is logged loudly, with the runtime it needs
+            logger.exception("model policy: not applied after %s (idle unload and Keep loaded need %s)", why, RUNTIME_NEEDED)
 
     thread = threading.Thread(target=_run, name="model-policy-apply", daemon=True)
     thread.start()

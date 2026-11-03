@@ -11630,16 +11630,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return row.runtime_id || `${row.provider || ""}/${row.model || ""}`;
 	    }
 	    // Idle unload (root backlog 1115): one plain line per loaded model, from what the runtime
-	    // reports (AbstractCore `resident_model_states`: `locked_by`, `last_used_at`, `idle_unload_at`,
-	    // null when off, locked or in use); nothing is computed from the gateway's own setting, so the
-	    // line never promises what the runtime does not do.
+	    // reports for the models in its process (`idle_unload_s`: 0 = off, null = not reported;
+	    // `idle_unload_at`: null while locked or in use; `in_use`, `locked_by`, `last_used_at`).
+	    // Nothing is computed from the gateway's own setting or guessed from a missing field, so the
+	    // line never promises what the runtime does not do; nothing reported, no line.
 	    function idleUnloadMinutes(ms) {
 	      const m = Math.max(0, Math.round(ms / 60000));
 	      return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
 	    }
 	    function idleUnloadLine(row, nowMs) {
 	      if (!row || row.resident !== true) return "";
-	      if ((Array.isArray(row.locked_by) && row.locked_by.length) || row.locked === true) return "Kept loaded: never unloads";
+	      if (row.locked === true || (Array.isArray(row.locked_by) && row.locked_by.length)) return "Kept loaded: never unloads";
+	      if (row.in_use === true) return "In use now";
 	      const now = typeof nowMs === "number" ? nowMs : Date.now();
 	      const at = row.idle_unload_at ? Date.parse(row.idle_unload_at) : NaN;
 	      const used = row.last_used_at ? Date.parse(row.last_used_at) : NaN;
@@ -11648,6 +11650,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const when = left > 0 ? `unloads in ${idleUnloadMinutes(left)}` : "unloads now";
 	        return isFinite(used) ? `Unused for ${idleUnloadMinutes(now - used)}, ${when}` : when.charAt(0).toUpperCase() + when.slice(1);
 	      }
+	      if (row.idle_unload_s === 0) return "Stays loaded: unloading unused models is off";
 	      return "";
 	    }
 	    // The setting (GET/POST /admin/runtime-config `models.idle_unload_minutes`): one number field,

@@ -27202,6 +27202,22 @@ def _row_v1_str(rec: Dict[str, Any], *names: str) -> Optional[str]:
     return None
 
 
+def _row_v1_time(rec: Dict[str, Any], *names: str) -> Optional[str]:
+    """A time as an ISO-8601 string. AbstractCore's residency states (relayed by the runtime) stamp
+    `last_used_at` / `idle_unload_at` as epoch seconds; rows carry ISO strings, so a number is
+    converted (UTC), a string passes through, anything else is null."""
+    for name in names:
+        value = rec.get(name)
+        if isinstance(value, str) and value.strip():
+            return value
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0:
+            try:
+                return datetime.datetime.fromtimestamp(float(value), tz=datetime.timezone.utc).isoformat(timespec="seconds")
+            except (OverflowError, OSError, ValueError):
+                continue
+    return None
+
+
 def _row_v1_bool(rec: Dict[str, Any], *names: str) -> Optional[bool]:
     for name in names:
         value = rec.get(name)
@@ -27231,6 +27247,19 @@ def _row_v1_int(rec: Dict[str, Any], *names: str) -> Optional[int]:
             return int(num)
         except (ValueError, TypeError, OverflowError):
             continue
+    return None
+
+
+def _row_v1_idle_unload_s(rec: Dict[str, Any]) -> Optional[float]:
+    """The runtime's `idle_unload_s`: seconds, 0 when it reports the idle unload off (`None` sent),
+    null when the row carries no such field."""
+    if "idle_unload_s" not in rec:
+        return None
+    value = rec.get("idle_unload_s")
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0:
+        return float(value)
     return None
 
 
@@ -27333,12 +27362,17 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "active": _row_v1_int(record, "active"),
         "queued": _row_v1_int(record, "queued"),
         "slot_refusal_reason": _row_v1_str(record, "slot_refusal_reason"),
-        "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
-        "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
+        "loaded_at": _row_v1_time(record, "loaded_at", "loadedAt"),
+        "last_used_at": _row_v1_time(record, "last_used_at", "lastUsedAt"),
         # Idle unload (root backlog 1115; AbstractCore `resident_model_states`, relayed by the
-        # runtime): when this model unloads if nothing uses it (null: locked, in use, or idle unload
-        # off), whether a call uses it now, and who keeps it loaded. As reported, never computed here.
-        "idle_unload_at": _row_v1_str(record, "idle_unload_at"),
+        # runtime for the models loaded in its process). `idle_unload_s`: the time in effect, 0 when
+        # the runtime reports it off, null when it reports nothing (an external engine).
+        # `idle_unload_at`: when this model unloads if nothing uses it; null while it is locked or in
+        # use, or when the idle unload is off (AbstractCore's contract). `in_use` / `locked_by`:
+        # AbstractCore's own reasons, null when the runtime does not relay them. As reported, never
+        # computed here.
+        "idle_unload_s": _row_v1_idle_unload_s(record),
+        "idle_unload_at": _row_v1_time(record, "idle_unload_at"),
         "in_use": _row_v1_bool(record, "in_use"),
         "locked_by": _row_v1_str_list(record, "locked_by"),
         # Additive-optional fields (lock/modality/calibration wave); null =

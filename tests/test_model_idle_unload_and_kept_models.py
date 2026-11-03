@@ -140,13 +140,54 @@ def test_the_policy_sends_minutes_as_seconds_and_the_whole_kept_list(tmp_path: P
     assert facade.calls[0] == ("idle", 0)  # 0 = never unloads
 
 
-def test_a_runtime_without_the_setters_is_reported_loudly(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    from abstractgateway.kept_models import RUNTIME_NEEDED, apply_model_policy
+def test_a_runtime_without_the_setters_fails_loudly(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Called directly, never `if hasattr`: a runtime older than 0.18 raises, and the boot/settings
+    thread logs it at ERROR naming the runtime it needs."""
+    from abstractgateway.kept_models import RUNTIME_NEEDED, apply_in_background, apply_model_policy
 
+    with pytest.raises(AttributeError):
+        apply_model_policy(tmp_path, object(), why="a test")
     with caplog.at_level("ERROR", logger="abstractgateway.kept_models"):
-        report = apply_model_policy(tmp_path, object(), why="a test")
-    assert report["missing"] == ["set_model_idle_unload", "set_model_residency_locks"]
-    assert sum(RUNTIME_NEEDED in r.getMessage() for r in caplog.records) == 2
+        apply_in_background("a test", data_dir=tmp_path, facade_getter=object).join(timeout=30)
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(errors) == 1 and RUNTIME_NEEDED in errors[0].getMessage() and errors[0].exc_info
+
+
+class _RefusingFacade:
+    """The runtime's answers when it refuses: the facade's `ok: false` (a client without the
+    setter, `supported: false`) and a kept model that could not load (`load_failed`)."""
+
+    def set_model_idle_unload(self, seconds: Any) -> Dict[str, Any]:
+        return {"ok": False, "supported": False, "operation": "set_model_idle_unload", "error": "client too old"}
+
+    def set_model_residency_locks(self, locks: Any) -> Dict[str, Any]:
+        return {"ok": False, "locks": [], "results": [
+            {"provider": "mlx", "model": "qwen", "action": "load_failed", "ok": False, "error": "model_not_downloaded"},
+            {"provider": "mlx", "model": "other", "action": "kept", "ok": True, "error": None}]}
+
+
+def test_a_refusal_in_the_runtime_answer_is_logged_per_model(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    from abstractgateway.kept_models import apply_model_policy, remember_kept
+
+    remember_kept(tmp_path, "mlx", "qwen")
+    remember_kept(tmp_path, "mlx", "other")
+    with caplog.at_level("ERROR", logger="abstractgateway.kept_models"):
+        report = apply_model_policy(tmp_path, _RefusingFacade(), why="a test")
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any("set_model_idle_unload refused" in e and "client too old" in e for e in errors)
+    assert any("mlx/qwen could not be kept loaded" in e and "model_not_downloaded" in e for e in errors)
+    assert not any("mlx/other" in e for e in errors) and len(errors) == 2
+    assert report["answers"]["set_model_residency_locks"]["results"][0]["action"] == "load_failed"
+
+
+def test_the_locks_sent_are_provider_and_model_only(tmp_path: Path) -> None:
+    """The runtime keys a lock by (provider, model); a stored base_url stays in the gateway's record."""
+    from abstractgateway.kept_models import apply_model_policy, remember_kept
+
+    remember_kept(tmp_path, "lmstudio", "gemma", "http://127.0.0.1:1234/v1")
+    facade = _PolicyFacade()
+    apply_model_policy(tmp_path, facade, why="a test")
+    assert facade.calls[1] == ("locks", [{"provider": "lmstudio", "model": "gemma"}])
 
 
 # ------------------------------------------------------------------ kept loaded: the routes
@@ -256,6 +297,24 @@ def test_the_rows_carry_what_the_runtime_reports() -> None:
                                              "idle_unload_at": "2026-11-03T10:48:00+00:00", "in_use": False,
                                              "locked_by": ["admin"], "last_used_at": "2026-11-03T09:48:00+00:00"})
     assert row["idle_unload_at"] == "2026-11-03T10:48:00+00:00" and row["in_use"] is False and row["locked_by"] == ["admin"]
+    assert row["idle_unload_s"] is None  # not reported
+
+
+def test_the_runtime_epoch_seconds_become_iso_times_and_off_becomes_zero() -> None:
+    """The runtime relays AbstractCore's `resident_model_states` as they are: epoch seconds for
+    `last_used_at` / `idle_unload_at`, `idle_unload_s: None` when it is off. Rows carry ISO times
+    (the console and the TUI parse ISO), and 0 for off (null stays "not reported")."""
+    from abstractgateway.routes.gateway import _normalize_model_residency_row_v1
+
+    base = {"task": "text_generation", "provider": "mlx", "model": "qwen", "resident": True}
+    row = _normalize_model_residency_row_v1({**base, "idle_unload_s": 3600.0, "last_used_at": 1_762_160_880.25,
+                                             "idle_unload_at": 1_762_164_480.25})
+    assert row["last_used_at"] == "2025-11-03T09:08:00+00:00" and row["idle_unload_at"] == "2025-11-03T10:08:00+00:00"
+    assert row["idle_unload_s"] == 3600.0
+    off = _normalize_model_residency_row_v1({**base, "idle_unload_s": None, "idle_unload_at": None})
+    assert off["idle_unload_s"] == 0.0 and off["idle_unload_at"] is None
+    junk = _normalize_model_residency_row_v1({**base, "idle_unload_s": "soon", "last_used_at": True, "idle_unload_at": float("nan")})
+    assert junk["idle_unload_s"] is None and junk["last_used_at"] is None and junk["idle_unload_at"] is None
 
 
 # ------------------------------------------------------------------ the line on the Models page
@@ -286,7 +345,10 @@ def test_the_models_page_line_says_what_the_runtime_reports() -> None:
     assert _line({"resident": True, "last_used_at": _iso(NOW - 12 * 60_000), "idle_unload_at": _iso(NOW + 48 * 60_000)}, NOW) == (
         "Unused for 12 min, unloads in 48 min")
     assert _line({"resident": True, "idle_unload_at": _iso(NOW + 90 * 60_000)}, NOW) == "Unloads in 1 h 30 min"
-    # Off, in use, nothing reported, or not resident: no line (never computed from the gateway's setting).
-    assert _line({"resident": True, "idle_unload_at": None, "locked_by": []}, NOW) == ""
+    assert _line({"resident": True, "in_use": True, "idle_unload_s": 3600, "idle_unload_at": None}, NOW) == "In use now"
+    assert _line({"resident": True, "idle_unload_s": 0, "idle_unload_at": None}, NOW) == "Stays loaded: unloading unused models is off"
+    # On but no time and no reason, nothing reported, or not resident: no line (never a guess,
+    # never computed from the gateway's own setting).
+    assert _line({"resident": True, "idle_unload_s": 3600, "idle_unload_at": None, "locked_by": []}, NOW) == ""
     assert _line({"resident": True}, NOW) == ""
     assert _line({"resident": False, "locked_by": ["admin"]}, NOW) == ""

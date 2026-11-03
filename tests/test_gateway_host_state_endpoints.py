@@ -544,6 +544,7 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         "loaded_at",
         "last_used_at",
         # idle unload (root backlog 1115), as the runtime reports it
+        "idle_unload_s",
         "idle_unload_at",
         "in_use",
         "locked_by",

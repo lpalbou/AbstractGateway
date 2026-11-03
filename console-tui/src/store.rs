@@ -2305,9 +2305,12 @@ pub struct ModelRow {
     pub loaded_at: Option<String>,
     pub last_used_at: Option<String>,
     /// Idle unload (root backlog 1115), as the runtime reports it (AbstractCore
-    /// `resident_model_states`): when this model unloads if nothing uses it (None: locked, in use,
-    /// or idle unload off) and who keeps it loaded.
+    /// `resident_model_states`): the time in effect (`Some(0.0)`: off; None: not reported), when
+    /// this model unloads if nothing uses it (None: locked, in use, or off), whether a call uses it
+    /// now and who keeps it loaded.
+    pub idle_unload_s: Option<f64>,
     pub idle_unload_at: Option<String>,
+    pub in_use: Option<bool>,
     pub locked_by: Vec<String>,
 }
 
@@ -2337,7 +2340,9 @@ impl ModelRow {
             host_name: s(v, "host_name"),
             loaded_at: s(v, "loaded_at"),
             last_used_at: s(v, "last_used_at"),
+            idle_unload_s: v.get("idle_unload_s").and_then(Value::as_f64),
             idle_unload_at: s(v, "idle_unload_at"),
+            in_use: b(v, "in_use"),
             locked_by: str_list(v, "locked_by"),
         }
     }
@@ -2350,6 +2355,9 @@ impl ModelRow {
         }
         if !self.locked_by.is_empty() || self.locked == Some(true) {
             return "Kept loaded: never unloads".into();
+        }
+        if self.in_use == Some(true) {
+            return "In use now".into();
         }
         let mins = |secs: i64| {
             let m = (secs.max(0) as f64 / 60.0).round() as i64;
@@ -2383,6 +2391,9 @@ impl ModelRow {
                         .unwrap_or_default()
                 }
             };
+        }
+        if self.idle_unload_s == Some(0.0) {
+            return "Stays loaded: unloading unused models is off".into();
         }
         String::new()
     }
@@ -4721,6 +4732,13 @@ mod tests {
             resident(&|r| r.idle_unload_at = Some("2026-11-03T11:30:00+00:00".into())),
             "Unloads in 1 h 30 min"
         );
+        assert_eq!(resident(&|r| r.in_use = Some(true)), "In use now");
+        assert_eq!(
+            resident(&|r| r.idle_unload_s = Some(0.0)),
+            "Stays loaded: unloading unused models is off"
+        );
+        // Reported as on, but no time and no reason: no line, never a guess.
+        assert_eq!(resident(&|r| r.idle_unload_s = Some(3600.0)), "");
         assert_eq!(resident(&|_| {}), "");
         let cold = ModelRow {
             locked_by: vec!["admin".into()],
