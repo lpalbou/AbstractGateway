@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from .console import gateway_console_html
 
@@ -130,7 +130,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.18.0",
+    version="0.19.0",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -302,6 +302,9 @@ app.include_router(session_passwords_router, prefix="/api")
 from .routes.me_events import router as me_events_router  # noqa: E402
 
 app.include_router(me_events_router, prefix="/api")
+
+from .routes.session_reads import router as session_reads_router  # noqa: E402
+app.include_router(session_reads_router, prefix="/api")
 # The replay view of a run (framework backlog 0993, AbstractRuntime ADR-0009):
 # /gateway/runs/{run_id}/view and /gateway/runs/{run_id}/view/stream.
 from .routes.replay_view import router as replay_view_router  # noqa: E402
@@ -627,6 +630,24 @@ async def gateway_root() -> RedirectResponse:
 @app.get("/console", include_in_schema=False)
 async def gateway_console() -> HTMLResponse:
     return HTMLResponse(gateway_console_html())
+
+
+@app.get("/console/assets/apps/{name}", include_in_schema=False)
+async def gateway_console_app_illustration(name: str) -> Response:
+    """An Apps-card illustration (apps_manager.registered_illustrations):
+    read-only, public like the console page itself, and only for a file
+    name the app registry declares and the package carries; 404 otherwise.
+    The card's URL carries a version query, so the response is immutable."""
+    from .apps_manager import ILLUSTRATION_TYPES, registered_illustrations
+
+    path = registered_illustrations().get(name)
+    if path is None or not path.is_file():
+        return Response(status_code=404, content="Not found", media_type="text/plain")
+    return FileResponse(
+        path,
+        media_type=ILLUSTRATION_TYPES[path.suffix.lower()],
+        headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.get("/api/health")

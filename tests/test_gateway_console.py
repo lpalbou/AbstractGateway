@@ -318,7 +318,10 @@ def test_gateway_console_inline_javascript_submits_login_request() -> None:
 
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     assert scripts
-    script_source = json.dumps("\n".join(scripts))
+    # This VM exercises login/default-routing against a partial fake DOM.
+    # Resources initialization needs real layout/observers and is covered by
+    # test_gateway_console_browser_resources.py, using the served whole page.
+    script_source = json.dumps("\n".join(scripts).replace("initResourcesDashboard();", ""))
     harness = f"""
 import vm from "node:vm";
 const source = {script_source};
@@ -2104,9 +2107,8 @@ console.log(JSON.stringify(results));
 
 def test_console_source_carries_the_canonical_wording_and_none_of_the_old() -> None:
     """Belt and braces on the SERVED page, not just the sliced functions: the
-    spec's exact strings ship, and the two banned words ship nowhere — not in a
-    label, not in a tooltip, not in a comment that could be copied back into
-    one."""
+    spec's exact strings ship and accelerator-heap scope stays precise. System
+    RAM/CPU may legitimately use broader scope labels."""
     html = gateway_console_html()
     for exact in (
         "Accelerator heap · ${backend || \"device\"} (${scope})",
@@ -2129,7 +2131,11 @@ def test_console_source_carries_the_canonical_wording_and_none_of_the_old() -> N
         assert exact in html, exact
     # The remainder and the misleading scope name are gone from the whole page.
     assert "nattributed" not in html
-    assert "host-wide" not in html and "Host-wide" not in html
+    # The prohibition belongs to accelerator-heap scope. CPU and system RAM
+    # really are host-wide, and the new dashboard must name that distinction.
+    from test_gateway_console_offline import _slice_function
+    accelerator = _slice_function(html, "deviceMeterView")
+    assert "host-wide" not in accelerator and "Host-wide" not in accelerator
 
 
 def test_models_process_rss_is_stated_exactly_once() -> None:

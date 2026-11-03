@@ -73,8 +73,11 @@ def test_wizard_dom_contract_is_present() -> None:
         assert f"function {fn}(" in html
     assert "/api/gateway/session/claim" in html
     assert "/api/gateway/host/first-run" in html
+    # The apps step renders the gateway's registry (overview cards[]): the page
+    # carries no app list of its own, not even for the error fallback.
+    assert "FIRST_RUN_APPS" not in html
     for pkg in ("flow", "code", "observer", "continuum", "entity"):
-        assert f"@abstractframework/{pkg}" in html
+        assert f"@abstractframework/{pkg}" not in html
 
 
 _HARNESS = r"""
@@ -91,7 +94,10 @@ const kitLib = islandsCtx.AfConsoleIslands;
 const cloudMounts = [];
 const kitIslands = {
   cloudProviders: kitLib.cloudProviders,
+  filterBarFacetsHtml: kitLib.filterBarFacetsHtml,
+  filterBarScopeButtonsHtml: kitLib.filterBarScopeButtonsHtml,
   brandMarks: kitLib.brandMarks,
+  tooltipAttributes: kitLib.tooltipAttributes,
   mountCloudProviderCards(el, props) {
     const rec = { id: el.id, props, updates: 0, unmounted: 0 };
     cloudMounts.push(rec);
@@ -220,7 +226,11 @@ async function fetch(path, options = {}) {
       : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
       : { label: "Not installed", tone: "muted", busy: false, action: null, enabled: false, tip: null };
     const row = (id, pkg, extra) => { const r = Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {}); r.status_control = badgeOf(r); return r; };
-    return res(200, { ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
+    // One card per row (apps_manager.app_cards for apps of no family).
+    const cardsOf = (rows) => rows.map((r) => ({ id: r.id, family: null, name: r.name, description: r.id + " in one sentence.", mark: r.id.slice(0, 2), illustration_url: null, members: [r.id],
+      launchers: [{ app: r.id, kind: r.kind === "desktop" ? "desktop" : "browser" }].concat((r.interfaces || []).filter((i) => i.kind === "tui").map(() => ({ app: r.id, kind: "terminal" }))) }));
+    const withCards = (body) => Object.assign(body, { cards: cardsOf(body.apps) });
+    return res(200, withCards({ ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
       console_tui: { kind: "tui", installed: false, install_available: false, install_method: "cargo", install_command: "cargo install abstractgateway-console", command: "abstractgateway-console --url http://127.0.0.1:18080" }, apps: [
       row("flow", "@abstractframework/flow", { install_available: true, install_blocked_reason: null, actions: ["install"] }),
       row("code", "@abstractframework/code", { installed: true, version: "0.4.2", running: true, status: "running", actions: ["open", "stop", "logs"], url: "http://127.0.0.1:3002/", interfaces: [{ kind: "web" }, { kind: "tui", installed: true, version: "0.5.0", launch_available: true, command: "abstractcode --gateway http://127.0.0.1:18080" }] }),
@@ -228,7 +238,7 @@ async function fetch(path, options = {}) {
       row("continuum", "@abstractframework/continuum"),
       row("entity", "@abstractframework/entity"),
       row("assistant", "abstractassistant", { kind: "desktop", name: "Assistant", installed: true, version: "0.5.0", status: "stopped", actions: ["open"], interfaces: [], desktop: { location: "/Applications/AbstractAssistant.app", launch_command: "open -a /Applications/AbstractAssistant.app", launch_available: true, launch_blocked: null } }),
-    ] });
+    ] }));
   }
   if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
@@ -243,7 +253,7 @@ async function fetch(path, options = {}) {
   if (path.startsWith("/api/gateway/config/capability-defaults/") && method === "PUT") { textDefaultSet = true; return res(200, { ok: true }); }
   if (path === "/api/gateway/models/availability") return res(200, {
     routes: [],
-    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
+    recommended: { total: 1, recommended: [{ route: "output.text", provider: "lmstudio", artifact: "qwen/qwen3.5-9b@4bit", route_provider: "lmstudio", route_model: "qwen/qwen3.5-9b@4bit", status: "absent" }], gaps: [] },
   });
   // A default text model exists unless the scenario says not (the Apps step is gated on it, 0.18.0).
   if (path === "/api/gateway/config/capability-defaults") return res(200, { routes: textDefaultSet ? [{ key: "input.text", kind: "input", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }, { key: "output.text", kind: "output", modality: "text", provider: "lmstudio", model: scenario.textModel || "qwen/qwen3.5-9b" }] : [] });
@@ -330,7 +340,9 @@ if (scenario.name === "claim") {
   } else {
     for (const want of ['data-engine-card="ollama"', 'data-engine-card="mlx"', "Not installed", "Ready", 'data-engine-action="install"']) if (!engines.includes(want)) fail("engine cards missing " + want + ": " + engines);
     // Official marks from the kit (brand_icons.tsx), never the old two-letter badges.
-    for (const id of ["ollama", "mlx"]) if (!new RegExp('<span class="af-brand-mark" data-brand="' + id + '" role="img" aria-label="[^"]+"><svg viewBox=').test(engines)) fail("engine card " + id + " must show its official mark: " + engines.slice(0, 600));
+    if (!/<span class="af-brand-mark" data-brand="mlx" role="img" aria-label="[^"]+"><svg viewBox=/.test(engines)) fail("engine card mlx must show its official mark: " + engines.slice(0, 600));
+    // Backlog 1100: Ollama's logo needs its written permission; until then its name, no logo.
+    if (!/<span class="af-brand-mark af-brand-mark--text" data-brand="ollama" role="img" aria-label="[^"]+">Ollama<\/span>/.test(engines)) fail("engine card ollama must show its name badge, no logo: " + engines.slice(0, 600));
     if (/<span class="ui-mark" aria-hidden="true">(Ol|MLX)<\/span>/.test(engines)) fail("the two-letter engine badges are gone");
     // Install asks first, then POSTs a real (non-dry-run) job with CSRF.
     await context.engineAction("install", "ollama"); await settle(); await settle();
@@ -386,8 +398,8 @@ if (scenario.name === "claim") {
   if (scenario.catalogFail) {
     for (const want of ["The model catalog did not load", scenario.catalogWant]) if (!cat.includes(want)) fail("model step must explain why the catalog is missing (" + want + "): " + cat);
   } else {
-    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "mlx-community/Qwen3.5-9B-8bit", "8-bit", "Starter", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
-    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16"]) if (cat.includes(gone)) fail("the guide presets Fits this computer; " + gone + " is too large and must be hidden: " + cat);
+    for (const want of ['data-mc-model="qwen3.5-9b"', "Recommended for this computer", "qwen/qwen3.5-9b@4bit", "Recommended", "Use as default", 'data-mc-fits="1" checked', "1</b> of 2 models"]) if (!cat.includes(want)) fail("catalog cards missing " + want + ": " + cat);
+    for (const gone of ['data-mc-model="big-model"', "qwen3.5:9b-fp16", "mlx-community/Qwen3.5-9B-8bit"]) if (cat.includes(gone)) fail("the guide defaults to 4-bit and presets Fits this computer; unexpected version " + gone);
     if (cat.includes("<table")) fail("the catalog is cards, not a table");
     if (cat.includes("does not report quant_class")) fail("a catalog WITH quant_class must not show the missing-field notice");
     // "Use as default" on the downloaded text model PUTs the text route with
@@ -400,7 +412,7 @@ if (scenario.name === "claim") {
     const body = JSON.parse(put.body);
     if (body.provider !== "lmstudio" || body.model !== "qwen/qwen3.5-9b") fail("Use as default body wrong: " + put.body);
     if (put.csrf !== "agcsrf_wizard") fail("Use as default PUT carried no CSRF header");
-    if (!el("first-run-message").textContent.includes("qwen/qwen3.5-9b")) fail("no confirmation after Use as default");
+    if (!el("first-run-message").textContent.includes("Default text model set to Qwen3.5 9B")) fail("no readable confirmation after Use as default");
   }
 
   context.firstRunStep(1); await settle();
@@ -411,7 +423,8 @@ if (scenario.name === "claim") {
   // details off: no Stop, no Show log, no versions, no commands.
   if (!apps.includes('class="ui-card-grid is-aligned"')) fail("the apps grid must pin the action rows (is-aligned): " + apps);
   for (const gone of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "npx @abstractframework/", "Version 0.4.2", "Open it with the Open button", "Also runs in your terminal", "abstractcode --gateway"]) if (apps.includes(gone)) fail("the plain view must not render " + gone + ": " + apps);
-  if (!apps.includes("http://127.0.0.1:18080")) fail("apps step did not name the gateway URL");
+  // One toolbar line, no explanatory sentence: the refresh icon button (and the settings gear).
+  if (apps.includes("Apps open in your browser") || !apps.includes('data-app-action="refresh" aria-label="Refresh"')) fail("the apps toolbar must be the refresh icon button only: " + apps);
   if (apps.includes("nodejs.org")) fail("apps step must not send people to nodejs.org");
   for (const want of ['data-app-action="install"', ">Install</button>", 'data-app-action="open"', 'data-app-action="tui-open"', "Open in Terminal", "Node.js will be installed for you", "turned off for this gateway", 'data-app-card="assistant"', 'data-app-action="desktop-open"']) if (!apps.includes(want)) fail("apps cards missing " + want + ": " + apps);
   // Mission LL: ONE Install (it installs the terminal app too), never
@@ -422,8 +435,8 @@ if (scenario.name === "claim") {
   if (cards.length !== 6) fail("six app cards expected (five browser apps + the Assistant): " + cards.length);
   if (!cards[5].includes('data-app-card="assistant"')) fail("the Assistant comes after the five browser apps: " + cards[5]);
   for (const c of cards) {
-    const at = ["ui-card__head", "ui-card__blurb is-oneline", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
-    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be head / one line / body / action row / technical, in that order: " + c);
+    const at = ["ui-app-card__art", "ui-card__head", "ui-card__blurb", "ui-card__body", "ui-card__actions", "ui-card__tech"].map((k) => c.indexOf('class="' + k));
+    if (at.some((i) => i < 0) || at.some((i, k) => k && i < at[k - 1])) fail("a card must be illustration / head / description / body / action row / technical, in that order: " + c);
     const row = c.slice(c.indexOf('class="ui-card__actions"'), c.indexOf('class="ui-card__tech"'));
     if ((row.match(/is-primary/g) || []).length !== 1) fail("one primary action per card: " + row);
   }
@@ -484,7 +497,7 @@ if (scenario.name === "claim") {
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
     if (scenario.dumpCatalogs) console.log("CATALOG tab " + JSON.stringify(el("catalog-cards-root").innerHTML));
-    if (!el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"')) fail("the Models tab opens on the whole catalog (no fits preset): " + el("catalog-cards-root").innerHTML);
+    if (el("catalog-cards-root").innerHTML.includes('data-mc-model="big-model"') || !el("catalog-cards-root").innerHTML.includes('data-mc-fits="1" checked')) fail("the Models tab defaults to Fits this computer");
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
     el("tab-button-catalog").onclick(); await settle();
@@ -594,8 +607,9 @@ if (scenario.name === "default-models") {
   await dmClick("first-run-head-actions", { dmMode: "advanced" });
   const html = el("first-run-default-models").innerHTML;
   const rows = (html.match(/data-dm-row="/g) || []).length;
-  if (rows !== 9) fail("expected 9 capability rows, got " + rows);
-  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
+  // Ten rows: AbstractCore 2.32.0 added the Decisions route (output.decision).
+  if (rows !== 10) fail("expected 10 capability rows, got " + rows);
+  for (const want of ["Voice out", "Voice in", "Embeddings", "Rankers", "3D", "Music", "Decisions", "speech</span> → <span class=\"chip\">text", "qwen/qwen3.5-9b@4bit", 'data-dm-use="input.text"', "Use recommended for all", "Choose…"]) {
     if (!html.includes(want)) fail("default models table missing " + want + ": " + html.slice(0, 1500));
   }
   await dmClick("first-run-default-models", { dmUse: "input.text" });
@@ -621,7 +635,9 @@ if (scenario.name === "simple-mode") {
   let html = el("first-run-default-models").innerHTML;
   const ins = (html.match(/data-dm-badge="in-/g) || []).length;
   const outs = (html.match(/data-dm-badge="out-/g) || []).length;
-  if (ins !== 5 || outs !== 8) fail(`expected 5 input and 8 output badges, got ${ins} and ${outs}`);
+  // Nine output badges: AbstractCore 2.32.0 added Decisions (output.decision).
+  if (ins !== 5 || outs !== 9) fail(`expected 5 input and 9 output badges, got ${ins} and ${outs}`);
+  if (!html.includes('data-dm-badge="out-decision"')) fail("simple mode has no Decisions badge");
   for (const want of ["Use recommended", "Recommended for this computer", ">Input <", ">Output <", "Embeddings", "Rankers", "Files", "Qwen3.5 9B", "dm-badge--recommended", "dm-badge--covered", "dm-badge--none", "<svg"]) {
     if (!html.includes(want)) fail("simple mode missing " + want + ": " + html.slice(0, 1200));
   }
@@ -781,7 +797,7 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
 
     harness = (
         _HARNESS.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
-        .replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts).replace("    initResourcesDashboard();", "    /* Resources wiring has its own real-browser suite. */")))
         .replace("__SCENARIO__", json.dumps(scenario))
         .replace("__CLASSES__", json.dumps(classes))
     )

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ..apps_manager import app_launch_config
-from . import apps as tray_apps, dialogs, menu_model, platform as plat
+from . import apps as tray_apps, dialogs, menu_model, menu_v2, platform as plat
 from .client import GatewayClient, Result
 from .events import AttentionLedger, AttentionNotice, EventFollower, is_automation_event
 from .icons import icon_signature, master_size_for_platform, render_icon
@@ -107,6 +107,30 @@ def instance_title(text: str, instance: str) -> str:
     if not name or name == "default" or not text.startswith(APP_NAME):
         return text
     return (f"{APP_NAME} ({name})" + text[len(APP_NAME):])[:120]
+
+
+def _native_header_available() -> bool:
+    try:
+        from .header_mac import header_available
+
+        return bool(header_available())
+    except Exception:
+        return False
+
+
+def _with_new_menu_switch(nodes: tuple) -> tuple:
+    """The classic menu plus Help ▸ *New menu* (before About): the way back
+    to the redesign without editing prefs.json. Everything else is the
+    classic menu as `menu_model.build_menu` made it."""
+    out = []
+    for n in nodes:
+        if n.label == "Help" and n.children is not None:
+            kids = list(n.children)
+            at = next((i for i, k in enumerate(kids) if k.separator), len(kids))
+            kids[at:at] = [Node("New menu", ("set_menu_style", menu_v2.STYLE), checked=False)]
+            n = dataclasses.replace(n, children=tuple(kids))
+        out.append(n)
+    return tuple(out)
 
 
 def tooltip_text(snap: Snapshot, *, attention_unseen: int = 0) -> str:
@@ -278,6 +302,14 @@ class TrayApp:
         self.client = GatewayClient(self.base_url, self.token)
         self.sampler = Sampler(self.client, version=self.version)
         self.prefs = Prefs(self.data_dir)
+        # `serve --tray-menu classic|v2` for this run (handshake `menu_style`);
+        # without it the machine's preference (prefs.json `menu_style`) decides.
+        self._menu_style_flag = str(handshake.get("menu_style") or "").strip() or None
+        # macOS draws the redesign's first row as a native view (logo · name ·
+        # subtitle · switch, header_mac.py); the objects it builds live here
+        # until the next menu rebuild (AppKit keeps only weak references).
+        self._native_header = sys.platform == "darwin" and _native_header_available()
+        self._header_refs: tuple = ()
         self._icon: Any = None
         self._lock = threading.RLock()
         self._last_menu_sig: Optional[tuple] = None
@@ -340,7 +372,12 @@ class TrayApp:
         dialogs.set_mac_app_identity(APP_NAME)
         self._pick_mode(force=True)
         first = render_icon(self._master, state="starting", mode=self._mode)
-        icon_cls = self._darwin_icon_class(pystray) if sys.platform == "darwin" else pystray.Icon
+        if sys.platform == "darwin":
+            icon_cls = self._darwin_icon_class(pystray)
+        elif sys.platform.startswith("linux"):
+            icon_cls = self._linux_icon_class(pystray)
+        else:
+            icon_cls = pystray.Icon
         try:
             self._icon = icon_cls(
                 "abstractgateway",
@@ -417,8 +454,25 @@ class TrayApp:
         import io
 
         base = pystray.Icon
+        app = self
 
         class RetinaIcon(base):  # type: ignore[misc,valid-type]
+            def _create_menu_item(self, descriptor, callbacks):  # noqa: D401 - pystray internal
+                """The redesign's header row: a native view (header_mac.py)
+                on the NSMenuItem pystray made; the text stays as its title
+                (VoiceOver reads it). Any failure keeps the text row."""
+                item = base._create_menu_item(self, descriptor, callbacks)
+                view = getattr(descriptor, "_ag_header", None)
+                if view is not None:
+                    built = app._build_header_view(view)
+                    if built is not None:
+                        try:
+                            item.setView_(built)
+                            item.setEnabled_(True)
+                        except Exception:
+                            logger.debug("tray: header view not attached", exc_info=True)
+                return item
+
             def _assert_image(self):  # noqa: D401 - pystray internal
                 if getattr(self, "_icon_image", None) is not None:
                     return
@@ -440,6 +494,58 @@ class TrayApp:
                     base._assert_image(self)
 
         return RetinaIcon
+
+    def _linux_icon_class(self, pystray: Any) -> Any:
+        """The GTK / AppIndicator icon with the logo on the header row
+        (header_gtk.py). pystray's xorg backend has no menu: unchanged."""
+        base = pystray.Icon
+        if not hasattr(base, "_create_menu_item") or getattr(base, "HAS_MENU", True) is False:
+            return base
+
+        class LogoHeaderIcon(base):  # type: ignore[misc,valid-type]
+            def _create_menu_item(self, descriptor, *args, **kwargs):  # noqa: D401 - pystray internal
+                view = getattr(descriptor, "_ag_header", None)
+                if view is not None:
+                    try:
+                        from .header_gtk import header_menu_item
+                        from .logo import logo_png
+
+                        item = header_menu_item(descriptor.text, logo_png=logo_png())
+                        if item is not None:
+                            return item
+                    except Exception:
+                        logger.debug("tray: gtk header row not built", exc_info=True)
+                return base._create_menu_item(self, descriptor, *args, **kwargs)
+
+        return LogoHeaderIcon
+
+    def _build_header_view(self, view: Any) -> Any:
+        """The macOS header's NSView for a `menu_v2.HeaderView`, or None.
+        Its switch calls `header_toggle` on the GUI thread."""
+        try:
+            from .header_mac import build_header_view
+            from .logo import logo_png
+
+            built = build_header_view(view, logo_png=logo_png(), on_toggle=self.header_toggle)
+        except Exception:
+            logger.debug("tray: header view not built", exc_info=True)
+            return None
+        if built is None:
+            return None
+        nsview, keep = built
+        self._header_refs = (nsview,) + tuple(keep)
+        return nsview
+
+    def header_toggle(self, on: bool) -> None:
+        """The header switch: ON resumes, OFF pauses (the gateway-wide
+        pause — the console keeps answering, conversations wait). The same
+        handlers as the Pause / Resume rows."""
+        snap = self._snap or self.sampler.snapshot()
+        paused = bool(snap.paused or snap.gateway_state in {"paused", "pausing"})
+        if on and paused:
+            self.resume()
+        elif not on and not paused:
+            self.pause()
 
     def _install_signals(self) -> None:
         def _term(*_a: Any) -> None:
@@ -683,11 +789,26 @@ class TrayApp:
             network=dataclasses.replace(self._network, busy=self._network_busy),
         )
 
+    def menu_style(self) -> str:
+        """`v2` (the 2026-11-01 redesign, `menu_v2.py`) or `classic`
+        (`menu_model.py`, kept whole for a roll-back): the launch flag wins for
+        this run, else the machine's preference, else the redesign."""
+        return menu_v2.menu_style(flag=self._menu_style_flag, prefs=self.prefs.data.get("menu_style"))
+
+    def menu_nodes(self) -> tuple:
+        """The menu as nodes, in the chosen style. The classic menu gets ONE
+        extra row (Help ▸ *New menu*) so the way back is a click, not a file
+        edit; `menu_model.build_menu` itself is untouched."""
+        inputs = self.menu_inputs()
+        if self.menu_style() == menu_v2.CLASSIC:
+            return _with_new_menu_switch(menu_model.build_menu(inputs))
+        return menu_v2.build_menu(inputs, native_header=self._native_header)
+
     def _menu_items(self):
         """pystray asks for the items on every rebuild: build the pure model,
         render it. `flat_menu` (tray prefs) is the explicit degrade for panels
         that drop submenus."""
-        nodes = menu_model.build_menu(self.menu_inputs())
+        nodes = self.menu_nodes()
         if self.prefs.data.get("flat_menu"):
             nodes = menu_model.flatten(nodes)
         for item in self._render_nodes(nodes):
@@ -708,7 +829,14 @@ class TrayApp:
                 kw["radio"] = True
             if n.checked is not None:
                 kw["checked"] = (lambda value: (lambda _i: value))(bool(n.checked))
-            if n.children is not None:
+            if isinstance(n, menu_v2.HeaderNode) and n.view is not None:
+                # The text is the fallback (a greyed line); the macOS icon
+                # class reads `_ag_header` and draws the native view instead.
+                kw["enabled"] = False
+                item = pystray.MenuItem(n.label, None, **kw)
+                item._ag_header = n.view  # type: ignore[attr-defined]
+                out.append(item)
+            elif n.children is not None:
                 out.append(pystray.MenuItem(n.label, pystray.Menu(*self._render_nodes(n.children)), **kw))
             elif n.action is not None:
                 out.append(pystray.MenuItem(n.label, self._act((lambda a: (lambda: self.dispatch(a)))(n.action)), **kw))
@@ -750,10 +878,12 @@ class TrayApp:
             "open_url": plat.open_url,
             "copy_console_link": self.copy_console_link,
             "toggle_memory_warn": self.toggle_memory_warn,
+            "set_menu_style": self.set_menu_style,
             "about": self.about,
             "quit": self.quit_gateway,
             "force_quit": self.force_quit,
             "eject": self.eject,
+            "eject_all": self.eject_all,
             "load": self.load_model,
             "app_open": self.app_open,
             "app_launch": self.app_launch,
@@ -783,6 +913,7 @@ class TrayApp:
             tuple(sorted(self._loading)),
             tuple(sorted(self._ejecting)),
             bool(self.prefs.data.get("flat_menu")),
+            self.menu_style(),
             self._network,
             self._network_busy,
         )
@@ -940,6 +1071,29 @@ class TrayApp:
             self._info("Already unloaded", "That model is no longer in memory.")
             return
         self.unload(row)
+
+    def eject_all(self) -> None:
+        """Models ▸ Eject All: one confirmation naming what goes and what it
+        frees, then every loaded model is ejected in turn (a locked one asks
+        again, as a single eject does)."""
+        snap = self._snap or self.sampler.snapshot()
+        rows = list(snap.models)
+        if not rows:
+            self._info("Nothing in memory", "No model is loaded.")
+            return
+        total = sum(r.size_bytes or 0 for r in rows)
+        names = ", ".join(menu_model.short_model_name(r.name) for r in rows[:4]) + ("…" if len(rows) > 4 else "")
+        frees = f"This frees about {fmt_bytes(total)}." if total else "This frees the memory they use."
+        busy = " Work running on them right now is stopped first." if snap.inflight_ticks > 0 else ""
+
+        def _do() -> None:
+            def _run() -> None:
+                for r in rows:
+                    self._unload_now(r, force=False)
+
+            self._bg(_run, "tray-unload-all")
+
+        self._confirm("unload:all", "Eject All", f"Eject {len(rows)} models?", f"{names}. {frees}{busy} Each loads again from disk the next time something needs it.", ok_label="Eject All", danger=True, action=_do)
 
     def load_model(self, provider: str, model: str, task: str = "text_generation") -> None:
         key = f"{provider}/{model}"
@@ -1512,6 +1666,20 @@ class TrayApp:
     def toggle_memory_warn(self) -> None:
         self.prefs.data["memory_warn"] = not bool(self.prefs.data.get("memory_warn", True))
         self.prefs.save()
+
+    def set_menu_style(self, style: str) -> None:
+        """Settings ▸ *Classic menu* / Help ▸ *New menu*: remember the choice
+        for this machine and rebuild the menu now. A launch flag for this run
+        still wins (the tooltip of the menu says nothing; the next open shows
+        the chosen style when no flag pins it)."""
+        word = str(style or "").strip().lower()
+        if word not in menu_v2.STYLES:
+            raise ValueError(f"tray: unknown menu style {style!r}")
+        self.prefs.data["menu_style"] = word
+        self.prefs.save()
+        if self._menu_style_flag and self._menu_style_flag != word:
+            self._info("Menu style saved for next time", f"This run was started with --tray-menu {self._menu_style_flag}; the {word} menu shows when the gateway starts without that flag.")
+        self._force_menu_rebuild()
 
     def pause(self) -> None:
         self.sampler.set_override("pausing")

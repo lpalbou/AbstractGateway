@@ -10,6 +10,7 @@ import tempfile
 
 from node_requirement import require_node
 
+from abstractgateway.console_islands import ISLANDS_JS
 from abstractgateway.console_catalog import CATALOG_JS
 
 _SCRIPT = r"""
@@ -20,7 +21,7 @@ const ctx = vm.createContext({
   console, setTimeout, clearTimeout, encodeURIComponent, decodeURIComponent,
   location: { hash: "", pathname: "/console", search: "" }, history: { replaceState() {} }, document: { activeElement: null }, window: {},
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
-  ICONS: { trash: "<svg data-icon=\"trash\"></svg>", lock: "<svg data-icon=\"lock\"></svg>" },
+  ICONS: Object.fromEntries(['trash','lock','gear','download','star','info','check','close','folder','retry','refresh','filter'].map(x=>[x,`<svg data-icon="${x}"></svg>`])),
   $: (id) => ({ click: () => clicks.push(id) }),
   state: { principal: { admin: true }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map(),
            hostState: { models: [
@@ -32,6 +33,8 @@ const ctx = vm.createContext({
   uiRestoreDownloads: () => {}, uiPill: (l, t) => `<span class="ui-pill tone-${t}">${l}</span>`, uiNum: (v) => typeof v === "number",
   uiBytes: (n) => `${n} B`, uiDetails: () => "", uiCopy: () => {}, dlActive: () => false, dlStatePill: () => "", dlJobId: (j) => j && j.job, trackDownloadJob: () => {}, downloadJobKey: (p, a) => `${p}/${a}`, servedModelId: (p, a) => a,
 });
+vm.runInContext(__ISLANDS__, ctx);
+ctx.window.AfConsoleIslands = ctx.AfConsoleIslands;
 vm.runInContext(__SOURCE__, ctx);
 const b = (a) => vm.runInContext(`mcLoadedBadge(${JSON.stringify(a)})`, ctx);
 const out = {
@@ -52,16 +55,16 @@ console.log(JSON.stringify(out));
 
 def test_the_catalog_row_says_loaded_or_kept_and_opens_resources():
     node = require_node()
-    src = _SCRIPT.replace("__SOURCE__", json.dumps(CATALOG_JS))
+    src = _SCRIPT.replace("__ISLANDS__", json.dumps(ISLANDS_JS)).replace("__SOURCE__", json.dumps(CATALOG_JS))
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False) as f:
         f.write(src)
     proc = subprocess.run([node, f.name], capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert ">Loaded</button>" in out["loaded"] and 'data-mc-open-resources="1"' in out["loaded"]
-    assert "Held by the runtime of account default/admin" in out["loaded"] and "Open Resources to keep it loaded" in out["loaded"]
+    assert 'data-icon="gear"' in out["loaded"] and 'data-mc-open-resources="1"' in out["loaded"]
+    assert "Held by" in out["loaded"] and "the runtime of account default/admin" in out["loaded"] and "Open Resources to manage residency" in out["loaded"]
     assert out["otherQuant"] == "", "another quant of the same repo is not the build in memory"
-    assert "Kept loaded</button>" in out["kept"] and 'data-icon="lock"' in out["kept"]
+    assert "Kept loaded" in out["kept"] and 'data-icon="lock"' in out["kept"]
     assert out["notResident"] == "" and out["otherProvider"] == ""
     assert "tab-button-models" in out["clicks"], "the badge opens the Resources page"
-    assert "Kept loaded</button>" in out["row"], "the catalog row carries the badge"
+    assert "Kept loaded" in out["row"], "the catalog row carries the badge"

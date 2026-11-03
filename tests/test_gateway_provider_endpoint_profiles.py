@@ -1135,3 +1135,135 @@ def test_in_process_local_providers_surface_when_models_exist(tmp_path: Path, mo
     # The in-process probe was called WITHOUT a base_url kwarg.
     mlx_call = next(c for c in calls if c["provider_name"] == "mlx")
     assert "base_url" not in mlx_call
+
+
+_PROFILES_URL = "/api/gateway/config/provider-endpoint-profiles"
+
+
+def _profile_row(client: TestClient, profile_id: str) -> dict[str, Any] | None:
+    listed = client.get(_PROFILES_URL, headers={"Authorization": "Bearer admin-token"})
+    assert listed.status_code == 200, listed.text
+    return next((row for row in listed.json()["profiles"] if row.get("id") == profile_id), None)
+
+
+def _stub_discovery(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_providers(self, *, include_models: bool = False, **kwargs: Any) -> dict[str, Any]:
+            return {"items": []}
+
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["jev-latest"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    return calls
+
+
+def test_typesafe_connection_saves_updates_and_deletes_with_its_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The console's TypeSafe (Jev) card: an API key, no base URL (the provider's hosted endpoint).
+    It was refused on save ("Unsupported provider family 'typesafe'") although the key check passed."""
+    calls = _stub_discovery(monkeypatch)
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            _PROFILES_URL,
+            headers=headers,
+            json={
+                "id": "typesafe-key", "display_name": "TypeSafe (Jev) (API key)", "provider_family": "typesafe",
+                "api_key": "apikey_test_only", "base_url": "", "scope": "gateway", "capabilities": ["text"],
+                "create_only": True,
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert "apikey_test_only" not in created.text
+        row = _profile_row(client, "typesafe-key")
+        assert row is not None and row["provider_family"] == "typesafe" and row["api_key_set"] is True
+        assert row["base_url"] == ""
+        first_fingerprint = row["api_key_fingerprint"]
+
+        models = client.get("/api/gateway/discovery/providers/endpoint%3Atypesafe-key/models", headers=headers)
+        assert models.status_code == 200, models.text
+        assert models.json()["routed_provider"] == "typesafe"
+
+        updated = client.put(f"{_PROFILES_URL}/typesafe-key", headers=headers, json={"api_key": "apikey_test_only_2"})
+        assert updated.status_code == 200, updated.text
+        row = _profile_row(client, "typesafe-key")
+        assert row is not None and row["api_key_set"] is True and row["api_key_fingerprint"] != first_fingerprint
+
+        deleted = client.delete(f"{_PROFILES_URL}/typesafe-key", headers=headers)
+        assert deleted.status_code == 200, deleted.text
+        assert _profile_row(client, "typesafe-key") is None
+
+    discovery = [call for call in _without_local_autoprobes(calls) if call["provider_name"] == "typesafe"]
+    assert [(c["base_url"], c["provider_api_key"]) for c in discovery] == [(None, "apikey_test_only")]
+
+
+def test_systemone_connection_saves_with_a_base_url_and_no_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _stub_discovery(monkeypatch)
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            _PROFILES_URL,
+            headers=headers,
+            json={
+                "id": "systemone-endpoint", "display_name": "System One endpoint (127.0.0.1)",
+                "provider_family": "systemone", "api_key": "", "base_url": "http://127.0.0.1:8000",
+                "scope": "gateway", "capabilities": ["text"], "create_only": True,
+            },
+        )
+        assert created.status_code == 200, created.text
+        row = _profile_row(client, "systemone-endpoint")
+        assert row is not None and row["provider_family"] == "systemone"
+        assert row["base_url"] == "http://127.0.0.1:8000" and row["api_key_set"] is False
+
+        models = client.get("/api/gateway/discovery/providers/endpoint%3Asystemone-endpoint/models", headers=headers)
+        assert models.status_code == 200, models.text
+
+        updated = client.put(
+            f"{_PROFILES_URL}/systemone-endpoint", headers=headers, json={"base_url": "http://127.0.0.1:8001", "api_key": "apikey_test_only"}
+        )
+        assert updated.status_code == 200, updated.text
+        row = _profile_row(client, "systemone-endpoint")
+        assert row is not None and row["base_url"] == "http://127.0.0.1:8001" and row["api_key_set"] is True
+
+        deleted = client.delete(f"{_PROFILES_URL}/systemone-endpoint", headers=headers)
+        assert deleted.status_code == 200, deleted.text
+        assert _profile_row(client, "systemone-endpoint") is None
+
+    discovery = [call for call in _without_local_autoprobes(calls) if call["provider_name"] == "systemone"]
+    assert [c["base_url"] for c in discovery] == ["http://127.0.0.1:8000"]
+
+
+def test_connection_families_follow_the_abstractcore_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No family list in the save path: a provider registered in AbstractCore is accepted as is,
+    a bogus one is refused with the accepted families named."""
+    from abstractcore.providers.registry import ProviderInfo, get_provider_registry
+
+    registry = get_provider_registry()
+    monkeypatch.setitem(
+        registry._providers, "acme-http", ProviderInfo(name="acme-http", display_name="Acme", provider_class=None, description="test")
+    )
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        accepted = client.post(
+            _PROFILES_URL,
+            headers=headers,
+            json={"id": "acme-key", "display_name": "Acme", "provider_family": "acme-http", "api_key": "apikey_test_only"},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert client.delete(f"{_PROFILES_URL}/acme-key", headers=headers).status_code == 200
+
+        refused = client.post(
+            _PROFILES_URL,
+            headers=headers,
+            json={"id": "bogus-key", "display_name": "Bogus", "provider_family": "bogus-family", "api_key": "apikey_test_only"},
+        )
+        assert refused.status_code == 400, refused.text
+        detail = refused.json()["detail"]
+        assert "Unsupported provider family 'bogus-family'" in detail
+        assert "typesafe" in detail and "systemone" in detail and "acme-http" in detail
+        assert _profile_row(client, "bogus-key") is None

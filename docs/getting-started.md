@@ -23,7 +23,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.8.2 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.15.3 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your
@@ -106,7 +106,7 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
   "http://127.0.0.1:8080/api/gateway/bundles"
 ```
 
-If `bundles.items` is empty (see also
+If the bundle response's `items` list is empty (see also
 [troubleshooting.md](./troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
 - point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
   directory containing `*.flow` files (or a single `.flow` file), or

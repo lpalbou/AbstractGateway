@@ -280,7 +280,7 @@ def amgr(tmp_path: Path, home: Path):
 def test_overview_lists_the_assistant_after_the_browser_apps(amgr) -> None:
     m, state, _ = amgr
     ov = m.overview(check_latest=False, caller={"local": True, "same_machine": True, "admin": True})
-    assert [a["id"] for a in ov["apps"]] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant"]
+    assert [a["id"] for a in ov["apps"]] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant-web", "assistant"]
     a = ov["apps"][-1]
     assert a["kind"] == "desktop" and a["name"] == "Assistant" and a["url"] is None and a["port"] is None
     assert a["status"] == "not_installed" and a["actions"] == ["install"] and a["install_available"]
@@ -591,10 +591,12 @@ def test_console_card_pins() -> None:
     terminal install), and the desktop card's Open goes to /launch."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
-    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(app) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
-    assert 'b("install", "Install", "is-primary", what)' in card
+    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appMemberParts(app, techOn, lead, shared) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
+    # The card's identity launches with the primary button; a family's other member with a ghost one.
+    assert 'const main = lead ? "is-primary" : "is-ghost";' in card
+    assert 'const label = shared ? (desk ? "Install desktop app" : "Install browser app") : "Install";' in card and 'b("install", label, main, what)' in card
     assert "Install and open" not in CONSOLE_UI_JS and "Install for Terminal" not in CONSOLE_UI_JS
-    assert 'b("desktop-open", "Open", "is-primary"' in card and 'desk.launch_blocked === "other_computer"' in card
+    assert 'b("desktop-open", openDesk, main,' in card and 'desk.launch_blocked === "other_computer"' in card
     assert "appPartsMarkup(job)" in card
     # R10.5: another Assistant running is its own sentence; nothing disables Open for it.
     assert "desk.other_running.sentence" in card and "data-app-desktop-other" in card
@@ -619,3 +621,23 @@ def test_on_windows_the_assistant_starts_with_pythonw_not_its_console_launcher(t
     # Other systems are unchanged.
     mac = desk.detect_assistant(_probes(tmp_path, files=[str(tmp_path / "venv" / "bin" / "abstractassistant"), pythonw], spec=pkg))
     assert mac["source"] == "script"
+
+
+def test_web_assistant_is_separate_from_desktop_and_opens_via_gateway_handover() -> None:
+    entries = tray_apps.build_app_entries(
+        {"apps": [{
+            "id": "assistant-web", "name": "Assistant (web)", "kind": "web", "installed": True,
+            "status": "running", "running": True, "url": "http://127.0.0.1:3008/",
+        }]},
+        None,
+        globals_found={},
+        assistant={"launch": ["/s/abstractassistant"], "source": "script", "running": True},
+        local_running={},
+    )
+    section = menu_model.apps_section(types.SimpleNamespace(apps=entries, apps_fetched=True), reachable=True)
+    labels = {n.label: n.action for n in section.children if getattr(n, "label", None)}
+    assert labels["Open Assistant (web)"] == ("app_open", "assistant-web")
+    assert labels["Launch Assistant"] == ("assistant_launch",)
+    web = next(a for a in am.APPS if a.id == "assistant-web")
+    assert web.package == "@abstractframework/assistant" and web.cookie_prefix == "abstractassistant"
+    assert web.default_port == 3008 and web.id in am.FLAG_CONFIGURED_APPS

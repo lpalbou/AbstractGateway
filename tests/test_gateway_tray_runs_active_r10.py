@@ -271,7 +271,7 @@ def test_the_menu_reads_a_fake_gateway_running_first_with_elapsed_time_and_obser
         snap = sampler.snapshot()
         assert [r.run_id for r in snap.runs] == ["occ-1", "chat-1", "ask-1", "done-1"]
 
-        app = tray_app.TrayApp({"base_url": gw.url, "token": "t", "data_dir": str(tmp_path)})
+        app = tray_app.TrayApp({"base_url": gw.url, "token": "t", "data_dir": str(tmp_path), "menu_style": "classic"})  # the classic layout this test reads
         app.client = client
         app.sampler = sampler
         app._snap = dataclasses.replace(snap, gateway_state="running", reachable=True)

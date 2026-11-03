@@ -1,0 +1,86 @@
+{
+  "implementation": "af7a33a4",
+  "focused_tests_passed": 42,
+  "browser_and_merged_rerun_passed": 7,
+  "browser": {
+    "checks": 140,
+    "failures": []
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "dimensions": {
+          "card": 195,
+          "header": 45,
+          "rows": [
+            44,
+            44,
+            44
+          ],
+          "columns": 2
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "twoColumns": true,
+          "headerCapabilities": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "rightAlignedCapabilities": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "mobileFits": true
+        },
+        "tooltip": {
+          "background": "rgb(22, 33, 62)",
+          "text": "rgb(238, 238, 238)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      },
+      {
+        "theme": "light",
+        "dimensions": {
+          "card": 195,
+          "header": 45,
+          "rows": [
+            44,
+            44,
+            44
+          ],
+          "columns": 2
+        },
+        "checks": {
+          "threeRows": true,
+          "compact": true,
+          "twoColumns": true,
+          "headerCapabilities": true,
+          "noInfoButtons": true,
+          "noOverflow": true,
+          "rightAlignedCapabilities": true,
+          "titleExpands": true,
+          "keyboardCollapses": true,
+          "detailsAndCopy": true,
+          "detailsClose": true,
+          "themedTooltip": true,
+          "mobileFits": true
+        },
+        "tooltip": {
+          "background": "rgb(255, 255, 255)",
+          "text": "rgb(15, 23, 42)",
+          "themed": true,
+          "label": "Text"
+        },
+        "health": "healthy"
+      }
+    ],
+    "errors": [],
+    "managementWrites": []
+  },
+  "final_alignment_commit": "fae77d55"
+}

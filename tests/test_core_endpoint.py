@@ -148,6 +148,12 @@ def test_admin_controls_reject_user_and_never_disclose_token_in_status(host, mon
     status = http.get("/api/gateway/admin/core-endpoint", headers=headers)
     assert token not in status.text
     assert status.headers["cache-control"] == "no-store"
+    direct = http.post("/api/gateway/admin/core-endpoint", headers=headers, json={"direct_enabled": True})
+    assert direct.status_code == 200, direct.text
+    assert direct.json()["direct_enabled"] is True and direct.json()["enabled"] is False
+    assert token not in direct.text
+    invalid_direct = http.post("/api/gateway/admin/core-endpoint", headers=headers, json={"direct_enabled": "false"})
+    assert invalid_direct.status_code == 422
     assert status.json()["base_url"].endswith("/v1") and not status.json()["base_url"].endswith("/core/v1")
     # Round 5: no route reveals a stored key (the rotate answer above is the only showing).
     reveal = http.post("/api/gateway/admin/core-endpoint/token/reveal", headers=headers)

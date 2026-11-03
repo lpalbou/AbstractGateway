@@ -248,6 +248,24 @@ def _rebuild_remote_error(message, remote_type, status_code, remote_traceback):
                                 remote_traceback=remote_traceback)
 
 
+class ModelHostRequestError(ModelHostRemoteError):
+    """A deterministic transport preparation failure, not an unhealthy owner."""
+
+    status_code = 400
+    retryable = False
+
+    def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(message, status_code=400)
+        self.context = dict(context or {})
+
+    def __reduce__(self):
+        return (_rebuild_request_error, (str(self), self.context))
+
+
+def _rebuild_request_error(message, context):
+    return ModelHostRequestError(message, context=context)
+
+
 _CALLABLE = ("callable",)
 
 
@@ -336,7 +354,10 @@ def _dumps_request(msg: Tuple[Any, ...], ctx: _CallContext, *, persistent_callba
             for key in _NOTIFY_KEYS:
                 if callable(scope.get(key)):
                     pickler.mark_notify(scope[key])
-    pickler.dump(msg)
+    try:
+        pickler.dump(msg)
+    except Exception as exc:
+        raise ModelHostRequestError(f"The model host request could not be encoded: {type(exc).__name__}: {exc}") from exc
     return buf.getvalue()
 
 
@@ -372,12 +393,25 @@ class _Connection:
             self.conn.close()
 
 
-def _describe_target(owner: Any, method: str) -> Dict[str, Any]:
+def _describe_target(owner: Any, method: str, kwargs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     row: Dict[str, Any] = {"method": method}
     ctor = getattr(owner, "_mh_ctor", None)
     if isinstance(ctor, dict):
         row["provider"] = ctor.get("provider")
         row["model"] = ctor.get("model")
+    params = (kwargs or {}).get("params")
+    if isinstance(params, dict):
+        for key in ("provider", "model"):
+            override = params.get("_" + key)
+            if isinstance(override, str) and override.strip():
+                row[key] = override.strip()
+    metadata = params.get("trace_metadata") if isinstance(params, dict) else None
+    if isinstance(metadata, dict):
+        for key in ("run_id", "step_id", "request_id", "node_id", "effect_idempotency_key", "attempt",
+                    "workflow_id", "parent_run_id", "session_id"):
+            value = metadata.get(key)
+            if isinstance(value, (str, int)):
+                row[key] = value
     return row
 
 
@@ -396,8 +430,14 @@ class _Exchange:
         self.host = host
         self.owner = owner
         self.ctx = _CallContext(persistent if persistent is not None else {})
-        self.payload = _dumps_request(msg, self.ctx, persistent_callbacks=persistent_callbacks)
         self.what = what or {"method": str(msg[0])}
+        try:
+            self.payload = _dumps_request(msg, self.ctx, persistent_callbacks=persistent_callbacks)
+        except Exception as exc:  # request data cannot be encoded; no inference was sent
+            raise ModelHostRequestError(
+                f"The model host request could not be encoded ({type(exc).__name__}: {exc}); context={self.what}",
+                context=self.what,
+            ) from exc
         self.conn: Optional[_Connection] = None
         self._sent_events: set = set()
 
@@ -433,6 +473,9 @@ class _Exchange:
             return _CALLABLE
         if kind == "err":
             exc, cause = msg[1], msg[2]
+            if isinstance(exc, ModelHostRequestError):
+                exc.context.update(self.what)
+                exc.args = (f"{exc}; context={exc.context}",)
             if isinstance(cause, BaseException):
                 exc.__cause__ = cause
             raise exc
@@ -469,7 +512,14 @@ class _Exchange:
             except (OSError, EOFError) as exc:
                 conn.close()
                 raise self.host._crashed_error(conn.generation, during="answering") from exc
-            msg = _ParentUnpickler(data, self.host, conn.generation).load()
+            try:
+                msg = _ParentUnpickler(data, self.host, conn.generation).load()
+            except Exception as exc:
+                conn.close()
+                raise ModelHostRequestError(
+                    f"The model host response could not be decoded ({type(exc).__name__}: {exc}); context={self.what}",
+                    context=self.what,
+                ) from exc
             kind = msg[0]
             if kind == "cb":
                 _, cid, method, args, kwargs = msg
@@ -491,6 +541,10 @@ class _Exchange:
                     reply = ("cbr", rid, False, _portable_exception(exc))
                 try:
                     conn.conn.send_bytes(_dumps_request(reply, self.ctx))
+                except ModelHostRequestError as exc:
+                    conn.close()
+                    exc.context.update(self.what)
+                    raise
                 except (OSError, EOFError) as exc:
                     conn.close()
                     raise self.host._crashed_error(conn.generation, during="answering") from exc
@@ -729,7 +783,7 @@ class ModelHostClient:
                     try:
                         _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                                   persistent=self._mh_persistent, persistent_callbacks=True,
-                                  what=_describe_target(self, name)).run()
+                                  what=_describe_target(self, name, kwargs)).run()
                     except (ModelHostUnavailable, ModelHostCrashed):
                         raise
                     except Exception as exc:  # noqa: BLE001 - a refused configuration is dropped, loudly
@@ -760,7 +814,7 @@ class ModelHostClient:
                 return None
             result = _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                                persistent=self._mh_persistent, persistent_callbacks=True,
-                               what=_describe_target(self, name)).run()
+                               what=_describe_target(self, name, kwargs)).run()
             with self._mh_setters_lock:
                 self._mh_setters.pop(name, None)
                 self._mh_setters[name] = (tuple(args), dict(kwargs))
@@ -772,7 +826,7 @@ class ModelHostClient:
             return result
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
-                         persistent=self._mh_persistent, what=_describe_target(self, name)).run()
+                         persistent=self._mh_persistent, what=_describe_target(self, name, kwargs)).run()
 
     def __setattr__(self, name: str, value: Any) -> None:
         """An attribute the host assigns on its client (bundle_host's `residency_owner_label`) is
@@ -948,6 +1002,7 @@ class ModelHostSupervisor:
         self.last_incident: Optional[Dict[str, Any]] = None
         self.last_error: Optional[str] = None
         self.last_rss: Optional[int] = None
+        self.http_status: Dict[str, Any] = {}
         self._restarts: Deque[float] = deque()
         self._stopping = False
         self._kill_reason: Optional[str] = None
@@ -1015,6 +1070,7 @@ class ModelHostSupervisor:
             self.generation += 1
             generation = self.generation
             self.state = "starting"
+            self.http_status = {}
             idle, self._idle = self._idle, []
         for conn in idle:
             conn.close()
@@ -1117,6 +1173,7 @@ class ModelHostSupervisor:
             if generation != self.generation:
                 return
             self._alive_generation = -1
+            self.http_status = {}
             idle, self._idle = self._idle, []
             stopping = self._stopping
             kind = reason_kind or self._kill_reason or "exit"
@@ -1229,7 +1286,9 @@ class ModelHostSupervisor:
             if time.monotonic() >= next_ping:
                 next_ping = time.monotonic() + self.ping_interval_s
                 try:
-                    _Exchange(self, None, ("ping",), what={"method": "ping"}).run(timeout_s=self.ping_timeout_s)
+                    reply = _Exchange(self, None, ("ping",), what={"method": "ping"}).run(timeout_s=self.ping_timeout_s)
+                    with self._lock:
+                        self.http_status = reply.get("http", {})
                     misses = 0
                 except ModelHostUnavailable:
                     misses += 1
@@ -1388,7 +1447,7 @@ class ModelHostSupervisor:
                 "max_restarts": self.max_restarts, "window_s": self.restart_window_s,
                 "rss_bytes": self.last_rss, "memory_ceiling_bytes": self.memory_ceiling_bytes, "nice": self.nice,
                 "inflight": len(self._inflight), "last_exit": self.last_exit, "last_incident": self.last_incident,
-                "last_error": self.last_error,
+                "last_error": self.last_error, "http": dict(self.http_status),
             }
 
 

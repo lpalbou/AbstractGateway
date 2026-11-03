@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-30",
+  "gateway_commits": [
+    "ce0c2e12",
+    "054f45d1",
+    "703af90b",
+    "5bcd4d8a"
+  ],
+  "core_commits": [
+    "57d28e86",
+    "ad8d1707",
+    "522fe653"
+  ],
+  "deployed_core_commits": [
+    "3ca06942",
+    "0d47b689",
+    "83709403"
+  ],
+  "tests": {
+    "gateway_console": 81,
+    "gateway_concurrency_and_endpoints": 30,
+    "core": 106
+  },
+  "browser": {
+    "catalog_wizard": {
+      "checks": 112,
+      "failures": []
+    },
+    "resources": {
+      "checks": 122,
+      "failures": []
+    }
+  },
+  "live": {
+    "firstPaintMs": 4279,
+    "fullReadyMs": 4484,
+    "health": "healthy",
+    "models": 83,
+    "filtersCollapsed": true,
+    "fourBitDefault": true,
+    "gridColumns": 2,
+    "iconActions": true,
+    "sharedWidgets": true,
+    "threeVersions": true,
+    "headerChevron": true,
+    "expandsAll": true,
+    "collapsesThree": true,
+    "detailsOpen": true,
+    "downloadedAllPrecisions": true,
+    "defaultTextActions": 37,
+    "pageErrors": [],
+    "mutations": [],
+    "network": [
+      {
+        "path": "/console",
+        "query": "",
+        "startMs": 397,
+        "endMs": 661,
+        "status": 200
+      },
+      {
+        "path": "/api/health",
+        "query": "",
+        "startMs": 788,
+        "endMs": 808,
+        "status": 200
+      },
+      {
+        "path": "/api/gateway/models/installed",
+        "query": "",
+        "startMs": 817,
+        "endMs": 3806,
+        "status": 200
+      },
+      {
+        "path": "/api/gateway/models/catalog",
+        "query": "",
+        "startMs": 816,
+        "endMs": 4254,
+        "status": 200
+      },
+      {
+        "path": "/api/gateway/models/catalog",
+        "query": "?hub=true&extended=true",
+        "startMs": 817,
+        "endMs": 4670,
+        "status": 200
+      }
+    ]
+  },
+  "timing_context": {
+    "original_catalog_seconds": 26.983,
+    "original_installed_seconds": 10.818,
+    "pre_final_ui_first_paint_ms": 54872,
+    "final_first_browser_after_restart": {
+      "firstPaintMs": 14169,
+      "fullReadyMs": 14995
+    },
+    "final_warm_browser": {
+      "firstPaintMs": 4279,
+      "fullReadyMs": 4484
+    },
+    "warm_http_catalog_seconds": 2.231,
+    "note": "Observed samples, not a capacity benchmark or a p95 SLA. Gateway workflow startup still competes for CPU."
+  },
+  "deployment": {
+    "method": "Existing authenticated graceful restart",
+    "runner_inflight_at_request": 0,
+    "temporary_profiler_removed": true,
+    "new_services": false,
+    "registry_release": false
+  }
+}

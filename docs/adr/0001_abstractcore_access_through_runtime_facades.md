@@ -74,3 +74,14 @@ name.
 - AbstractRuntime ADR 0001 (layered coupling), 0005 (discovery queries), 0008 (integration
   facades are the complete host surface).
 - `docs/architecture.md` ("AbstractCore, reached through Runtime facades").
+
+## Optional direct Core HTTP composition (2026-10-29)
+
+The supervised execution owner may start Core's optional direct listener via
+`server_facade.start_core_server`. This is a lazy lifecycle delegation to
+Core's own service factory, configuration and authentication. Direct HTTP
+requests go straight to Core handlers; they create no Gateway/Runtime runs.
+The existing Gateway-mounted `/v1` remains a separate compatibility service
+with Gateway admission and named-key policy. Neither HTTP service is part of
+native RPC readiness. A fatal shared-owner failure interrupts both kinds of
+in-flight inference while Gateway remains available and supervises recovery.

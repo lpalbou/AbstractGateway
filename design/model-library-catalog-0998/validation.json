@@ -1,0 +1,241 @@
+{
+  "date": "2026-10-30",
+  "gateway_commit": "334dd3bb",
+  "core_source_commits": [
+    "62581e63",
+    "8afe7771"
+  ],
+  "core_deployed_commits": [
+    "e42d5146",
+    "a2fd2b10"
+  ],
+  "checks": {
+    "core_source_gate": 165,
+    "core_followup_identity_gate": 35,
+    "core_deployment_gate": 132,
+    "gateway": 36,
+    "catalog_browser": {
+      "checks": 214,
+      "failures": []
+    }
+  },
+  "redeploy": {
+    "before_health": "healthy",
+    "model_inflight": 0,
+    "runner_ticks": 0,
+    "restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Deploy single Models library control, recommended badge and robust registry-backed installed variants (0998 / 0873 / 0874)"
+    },
+    "core_deploy_commits": [
+      "e42d5146",
+      "a2fd2b10"
+    ],
+    "activation_restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Activate Core deployment checkout patches e42d5146/a2fd2b10 for catalogue identity and registries"
+    }
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "checks": {
+          "singleControl": true,
+          "recommendedVisible": true,
+          "recommendedContrast": true,
+          "recommendationExplained": true,
+          "toggleKeyboard": true,
+          "noRepeatedDownloaded": true,
+          "allLocalVariantsReachable": true,
+          "noLocalCatalogDuplicates": true,
+          "exactActions": true,
+          "toggleReload": true,
+          "restoreBrowse": true,
+          "narrowNoOverflow": true,
+          "narrowControl": true,
+          "healthy": true
+        },
+        "recommendationContrast": 13.135185749786848,
+        "localVariantRows": 24,
+        "localExtras": 0
+      },
+      {
+        "theme": "light",
+        "checks": {
+          "singleControl": true,
+          "recommendedVisible": true,
+          "recommendedContrast": true,
+          "recommendationExplained": true,
+          "toggleKeyboard": true,
+          "noRepeatedDownloaded": true,
+          "allLocalVariantsReachable": true,
+          "noLocalCatalogDuplicates": true,
+          "exactActions": true,
+          "toggleReload": true,
+          "restoreBrowse": true,
+          "narrowNoOverflow": true,
+          "narrowControl": true,
+          "healthy": true
+        },
+        "recommendationContrast": 15.092617667073377,
+        "localVariantRows": 24,
+        "localExtras": 0
+      }
+    ],
+    "pageErrors": [],
+    "managementWrites": [],
+    "catalog": {
+      "models": 102,
+      "seconds": 1.972,
+      "localArtifacts": 23,
+      "missing": [],
+      "unidentified": [],
+      "incorrectPresence": [],
+      "variants": [
+        {
+          "artifact": "spark-x2.6-4b",
+          "quant": "q4_k_m",
+          "catalogId": "spark-x2.6-4b",
+          "row": "spark-x2.6-4b"
+        },
+        {
+          "artifact": "lfm3-1.7b",
+          "quant": "q8_0",
+          "catalogId": "lfm3-1.7b",
+          "row": "lfm3-1.7b"
+        },
+        {
+          "artifact": "qwen3.8-27b",
+          "quant": "q3_k_xl",
+          "catalogId": "qwen3.8-27b",
+          "row": "qwen3.8-27b"
+        },
+        {
+          "artifact": "liquid/lfm2-24b-a2b@q4_k_m",
+          "quant": "q4_k_m",
+          "catalogId": "lfm2-24b-a2b",
+          "row": "lfm2-24b-a2b"
+        },
+        {
+          "artifact": "google/gemma-4-26b-a4b-qat@4bit",
+          "quant": "4bit",
+          "catalogId": "gemma-4-26b-a4b",
+          "row": "gemma-4-26b-a4b"
+        },
+        {
+          "artifact": "google/gemma-4-12b-qat@q4_0",
+          "quant": "q4_0",
+          "catalogId": "gemma-4-12b",
+          "row": "gemma-4-12b"
+        },
+        {
+          "artifact": "prism-ml/bonsai-27b@2bit",
+          "quant": "2bit",
+          "catalogId": "bonsai-27b",
+          "row": "bonsai-27b"
+        },
+        {
+          "artifact": "lfm2.5-24b-a2b",
+          "quant": "q4_0",
+          "catalogId": "lfm2.5-24b-a2b",
+          "row": "lfm2.5-24b-a2b"
+        },
+        {
+          "artifact": "openai/gpt-oss-20b@mxfp4",
+          "quant": "mxfp4",
+          "catalogId": "gpt-oss-20b",
+          "row": "gpt-oss-20b"
+        },
+        {
+          "artifact": "qwen/qwen3.5-9b@q4_k_m",
+          "quant": "q4_k_m",
+          "catalogId": "qwen3.5-9b",
+          "row": "qwen3.5-9b"
+        },
+        {
+          "artifact": "google/gemma-4-e4b@q4_k_m",
+          "quant": "q4_k_m",
+          "catalogId": "gemma-4-e4b",
+          "row": "gemma-4-e4b"
+        },
+        {
+          "artifact": "google/gemma-4-e2b@q4_k_m",
+          "quant": "q4_k_m",
+          "catalogId": "gemma-4-e2b",
+          "row": "gemma-4-e2b"
+        },
+        {
+          "artifact": "qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive",
+          "quant": "q4_k_m",
+          "catalogId": "qwen3.6-35b-a3b-hauhaucs-aggressive",
+          "row": "qwen3.6-35b-a3b-hauhaucs-aggressive"
+        },
+        {
+          "artifact": "qwen3-embedding-0.6b@8bit",
+          "quant": "8bit",
+          "catalogId": "qwen3-embedding-0.6b",
+          "row": "qwen3-embedding-0.6b"
+        },
+        {
+          "artifact": "qwen3-embedding-0.6b@mxfp8",
+          "quant": "mxfp8",
+          "catalogId": "qwen3-embedding-0.6b",
+          "row": "qwen3-embedding-0.6b"
+        },
+        {
+          "artifact": "all-minilm-l6-v2@4bit",
+          "quant": "4bit",
+          "catalogId": "all-minilm-l6-v2",
+          "row": "all-minilm-l6-v2"
+        },
+        {
+          "artifact": "all-minilm-l6-v2@8bit",
+          "quant": "8bit",
+          "catalogId": "all-minilm-l6-v2",
+          "row": "all-minilm-l6-v2"
+        },
+        {
+          "artifact": "text-embedding-qwen3-embedding-4b",
+          "quant": "q4_k_m",
+          "catalogId": "qwen3-embedding-4b",
+          "row": "qwen3-embedding-4b"
+        },
+        {
+          "artifact": "text-embedding-qwen3-embedding-0.6b",
+          "quant": "q8_0",
+          "catalogId": "qwen3-embedding-0.6b",
+          "row": "qwen3-embedding-0.6b"
+        },
+        {
+          "artifact": "bge-small-en-v1.5",
+          "quant": "8bit",
+          "catalogId": "bge-small-en-v1.5",
+          "row": "bge-small-en-v1.5"
+        },
+        {
+          "artifact": "text-embedding-all-minilm-l6-v2",
+          "quant": "q8_0",
+          "catalogId": "all-minilm-l6-v2",
+          "row": "all-minilm-l6-v2"
+        },
+        {
+          "artifact": "qwen/qwen3-vl-4b@4bit",
+          "quant": "4bit",
+          "catalogId": "qwen3-vl-4b",
+          "row": "qwen3-vl-4b"
+        },
+        {
+          "artifact": "text-embedding-nomic-embed-text-v1.5",
+          "quant": "q4_k_m",
+          "catalogId": "nomic-embed-text-v1.5",
+          "row": "nomic-embed-text-v1.5"
+        }
+      ]
+    }
+  }
+}

@@ -625,7 +625,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         def _start_tray_when_bound() -> None:
             if not _wait_until_bound(server):
                 return
-            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision)
+            extra = {"menu_style": str(args.tray_menu)} if getattr(args, "tray_menu", None) else None
+            st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision, extra=extra)
             if st.get("running"):
                 _stderr(f"Desktop tray: started (pid {st.get('pid')}); console at {base_url}/console")
             else:
@@ -662,6 +663,10 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
         except (ValueError, OSError):
             _previous_sigterm = None
+    # While the gateway runs, the Mac does not idle-sleep (keep_awake.py).
+    from . import keep_awake
+
+    awake = keep_awake.hold()
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -678,6 +683,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         if _previous_sigterm is not None:
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(signal.SIGTERM, _previous_sigterm)
+        keep_awake.release(awake)
         tray.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
@@ -961,6 +967,15 @@ def main(argv: list[str] | None = None) -> None:
         dest="tray",
         help="Show the menu bar / tray icon for this run although it was not started as the machine's gateway "
         "service (a `serve` from a terminal, a test or a script shows none).",
+    )
+    serve.add_argument(
+        "--tray-menu",
+        choices=["v2", "classic"],
+        default=None,
+        dest="tray_menu",
+        help="Which menu the tray icon shows for this run: the redesigned menu (v2, the default) or the previous "
+        "layout (classic). Without the flag, <data dir>/tray/prefs.json `menu_style` decides (Settings ▸ Classic "
+        "menu / Help ▸ New menu write it).",
     )
     serve.add_argument(
         "--watchdog-seconds",
@@ -1683,7 +1698,7 @@ def main(argv: list[str] | None = None) -> None:
         # <data dir>/split/model_host.json), so the text model is loaded in this process only, or,
         # with --model-host process (ADR 0002), in this process's child. Started before the runner
         # builds its runtimes, so they send their model work there.
-        from .split_mode import ModelHost
+        from .model_host_http import OptionalHTTP
         from .users import gateway_data_dir_from_env
 
         model_host = None
@@ -1699,12 +1714,9 @@ def main(argv: list[str] | None = None) -> None:
             _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is the child "
                     f"process {_sup.pid if _sup else '?'}")
         else:
-            try:
-                model_host = ModelHost(gateway_data_dir_from_env()).start()
-                _stderr(f"[INFO] split mode: runner process {os.getpid()}; the OpenAI API's model host is on {model_host.url}")
-            except Exception as exc:  # noqa: BLE001 - runs still tick; /v1 on the API answers 503 runner_unavailable
-                _stderr(f"[ERROR] split mode: the model host did not start ({type(exc).__name__}: {exc}); "
-                        "the OpenAI API (/v1) answers 503 until the runner is restarted")
+            model_host = OptionalHTTP(gateway_data_dir_from_env())
+            model_host.start()
+            _stderr(f"[INFO] split mode: runner process {os.getpid()}; optional Core HTTP listeners follow endpoint settings")
         try:
             while not stop.is_set():
                 stop.wait(0.5)

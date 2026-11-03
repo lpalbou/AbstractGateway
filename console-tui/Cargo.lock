@@ -3,19 +3,26 @@
 version = 4
 
 [[package]]
-name = "abstractcore-console"
-version = "0.4.0"
+name = "abstractavatar"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69efe7093a2562e6a9edef6933852a318131bd9bb05c7486c45c928d8f29d450"
+checksum = "aaa5925d278d4b58aa9e9bde068eea3de548cb0fec75c5e20ef23a10b39c1868"
+
+[[package]]
+name = "abstractcore-console"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173e64612637597878f998df761312c2c2bc37600d2edc0d9335c676d341a528"
 dependencies = [
  "abstracttui",
+ "libc",
  "serde_json",
  "sha2",
 ]
 
 [[package]]
 name = "abstractgateway-console"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "abstractcore-console",
  "abstracttui",
@@ -26,10 +33,11 @@ dependencies = [
 
 [[package]]
 name = "abstracttui"
-version = "0.3.8"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34fa57af26ff10ec42926c2ebc29c437b9a234387ddbe0020cc95305cdafd8bd"
+checksum = "71b58967e5dd8843ba426f9bc8c4a7094546732fa70e69fd3de35581ce7eed87"
 dependencies = [
+ "abstractavatar",
  "libc",
  "miniz_oxide 0.9.1",
  "unicode-segmentation",

@@ -14,10 +14,8 @@ Places: the Models tab (Catalog and Hugging Face modes) and the setup guide's mo
 (``mountModelCatalog("first-run", ...)`` in console.py's loadFirstRunModel). The guide's Advanced
 default-models table has no filters.
 
-The console vendors a RELEASED kit (console_islands.py). Until a kit release carries the bar, the
-console ports the kit's markup functions verbatim and serves a verbatim copy of the kit's CSS
-block; these tests pin both against the kit checkout and fail the day the vendored kit carries the
-block (so the copies are deleted then).
+The console uses the vendored kit's filter markup and CSS directly. These tests pin
+one shared stylesheet and the thin calls to its escaping/markup functions.
 """
 
 from __future__ import annotations
@@ -33,7 +31,7 @@ from node_requirement import require_node
 
 from abstractgateway import console_catalog, console_islands_sync
 from abstractgateway.console import gateway_console_html
-from abstractgateway.console_catalog import CATALOG_JS, KIT_FILTER_BAR_CSS
+from abstractgateway.console_catalog import CATALOG_JS
 from abstractgateway.console_islands import ISLANDS_CSS
 from abstractgateway.console_ui import CONSOLE_UI_CSS
 from test_gateway_console_catalog import _catalog, _hub_page, _run
@@ -52,16 +50,23 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert lead.startswith('<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">'), where
     assert '<div class="af-filterbar__scope" role="group" aria-label="Search in"' in lead, where
     assert 'class="af-filterbar__scope-btn" data-af-scope="catalog"' in lead and 'data-af-scope="hf"' in lead, where
-    # The search field and "Fits this computer" share the ONE first-line element; it holds no other toggle.
+    # The shared first-line element holds Fits and, on Models, Downloaded.
     line = re.search(r'<div class="af-filterbar__line">(.*?)</div>', lead, flags=re.S).group(1)
     assert line.startswith('<input type="search" class="af-filterbar__search" data-mc-search="1"'), (where, line)
     assert '<span class="af-filterbar__toggles"><label class="af-switch af-switch--native af-switch--sm">' in line, (where, line)
     assert 'data-mc-fits="1"' in line and "Fits this computer" in line, (where, line)
-    assert line.count('role="switch"') == 1 and lead.count('role="switch"') == 1, (where, lead)
-    # One row per facet: label first, in its own element (the fixed column), then the chips column.
+    toggle_count = 1 if where == "setup guide" else 2
+    assert line.count('role="switch"') == toggle_count and lead.count('role="switch"') == toggle_count, (where, lead)
+    # The two-row toolbar: Provider and Capability are the quick selects under the search line.
+    quick = re.search(r'<div class="mc-quick-filters" data-mc-part="quick">(.*?)</div>', lead, flags=re.S)
+    assert quick, (where, lead)
+    assert re.findall(r'<select data-mc-filter="(\w+)" aria-label="([^"]+)"[^>]*>', quick.group(1)) == [
+        ("provider", "Provider"), ("cap", "Capability")], (where, quick.group(1))
+    # The advanced Filters panel: one row per facet, label first, in its own element (the fixed
+    # column), then the chips column.
     facets = html[html.index('<div class="af-filterbar__facets"') :]
-    assert re.findall(r'data-af-facet-row="(\w+)"', facets) == ["quant", "provider", "cap", "status"], where
-    for facet, label in (("quant", "Quantization"), ("provider", "Provider"), ("cap", "Capability"), ("status", "Status")):
+    assert re.findall(r'data-af-facet-row="(\w+)"', facets) == ["kind", "quant"], where
+    for facet, label in (("kind", "Asset type"), ("quant", "Quantization")):
         row = f'role="group" aria-label="{label}" data-af-facet-row="{facet}"><span class="af-filterbar__label" aria-hidden="true">{label}</span><div class="af-filterbar__chips">'
         assert row in facets, (where, facet)
     # Every chip is the kit chip at the filter size; counts are the muted count element.
@@ -70,7 +75,7 @@ def _check_kit_bar(html: str, where: str) -> None:
     assert re.search(r'<span class="af-chip__label">[^<]+</span><span class="af-filterbar__count" aria-hidden="true">\d+</span>', facets), where
     # No "Every quant" switch on any tab (operator ruling, AbstractGateway #79): one toggle in all.
     assert "data-mc-every" not in html and "af-filterbar__trailing" not in html, where
-    assert html.count('role="switch"') == 1, where
+    assert html.count('role="switch"') == toggle_count, where
     classes = {c for attr in re.findall(r'class="([^"]*)"', html) for c in attr.split()}
     assert not classes & set(LEGACY), (where, classes & set(LEGACY))
 
@@ -117,14 +122,10 @@ def _block(css: str) -> str | None:
     return css[begin : end + len("/* af-filterbar:end */")] if begin >= 0 and end > begin else None
 
 
-def test_the_page_serves_the_kit_filter_bar_css_until_the_vendored_kit_carries_it() -> None:
-    if ".af-filterbar__facet" in ISLANDS_CSS:
-        pytest.fail("the vendored kit (console_islands.py) now carries the af-filterbar block: delete KIT_FILTER_BAR_CSS in "
-                    "console_catalog.py, its splice in console.py and the markup port (afFilter* in CATALOG_JS); use "
-                    "the islands' filterBarFacetsHtml / filterBarScopeButtonsHtml")
-    assert _block(KIT_FILTER_BAR_CSS) == KIT_FILTER_BAR_CSS.strip(), "KIT_FILTER_BAR_CSS must be the kit block, markers included"
+def test_the_page_serves_the_shared_kit_filter_bar_css_once() -> None:
+    assert ".af-filterbar__facet" in ISLANDS_CSS
+    assert not hasattr(console_catalog, "KIT_FILTER_BAR_CSS")
     html = gateway_console_html()
-    # Served once, comments stripped, before the catalog's own placement rules (which override it).
     base = ".af-filterbar__facet {\n  display: grid;"
     assert html.count(base) == 1
     assert html.index(base) < html.index(".mc-filterbar > .af-filterbar__facets {") < html.index(".mc-card {")
@@ -137,19 +138,17 @@ def _kit_dir() -> Path:
     return kit
 
 
-def test_interim_css_is_the_kit_block_verbatim() -> None:
+def test_vendored_filter_bar_css_tracks_the_kit() -> None:
     kit = _kit_dir()
     block = _block((kit / "src" / "theme.css").read_text(encoding="utf-8"))
-    if block is None:
-        pytest.skip(f"{kit} has no af-filterbar block yet (the kit PR is not merged there): set "
-                    "ABSTRACTUIC_SRC=<abstractuic checkout with backlog 0074>/ui-kit/src to run this pin")
-    assert KIT_FILTER_BAR_CSS.strip() == block, "KIT_FILTER_BAR_CSS drifted from the kit's af-filterbar block: copy it again"
+    assert block is not None
+    assert console_islands_sync.strip_css_comments(block).strip() in ISLANDS_CSS
 
 
 _PORT_PROBE = r"""
 import vm from "node:vm";
 const kit = await import(process.argv[2]);
-const ctx = vm.createContext({});
+const ctx = vm.createContext({window:{AfConsoleIslands:{filterBarFacetsHtml:kit.afFilterFacetsHtml,filterBarScopeButtonsHtml:kit.afFilterScopeButtonsHtml}}});
 vm.runInContext(process.argv[3], ctx);
 const facets = [
   { id: "quant", label: "Quantization", value: "8bit", options: [{ value: "all", label: "All" }, { value: "4bit", label: "4-bit", count: 186 }, { value: "8bit", label: "8-bit", count: 128 }, { value: "other", label: "Other", count: 0 }] },
@@ -165,14 +164,14 @@ console.log(JSON.stringify({
 """
 
 
-def test_console_markup_port_is_the_kit_core() -> None:
+def test_console_calls_the_shared_kit_markup() -> None:
     """The console's afFilter* functions produce byte-for-byte the kit core's markup."""
     kit = _kit_dir()
     core = kit / "src" / "af_filter_bar_core.ts"
     if not core.is_file():
         pytest.skip(f"{core} is missing (the kit PR is not merged there): set ABSTRACTUIC_SRC=<abstractuic checkout with backlog 0074>/ui-kit/src")
     node = require_node()
-    start = CATALOG_JS.index("    const AF_FILTER_ESC = ")
+    start = CATALOG_JS.index("    function mcFilterKit()")
     end = CATALOG_JS.index("    // The kit's native switch")
     port = CATALOG_JS[start:end]
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:
@@ -183,4 +182,4 @@ def test_console_markup_port_is_the_kit_core() -> None:
     got = json.loads(r.stdout.strip().splitlines()[-1])
     assert got["port"] == got["kit"]
     assert "&lt;i&gt;" in got["kit"][1] and 'disabled=""' in got["kit"][1]
-    assert console_catalog.KIT_FILTER_BAR_CSS  # the port and the CSS copy go together
+    assert "AF_FILTER_ESC" not in CATALOG_JS  # the kit owns escaping and markup

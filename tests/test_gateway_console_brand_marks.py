@@ -55,13 +55,19 @@ def test_every_engine_and_cloud_provider_has_an_official_mark_or_a_documented_fa
     for id_ in ids:
         info = got["marks"][id_]["info"]
         html = got["marks"][id_]["html"]
-        assert info["kind"] in {"icon", "text"}, f"{id_}: no mark and no documented fallback ({info})"
+        # icon: an official mark; text: a documented text fallback; glyph (kit 0.9.12): a protocol, not a
+        # brand (System One-compatible endpoints), drawn with the kit's neutral glyph and its documented reason.
+        assert info["kind"] in {"icon", "text", "glyph"}, f"{id_}: no mark and no documented fallback ({info})"
         if info["kind"] == "icon":
             icon = info["icon"]
             for field in ("source", "terms", "licence", "retrieved"):
                 assert icon.get(field), f"{id_}: the mark has no {field}"
             assert html.startswith(f'<span class="af-brand-mark" data-brand="{id_}"') and "<svg viewBox=" in html
             assert "http" not in icon["body"], f"{id_}: a mark must not reference any host"
+        elif info["kind"] == "glyph":
+            fb = info["fallback"]
+            assert fb["glyph"] and len(fb["reason"]) >= 20, f"{id_}: a glyph fallback needs its glyph and its reason"
+            assert "af-brand-mark--glyph" in html and "<svg " in html and "http" not in html
         else:
             fb = info["fallback"]
             assert fb["text"] and len(fb["reason"]) >= 20, f"{id_}: a text fallback needs its reason"
@@ -73,6 +79,28 @@ def test_engine_cards_draw_the_kit_marks_not_two_letter_badges() -> None:
 
     assert "ENGINE_MARKS" not in CONSOLE_UI_JS
     assert CONSOLE_UI_JS.count("${uiBrandMark(") >= 2
+
+
+def test_brands_awaiting_written_permission_show_their_name_not_a_logo() -> None:
+    # Operator ruling 2026-11-02 (AbstractFramework backlog 1100), read from the VENDORED bundle.
+    awaiting = ["anthropic", "ovh", "portkey", "ollama", "deepseek", "nvidia", "google", "meta", "microsoft", "mistral"]
+    got = _kit_marks(awaiting + ["openai", "openrouter", "huggingface", "lmstudio"])
+    for id_ in awaiting:
+        html = got["marks"][id_]["html"]
+        assert "af-brand-mark--text" in html and "<svg" not in html and "data:image" not in html, f"{id_}: {html[:200]}"
+    for id_ in ["openai", "openrouter", "huggingface", "lmstudio"]:
+        assert "<svg viewBox=" in got["marks"][id_]["html"], f"{id_}: its logo is allowed and must be shown"
+
+
+def test_console_footer_carries_the_trademark_line() -> None:
+    from abstractgateway.console import _CONSOLE_HTML_TEMPLATE
+
+    line = "Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them."
+    footer = f'<footer class="console-footer">{line}</footer>'
+    # The signed-in console and the first-run guide (its engine and cloud steps draw provider marks).
+    assert _CONSOLE_HTML_TEMPLATE.count(footer) == 2
+    guide = _CONSOLE_HTML_TEMPLATE[_CONSOLE_HTML_TEMPLATE.index('id="first-run-wizard"'):_CONSOLE_HTML_TEMPLATE.index('class="first-run-footer"')]
+    assert footer in guide
 
 
 def test_the_compatible_cards_ride_on_abstractcores_openai_compatible_provider() -> None:

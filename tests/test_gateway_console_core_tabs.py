@@ -217,8 +217,10 @@ def test_apps_cards_pin_one_action_row_and_render_technical_parts_on_demand() ->
     re-renders the cards; no permanent box restates the status pill."""
     from abstractgateway.console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
 
-    assert '`<div class="ui-card-grid is-aligned">${apps.map(appCardMarkup).join("")}</div>`' in CONSOLE_UI_JS
+    assert '`<div class="ui-card-grid is-aligned">${d.cards.map((c) => appCardMarkup(c, withArt)).join("")}</div>`' in CONSOLE_UI_JS
     assert ".ui-card-grid.is-aligned > .ui-card { display: grid; grid-row: span 5; grid-template-rows: subgrid;" in CONSOLE_UI_CSS
+    # An app card adds its illustration row (empty, zero height, when no card of the grid has one).
+    assert ".ui-card-grid.is-aligned > .ui-card.ui-app-card { grid-row: span 6; grid-template-columns: minmax(0, 1fr); }" in CONSOLE_UI_CSS
     assert "try { appRender(); consoleTuiRender(); } catch" in CONSOLE_UI_JS
     assert "const techOn = uiShowAdvanced();" in CONSOLE_UI_JS
     for gone in ("Open it with the Open button", "Also runs in your terminal", "ui-iface"):
