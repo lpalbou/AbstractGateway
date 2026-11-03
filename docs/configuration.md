@@ -1604,6 +1604,11 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   it; send the message again in a few seconds." (status 424, not retried automatically: the request may
   be what crashed it). A request while it restarts fails at once with status 503 (retried by the
   runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.
+- **A stop the gateway asked for is not a failure** (backlog 1103): when the gateway stops or restarts
+  (a signal, the tray or console Restart, an update, a network change) or restarts the child on purpose
+  (a llama.cpp update), a request in flight is interrupted. The run stays running at its last durable step
+  and the call is sent again when the gateway is back: no retry used, no incident, no notification. Once a
+  stop begins no new workflow step starts; a request made during a requested restart waits for the new child.
 - **Incidents**: each unexpected exit writes `<data dir>/incidents/model-host-<UTC stamp>-<id>-<kind>.json`
   (0600, schema `abstractgateway.incident.v1`, the newest 200 kept): `kind` (`exit`, `memory_ceiling`,
   `unresponsive`, `gave_up`), `pid`, `exit_code`, `signal`, `description`, `rss_bytes_last`,

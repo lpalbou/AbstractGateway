@@ -278,7 +278,7 @@ def _llama_takes_effect() -> str:
     except Exception:  # noqa: BLE001
         sup = None
     if sup is not None:
-        sup.kill("llama.cpp updated: restarting the model host with the new llama.cpp")
+        sup.kill("llama.cpp updated: restarting the model host with the new llama.cpp", requested=True)
         return "The model host restarts with the new llama.cpp; the next model load uses it"
     return "The next model load uses the new llama.cpp"
 
