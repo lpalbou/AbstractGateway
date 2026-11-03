@@ -151,7 +151,7 @@ def _strip_html_comments(page: str) -> str:
 @functools.lru_cache(maxsize=1)
 def _console_owned_sources() -> Tuple[str, str, str, str]:
     """(template, theme CSS, UI CSS, UI JS) without their source comments."""
-    from .console_catalog import CATALOG_CSS, CATALOG_JS, KIT_FILTER_BAR_CSS
+    from .console_catalog import CATALOG_CSS, CATALOG_JS
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_mailboxes import MAILBOXES_CSS, MAILBOXES_JS
@@ -159,12 +159,13 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
+    from .console_resources import RESOURCES_HTML, RESOURCES_MODAL_HTML, RESOURCES_CSS, RESOURCES_JS
 
     return (
-        _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
+        _strip_html_comments(_CONSOLE_HTML_TEMPLATE.replace("<!--__RESOURCES_DASHBOARD__-->", RESOURCES_HTML).replace("<!--__RESOURCES_MODAL__-->", RESOURCES_MODAL_HTML)),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + KIT_FILTER_BAR_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS + RESOURCES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS + RESOURCES_JS),
     )
 
 
@@ -476,13 +477,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .topbar-resources__k { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__v { color: var(--text-primary, var(--text)); }
 	    .topbar-resources__short { display: none; }
+	    .topbar-resources__machine { max-width: 140px; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary, var(--text)); }
 	    .topbar-resources__sep { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__bar { position: relative; width: 4px; height: 14px; border-radius: 999px; background: var(--bg-tertiary, var(--line)); overflow: hidden; }
 	    .topbar-resources__fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--info); }
 	    @media (max-width: 767.98px) {
 	      .topbar-resources { gap: 4px; padding: 3px 8px; }
+	      .topbar-resources__machine { max-width: 76px; }
 	      .topbar-resources__long { display: none; }
 	      .topbar-resources__short { display: inline; }
+	    }
+	    @media (max-width: 479.98px) {
+	      .topbar-resources { flex-wrap: wrap; border-radius: var(--radius-lg); justify-content: flex-start; }
+	      .topbar-resources__machine { flex-basis: 100%; max-width: none; text-align: left; }
+	      .topbar-resources__machine-sep { display: none; }
 	    }
 	    /* The kit tooltip keeps line breaks (the widget's tip is one value per
 	       line; every other tip is one sentence without breaks). */
@@ -611,6 +619,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
     @media (pointer: coarse) { .af-drawer__close { width: var(--tap-min, 44px); height: var(--tap-min, 44px); } }
 		    .workspace-shell { display: grid; gap: 16px; }
+		    .console-footer { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); text-align: center; }
 		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
 		       tab-button class + ids survive so the wiring and tests hold. */
 		    .tab-button.shell_nav_item {
@@ -972,8 +981,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-chat-bubble { max-width: min(86%, 72ch); }
 	    .entity-chat-bubble .entity-kv-key { display: block; margin-bottom: 3px; }
 	    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-	    .entity-chat-composer { align-items: flex-end; }
-	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: var(--font-size-md); }
+	    .entity-chat-composer { align-items: stretch; }
 	    .model-picker { display: grid; gap: 8px; }
 	    .model-picker__head {
 	      display: flex;
@@ -2188,6 +2196,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	         with the real values; a click opens Resources. Gateway-owned, so it
 	         shows with the island and with the static fallback alike. -->
 	    <button id="topbar-resources" class="topbar-resources hidden" type="button" aria-label="Host resources. Open Resources." data-af-tip="Reading host resources…">
+	      <span class="topbar-resources__machine" id="topbar-res-machine">Host</span><span class="topbar-resources__sep topbar-resources__machine-sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-mem-bar"></span></span><span class="topbar-resources__k">Mem</span> <span class="topbar-resources__v topbar-resources__long" id="topbar-res-mem">—</span><span class="topbar-resources__v topbar-resources__short" id="topbar-res-mem-short">—</span></span>
 	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-gpu-bar"></span></span><span class="topbar-resources__k">GPU</span> <span class="topbar-resources__v" id="topbar-res-gpu">—</span></span>
@@ -2761,6 +2770,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	            </section>
 	            <section id="models-host-section" class="session-only">
+                <!--__RESOURCES_DASHBOARD__-->
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▦</span><span>Memory &amp; GPU</span></h2>
@@ -3015,6 +3025,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          </div>
 	        </div>
 	      </div>
+	      <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	    </div>
 	  </main>
 	  </div><!-- /shell_main -->
@@ -3256,6 +3267,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
 	              <div id="first-run-done-body"></div>
 	            </section>
+	            <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	          </div>
 	        </div>
 	        <footer class="first-run-footer">
@@ -3630,7 +3642,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <div id="entity-chat-transcript" class="entity-chat-transcript" aria-live="polite"></div>
             <div class="af-form__field entity-chat-composer">
               <label class="af-form__label" for="entity-chat-input">Message</label>
-              <div class="af-form__inline"><textarea id="entity-chat-input" rows="2" aria-describedby="entity-chat-input-help"></textarea><button id="entity-chat-send" class="secondary" type="button" disabled>Send</button></div>
+              <div id="entity-chat-composer-root"></div>
               <p id="entity-chat-input-help" class="af-form__help">Enter sends; Shift+Enter starts a new line. Open a visit first.</p>
             </div>
           </section>
@@ -3775,6 +3787,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
   </div>
+  <!--__RESOURCES_MODAL__-->
   <div id="confirm-backdrop" class="modal-backdrop hidden" role="presentation">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Confirm</h2>
@@ -3959,10 +3972,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      openNew: svgIcon('<path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path>'),
 	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
 	      download: svgIcon('<path d="M12 4v11"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path>'),
+	      filter: svgIcon('<path d="M4 5h16l-6 7v6l-4 2v-8L4 5z"></path>'),
+	      star: svgIcon('<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z"></path>'),
+	      info: svgIcon('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><circle cx="12" cy="7" r=".6"></circle>'),
+	      check: svgIcon('<path d="m5 12 4 4L19 6"></path>'),
+	      close: svgIcon('<path d="m6 6 12 12M18 6 6 18"></path>'),
 	      archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
 	      unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 18v-6"></path><path d="m9.5 14.5 2.5-2.5 2.5 2.5"></path>'),
 	      pencil: svgIcon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
 	      eye: svgIcon('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle>'),
+	      text: svgIcon('<path d="M4 6V4h16v2M12 4v16M8 20h8"></path>'),
+	      brain: svgIcon('<path d="M12 4a3 3 0 0 0-5-1 4 4 0 0 0-3 6 4 4 0 0 0 0 7 4 4 0 0 0 5 5 3 3 0 0 0 3-3V4Zm0 0a3 3 0 0 1 5-1 4 4 0 0 1 3 6 4 4 0 0 1 0 7 4 4 0 0 1-5 5 3 3 0 0 1-3-3M7 8l2 2M5 15l3-1M17 8l-2 2M19 15l-3-1"></path>'),
+	      tool: svgIcon('<path d="m14 7 3 3 4-4a6 6 0 0 1-8 7l-7 7a2 2 0 0 1-3-3l7-7a6 6 0 0 1 7-8l-3 5Z"></path>'),
+	      waveform: svgIcon('<path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"></path>'),
+	      embedding: svgIcon('<circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 0M6 7l5 10M18 7l-5 10"/>'),
+	      mic: svgIcon('<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>'),
+	      image: svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/>'),
+	      video: svgIcon('<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/>'),
+	      // The Apps card's launcher badges: in the web browser / an app on the computer.
+	      globe: svgIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"></path>'),
+	      monitor: svgIcon('<rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8M12 16v4"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
@@ -5793,6 +5822,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // words to the WRONG entity under the right header.
 	      state.chatId = "";
 	      state.chatEntity = "";
+	      state.chatDraft = "";
+	      state.chatBusy = false;
 	      const t = $("entity-chat-transcript"); if (t) t.textContent = "";
 	      _entOut("entity-chat-status", "");
 	      chatUiState();
@@ -6829,6 +6860,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // session per home server-side; the console holds one chat_id at a time.
 	    state.chatId = "";
 	    state.chatEntity = "";
+	    state.chatDraft = "";
+	    state.chatBusy = false;
+	    let entityChatComposer = null;
+    function renderEntityChatComposer() {
+      const lib = islands.lib;
+      if (!lib) {
+        const root = $("entity-chat-composer-root");
+        if (root) root.textContent = "The message box is unavailable: the console's shared components did not load. Reload the page.";
+        return;
+      }
+      if (typeof lib.mountChatComposer !== "function") throw new Error("AbstractGateway console: the islands bundle has no mountChatComposer; refresh the shared composer bundle.");
+      const props = {
+        value: state.chatDraft,
+        onChange: (value) => { state.chatDraft = value; renderEntityChatComposer(); },
+        onSubmit: () => { void entityChatSend(); },
+        textareaId: "entity-chat-input",
+        ariaLabel: "Message",
+        ariaDescribedBy: "entity-chat-input-help",
+        placeholder: "Tell the entity…",
+        disabled: !state.chatId,
+        busy: !!state.chatBusy,
+      };
+      if (!entityChatComposer) entityChatComposer = lib.mountChatComposer($("entity-chat-composer-root"), props);
+      else entityChatComposer.update(props);
+    }
     function chatLine(who, text) {
       // The shared abstractuic dialogue look (pc-chat-item) — same classes
       // the sandbox speaks, so every conversation on the console matches.
@@ -6851,7 +6907,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const open = Boolean(state.chatId);
 	      $("entity-chat-open").classList.toggle("hidden", open);
 	      $("entity-chat-close").classList.toggle("hidden", !open);
-	      $("entity-chat-send").disabled = !open;
+	      renderEntityChatComposer();
 	    }
 	    async function entityChatOpen() {
 	      const name = state.manageName; if (!name) return;
@@ -6876,18 +6932,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function entityChatSend() {
-	      const text = ($("entity-chat-input").value || "").trim();
-	      if (!text || !state.chatId) return;
+	      const text = (state.chatDraft || "").trim();
+	      if (!text || !state.chatId || state.chatBusy) return;
 	      const name = state.chatEntity || state.manageName;
-	      $("entity-chat-send").disabled = true;
+	      const chatId = state.chatId;
+	      const manageToken = state.manageToken;
+	      const current = () => state.chatId === chatId && state.manageToken === manageToken;
+	      state.chatBusy = true;
+	      renderEntityChatComposer();
 	      chatLine("you", text);
-	      $("entity-chat-input").value = "";
 	      _entOut("entity-chat-status", "thinking…");
 	      try {
-	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/turn`, {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(chatId)}/turn`, {
 	          slow: true,  // a real LLM round trip, not a discovery probe
 	          method: "POST", body: JSON.stringify({ text }),
 	        });
+	        if (!current()) return;
+	        if ((state.chatDraft || "").trim() === text) state.chatDraft = "";
 	        chatLine(name, String(r.reply || ""));
 	        const bits = [];
 	        if (Array.isArray(r.tools_ran) && r.tools_ran.length) bits.push(`tools: ${r.tools_ran.join(", ")}`);
@@ -6895,9 +6956,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (Array.isArray(r.diary_entries) && r.diary_entries.length) bits.push(`${r.diary_entries.length} diary entr${r.diary_entries.length === 1 ? "y" : "ies"}`);
 	        _entOut("entity-chat-status", bits.join(" · ") || "");
 	      } catch (e) {
-	        _entOut("entity-chat-status", String(e.message || e));
+	        if (current()) _entOut("entity-chat-status", String(e.message || e));
 	      } finally {
-	        $("entity-chat-send").disabled = !state.chatId;
+	        if (current()) { state.chatBusy = false; renderEntityChatComposer(); }
 	      }
 	    }
 	    async function entityChatClose() {
@@ -6910,6 +6971,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
 	        state.chatId = "";
 	        state.chatEntity = "";
+	        state.chatBusy = false;  // a send still in flight belongs to the closed visit; its reply is dropped
 	      } catch (e) {
 	        // Clear only when the server says the session is already gone (a
 	        // 4xx not-open) — a FAILED close must keep the session marked open
@@ -6919,6 +6981,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (e.status && e.status >= 400 && e.status < 500) {
 	          state.chatId = "";
 	          state.chatEntity = "";
+	          state.chatBusy = false;
 	          _entOut("entity-chat-status", "session already closed server-side: " + String(e.message || e));
 	        } else {
 	          _entOut("entity-chat-status", "close FAILED — the visit is still open; retry: " + String(e.message || e));
@@ -9518,6 +9581,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           emptyProviders: "No 3D scene discovery — type the provider id",
           emptyModels: "No 3D scene discovery — type the model id",
         };
+      }
+      // output.decision (AbstractCore 2.32.0): the discovery catalog filtered on the
+      // route, like the input routes — a decision model is a text-shaped model whose
+      // capability_routes.output is ["decision"] (kev, lev, laya), not a media engine.
+      if (key === "output.decision") {
+        return textCatalog("decision", { capability_route: "output.decision" });
       }
       if (key === "output.music") {
         return {
@@ -12385,6 +12454,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Quiet (poll) repaints skip the datalist rebuild — replacing the
 	      // <option>s every 5s flicks an open suggestion popup shut.
 	      renderModelsLoadForm({ rebuildOptions: !quiet });
+          renderResourcesDashboard(data);
 	    }
 	    async function loadHostState({ quiet = false, widgetOnly = false } = {}) {
 	      if (!state.principal) return;
@@ -12430,6 +12500,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const breakdown = $("models-breakdown"); if (breakdown) { breakdown.textContent = ""; breakdown.classList.add("hidden"); }
 	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
+            renderResourcesDashboard(null, String(e.message || e));
 	      } finally {
 	        state.hostStateInflight = Math.max(0, (state.hostStateInflight || 1) - 1);
 	      }
@@ -12753,6 +12824,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
+              resetResourcesDashboard();
 		        document.body.classList.remove("signed-in");
 		        $("page-title").textContent = "AbstractGateway Console";
 		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";
@@ -14129,9 +14201,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             voice: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
             sound: '<path d="M4 9v6M8 5v14M12 2v20M16 5v14M20 9v6"/>',
             music: '<path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
-            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>'
+            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>',
+            decision: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0l-3-7M17 7l-3 7a3 3 0 0 0 6 0l-3-7"/>'
           };
-          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene"};
+          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene",decision:"Decision"};
           const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
           const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
           const direction = defaultRowKindModality(row).kind;
@@ -15375,18 +15448,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; to use a cloud account instead, the next step takes its API key." },
-      cloud: { title: "Cloud providers", hint: "OpenAI, Anthropic, OpenRouter...", lede: "Use models from a cloud account: paste its API key, check it, then save it. The key stays on this gateway and is never shown again; billing is the provider's, per use. The same cards are on the Providers tab." },
+      cloud: { title: "Cloud providers", hint: "Cloud accounts and compatible endpoints", lede: "Connect a cloud account with its API key, or add an OpenAI-compatible endpoint. These connections are also available on the Providers page." },
       model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
-    const FIRST_RUN_APPS = [
-      { pkg: "@abstractframework/flow", name: "Flow", mark: "Fl", what: "Design workflows visually and run them on this gateway." },
-      { pkg: "@abstractframework/code", name: "Code", mark: "Co", what: "A coding assistant in your browser, with sessions that survive restarts." },
-      { pkg: "@abstractframework/observer", name: "Observer", mark: "Ob", what: "Watch runs live, replay them, and send commands to running work." },
-      { pkg: "@abstractframework/continuum", name: "Continuum", mark: "Cn", what: "Your backlog, inbox and long-running processes, driven by this gateway." },
-      { pkg: "@abstractframework/entity", name: "Entity", mark: "En", what: "Create entities, see their memory grow, and talk with them." },
-    ];
     const firstRun = { open: false, step: "welcome", checked: false, autoOpened: false, host: null, engines: null, enginesMissing: false, enginesError: "" };
     function firstRunHash() {
       try { return String((typeof location !== "undefined" && location && location.hash) || ""); } catch { return ""; }
@@ -15701,6 +15767,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v4"></path><path d="M8 22h8"></path>',
       speaker: '<path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18 6a9 9 0 0 1 0 12"></path>',
       music: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+      decision: '<path d="M12 3v18"></path><path d="M5 7h14"></path><path d="M7 7l-3 7a3 3 0 0 0 6 0l-3-7"></path><path d="M17 7l-3 7a3 3 0 0 0 6 0l-3-7"></path>',
       file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
       database: '<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path>',
       // Not in the kit's icon set (root backlog 1073: one icon set across apps): drawn on the kit's
@@ -15727,6 +15794,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "out-video", label: "Video", icon: "video", hue: "#ef4444", route: "output.video", catalog: "video_generation", what: "Clips from a description or a picture" },
       { id: "out-voice", label: "Voice", icon: "speaker", hue: "#f59e0b", route: "output.voice", what: "Reads answers aloud" },
       { id: "out-music", label: "Music", icon: "music", hue: "#8b5cf6", route: "output.music", what: "Songs and soundtracks" },
+      { id: "out-decision", label: "Decisions", icon: "decision", hue: "#0f766e", route: "output.decision", what: "Yes/no, choice and score answers with confidence" },
       { id: "out-3d", label: "3D", icon: "cube", hue: "#14b8a6", route: "output.scene3d", what: "3D scenes" },
       { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
       { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
@@ -15865,6 +15933,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       { id: "voice_out", label: "Voice out", route: "output.voice", inputs: ["text"], outputs: ["speech"], what: "Reads answers aloud" },
       { id: "voice_in", label: "Voice in", route: "input.voice", inputs: ["speech"], outputs: ["text"], what: "Turns speech into text" },
       { id: "music", label: "Music", route: "output.music", inputs: ["text"], outputs: ["music"], what: "Songs and soundtracks" },
+      { id: "decision", label: "Decisions", route: "output.decision", inputs: ["text"], outputs: ["decisions"], what: "Yes/no, choice and score answers with confidence" },
       { id: "3d", label: "3D", route: "output.scene3d", inputs: ["text", "image"], outputs: ["3D scene"], what: "3D scenes from a description or a picture" },
       { id: "embeddings", label: "Embeddings", route: "embedding.text", inputs: ["text"], outputs: ["vectors"], what: "Search and memory" },
       { id: "rankers", label: "Rankers", route: "rerank.text", inputs: ["query", "texts"], outputs: ["scores"], what: "Orders search results by relevance" },
@@ -17391,11 +17460,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	    }
 	    $("entity-chat-open").onclick = entityChatOpen;
-	    $("entity-chat-send").onclick = entityChatSend;
 	    $("entity-chat-close").onclick = entityChatClose;
-	    $("entity-chat-input").onkeydown = (ev) => {
-	      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); entityChatSend(); }
-	    };
 	    $("create-user").onclick = createUser;
 	    $("open-create-user").onclick = openUserCreate;
 	    $("create-user-cancel").onclick = closeUserCreate;

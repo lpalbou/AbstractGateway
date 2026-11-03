@@ -191,56 +191,58 @@ try {
   });
   await page.waitForSelector("#cloud-providers-root [data-cloud-provider]", { timeout: 20000 });
   const cloudIds = await page.$$eval("#cloud-providers-root [data-cloud-provider]", (els) => els.map((e) => e.getAttribute("data-cloud-provider")));
-  check(JSON.stringify(cloudIds) === JSON.stringify(["anthropic", "openai", "openrouter", "portkey"]), "one cloud card per AbstractCore cloud provider", cloudIds);
+  check(["anthropic", "openai", "openrouter", "portkey"].every((id) => cloudIds.includes(id)) && cloudIds.slice(cloudIds.indexOf("ovh")).join(",") === (cloudIds.includes("systemone") ? "ovh,openai-compatible,systemone" : "ovh,openai-compatible"), "brand cards, OVH, then the compatible cards last (OpenAI-compatible, System One-compatible)", cloudIds);
   const presets = await page.$$eval("#provider-preset-grid .provider-preset", (els) => els.map((e) => e.id.replace(/^provider-preset-/, "")));
   check(JSON.stringify(presets) === JSON.stringify(["openai-compatible"]), "only the custom server stays a preset", presets);
   const cloud = (id) => `#cloud-providers-root [data-cloud-provider="${id}"]`;
   await page.waitForFunction(() => /Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="openai"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
   const openaiStatus = (await page.textContent(`${cloud("openai")} [data-cloud-status]`)).trim();
-  check(/^Connected · key [0-9a-f]{8}$/.test(openaiStatus), "OpenAI card: Connected + 8-char fingerprint", openaiStatus);
+  check(/^Connected( · (…|48 models))?$/.test(openaiStatus), "OpenAI card: Connected with its discovered count (no fingerprint on the card)", openaiStatus);
   check((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim() === "Not connected", "Anthropic card: Not connected");
   check(await page.$(`${cloud("openrouter")} .af-brand-mark svg`) !== null, "OpenRouter card shows its official mark");
-  check((await page.textContent(`${cloud("openai")} .af-brand-mark--text`)).trim() === "OAI", "OpenAI keeps a readable text badge (brand terms)");
-  check(await page.$(`${card("ollama")} .af-brand-mark svg`) !== null, "Ollama engine card shows its official mark");
-  // A refused key: one sentence, no Save, nothing stored.
-  await page.fill(`${cloud("anthropic")} input[type=password]`, "sk-wrong-cloud-key-000");
-  await page.click(`${cloud("anthropic")} button[data-action="check"]`);
-  await page.waitForFunction(() => /refused this key/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-line]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
-  check((await page.textContent(`${cloud("anthropic")} [data-cloud-line]`)).trim() === "Anthropic refused this key. Check that it was copied in full and is still active.", "a refused key says why", await page.textContent(`${cloud("anthropic")} [data-cloud-line]`));
-  check(await page.$(`${cloud("anthropic")} button[data-action="save"]`) === null, "a refused key offers no Save");
+  check(await page.$(`${cloud("openai")} .af-brand-mark svg`) !== null, "OpenAI card shows its official mark");
+  // Backlog 1100: brands awaiting written permission show their name, no logo.
+  check(await page.$(`${card("ollama")} .af-brand-mark svg`) === null && (await page.textContent(`${card("ollama")} .af-brand-mark--text`)).trim() === "Ollama", "Ollama engine card shows its name badge, no logo");
+  check(await page.$(`${cloud("anthropic")} .af-brand-mark svg`) === null && (await page.textContent(`${cloud("anthropic")} .af-brand-mark--text`)).trim() === "Anthropic", "Anthropic card shows its name badge, no logo");
+  // Kit 0.9.12: ONE button per card (Connect / Edit), no field on the card; the modal does the rest.
+  check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Connect" && (await page.textContent(`${cloud("openai")} button`)).trim() === "Edit", "Connect when nothing is stored, Edit when connected");
+  check((await page.$$(`#cloud-providers-root [data-cloud-provider] input`)).length === 0, "no field on a cloud card");
+  const modal = (name) => page.getByRole("dialog", { name });
+  // A refused key: one sentence in the modal, nothing stored.
+  await page.click(`${cloud("anthropic")} button`);
+  await modal("Connect Anthropic").waitFor({ timeout: 8000 });
+  await modal("Connect Anthropic").getByLabel("API key").fill("sk-wrong-cloud-key-000");
+  await modal("Connect Anthropic").getByRole("button", { name: "Test connection" }).click();
+  const line = () => page.textContent(".af-cloud-modal [data-cloud-modal-line]");
+  await page.waitForFunction(() => /refused this key/.test(document.querySelector(".af-cloud-modal [data-cloud-modal-line]")?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check((await line()).trim() === "Anthropic refused this key. Check that it was copied in full and is still active.", "a refused key says why", await line());
   check(!cloudPosts.some((c) => c.path === "create"), "nothing stored for a refused key", cloudPosts);
-  // A working key: checked first, then saved as a NEW connection.
-  await page.fill(`${cloud("anthropic")} input[type=password]`, FAKE_KEY);
-  await page.click(`${cloud("anthropic")} button[data-action="check"]`);
-  await page.waitForSelector(`${cloud("anthropic")} button[data-action="save"]`, { timeout: 15000 }).catch(() => {});
-  check((await page.textContent(`${cloud("anthropic")} [data-cloud-line]`)).trim() === "Key works · 48 models", "Key works · 48 models", await page.textContent(`${cloud("anthropic")} [data-cloud-line]`));
-  check(!cloudPosts.some((c) => c.path === "create"), "the check stored nothing", cloudPosts);
-  const checksBeforeSave = cloudPosts.filter((c) => c.path === "discover-models").length;
-  await page.click(`${cloud("anthropic")} button[data-action="save"]`);
-  await page.waitForFunction(() => /^Saved as/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-line]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  // A working key: Test, then Save stores it as a NEW connection.
+  await modal("Connect Anthropic").getByLabel("API key").fill(FAKE_KEY);
+  await modal("Connect Anthropic").getByRole("button", { name: "Test connection" }).click();
+  await page.waitForFunction(() => /Key works/.test(document.querySelector(".af-cloud-modal [data-cloud-modal-line]")?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check((await line()).trim() === "Key works · 48 models", "Key works · 48 models", await line());
+  check(!cloudPosts.some((c) => c.path === "create"), "the test stored nothing", cloudPosts);
+  await modal("Connect Anthropic").getByRole("button", { name: "Save", exact: true }).click();
+  await modal("Connect Anthropic").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
   const created = cloudPosts.filter((c) => c.path === "create");
   check(created.length === 1 && created[0].body.id === "anthropic-key" && created[0].body.create_only === true && created[0].body.provider_family === "anthropic", "save = one create_only POST with a fresh id", created);
-  check(checksBeforeSave >= 1 && cloudPosts.findIndex((c) => c.path === "create") > cloudPosts.findIndex((c) => c.path === "discover-models" && c.body.api_key === FAKE_KEY), "the key was checked before it was stored", cloudPosts.map((c) => c.path));
-  check((await page.inputValue(`${cloud("anthropic")} input[type=password]`)) === "", "the field is emptied after the save");
-  await page.waitForFunction(() => /^Connected · key/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
-  check(/^Connected · key [0-9a-f]{8}$/.test((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim()), "Anthropic card now Connected with a fingerprint", await page.textContent(`${cloud("anthropic")} [data-cloud-status]`));
-  // OpenAI already has a connection (id "openai"): the new key is a NEW connection, never an overwrite.
+  check(cloudPosts.findIndex((c) => c.path === "create") > cloudPosts.findIndex((c) => c.path === "discover-models" && c.body.api_key === FAKE_KEY), "the key was tested before it was stored", cloudPosts.map((c) => c.path));
+  await page.waitForFunction(() => /^Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check(/^Connected · 48 models$/.test((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim()), "Anthropic card now Connected with the models found", await page.textContent(`${cloud("anthropic")} [data-cloud-status]`));
+  check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Edit", "Anthropic now offers Edit");
+  // Edit OpenAI (connection "openai"): a new key REPLACES that connection's key in place (PUT).
   const openaiBefore = await page.evaluate(async () => (await (await fetch("/api/gateway/config/provider-endpoint-profiles", { credentials: "same-origin" })).json()).profiles.find((p) => p.id === "openai"));
-  await page.fill(`${cloud("openai")} input[type=password]`, FAKE_KEY + "-2");
-  await page.click(`${cloud("openai")} button[data-action="check"]`);
-  await page.waitForSelector(`${cloud("openai")} button[data-action="save"]`, { timeout: 15000 }).catch(() => {});
-  check((await page.textContent(`${cloud("openai")} button[data-action="save"]`)).trim() === "Save as a new connection", "a connected provider saves as a new connection");
-  await page.click(`${cloud("openai")} button[data-action="save"]`);
-  await page.waitForFunction(() => /^Saved as/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="openai"] [data-cloud-line]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  await page.click(`${cloud("openai")} button`);
+  await modal("Edit OpenAI").waitFor({ timeout: 8000 });
+  check((await modal("Edit OpenAI").getByLabel("API key").inputValue()) === "", "Edit starts with an empty key field");
+  await modal("Edit OpenAI").getByLabel("API key").fill(FAKE_KEY + "-2");
+  await modal("Edit OpenAI").getByRole("button", { name: "Save", exact: true }).click();
+  await modal("Edit OpenAI").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
   const profilesAfter = await page.evaluate(async () => (await (await fetch("/api/gateway/config/provider-endpoint-profiles", { credentials: "same-origin" })).json()).profiles);
   const kept = profilesAfter.find((p) => p.id === "openai");
-  check(!!kept && kept.api_key_fingerprint === openaiBefore.api_key_fingerprint && kept.display_name === openaiBefore.display_name, "the existing OpenAI connection is unchanged", { openaiBefore, kept });
-  check(profilesAfter.some((p) => p.id === "openai-key" && p.provider_family === "openai"), "the new key is its own connection (openai-key)", profilesAfter.map((p) => p.id));
-  // "More settings" opens this tab's connection editor for that provider.
-  await page.click(`${cloud("openrouter")} button[data-action="configure"]`);
-  await page.waitForTimeout(300);
-  check((await page.inputValue("#endpoint-provider-family")) === "openrouter", "More settings opens the connection editor for that provider");
-  await page.evaluate(() => document.getElementById("provider-modal-backdrop").classList.add("hidden"));
+  check(!!kept && kept.api_key_fingerprint !== openaiBefore.api_key_fingerprint && kept.display_name === openaiBefore.display_name, "Edit replaced the key of the SAME connection", { openaiBefore, kept });
+  check(!profilesAfter.some((p) => p.id === "openai-key"), "Edit created no new connection", profilesAfter.map((p) => p.id));
   const html = await page.content();
   check(!html.includes(FAKE_KEY), "the API key never reaches the page");
   await page.unroute(/\/api\/gateway\/config\/provider-endpoint-profiles\/discover-models$/);

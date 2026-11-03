@@ -1,10 +1,10 @@
 """Browser apps managed by the gateway: Node.js for the user, npm packages, processes.
 
-The six browser apps (Flow, Code, Observer, Continuum, Entity, Note) are npm
+The seven browser apps (Flow, Code, Observer, Continuum, Entity, Note, Assistant web) are npm
 packages whose `bin/cli.js` starts a small Node server. That server is not
 optional: it holds the app-origin gateway session (HttpOnly cookies, CSRF, the
 `/api/connection/gateway` sign-in endpoint, the same-origin `/api/*` proxy that
-SSE rides on), and four of the six bundles load their assets from absolute
+SSE rides on), and some bundles load their assets from absolute
 `/assets/` paths. So the gateway RUNS each app's own server as a child process
 (decision A in docs/apps.md) instead of serving `dist/` itself.
 
@@ -119,6 +119,7 @@ STACK_PORTS: Tuple[Tuple[str, int], ...] = (
     ("entity", 3004),
     ("flow", 3005),
     ("note", 3006),
+    ("assistant-web", 3008),
 )
 STACK_PORT: Dict[str, int] = dict(STACK_PORTS)
 # Older launcher defaults (root backlog 0859: scripts/lib/apps_common.sh ran
@@ -130,9 +131,15 @@ LEGACY_PROBE_PORTS: Tuple[int, ...] = (3000, 3007)
 
 @dataclass(frozen=True)
 class AppSpec:
+    """One browser app the gateway installs, runs and lists (docs/apps.md,
+    "Registering an app"). The card fields (`mark`, `description`,
+    `illustration`, `family`) are what the console's Apps card shows: the
+    console holds no per-app copy."""
+
     id: str
     name: str
     package: str
+    # The card's sentence: one short, complete sentence, shown whole.
     description: str
     default_port: int
     cookie_prefix: str  # the app server's `<prefix>_gateway_{url,session,csrf}` cookies
@@ -141,6 +148,15 @@ class AppSpec:
     # app started outside the gateway is recognised: none of the apps
     # has an identity route that answers without a gateway sign-in).
     html_title: str = ""
+    # The two letters of the card's mark tile.
+    mark: str = ""
+    # A file name under console_assets/apps/ (16:9, 768x432 WebP), served at
+    # /console/assets/apps/<file>; None = the card shows its mark only.
+    illustration: Optional[str] = None
+    # Apps of one family (an APP_FAMILIES key) render as ONE card whose
+    # identity (description, illustration, status badge) is the browser app;
+    # every member adds its launcher(s). None = a card of its own.
+    family: Optional[str] = None
 
     @property
     def short_name(self) -> str:
@@ -148,21 +164,146 @@ class AppSpec:
 
 
 APPS: Tuple[AppSpec, ...] = (
-    AppSpec("observer", "Observer", "@abstractframework/observer", "Watch runs, replay/stream ledgers, submit durable commands.", STACK_PORT["observer"], "abstractobserver", "ABSTRACTOBSERVER_GATEWAY_URL", "AbstractObserver"),
-    AppSpec("continuum", "Continuum", "@abstractframework/continuum", "Backlog, inbox triage and managed processes against this gateway.", STACK_PORT["continuum"], "abstractcontinuum", "ABSTRACTCONTINUUM_GATEWAY_URL", "AbstractContinuum"),
-    AppSpec("code", "Code", "@abstractframework/code", "Browser-based coding assistant with durable agent sessions.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode"),
-    AppSpec("entity", "Entity", "@abstractframework/entity", "Create summoned entities, watch their memory graph, talk with them.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity"),
-    AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Visual workflow editor.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow"),
-    AppSpec("note", "Note", "@abstractframework/note", "Capture anything; see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote"),
+    AppSpec("observer", "Observer", "@abstractframework/observer", "Watch your agents work in real time: follow each run, replay it and step in to steer.", STACK_PORT["observer"], "abstractobserver", "ABSTRACTOBSERVER_GATEWAY_URL", "AbstractObserver",
+            mark="Ob", illustration="observer.webp"),
+    AppSpec("continuum", "Continuum", "@abstractframework/continuum", "Your backlog, inbox and long-running processes in one place, tracked against this gateway.", STACK_PORT["continuum"], "abstractcontinuum", "ABSTRACTCONTINUUM_GATEWAY_URL", "AbstractContinuum",
+            mark="Cn", illustration="continuum.webp"),
+    AppSpec("code", "Code", "@abstractframework/code", "A coding assistant with durable sessions: restart anytime and pick up where you left off.", STACK_PORT["code"], "abstractcode", "ABSTRACTCODE_GATEWAY_URL", "AbstractCode",
+            mark="Co", illustration="code.webp"),
+    AppSpec("entity", "Entity", "@abstractframework/entity", "Create entities whose memory grows as you talk; see what they learn and how it connects.", STACK_PORT["entity"], "abstractentity", "ABSTRACTENTITY_GATEWAY_URL", "AbstractEntity",
+            mark="En", illustration="entity.webp"),
+    AppSpec("flow", "Flow Editor", "@abstractframework/flow", "Design workflows visually, run them here and reuse them in agents and automations.", STACK_PORT["flow"], "abstractflow", "ABSTRACTFLOW_GATEWAY_URL", "AbstractFlow",
+            mark="Fl", illustration="flow.webp"),
+    AppSpec("note", "Note", "@abstractframework/note", "Capture anything in a line, then see how what you know connects and changes over time.", STACK_PORT["note"], "abstractnote", "ABSTRACTNOTE_GATEWAY_URL", "AbstractNote",
+            mark="No", illustration="note.webp"),
+    AppSpec("assistant-web", "Assistant (web)", "@abstractframework/assistant", "Chat or talk with the Assistant, in the browser or on this Mac, with voice and approvals.", STACK_PORT["assistant-web"], "abstractassistant", "ABSTRACTASSISTANT_GATEWAY_URL", "AbstractAssistant",
+            mark="As", illustration="assistant.webp", family="assistant"),
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
+
+# The card title of each app family (`family` on AppSpec / DesktopAppSpec).
+# A family's members render as ONE card (app_cards); its identity is the
+# browser member. A family missing here fails the apps overview loudly.
+APP_FAMILIES: Dict[str, str] = {"assistant": "Assistant"}
+
+# The card illustrations: files under this package folder, declared by the
+# registry (`illustration`), served read-only at CONSOLE_APP_ASSETS_PATH
+# (app.py). Only these types are served (never SVG: it can carry script).
+CONSOLE_APP_ASSETS_DIR = Path(__file__).resolve().parent / "console_assets" / "apps"
+CONSOLE_APP_ASSETS_PATH = "/console/assets/apps/"
+ILLUSTRATION_TYPES: Dict[str, str] = {".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".avif": "image/avif"}
+# A card's launchers, derived from its members' kinds: a browser app row
+# (kind "web"), a desktop app row (kind "desktop"), and a terminal version
+# (an `interfaces[]` entry of kind "tui").
+LAUNCHER_KIND = {"web": "browser", "desktop": "desktop", "tui": "terminal"}
+
+
+def _card_specs() -> List[Any]:
+    """Every registered app the Apps tab shows: the browser apps, then the desktop apps."""
+    from .apps_desktop import DESKTOP_APPS
+
+    return [*APPS, *DESKTOP_APPS]
+
+
+def registered_illustrations() -> Dict[str, Path]:
+    """{file name: path} of every illustration the registry declares, whether
+    or not the file is there yet."""
+    out: Dict[str, Path] = {}
+    for spec in _card_specs():
+        name = spec.illustration
+        if not name:
+            continue
+        if Path(name).name != name or Path(name).suffix.lower() not in ILLUSTRATION_TYPES:
+            raise ValueError(f"app {spec.id!r}: illustration {name!r} must be a plain {'/'.join(sorted(ILLUSTRATION_TYPES))} file name")
+        out[name] = CONSOLE_APP_ASSETS_DIR / name
+    return out
+
+
+# path -> ((size, mtime_ns), content tag): each file is hashed once, again
+# only when it is replaced.
+_ILLUSTRATION_TAGS: Dict[Path, Tuple[Tuple[int, int], str]] = {}
+
+
+def illustration_url(name: Optional[str]) -> Optional[str]:
+    """The console URL of a registered illustration that exists, with a
+    version query from its CONTENT (the route's cache is immutable, so a
+    replaced file gets a new URL; a wheel's fixed timestamps do not matter);
+    None otherwise."""
+    if not name:
+        return None
+    path = registered_illustrations().get(name)
+    if path is None or not path.is_file():
+        return None
+    st = path.stat()
+    key = (st.st_size, st.st_mtime_ns)
+    hit = _ILLUSTRATION_TAGS.get(path)
+    if hit is None or hit[0] != key:
+        hit = (key, hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+        _ILLUSTRATION_TAGS[path] = hit
+    return f"{CONSOLE_APP_ASSETS_PATH}{urllib.parse.quote(name)}?v={hit[1]}"
+
+
+def card_fields(spec: Any) -> Dict[str, Any]:
+    """The registry's card fields on an apps row."""
+    return {
+        "mark": spec.mark or spec.name[:2],
+        "family": spec.family,
+        "illustration_url": illustration_url(spec.illustration),
+    }
+
+
+def app_cards(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The Apps tab's cards, in row order: one per family, else one per app.
+    A family card's description, mark and illustration are its browser
+    member's (the registry's identity). Its LEAD — the first member, whose
+    status badge and primary action head the card — is the first INSTALLED
+    member, browser preferred; the browser member when none is installed. So
+    the headline describes what this computer has. The other members follow
+    (browser before desktop), each with its own badge and notes; the
+    launchers follow from the members' kinds (LAUNCHER_KIND), in member
+    order, a member's terminal version right after it."""
+    cards: List[Dict[str, Any]] = []
+    by_family: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        fam = row.get("family")
+        if fam and fam in by_family:
+            by_family[fam]["rows"].append(row)
+            continue
+        card = {"id": fam or row["id"], "family": fam or None, "rows": [row]}
+        if fam:
+            by_family[fam] = card
+        cards.append(card)
+    kind_order = {"web": 0, "desktop": 1}
+    out: List[Dict[str, Any]] = []
+    for card in cards:
+        members = sorted(card["rows"], key=lambda r: kind_order.get(str(r.get("kind")), 2))
+        ident = members[0]
+        lead = next((r for r in members if r.get("installed")), ident)
+        members = [lead] + [r for r in members if r is not lead]
+        launchers: List[Dict[str, str]] = []
+        for m in members:
+            launchers.append({"app": m["id"], "kind": LAUNCHER_KIND[str(m.get("kind"))]})
+            for iface in m.get("interfaces") or []:
+                if iface.get("kind") == "tui":
+                    launchers.append({"app": m["id"], "kind": LAUNCHER_KIND["tui"]})
+        out.append({
+            "id": card["id"],
+            "family": card["family"],
+            "name": APP_FAMILIES[card["family"]] if card["family"] else ident.get("name"),
+            "description": ident.get("description"),
+            "mark": ident.get("mark"),
+            "illustration_url": ident.get("illustration_url"),
+            "members": [m["id"] for m in members],
+            "launchers": launchers,
+        })
+    return out
 
 # Every app's server takes its address and gateway URL as launch flags
 # (`--port`, `--host`, `--gateway-url`: the abstractuic app-server kit's flag
 # parser; Continuum since 0.3.1, Flow since its own parser). Flags beat the
 # environment and any settings file an app keeps (Continuum's
 # ~/.abstractcontinuum/settings.json), so the gateway passes flags.
-FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note"})
+FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow", "note", "assistant-web"})
 # The last released version of an app that IGNORES those flags (it reads
 # PORT / HOST / <APP>_GATEWAY_URL only; an unknown flag is skipped, so it
 # would bind its own default port and host). Such an install, or one whose
@@ -3897,6 +4038,7 @@ class AppsManager:
             "name": spec.name,
             "kind": "desktop",
             "description": spec.description,
+            **card_fields(spec),
             "package": spec.package,
             "installed": installed,
             "version": version,
@@ -3934,6 +4076,10 @@ class AppsManager:
                 "launch_available": launch_available,
                 "launch_blocked": code,
                 "launch_blocked_reason": launch_blocked,
+                # The card's desktop launcher, in this computer's words.
+                "open_label": "Open on this Mac" if sys.platform == "darwin" else "Open on this computer",
+                # Where it runs, in the family card's badge ("This Mac: Stopped.").
+                "where_label": "This Mac" if sys.platform == "darwin" else "This computer",
                 # A running Assistant of the OTHER artifact (R10.5): its own
                 # sentence; Open still launches the one this card describes.
                 "other_running": (dict(pres["other_running"], argv=None) if pres.get("other_running") else None),
@@ -4252,6 +4398,7 @@ class AppsManager:
             "name": spec.name,
             "kind": "web",
             "description": spec.description,
+            **card_fields(spec),
             "package": spec.package,
             "installed": True,
             "version": ext.version,
@@ -4356,6 +4503,7 @@ class AppsManager:
             "name": spec.name,
             "kind": "web",
             "description": spec.description,
+            **card_fields(spec),
             "package": spec.package,
             "installed": bool(installed),
             "version": installed,
@@ -4483,6 +4631,8 @@ class AppsManager:
             "ok": True,
             "runtime": {"node": node_public},
             "apps": rows,
+            # The Apps tab's cards (app_cards): one per family, else one per app.
+            "cards": app_cards(rows),
             "install_allowed": self.install_allowed(same_machine=same_machine),
             "registry": {"url": self.registry_url, "reachable": reachable, "error": errors[0] if errors else None},
             # The AbstractFramework release whose app versions Install follows (`release_app_versions`).

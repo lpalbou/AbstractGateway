@@ -458,7 +458,7 @@ available at `GET /api/gateway/workflow-catalog`.
 
 ## Sign-in: passwords, tokens and the first-run window
 
-Since 0.18.0 an account signs in with its **account id and a password** or with its
+Since 0.19.0 an account signs in with its **account id and a password** or with its
 **gateway token**; both open the same browser session (`POST /api/gateway/session/login`
 with `{user_id, password}` or `{user_id, token}`, exactly one of the two). Tokens stay
 for apps, scripts and the OpenAI-compatible API (`/v1` takes named API keys).
@@ -534,7 +534,7 @@ That window is the risk, and it is fenced:
 - **closes for good** on the first admin sign-in of any kind (password, token, one-time
   link, email code), when the admin gets a password, or when an admin creates an account
   (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
-  then. A data folder that was not fresh when 0.18.0 first ran never has the record, so an
+  then. A data folder that was not fresh when 0.19.0 first ran never has the record, so an
   upgrade never opens the window.
 
 The one-time claim link (`abstractgateway claim`) stays the loopback-only path: it is

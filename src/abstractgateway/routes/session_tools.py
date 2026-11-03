@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from ..entity_access import entity_name_guard, entity_plane_resolver
 from ..entity_session_tools import (SessionToolPolicy, decide, install_policy, normalize_policy,
-                                    require_owner, session_state, tool_options)
+                                    require_owner, session_state, tool_options, guide_visit, answer_question)
 from ..entity_visits import VisitRefused
 
 router = APIRouter(prefix="/gateway", tags=["session-tools"],
@@ -22,6 +22,20 @@ class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     tool_policy: Optional[PolicyRequest] = None
+    conversation: Optional[StrictBool] = None
+
+
+class GuidanceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, strict=True)
+    display_text: Optional[str] = Field(default=None, min_length=1, max_length=65_536, strict=True)
+
+
+class QuestionAnswerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wait_key: str = Field(min_length=1, max_length=512)
+    response: str = Field(min_length=1, strict=True)
+    target_run_id: Optional[str] = None
 
 
 class DecisionRequest(BaseModel):
@@ -78,7 +92,24 @@ def open_entity_session(name: str, req: SessionRequest) -> dict:
     from .entities import OpenVisitRequest, open_visit
 
     return open_visit(name, OpenVisitRequest(session_id=req.session_id,
-                      tool_policy=req.tool_policy or PolicyRequest()))
+                      tool_policy=req.tool_policy or PolicyRequest(), conversation=req.conversation))
+
+
+@router.post("/entities/{name}/visit/{run_id}/guidance")
+def entity_visit_guidance(name: str, run_id: str, req: GuidanceRequest) -> dict:
+    try:
+        return guide_visit(_host(), name, run_id, text=req.text, display_text=req.display_text)
+    except (VisitRefused, KeyError, ValueError) as exc:
+        return _refused(exc)
+
+
+@router.post("/entities/{name}/visit/{run_id}/answer")
+def entity_visit_answer(name: str, run_id: str, req: QuestionAnswerRequest) -> dict:
+    try:
+        return answer_question(_host(), name, run_id, wait_key=req.wait_key, response=req.response,
+                               target_run_id=req.target_run_id)
+    except (VisitRefused, KeyError, ValueError) as exc:
+        return _refused(exc)
 
 
 @router.get("/entities/{name}/visit/{run_id}/state")

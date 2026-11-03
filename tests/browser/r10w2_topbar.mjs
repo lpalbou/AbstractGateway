@@ -30,7 +30,7 @@ function snapshot({ usedGib, pct, gpu, loaded }) {
       device: { backend: "metal", host_in_use_bytes: 18 * GIB, wired_limit_bytes: 48 * GIB, total_bytes: 64 * GIB },
       process: { rss_bytes: 3 * GIB },
     },
-    gpu: { supported: true, utilization_gpu_pct: gpu, source: "ioreg" },
+    gpu: { supported: true, utilization_gpu_pct: gpu, source: "ioreg", gpus: [{ name: "Apple M5 Max" }] },
     models: Array.from({ length: loaded }, (_, i) => ({ provider: "mlx", model: `fake-model-${i + 1}`, resident: true, size_bytes: 15 * GIB, cache_bytes: GIB, task: "text_generation" })),
     session_caches: [{ bytes: 512 * 1024 ** 2 }],
     totals: { models: loaded, models_resident: loaded, model_bytes: 15 * GIB * loaded, cache_bytes_models: GIB * loaded, session_cache_bytes: 512 * 1024 ** 2 },
@@ -47,15 +47,13 @@ async function open(browser, { width = 1440, height = 900, theme = "dark" } = {}
   const errors = [];
   page.on("pageerror", (e) => { errors.push(e.message); failures.push(`pageerror@${width}/${theme}: ${e.message}`); });
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  // This check concerns the widget, not the replaced legacy sign-in form.
+  await page.route(`${BASE}/**`, route => route.continue({ headers: { ...route.request().headers(), Authorization: `Bearer ${ADMIN}` } }));
   await page.route("**/api/gateway/host/state", async (route) => {
     hostStateCalls += 1;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(current) });
   });
   await page.goto(`${BASE}/console`);
-  await page.waitForSelector("#login-form");
-  await page.fill("#login-user", "admin");
-  await page.fill("#login-token", ADMIN);
-  await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 20000 });
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForFunction(() => (document.getElementById("topbar-res-gpu") || {}).textContent === "12%", null, { timeout: 15000 }).catch(() => {});
@@ -99,7 +97,7 @@ try {
       }
       check(w.left >= 0 && w.right <= w.vw + 0.5 && w.scrollW <= w.vw + 1, `widget inside the viewport, no horizontal scroll (${tag})`, w);
       check(!w.title, `no native title (kit tooltip only) (${tag})`, w.title);
-      check(/^RAM: 41\.2 GiB of 64\.0 GiB \(64%\)\nAccelerator heap: 18\.0 GiB \/ 48\.0 GiB \(all processes\)\nModel weights: 15\.0 GiB · 1 model loaded\nKV caches: 1\.0 GiB for models · 512\.0 MiB in sessions\nGPU load: 12% \(via ioreg\)\nClick to open Resources\.$/.test(w.tip || ""), `tooltip lists the real values (${tag})`, w.tip);
+      check(/^RAM: 41\.2 GiB of 64\.0 GiB \(64%\)\nAccelerator heap: 18\.0 GiB \/ 48\.0 GiB \(all processes\)\nModel weights: 15\.0 GiB · 1 model loaded\nKV caches: 1\.0 GiB for models · 512\.0 MiB in sessions\nGPU load: 12% \(via ioreg\)\nMachine: Apple M5 Max\nClick to open Resources\.$/.test(w.tip || ""), `tooltip lists the real values (${tag})`, w.tip);
 
       // The kit tooltip, on hover: themed, multi-line, inside the viewport.
       await page.hover("#topbar-resources");

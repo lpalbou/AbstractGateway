@@ -825,40 +825,56 @@ flowchart TB
   end
   subgraph Server["Server or container"]
     API["abstractgateway serve --no-runner<br/>HTTP API, console, streams"] --- DD[("shared data dir")]
-    Worker["abstractgateway runner<br/>runs, model, mail, feeds, push"] --- DD
+    Worker["abstractgateway runner<br/>runs, mail, feeds, push"] --- DD
     Proxy["TLS reverse proxy or tunnel"] --> API
-    API -->|"/v1 forwarded<br/>(127.0.0.1, per-start secret)"| ModelHost["Model host<br/>(in the runner process)"]
-    Worker --- ModelHost
+    API -->|"optional Gateway /v1<br/>(private loopback + per-start secret)"| ModelHost["Supervised model-host child<br/>Core resources and optional HTTP"]
+    Worker -->|"native execution RPC"| ModelHost
   end
 ```
 
 ```mermaid
 flowchart LR
-  Client["Browser, apps, /v1 clients"] --> GW["abstractgateway serve<br/>accounts, routes, auth, reach,<br/>ledger, runs, supervision"]
-  GW -->|"runtime LLM client proxy<br/>(Unix socket, per-boot key)"| MH["Model host child<br/>every Core provider,<br/>the model pool, Core's /v1 app"]
-  GW -->|"/v1 admitted, then forwarded<br/>(127.0.0.1, per-start secret)"| MH
-  GW -.->|"ping, restart, memory ceiling,<br/>incident file per crash"| MH
+  Native["Native framework clients"] -->|"run APIs / commands"| GW["Gateway + Runtime<br/>runs, ledger, auth, supervision"]
+  GW -->|"native RPC: original schema data<br/>Unix socket or Windows named pipe"| Exec["Execution owner<br/>Core clients and validators"]
+  GW -->|"replay views / SSE"| Native
+  Compat["Gateway /v1 clients<br/>Gateway API keys"] --> Legacy["Optional Gateway /v1 admission"]
+  Legacy -->|"private loopback + per-start secret"| PrivateHTTP["Optional private Core listener"]
+  Direct["Direct inference clients<br/>Core server token"] --> DirectHTTP["Optional direct Core listener<br/>Core bind and auth"]
+  subgraph MH["One supervised model-host child"]
+    Exec --> Resources["Core local model resources<br/>compatible sharing / conflict refusal"]
+    PrivateHTTP --> Resources
+    DirectHTTP --> Resources
+  end
+  GW -.->|"ping / bounded restart / incidents"| MH
 ```
 
-- **Single process**: `abstractgateway serve` starts the HTTP API and the
-  runner. On a desktop session it also starts the tray helper, and it starts
-  the browser apps you enabled.
+- **Combined API and runner**: `abstractgateway serve` starts the HTTP API and the
+  runner, with model execution in a supervised child by default. On a desktop
+  session it also starts the tray helper and the browser apps you enabled.
 - **Model host** (ADR 0002,
-  `--model-host process`, the default on every OS): the models and every
-  AbstractCore provider call run in one child process the gateway supervises;
+  `--model-host process`, the default on every OS): managed model loads and
+  Runtime-backed provider calls run in one child process the gateway supervises;
   the runtime's LLM clients in the gateway are proxies with the same API, and
-  `/v1` is admitted by the gateway and served by the child. A crash there costs
+  optional Gateway `/v1` is admitted by the gateway and served by the child.
+  Optional direct Core HTTP reaches Core's app with Core authentication, without
+  a Gateway run or Runtime orchestration. Both listeners share the execution
+  owner's resources; their startup and shutdown do not define native readiness.
+  A listener can fail or restart while native RPC remains available. A fatal
+  execution-owner crash costs
   the requests in flight, is recorded in `<data dir>/incidents/`, and the child
   is restarted; the gateway keeps answering, on Linux, macOS and Windows alike. Details: [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process).
 - **Split API and runner** (opt-in): `abstractgateway runner --data-dir DIR`
   (worker) and `abstractgateway serve --no-runner --data-dir DIR` (API) share
   one data dir, so you can restart the API without pausing durable execution.
-  The runner process ticks every run, holds the one text model, and runs the
+  The runner process ticks every run, supervises the model-host child, and runs the
   mail watchers, feed polling, push dispatcher and bridges; the API process
   only serves HTTP, creates runs and queues commands. Its OpenAI-compatible
-  `/v1` admits each request, then forwards it to a model host the runner
-  serves on `127.0.0.1` (address and per-start secret in
-  `<data dir>/split/model_host.json`), so the model is never loaded twice.
+  `/v1` admits each request, then forwards it to the optional private Core
+  listener in that owner on `127.0.0.1` (address and per-start secret in
+  `<data dir>/split/model_host.json`). An explicit `--model-host in-process`
+  keeps execution in the runner instead. Admin listener status comes from
+  `<data dir>/split/model_host_http.json`, an atomic, owner-only file containing
+  service states and URLs without credentials; readers check owner liveness.
   Live replies pass through `<data dir>/live/`; events the API delivers reach
   runs the runner parked (the run store's indexes refresh across processes).
   The full table of who does what: [configuration.md](./configuration.md#split-mode-api-and-runner-in-two-processes-opt-in).

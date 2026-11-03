@@ -8,6 +8,7 @@
 // Prints one JSON line: {"failures": [...], "checks": N, "sandboxRequests": N}.
 import { createRequire } from "node:module";
 import path from "node:path";
+import { mkdirSync } from "node:fs";
 
 const [BASE, ADMIN, PW] = process.argv.slice(2);
 const require = createRequire(path.join(PW, "/"));
@@ -20,7 +21,7 @@ function check(ok, what, detail) {
   if (!ok) failures.push(detail === undefined ? what : `${what}: ${JSON.stringify(detail)}`);
 }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
@@ -32,11 +33,12 @@ try {
   let sandboxRequests = 0;
   page.on("request", (req) => { if (req.method() === "POST" && req.url().endsWith("/api/gateway/sandbox/generate")) sandboxRequests += 1; });
 
+  // This suite verifies chat widgets, independently of the first-run sign-in UI.
+  const login = await page.request.post(`${BASE}/api/gateway/session/login`, {
+    headers: { Origin: BASE }, data: { user_id: "admin", token: ADMIN },
+  });
+  if (!login.ok()) throw new Error(`fixture sign-in failed: HTTP ${login.status()}`);
   await page.goto(`${BASE}/console`);
-  await page.waitForSelector("#login-form");
-  await page.fill("#login-user", "admin");
-  await page.fill("#login-token", ADMIN);
-  await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
   await page.evaluate(() => document.getElementById("tab-button-sandbox").click());
   await page.waitForTimeout(800);
@@ -49,6 +51,32 @@ try {
   check(await textarea.count() === 1, "panel-chat composer textarea present");
   check(await root.getByRole("button", { name: "Attach file" }).count() === 1, "standard Attach control present");
   check(await page.locator("#sandbox-prompt, #sandbox-run, #sandbox-transcript").count() === 0, "the console's own composer is gone");
+  check(await root.locator(".pc-composer--compact").count() === 1, "Sandbox uses the rounded shared composer by default");
+  check(await textarea.getAttribute("rows") === "2", "the default composer starts with multiple text lines");
+  check(await root.locator(".pc-composer__send--compact svg").count() === 1, "the shared send button has its accessible icon");
+  const draft = "Compare these options\nKeep the accessible choice\nExplain the difference";
+  await textarea.fill(draft);
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await textarea.scrollIntoViewIfNeeded();
+    const composer = root.locator(".pc-composer");
+    const geometry = await composer.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const field = element.querySelector("textarea");
+      const send = element.querySelector(".pc-composer__send--compact");
+      return { width: box.width, left: box.left, right: box.right, viewport: innerWidth,
+        radius: parseFloat(getComputedStyle(element).borderRadius), lines: field.value.split("\n").length,
+        sendRadius: send ? parseFloat(getComputedStyle(send).borderRadius) : null, sendWidth: send ? send.getBoundingClientRect().width : 0 };
+    });
+    check(geometry.left >= -1 && geometry.right <= geometry.viewport + 1, `composer fits at ${viewport.width}px`, geometry);
+    check(geometry.radius >= 24 && geometry.sendRadius >= geometry.sendWidth / 2 - 1, `rounded input and circular send survive console styles at ${viewport.width}px`, geometry);
+    check((await textarea.inputValue()) === draft && geometry.lines === 3, `multiline draft survives resize at ${viewport.width}px`);
+    if (process.env.ABSTRACTGATEWAY_COMPOSER_SHOTS) {
+      mkdirSync(process.env.ABSTRACTGATEWAY_COMPOSER_SHOTS, { recursive: true });
+      await composer.screenshot({ path: path.join(process.env.ABSTRACTGATEWAY_COMPOSER_SHOTS, `console-composer-${viewport.width}.png`) });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // 2. Every output mode the console offers is still a button around the island.
   const modes = await page.evaluate(() => ({
@@ -90,6 +118,13 @@ try {
   // 5. Clear empties the thread.
   await root.getByRole("button", { name: "Clear chat" }).click();
   check(await root.locator(".pc-chat-item").count() === 0, "Clear empties the thread");
+  // The console's Docs drawer is a second island over the same default composer.
+  await page.getByRole("button", { name: "Docs assistant", exact: true }).click();
+  const docs = page.locator(".pc-docs-assistant");
+  await docs.waitFor({ state: "visible" });
+  check(await docs.locator(".pc-composer--compact").count() === 1, "Docs assistant uses the rounded shared default too");
+  check(await docs.locator("textarea").getAttribute("rows") === "2", "Docs assistant does not pin the old single-line layout");
+  check(await docs.locator(".pc-composer__send--compact svg").count() === 1, "Docs assistant retains the shared accessible send icon");
   console.log(JSON.stringify({ failures, checks, sandboxRequests }));
 } finally {
   await browser.close();

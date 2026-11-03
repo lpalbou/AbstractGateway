@@ -1,0 +1,67 @@
+{
+  "themes": [
+    {
+      "theme": "dark",
+      "checks": {
+        "noUncatalogued": true,
+        "mixedAssetCount": true,
+        "downloaded": true,
+        "inventoryCovered": true,
+        "typedCards": true,
+        "supportingAssets": true,
+        "partialCache": true,
+        "screenshotAssets": true,
+        "structuredTooltip": true,
+        "viewport390": true,
+        "typedCardFit390": true,
+        "viewport320": true,
+        "typedCardFit320": true,
+        "healthy": true
+      },
+      "catalog": {
+        "rows": 224,
+        "artifacts": 1825,
+        "installed": 140,
+        "discovered": 122
+      },
+      "inventory": 162,
+      "unaccounted": [],
+      "typedCards": 122
+    },
+    {
+      "theme": "light",
+      "checks": {
+        "noUncatalogued": true,
+        "mixedAssetCount": true,
+        "downloaded": true,
+        "inventoryCovered": true,
+        "typedCards": true,
+        "supportingAssets": true,
+        "partialCache": true,
+        "screenshotAssets": true,
+        "structuredTooltip": true,
+        "viewport390": true,
+        "typedCardFit390": true,
+        "viewport320": true,
+        "typedCardFit320": true,
+        "healthy": true
+      },
+      "catalog": {
+        "rows": 224,
+        "artifacts": 1825,
+        "installed": 140,
+        "discovered": 122
+      },
+      "inventory": 162,
+      "unaccounted": [],
+      "typedCards": 122
+    }
+  ],
+  "pageErrors": [],
+  "managementWrites": [],
+  "touch": {
+    "viewport": true,
+    "noUncatalogued": true,
+    "typedCards": true
+  }
+}

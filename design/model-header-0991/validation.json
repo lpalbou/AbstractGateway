@@ -1,0 +1,27 @@
+{
+  "implementation": "549680a7",
+  "tests_passed": 42,
+  "browser": {
+    "checks": 124,
+    "failures": []
+  },
+  "live": {
+    "health": "healthy",
+    "distinctHeader": true,
+    "hoverHighlight": true,
+    "pointer": true,
+    "focusHighlight": true,
+    "titleExpands": true,
+    "whitespaceCollapses": true,
+    "keyboardExpands": true,
+    "keyboardCollapses": true,
+    "pageErrors": [],
+    "managementWrites": []
+  },
+  "deployment": {
+    "method": "Existing graceful restart",
+    "runner_inflight": 0,
+    "model_inflight": 0,
+    "kit_changed": false
+  }
+}

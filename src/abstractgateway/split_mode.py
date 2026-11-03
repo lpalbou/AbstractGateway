@@ -186,6 +186,11 @@ class ModelHost:
         self._thread: Optional[threading.Thread] = None
 
     @property
+    def is_running(self) -> bool:
+        return (self._thread is not None and self._thread.is_alive() and bool(self._server.started)
+                and not self._server.should_exit)
+
+    @property
     def url(self) -> Optional[str]:
         return None if self.port is None else f"http://127.0.0.1:{self.port}"
 
@@ -222,9 +227,14 @@ class ModelHost:
         sock.listen(128)
         sock.set_inheritable(False)
         self.port = int(sock.getsockname()[1])
-        config = uvicorn.Config(app=self, lifespan="off", log_level="warning", access_log=False,
-                                timeout_graceful_shutdown=5)
-        self._server = uvicorn.Server(config)
+        try:
+            config = uvicorn.Config(app=self, lifespan="off", log_level="warning", access_log=False,
+                                    timeout_graceful_shutdown=5)
+            self._server = uvicorn.Server(config)
+        except BaseException:
+            sock.close()
+            self.port = None
+            raise
 
         def _serve() -> None:
             try:
@@ -237,6 +247,9 @@ class ModelHost:
         deadline = time.monotonic() + timeout_s
         while not getattr(self._server, "started", False):
             if not self._thread.is_alive() or time.monotonic() > deadline:
+                self.stop()
+                sock.close()
+                self.port = None
                 raise RuntimeError("the model host did not start on 127.0.0.1")
             time.sleep(0.02)
         _write_address(self.data_dir, {"url": self.url, "pid": os.getpid(), "secret": self.secret,
@@ -253,6 +266,8 @@ class ModelHost:
             self._server.should_exit = True
         if self._thread is not None:
             self._thread.join(timeout=10.0)
+            if self._thread.is_alive():
+                raise RuntimeError("The legacy Core HTTP listener has not stopped")
 
 
 # ---- API side: forwarding ----------------------------------------------------------------------

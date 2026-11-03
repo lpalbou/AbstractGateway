@@ -1,0 +1,156 @@
+{
+  "themes": [
+    {
+      "theme": "dark",
+      "checks": {
+        "singleCatalogueRead": true,
+        "onePrimary": true,
+        "noSecondLoadingStep": true,
+        "regularGrid": true,
+        "capabilityMatrix": true,
+        "fullTitles": true,
+        "localSearch": true,
+        "emptyRecovery": true,
+        "downloadedStaysLocal": true,
+        "modelsOnly": true,
+        "downloadedGrid": true,
+        "downloadedMatrix": true,
+        "allKnownBuilds": true,
+        "focusRetained": true,
+        "collapsesToPrimary": true,
+        "recommendedName": true,
+        "advancedAdapters": true,
+        "localRefresh": true,
+        "viewport390": true,
+        "matrix390": true,
+        "readableCapabilities390": true,
+        "viewport320": true,
+        "matrix320": true,
+        "readableCapabilities320": true,
+        "healthy": true
+      },
+      "timing": {
+        "cardsMs": 1561,
+        "readyMs": 1567
+      },
+      "browse": {
+        "cards": 88,
+        "firstSixHeights": [
+          141,
+          141,
+          141,
+          141,
+          141,
+          141
+        ],
+        "regular": true,
+        "matrix": true,
+        "titles": true
+      },
+      "downloaded": {
+        "cards": 71,
+        "firstSixHeights": [
+          141,
+          141,
+          141,
+          141,
+          141,
+          141
+        ],
+        "regular": true,
+        "matrix": true,
+        "titles": true
+      },
+      "catalogueRequests": [
+        {
+          "path": "/api/gateway/models/catalog",
+          "query": ""
+        },
+        {
+          "path": "/api/gateway/models/catalog",
+          "query": ""
+        }
+      ]
+    },
+    {
+      "theme": "light",
+      "checks": {
+        "singleCatalogueRead": true,
+        "onePrimary": true,
+        "noSecondLoadingStep": true,
+        "regularGrid": true,
+        "capabilityMatrix": true,
+        "fullTitles": true,
+        "localSearch": true,
+        "emptyRecovery": true,
+        "downloadedStaysLocal": true,
+        "modelsOnly": true,
+        "downloadedGrid": true,
+        "downloadedMatrix": true,
+        "allKnownBuilds": true,
+        "focusRetained": true,
+        "collapsesToPrimary": true,
+        "recommendedName": true,
+        "advancedAdapters": true,
+        "localRefresh": true,
+        "viewport390": true,
+        "matrix390": true,
+        "readableCapabilities390": true,
+        "viewport320": true,
+        "matrix320": true,
+        "readableCapabilities320": true,
+        "healthy": true
+      },
+      "timing": {
+        "cardsMs": 2040,
+        "readyMs": 2053
+      },
+      "browse": {
+        "cards": 88,
+        "firstSixHeights": [
+          141,
+          141,
+          141,
+          141,
+          141,
+          141
+        ],
+        "regular": true,
+        "matrix": true,
+        "titles": true
+      },
+      "downloaded": {
+        "cards": 71,
+        "firstSixHeights": [
+          141,
+          141,
+          141,
+          141,
+          141,
+          141
+        ],
+        "regular": true,
+        "matrix": true,
+        "titles": true
+      },
+      "catalogueRequests": [
+        {
+          "path": "/api/gateway/models/catalog",
+          "query": ""
+        },
+        {
+          "path": "/api/gateway/models/catalog",
+          "query": ""
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "writes": [],
+  "touch": {
+    "expanded": true,
+    "oneRequest": true,
+    "viewport": true,
+    "targets": true
+  }
+}

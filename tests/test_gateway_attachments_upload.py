@@ -160,3 +160,49 @@ def test_gateway_attachments_upload_preserves_client_relative_source_path(tmp_pa
         tags = found.get("tags") or {}
         assert isinstance(tags, dict)
         assert tags.get("path") == "client:folder/sub/report.txt"
+
+
+def test_gateway_attachments_upload_stamps_dictation_recordings_as_voice_transport(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR 0047: a spoken question uploaded under the reserved voice/dictation/ path is voice transport —
+    tagged purpose=voice_dictation / artifact_space=voice and hidden from the default listing; a normal upload is not."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-attachments-dictation", flow_id="root")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+
+    from abstractgateway.app import app
+
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client:
+        spoken = client.post(
+            "/api/gateway/attachments/upload",
+            data={"session_id": "s3", "source_path": "voice/dictation/2f1c9d3e-1111-4222-8333-444455556666.wav"},
+            files={"file": ("2f1c9d3e-1111-4222-8333-444455556666.wav", b"RIFF-spoken", "audio/wav")},
+            headers=headers,
+        )
+        assert spoken.status_code == 200, spoken.text
+        spoken_id = spoken.json()["attachment"]["$artifact"]
+        assert spoken.json()["attachment"]["source_path"] == "client:voice/dictation/2f1c9d3e-1111-4222-8333-444455556666.wav"
+        memo = client.post(
+            "/api/gateway/attachments/upload",
+            data={"session_id": "s3", "source_path": "memos/my-recording.wav"},
+            files={"file": ("my-recording.wav", b"RIFF-memo", "audio/wav")},
+            headers=headers,
+        )
+        assert memo.status_code == 200, memo.text
+        memo_id = memo.json()["attachment"]["$artifact"]
+
+        default_items = client.get("/api/gateway/runs/session_memory_s3/artifacts", headers=headers).json()["items"]
+        assert [it["artifact_id"] for it in default_items] == [memo_id], default_items
+        everything = client.get("/api/gateway/runs/session_memory_s3/artifacts", params={"include_voice": True}, headers=headers).json()["items"]
+        by_id = {it["artifact_id"]: it["tags"] for it in everything}
+        assert by_id[spoken_id]["purpose"] == "voice_dictation" and by_id[spoken_id]["artifact_space"] == "voice"
+        assert by_id[spoken_id]["kind"] == "attachment" and by_id[spoken_id]["path"] == "client:voice/dictation/2f1c9d3e-1111-4222-8333-444455556666.wav"
+        assert "purpose" not in by_id[memo_id] and "artifact_space" not in by_id[memo_id]
+        # The recording itself still resolves (transport is hidden, never deleted).
+        content = client.get(f"/api/gateway/runs/session_memory_s3/artifacts/{spoken_id}/content", headers=headers)
+        assert content.status_code == 200 and content.content == b"RIFF-spoken"

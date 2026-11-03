@@ -32,7 +32,7 @@ import weakref
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from .model_host import CONFIG_ATTRS, ModelHostRemoteError, _portable_exception
+from .model_host import CONFIG_ATTRS, ModelHostRemoteError, ModelHostRequestError, _portable_exception
 
 SYNC_CALLBACK_TIMEOUT_S = 60.0
 _STRONG_HANDLES_MAX = 256
@@ -56,6 +56,9 @@ class _Host:
         self._ids = itertools.count(1)
         self._stores: Dict[str, Any] = {}
         self.lock = threading.Lock()
+        from .model_host_http import OptionalHTTP
+
+        self.http = OptionalHTTP(data_dir)
 
     def artifact_store(self, base: str) -> Any:
         with self.lock:
@@ -116,7 +119,10 @@ class _Channel:
 
     def send(self, msg: Tuple[Any, ...]) -> None:
         buf = io.BytesIO()
-        _ChildPickler(buf, self.host).dump(msg)
+        try:
+            _ChildPickler(buf, self.host).dump(msg)
+        except Exception as exc:
+            raise ModelHostRequestError(f"The model host response could not be encoded: {type(exc).__name__}: {exc}") from exc
         data = buf.getvalue()
         with self.send_lock:
             self.conn.send_bytes(data)
@@ -326,7 +332,7 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
     token = _current_channel.set(channel)
     try:
         if op == "ping":
-            channel.send(("ok", {"pid": os.getpid()}))
+            channel.send(("ok", {"pid": os.getpid(), "http": host.http.snapshot()}))
         elif op == "new":
             _, cid, kind, ctor = req
             client = _build_client(kind, ctor)
@@ -371,8 +377,7 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
                         f"the result of {method} ({type(result).__name__}) cannot cross to the gateway: {exc}",
                         remote_type=type(exc).__name__), None))
         elif op == "unreadable":
-            channel.send(("err", ModelHostRemoteError(f"the model host could not read this request: {req[1]}",
-                                                      remote_type=type(req[1]).__name__), None))
+            channel.send(("err", ModelHostRequestError(f"the model host could not read this request: {req[1]}"), None))
         else:
             channel.send(("err", ModelHostRemoteError(f"unknown model host request {op!r}"), None))
     except (OSError, EOFError):
@@ -479,16 +484,13 @@ def main() -> int:
         listener = Listener(address, family=family, authkey=authkey, backlog=64)
         if family == "AF_UNIX":
             os.chmod(address, 0o600)
-        from .split_mode import ModelHost
-
-        http = ModelHost(data_dir).start()
     except Exception as exc:  # noqa: BLE001 - reported to the supervisor, which records it
         traceback.print_exc()
         sys.stdout.write(json.dumps({"ready": False, "reason": f"{type(exc).__name__}: {exc}"}) + "\n")
         sys.stdout.flush()
         return 3
-    logger.info("model host pid %s: RPC on %s, Core's app on %s", os.getpid(), address, http.url)
-    sys.stdout.write(json.dumps({"ready": True, "pid": os.getpid(), "http": http.url}) + "\n")
+    logger.info("model host pid %s: native RPC on %s", os.getpid(), address)
+    sys.stdout.write(json.dumps({"ready": True, "pid": os.getpid()}) + "\n")
     sys.stdout.flush()
     # From here on, anything printed goes to the log: the gateway reads no more of our stdout, and
     # a full pipe would block whichever thread printed.
@@ -497,6 +499,7 @@ def main() -> int:
     # Warm the imports every client build needs (AbstractRuntime's client, Core's provider
     # registry) after the readiness line, so a restart is not slower and the first request does
     # not pay for them (a fresh interpreter: ~1 s on a Mac with MLX).
+    host.http.start()
     threading.Thread(target=_warm_imports, name="model-host-warm-imports", daemon=True).start()
     while True:
         try:

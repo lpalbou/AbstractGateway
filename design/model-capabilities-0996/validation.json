@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-30",
+  "implementation": "c332731e",
+  "pytest": {
+    "passed": 34,
+    "modules": [
+      "test_gateway_console_catalog.py",
+      "test_gateway_console_browser_catalog_cards.py",
+      "test_gateway_console_models_merged.py"
+    ]
+  },
+  "browser": {
+    "checks": 208,
+    "failures": []
+  },
+  "redeploy": {
+    "health": "healthy",
+    "model_inflight": 0,
+    "runner_inflight_ticks": 0,
+    "restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Deploy meaningful model capability badge explanations (0996)"
+    },
+    "after_health": "healthy"
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "checks": {
+          "textExplained": true,
+          "textAccessible": true,
+          "textThemed": true,
+          "textKeyboard": true,
+          "textEscape": true,
+          "thinkingExplained": true,
+          "thinkingAccessible": true,
+          "thinkingThemed": true,
+          "thinkingKeyboard": true,
+          "thinkingEscape": true,
+          "toolsExplained": true,
+          "toolsAccessible": true,
+          "toolsThemed": true,
+          "toolsKeyboard": true,
+          "toolsEscape": true,
+          "visionExplained": true,
+          "visionAccessible": true,
+          "visionThemed": true,
+          "visionKeyboard": true,
+          "visionEscape": true,
+          "noRedundantGroup": true,
+          "cardGeometry": true,
+          "narrowPlacement": true
+        },
+        "copies": {
+          "text": {
+            "title": "Text generation",
+            "description": "Produces text responses from prompts, such as chat, summaries and code."
+          },
+          "thinking": {
+            "title": "Thinking",
+            "description": "Can reason through a problem before giving its final answer. Useful for complex questions, but may take longer to respond."
+          },
+          "tools": {
+            "title": "Tool use",
+            "description": "Can request calls to tools supplied by the app, such as search or calculations. The app runs them under its permission rules."
+          },
+          "vision": {
+            "title": "Image input",
+            "description": "Understands images attached to a prompt, so you can ask about screenshots, photos and diagrams."
+          }
+        }
+      },
+      {
+        "theme": "light",
+        "checks": {
+          "textExplained": true,
+          "textAccessible": true,
+          "textThemed": true,
+          "textKeyboard": true,
+          "textEscape": true,
+          "thinkingExplained": true,
+          "thinkingAccessible": true,
+          "thinkingThemed": true,
+          "thinkingKeyboard": true,
+          "thinkingEscape": true,
+          "toolsExplained": true,
+          "toolsAccessible": true,
+          "toolsThemed": true,
+          "toolsKeyboard": true,
+          "toolsEscape": true,
+          "visionExplained": true,
+          "visionAccessible": true,
+          "visionThemed": true,
+          "visionKeyboard": true,
+          "visionEscape": true,
+          "noRedundantGroup": true,
+          "cardGeometry": true,
+          "narrowPlacement": true
+        },
+        "copies": {
+          "text": {
+            "title": "Text generation",
+            "description": "Produces text responses from prompts, such as chat, summaries and code."
+          },
+          "thinking": {
+            "title": "Thinking",
+            "description": "Can reason through a problem before giving its final answer. Useful for complex questions, but may take longer to respond."
+          },
+          "tools": {
+            "title": "Tool use",
+            "description": "Can request calls to tools supplied by the app, such as search or calculations. The app runs them under its permission rules."
+          },
+          "vision": {
+            "title": "Image input",
+            "description": "Understands images attached to a prompt, so you can ask about screenshots, photos and diagrams."
+          }
+        }
+      }
+    ],
+    "pageErrors": [],
+    "managementWrites": []
+  }
+}

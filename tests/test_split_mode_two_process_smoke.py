@@ -245,7 +245,7 @@ def test_split_mode_boots_runs_and_reports_itself(tmp_path: Path) -> None:
         models = client.get("/v1/models", headers={"Authorization": f"Bearer {ENDPOINT_TOKEN}"}, timeout=60.0)
         assert models.status_code == 200, models.text
         assert models.json().get("object") == "list"
-        assert "the OpenAI API's model host is on http://127.0.0.1:" in runner_log.read_text()
+        assert "optional Core HTTP listeners follow endpoint settings" in runner_log.read_text()
         # The API process built its runtime (it serves the run above) without its default model, and
         # /v1 built none there either: the model is the runner's alone.
         api_builds = [b for b in _provider_builds(provider_log) if b["pid"] == api.pid]

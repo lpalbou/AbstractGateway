@@ -42,7 +42,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Cloud providers**: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, **More settings** for the base URL and allowed models), then custom OpenAI-compatible servers; then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your named API keys (New key, Reveal, Copy, Revoke); Authentication, who may reveal keys and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
+| Models | **Multimodal** | capability route defaults (text, every media modality and **Decisions**, `output.decision`), the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login, last restart after a hang) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
 | System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically; manual allowed origins and *Trust proxies on other machines* are in the same card) ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
@@ -84,7 +84,10 @@ In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a
 provider lists no voices. The cloud voice providers (OpenAI,
 OpenAI-compatible) are always listed, marked "needs an API key" until you add
-one under **Providers**.
+one under **Providers**. The **Decisions** row (`output.decision`) offers the
+discovery catalog's decision models (AbstractCore's `decision` output modality,
+for example `mlx` / `jaredpalmer/kev-4b`); the setup guide's default-model step
+shows the same row ([api.md](./api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
@@ -688,7 +691,7 @@ list.
 
 - The card header is one line: the model's name, organisation, parameter count
   and licence, its capabilities (Text, Thinking, Tools, Vision, Audio,
-  Embedding, Voice, Image, Video) as small tags, and a **Starter** badge for the
+  Embedding, Voice, Image, Video, Decision) as small tags, and a **Starter** badge for the
   models of the recommended starter set.
 - The card body: one line per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
@@ -838,21 +841,37 @@ rest of the console keeps working.
 
 The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in [apps.md](./apps.md)). What a plain user sees on
-each card: the app's mark, name and status badge (Not installed, Stopped,
-Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
-description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height. Above
-the cards, one line names where the apps open: this browser's own address
-plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
-address the browser used to reach the gateway.
+each card: the app's illustration, its mark, name and status badge (Not
+installed, Stopped, Running, Installing, Stopped unexpectedly, Keeps
+crashing), a one-sentence description (two lines at most), and one
+row of launchers.
+Each launcher says where it opens: a globe for the web browser, a monitor for
+an app on the gateway's computer, `>_` for a terminal. An app family is one
+card: the **Assistant** card holds **Open in browser** (the web Assistant)
+and **Open on this Mac** (the desktop Assistant). Its one status badge shows
+both, each with its icon (globe Running · monitor Stopped), and each part
+starts or stops its own Assistant; the primary button is the Assistant
+installed on this computer (the web one first); the desktop Assistant's notes
+sit beside its button, and on that card each Install says what it installs (**Install browser app**,
+**Install desktop app**). When the gateway cannot list its apps, the tab shows
+the reason only. The words and
+pictures come from the gateway's app registry ([apps.md](./apps.md#registering-an-app)).
+The button rows of the cards side by side are always at the same height. At
+the top right, **Refresh** (an icon button: it asks again which apps are
+installed and whether updates exist) sits beside the Apps settings gear. Apps
+open at this browser's own address plus `/apps/<app>/`, whatever address the
+browser used to reach the gateway. Node.js (what the browser apps run on) is a
+card with **Install Node.js** only when it is missing, while it installs, or
+after a failed install; when it is ready, **Technical details** show it as one
+quiet line ("Node.js 24.14.0 · found on this computer" and its path).
 
 | The app is | The action row |
 |---|---|
 | not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
 | installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
 | an install failed | the reason, **Show details**, and **Install** again |
-| installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
-| installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
+| installed and running | **Open in browser** (a new tab at `/apps/<app>/`, already signed in) |
+| installed but stopped, or crashed | **Open in browser** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
 The status badge is the start/stop control (R11.3), one click as Install is:
 **Running** stops the app ("Running — click to stop"), **Stopped** (or a
@@ -868,7 +887,7 @@ an admin can start or stop apps"). There is no separate Stop or Start button,
 not even under **Technical details**. The words come from the gateway
 (`status_control` on each row, [apps.md](./apps.md#http-api)).
 
-Code has a terminal version too. Next to Code's Open: **Open in Terminal**
+Code has a terminal version too. Next to Code's **Open in browser**: **Open in Terminal**
 when the terminal version is installed and the browser is on the gateway
 machine (a new terminal window opens there, signed in). The plain view never
 installs the terminal version on its own: Code's Install installs both. When

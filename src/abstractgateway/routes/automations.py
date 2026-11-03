@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict
 
 # Runtime seams (automations contracts A-E): imported directly, so a runtime
 # without them fails at import, never silently.
-from abstractruntime.automation_queries import ChangedSinceUnsupported, InvalidCursor, automation_summary, list_automations
+from abstractruntime.automation_queries import ChangedSinceUnsupported, automation_summary
 from abstractruntime.automations.attention import (
     list_attention,
     normalize_occurrence_output,
@@ -74,6 +74,12 @@ from ..automation_defaults import (
     validate_flow_automation_defaults,
 )
 from ..automation_errors import AutomationError
+from ..automation_order import InvalidOrderCursor, automation_section
+from ..automation_order import decode_cursor as decode_order_cursor
+from ..automation_order import order_key as automation_order_key
+from ..automation_order import ordered as ordered_automations
+from ..automation_order import page as order_page
+from ..automation_order import section_counts as automation_section_counts
 from ..automation_pause_reasons import clear_pause_reason, pause_reason
 from ..automation_schedule import first_run_sentence, is_schedule_v2, owner_time_zone, schedule_fields, trigger_time_zone, with_time_zone
 from ..run_retention import resolve_gateway_run_workspace, write_gateway_workspace_marker
@@ -465,6 +471,9 @@ def automation_summary_row(
         "legacy": False,
         "revision": base["revision"],
         "updated_at": controller.updated_at,
+        # ADR 0048: the list section the row is drawn in and the instant the listing orders by.
+        "section": automation_section(status),
+        "last_activity_at": controller.updated_at,
         "capabilities": _capabilities(status),
         "session_kind": "automation",
     }
@@ -540,6 +549,8 @@ def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = 
         "legacy": True,
         "revision": None,
         "updated_at": legacy["updated_at"],
+        "section": automation_section(legacy["status"]),
+        "last_activity_at": legacy["updated_at"],
         "capabilities": ["legacy"],
         "session_kind": "automation",
     }
@@ -1189,6 +1200,10 @@ def invalidate_automations_listing(svc: Any) -> None:
 
 
 def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
+    """One page of this principal's automations in the listing order (`automation_order`, ADR
+    0048): active ones first, then paused ones, each by last activity, newest first. Every
+    controller is loaded once per computation: its status and `updated_at` place it, and only the
+    rows of the page are projected into summaries."""
     if archived_only and status:
         raise AutomationError(422, "invalid_request", "archived_only and status cannot be combined", field="archived_only")
     wanted = filter_values(status) if status else None
@@ -1201,48 +1216,68 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     else:
         # Archived automations leave the default listing (archived_only=true lists them).
         wanted = [s for s in AUTOMATION_STATUSES if s != "archived"]
+    if cursor:
+        try:
+            decode_order_cursor(cursor)
+        except InvalidOrderCursor as e:
+            raise AutomationError(422, "invalid_request", str(e), field="cursor")
     run_store = svc.host.run_store
     owner_zone = principal_time_zone(svc, principal)
     controller_rows, legacy_rows = _index_rows(run_store)
-    try:
-        # The status filter rides the runtime's page so a page is never short of what it hides.
-        page = list_automations(run_store, status=list(wanted), cursor=cursor, limit=limit, index_rows=controller_rows)
-    except InvalidCursor as e:
-        raise AutomationError(422, "invalid_request", str(e), field="cursor")
-    # Every run waiting on a person, from ONE read of the WAITING index, for the whole page.
-    waits_by_automation = pending_waits_by_automation(run_store, limit=_ITEMS_MAX)
-    items: List[Dict[str, Any]] = []
-    for row in page.items:
-        controller = run_store.load(str(row["automation_id"]))
+    statuses: List[str] = []
+    entries: List[Tuple[Any, Tuple[str, Any]]] = []
+    for row in controller_rows:
+        controller = run_store.load(str(row["run_id"]))
         if controller is None:
-            _forget_index_row(run_store, str(row["automation_id"]))
+            _forget_index_row(run_store, str(row["run_id"]))
             continue
         try:
-            summary = automation_summary_row(
-                svc, principal, controller, owner_zone=owner_zone, waits=waits_by_automation.get(str(controller.run_id), [])
-            )
-        except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError) as e:
-            # One malformed row must never take the whole list down (review 47 P2-1).
-            logger.warning("automations list: skipping malformed automation %s: %s", row.get("automation_id"), e)
+            st = automation_status(controller)
+        except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError, AttributeError) as e:
+            logger.warning("automations list: skipping malformed automation %s: %s", row.get("run_id"), e)
             continue
-        if wanted is None or summary["status"] in wanted:
-            items.append(summary)
-    # Legacy scheduled roots: projected once, for the last page and the archived count.
-    legacy_rows = sorted(legacy_rows, key=lambda r: (str(r.get("created_at") or ""), str(r.get("run_id") or "")), reverse=True)
-    legacy: List[Dict[str, Any]] = []
+        statuses.append(st)
+        if st in wanted:
+            key = automation_order_key(status=st, last_activity_at=controller.updated_at, automation_id=str(controller.run_id))
+            entries.append((key, ("controller", controller)))
+    # Legacy scheduled roots: projected read-only, placed by the same rule.
     for row in legacy_rows:
         run = run_store.load(str(row["run_id"]))
         if run is None:
             _forget_index_row(run_store, str(row["run_id"]))
             continue
-        legacy.append(legacy_summary_row(run, run_store, owner_zone=owner_zone))
-    if page.next_cursor is None:
-        # Legacy scheduled roots ride the LAST page: a client paging through
-        # every page sees each of them exactly once.
-        items.extend(summary for summary in legacy if wanted is None or summary["status"] in wanted)
-    archived = len(list_automations(run_store, status="archived", limit=1_000_000, index_rows=controller_rows).items)
-    archived += sum(1 for summary in legacy if summary["status"] == "archived")
-    return {"items": items, "next_cursor": page.next_cursor, "archived_automations": archived}
+        summary = legacy_summary_row(run, run_store, owner_zone=owner_zone)
+        statuses.append(summary["status"])
+        if summary["status"] in wanted:
+            key = automation_order_key(status=summary["status"], last_activity_at=summary.get("updated_at"), automation_id=str(summary["automation_id"]))
+            entries.append((key, ("legacy", summary)))
+    # Every run waiting on a person, from ONE read of the WAITING index, for the whole page.
+    rows, next_cursor = order_page(ordered_automations(entries), cursor=cursor, limit=limit)
+    waits_by_automation = pending_waits_by_automation(run_store, limit=_ITEMS_MAX) if any(k == "controller" for _key, (k, _o) in rows) else {}
+    items: List[Dict[str, Any]] = []
+    for _key, (kind, obj) in rows:
+        if kind == "controller":
+            try:
+                summary = automation_summary_row(
+                    svc, principal, obj, owner_zone=owner_zone, waits=waits_by_automation.get(str(obj.run_id), [])
+                )
+            except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError) as e:
+                # One malformed row must never take the whole list down (review 47 P2-1).
+                logger.warning("automations list: skipping malformed automation %s: %s", obj.run_id, e)
+                continue
+        else:
+            summary = obj
+        items.append(summary)
+    counts = automation_section_counts(statuses)
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        # Counts, named `*_count` (a bundle route's `paused_automations` is a list of ids);
+        # `archived_automations` is the same count, kept for the clients that read it.
+        "paused_automations_count": counts["paused"],
+        "archived_automations_count": counts["archived"],
+        "archived_automations": counts["archived"],
+    }
 
 
 def _principal_list_key(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool) -> Any:
@@ -1288,12 +1323,16 @@ async def list_automations_route(
     cursor: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     changed_since: Optional[str] = Query(None, description="Not supported in v1 (422 unsupported_feature): poll full pages."),
-    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `archived_automations` (how many this principal has archived)."),
+    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `paused_automations_count` and `archived_automations_count` (how many this principal has paused and archived; `archived_automations` is the same count)."),
 ) -> Dict[str, Any]:
-    """Every automation of this principal, newest first, as full pages; legacy
-    `scheduled:*` roots follow on the last page with `legacy: true`. Archived
+    """Every automation of this principal as full pages, in the listing order
+    (ADR 0048, `automation_order`): active ones first, then paused ones, each by
+    `last_activity_at`, newest first; every row carries its `section`. Legacy
+    `scheduled:*` roots are placed by the same rule (`legacy: true`). Archived
     automations are listed only with `archived_only=true` (or an explicit
-    `status` naming `archived`). Identical concurrent requests share one
+    `status` naming `archived`). The answer counts this principal's paused
+    (`paused_automations_count`) and archived (`archived_automations_count`) automations on
+    every page. Identical concurrent requests share one
     computation; its answer is kept a few seconds, dropped by any change this
     gateway records (see `_ListMemo`)."""
     principal = _principal_from_request(request)

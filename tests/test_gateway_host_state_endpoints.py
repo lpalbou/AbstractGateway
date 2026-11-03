@@ -254,6 +254,32 @@ def test_host_state_omits_host_block_when_memory_snapshot_lacks_one(
     assert "host" not in resp.json()
 
 
+def test_host_state_system_observations_are_additive_and_failure_is_isolated(tmp_path, monkeypatch):
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractgateway import host_system_metrics
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_FullStubHostFacade(), None))
+    _patch_gpu(monkeypatch, {"supported": True, "utilization_gpu_pct": 0})
+    expected = {"ts": 123.0, "cpu": {"supported": True, "utilization_pct": None, "reason": "Collecting the first interval"}}
+    monkeypatch.setattr(host_system_metrics, "get_host_system_metrics", lambda data_dir: expected)
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        response = client.get("/api/gateway/host/state", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["system"] == expected
+        assert response.json()["memory"]["ram"] == _MEMORY_SNAPSHOT["ram"]
+
+        def fail(data_dir):
+            raise OSError("volume not readable")
+
+        monkeypatch.setattr(host_system_metrics, "get_host_system_metrics", fail)
+        response = client.get("/api/gateway/host/state", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["system"]["supported"] is False
+        assert "volume not readable" in response.json()["system"]["reason"]
+        assert response.json()["memory"]["ram"] == _MEMORY_SNAPSHOT["ram"]
+
+
 def test_host_state_partial_facade_degrades_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 

@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..work_pools import off_loop
@@ -1718,6 +1718,7 @@ def _visit_host():
 
 class OpenVisitRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Stable session id (None = minted)")
+    conversation: Optional[bool] = Field(default=None, strict=True, description="Opt in to public conversational updates for this visit")
     tool_policy: Optional[SessionToolPolicy] = Field(
         default=None,
         description="Optional visitor-scoped policy: modes=null inherits the home's tools; modes={} disables all. Omit to retain legacy visit behavior.",
@@ -1772,8 +1773,10 @@ def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
         if req.tool_policy is not None:
             from ..entity_session_tools import open_session
 
-            return open_session(_visit_host(), name, session_id=req.session_id, modes=req.tool_policy.modes)
-        return _visit_host().open(name, participants=[visitor], session_id=req.session_id)
+            return open_session(_visit_host(), name, session_id=req.session_id, modes=req.tool_policy.modes,
+                                conversation=req.conversation)
+        options = {"conversation": req.conversation} if req.conversation is not None else {}
+        return _visit_host().open(name, participants=[visitor], session_id=req.session_id, **options)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:
@@ -2874,6 +2877,7 @@ def entity_seat(name: str) -> Dict[str, Any]:
 
 
 class SummonEntityRequest(BaseModel):
+    conversation: Optional[bool] = Field(default=None, strict=True, description="Opt in to public conversational updates")
     # Boundary validation (flow c5253 P1-3): an empty prompt used to be
     # accepted here and die 2.5s later inside the run as "MEMORY_PROBE
     # op=probe requires payload.cue" — engine jargon for an input the door
@@ -3287,6 +3291,8 @@ def _summon_core(
     participants: List[str] = [f"person:{caller_id}", home.entity_id]
 
     input_data: Dict[str, Any] = dict(req.input_data or {})
+    from .gateway import _apply_conversation_opt_in
+    _apply_conversation_opt_in(input_data, req.conversation)
     # The client's workspace knobs get the same policy check as /runs/start
     # (400 when refused); the host then gives the run its workspace and the
     # built-in tool deny rule (run_workspace_guard.py).
@@ -5468,14 +5474,15 @@ async def entity_voice_tts(name: str, req: "GatewayVoiceTTSRequest") -> Dict[str
 
 
 @router.post("/{name}/voice/tts/stream")
-async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest"):
+async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest", request: Request):
     """Streaming twin of the entity TTS lane — same resolution, same
     delegation; `X-Voice-Source` rides the response headers (the JSONL
-    stream body is the generic route's, byte-unchanged)."""
+    stream body is the generic route's, byte-unchanged). `request` carries
+    the audit detail the generic route fills (voice_stream counters)."""
     from .gateway import voice_tts_stream
 
     manifest, tts_req, scope, source = _entity_tts_request(name, req)
-    response = await voice_tts_stream(scope, tts_req)
+    response = await voice_tts_stream(scope, tts_req, request)
     try:
         response.headers["X-Voice-Source"] = source
         response.headers["X-Entity"] = manifest.slug

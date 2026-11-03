@@ -353,6 +353,17 @@ Higher apps should feature-detect music from
 `capabilities.contracts.flow_editor.media.generated_music` or
 `capabilities.contracts.assistant.media.generated_music`.
 
+Decisions (AbstractCore's `decision` output modality: yes/no, choice and score
+answers about a text, with confidence; no text, no artifact) use the same direct
+child-run pattern and need a decision model on the `output.decision` route:
+
+```text
+POST /api/gateway/runs/{run_id}/decisions
+```
+
+Feature-detect it from `capabilities.contracts.flow_editor.decision` or
+`capabilities.contracts.assistant.decision`; see [api.md](./api.md#decisions).
+
 ### What is `voice.listen` in the capabilities contract?
 
 `voice.listen` is not a live server-side microphone transport. It is a

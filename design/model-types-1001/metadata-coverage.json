@@ -1,0 +1,18 @@
+{
+  "seconds": 1.069,
+  "counts": {
+    "rows": 224,
+    "artifacts": 522,
+    "installed": 140,
+    "discovered": 122
+  },
+  "kinds": {
+    "model": 142,
+    "adapter": 44,
+    "unknown": 26,
+    "component": 12
+  },
+  "adapter_metadata": 44,
+  "declared_base": 41,
+  "with_triggers": 0
+}

@@ -49,6 +49,7 @@ pytest.importorskip("yaml")
 PUBLIC_ROUTES: set[tuple[str, str]] = {
     ("GET", "/"),  # redirect to /console (no data)
     ("GET", "/console"),  # static operator HTML; every API call it makes is authenticated
+    ("GET", "/console/assets/apps/{name}"),  # Apps-card illustrations: registry-allowlisted package images
     ("GET", "/docs"),  # offline OpenAPI viewer (static HTML)
     ("GET", "/redoc"),  # offline OpenAPI viewer (static HTML)
     ("GET", "/openapi.json"),  # FastAPI schema (route shapes only, no data)
@@ -183,6 +184,11 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # notice it showed, in the caller's own stream only (no parameter names another person).
     ("POST", "/api/gateway/me/events/notifications"),
     ("POST", "/api/gateway/me/events/seen"),
+    # Conversation read receipts (routes/session_reads.py): the caller marks turns of its own
+    # sessions read in ITS OWN receipt ledger (keyed by the request principal's tenant and user);
+    # the run is only read to check it is a conversation turn root of that session; execution is
+    # never modified (test_session_reads.py: isolation between accounts, no run mutation).
+    ("POST", "/api/gateway/me/session-reads"),
     # Apple push (backlog 1049): the caller registers or forgets ITS OWN devices; the plane and the
     # principal come from the request (a device of another principal is never touched; a token the
     # caller registers leaves other registrations because the caller holds that token).
@@ -338,6 +344,7 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/runs/{run_id}/images/edit"),
     ("POST", "/api/gateway/runs/{run_id}/images/upscale"),
     ("POST", "/api/gateway/runs/{run_id}/music/generate"),
+    ("POST", "/api/gateway/runs/{run_id}/decisions"),
     ("POST", "/api/gateway/runs/{run_id}/videos/generate"),
     ("POST", "/api/gateway/runs/{run_id}/videos/from_image"),
     ("POST", "/api/gateway/runs/{run_id}/voice/tts"),
@@ -431,6 +438,16 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/entities/{name}/visit/{run_id}/tool-policy"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/decision"),
     ("POST", "/api/gateway/entities/{name}/visit/{run_id}/end"),
+    # A person's live correction and answer to a conversational question in
+    # their own visit (routes/session_tools.py -> entity_session_tools
+    # guide_visit / answer_question): both refuse a caller who is not a
+    # participant of the visit (_participant: 404, and require_owner for a
+    # managed visit), refuse a paused entity, and only queue guidance or
+    # resume the visit's own pending question wait (a child run must descend
+    # from the visit). Same chat class as turn; proven in
+    # test_entity_conversation_opt_in.py (another owner gets 404).
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/guidance"),
+    ("POST", "/api/gateway/entities/{name}/visit/{run_id}/answer"),
     ("POST", "/api/gateway/entities/meets/open"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/relay"),
     ("POST", "/api/gateway/entities/meets/{meet_id}/close"),

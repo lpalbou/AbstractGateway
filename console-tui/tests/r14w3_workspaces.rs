@@ -84,7 +84,7 @@ fn inside_modal(s: &str) -> String {
 fn flat(s: &str) -> String {
     let s = &inside_modal(s);
     s.lines()
-        .map(|l| l.trim_matches(|c| c == '│' || c == ' ' || c == '┃'))
+        .map(|l| l.trim_matches(|c| c == '│' || c == ' ' || c == '┃' || c == '█' || c == '▏'))
         .collect::<Vec<_>>()
         .join(" ")
         .split_whitespace()

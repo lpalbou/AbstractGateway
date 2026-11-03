@@ -78,7 +78,7 @@ sign-in (a one-time link from section 3, the admin token, a code sent by
 email), an admin setting the admin's password from the Accounts page, or an
 admin creating another account. When
 it closes, unused one-time links are deleted. A data folder that already had
-accounts when the gateway was upgraded to 0.18.0 is never "fresh": it keeps
+accounts when the gateway was upgraded to 0.19.0 is never "fresh": it keeps
 the sign-in form.
 
 **Limits.** 5 wrong setup codes from one address, or 20 from all addresses

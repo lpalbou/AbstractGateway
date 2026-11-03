@@ -112,7 +112,9 @@ _role_lock = threading.Lock()
 # 0.15.3: the run store's change token holds across the index build (JsonFileRunStore; AbstractRuntime
 #         backlog 0864, gateway 0965). 0.15.2 moved it on every boot, so the mail collector's change-driven
 #         pass reloaded every finished run; 0.15.2 is below the floor although its API is the same.
-ABSTRACTRUNTIME_FLOOR = "0.15.3"
+# 0.16.0: `run_facade.decide` (the `decision` output modality: POST /runs/{run_id}/decisions) and the
+#         `decide` flow node.
+ABSTRACTRUNTIME_FLOOR = "0.16.0"
 
 
 def _installed_runtime_version() -> str:
@@ -944,6 +946,13 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("ledger rows by address (LedgerStore.get_record, AbstractRuntime 0.15.0)")
     except ImportError:
         missing.append("the AbstractMemory facade (abstractruntime.integrations.abstractmemory.memory_facade.MemoryFacade)")
+    try:
+        from abstractruntime.integrations.abstractcore.run_facade import AbstractCoreRunFacade
+
+        if not callable(getattr(AbstractCoreRunFacade, "decide", None)):
+            missing.append("durable decisions (AbstractCoreRunFacade.decide, AbstractRuntime 0.16.0)")
+    except ImportError:
+        missing.append("the AbstractCore run facade (abstractruntime.integrations.abstractcore.run_facade.AbstractCoreRunFacade)")
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
