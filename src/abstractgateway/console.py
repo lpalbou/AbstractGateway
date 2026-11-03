@@ -619,6 +619,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
     @media (pointer: coarse) { .af-drawer__close { width: var(--tap-min, 44px); height: var(--tap-min, 44px); } }
 		    .workspace-shell { display: grid; gap: 16px; }
+		    .console-footer { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); text-align: center; }
 		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
 		       tab-button class + ids survive so the wiring and tests hold. */
 		    .tab-button.shell_nav_item {
@@ -3024,6 +3025,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          </div>
 	        </div>
 	      </div>
+	      <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	    </div>
 	  </main>
 	  </div><!-- /shell_main -->
@@ -3265,6 +3267,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
 	              <div id="first-run-done-body"></div>
 	            </section>
+	            <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	          </div>
 	        </div>
 	        <footer class="first-run-footer">

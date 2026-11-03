@@ -201,7 +201,9 @@ try {
   check((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim() === "Not connected", "Anthropic card: Not connected");
   check(await page.$(`${cloud("openrouter")} .af-brand-mark svg`) !== null, "OpenRouter card shows its official mark");
   check(await page.$(`${cloud("openai")} .af-brand-mark svg`) !== null, "OpenAI card shows its official mark");
-  check(await page.$(`${card("ollama")} .af-brand-mark svg`) !== null, "Ollama engine card shows its official mark");
+  // Backlog 1100: brands awaiting written permission show their name, no logo.
+  check(await page.$(`${card("ollama")} .af-brand-mark svg`) === null && (await page.textContent(`${card("ollama")} .af-brand-mark--text`)).trim() === "Ollama", "Ollama engine card shows its name badge, no logo");
+  check(await page.$(`${cloud("anthropic")} .af-brand-mark svg`) === null && (await page.textContent(`${cloud("anthropic")} .af-brand-mark--text`)).trim() === "Anthropic", "Anthropic card shows its name badge, no logo");
   // Kit 0.9.12: ONE button per card (Connect / Edit), no field on the card; the modal does the rest.
   check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Connect" && (await page.textContent(`${cloud("openai")} button`)).trim() === "Edit", "Connect when nothing is stored, Edit when connected");
   check((await page.$$(`#cloud-providers-root [data-cloud-provider] input`)).length === 0, "no field on a cloud card");
