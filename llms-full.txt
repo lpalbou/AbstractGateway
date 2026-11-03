@@ -1621,7 +1621,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.16.0` (decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.17.0` (a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -3168,8 +3168,11 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   over the saved setting, which wins over 60. A model kept loaded (**Keep loaded**) never unloads this
   way, and the gateway records the lock (`models.kept_loaded`): it is set again after a gateway or
   model-host restart. A model unloaded with **Force unload** is no longer kept. The Models page and
-  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min" or "Kept loaded:
-  never unloads". Needs AbstractRuntime 0.18 or later; an older runtime is reported in the log.
+  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min", "Kept loaded:
+  never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
+  loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
+  LM Studio, llama.cpp server) keeps its own rule. Needs AbstractRuntime 0.18 or later; an older runtime
+  is reported in the log.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -8339,9 +8342,12 @@ model despite the lock. Every other unload outcome stays in-band at 200.
   A confirmed lock is recorded in the gateway's settings (`models.kept_loaded`) and
   set again after a gateway or model-host restart; an unlock, or an unload with
   `force`, removes the record.
-- Idle unload: rows also carry `last_used_at`, `in_use`, `locked_by` and
-  `idle_unload_at` as the runtime reports them (`idle_unload_at` is null when the
-  model is locked, in use, or idle unload is off). The time is the setting
+- Idle unload: rows also carry `idle_unload_s` (the time in effect in seconds, `0`
+  when it is off, null when the runtime reports nothing, as for an external engine),
+  `idle_unload_at` and `last_used_at` (ISO times; the runtime's epoch seconds are
+  converted), `in_use` and `locked_by`, as the runtime reports them
+  (`idle_unload_at` is null when the model is locked, in use, or idle unload is
+  off). The time is the setting
   `models.idle_unload_minutes` (`GET/POST /api/gateway/admin/runtime-config`,
   default 60, `0` never; `serve --model-idle-unload MINUTES` wins for one run).
 - `GET /models/context_estimate?provider=&model=&context_length=` (any
@@ -10187,7 +10193,8 @@ you can click.
   - **▣ Models** has the **Show configured / cached** switch (`a`; resident models only by default) and **Load model** (`w`, a dialog with Provider, Model, the **lock in memory** switch and **[Cancel] [Load model]**). Its table has the columns **Modality**, **Provider**, **Model**, **Resident**, **Size**, **Context**, **Flags** and **Actions**. Row buttons: **Estimate** (`e`), **Lock** / **Unlock** (`k`) and **Unload** (`u`).
     - Unload asks **[Unload] [Cancel]**; a locked model then asks **[Force unload] [Cancel]**.
     - The selected model's facts line ends with the idle-unload line the web Models page shows:
-      "Unused for 12 min, unloads in 48 min", or "Kept loaded: never unloads".
+      "Unused for 12 min, unloads in 48 min", "Kept loaded: never unloads", "In use now" or
+      "Stays loaded: unloading unused models is off" (nothing when the runtime reports nothing).
     - Unlock asks **[Unlock] [Cancel]**.
   - **⌸ Session caches** has the columns **Session**, **Model**, **Size**, **Tokens**, **Created** and **Actions**, with **Clear** (`c`; **[Clear] [Cancel]**).
   Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.

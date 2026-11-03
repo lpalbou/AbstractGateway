@@ -2853,9 +2853,12 @@ model despite the lock. Every other unload outcome stays in-band at 200.
   A confirmed lock is recorded in the gateway's settings (`models.kept_loaded`) and
   set again after a gateway or model-host restart; an unlock, or an unload with
   `force`, removes the record.
-- Idle unload: rows also carry `last_used_at`, `in_use`, `locked_by` and
-  `idle_unload_at` as the runtime reports them (`idle_unload_at` is null when the
-  model is locked, in use, or idle unload is off). The time is the setting
+- Idle unload: rows also carry `idle_unload_s` (the time in effect in seconds, `0`
+  when it is off, null when the runtime reports nothing, as for an external engine),
+  `idle_unload_at` and `last_used_at` (ISO times; the runtime's epoch seconds are
+  converted), `in_use` and `locked_by`, as the runtime reports them
+  (`idle_unload_at` is null when the model is locked, in use, or idle unload is
+  off). The time is the setting
   `models.idle_unload_minutes` (`GET/POST /api/gateway/admin/runtime-config`,
   default 60, `0` never; `serve --model-idle-unload MINUTES` wins for one run).
 - `GET /models/context_estimate?provider=&model=&context_length=` (any

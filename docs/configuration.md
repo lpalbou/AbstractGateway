@@ -1586,8 +1586,11 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   over the saved setting, which wins over 60. A model kept loaded (**Keep loaded**) never unloads this
   way, and the gateway records the lock (`models.kept_loaded`): it is set again after a gateway or
   model-host restart. A model unloaded with **Force unload** is no longer kept. The Models page and
-  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min" or "Kept loaded:
-  never unloads". Needs AbstractRuntime 0.18 or later; an older runtime is reported in the log.
+  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min", "Kept loaded:
+  never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
+  loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
+  LM Studio, llama.cpp server) keeps its own rule. Needs AbstractRuntime 0.18 or later; an older runtime
+  is reported in the log.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
