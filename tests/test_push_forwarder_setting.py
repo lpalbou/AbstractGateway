@@ -19,6 +19,7 @@ from abstractgateway.events_stream import stream_for
 from abstractgateway.push import settings as push_settings
 from abstractgateway.push.dispatcher import PushDispatcher, collapse_id
 from abstractgateway.push.store import DeviceStore
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 SETTINGS = "/api/gateway/push/settings"
 DEVICES = "/api/gateway/me/push/devices"
@@ -34,7 +35,7 @@ def _no_flag():
 
 def _wait(pred, timeout: float = 15.0) -> None:
     t0 = time.monotonic()
-    while time.monotonic() - t0 < timeout:
+    while time.monotonic() - t0 < patient(timeout):
         if pred():
             return
         time.sleep(0.02)

@@ -188,3 +188,21 @@ def test_non_admin_is_refused_on_every_mcp_write(env) -> None:
     assert listing.status_code == 403
     assert listing.json()["detail"]["message"] == "Only an admin can see the MCP servers of this gateway."
     assert client.get("/api/gateway/mcp/servers", headers=ADMIN).status_code == 200
+
+
+def test_the_client_timeout_is_a_backstop_past_the_test_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The connection test's own deadline decides and reports ("did not answer initialize within N
+    seconds"); the MCP client's request timeout is set past it, so it can never fire first with its
+    own wording (local gate b9149042, 3.13: both were 1.0 s and the client's won)."""
+    import abstractgateway.mcp_registry as reg
+    from abstractruntime.integrations.abstractcore import mcp_facade
+
+    seen = {}
+
+    def fake_open(**kw):
+        seen.update(kw)
+        raise FileNotFoundError("x")
+
+    monkeypatch.setattr(mcp_facade, "open_mcp_client", fake_open)
+    reg.run_connection_test({"transport": "stdio", "command": "x", "args": []}, {}, timeout_s=1.0)
+    assert seen["timeout_s"] == 1.0 + reg.CLIENT_TIMEOUT_GRACE_S and reg.CLIENT_TIMEOUT_GRACE_S > 0

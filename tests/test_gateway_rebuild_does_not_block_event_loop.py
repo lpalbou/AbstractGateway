@@ -17,6 +17,7 @@ Off the loop, the rebuild costs the same but the gateway keeps answering.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -24,15 +25,32 @@ import httpx
 import pytest
 
 from test_gateway_prompt_cache_endpoints import _make_client
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 REBUILD_S = 1.2
 _REBUILD_STARTED_AT: list[float] = []
+# The rebuild holds until /api/health has answered (or REBUILD_S, patiently, passes). Off the
+# loop, health answers while the rebuild still holds; on the loop, health cannot be served until
+# the rebuild gives up, so `_REBUILD_ENDED` is already set when it answers. An ordering check,
+# not a stopwatch: a slow machine cannot turn it red.
+_HEALTH_ANSWERED = threading.Event()
+_REBUILD_ENDED: list[bool] = []
+
+
+def _hold_rebuild() -> dict:
+    _REBUILD_STARTED_AT.append(time.perf_counter())
+    _REBUILD_ENDED.append(_HEALTH_ANSWERED.wait(timeout=patient(REBUILD_S)))
+    return {"ok": True, "bundle_ids": [], "count": 0}
+
+
+def _reset() -> None:
+    _REBUILD_STARTED_AT.clear()
+    _REBUILD_ENDED.clear()
+    _HEALTH_ANSWERED.clear()
 
 
 def _slow_rebuild(self):  # stands in for "recompile everything and reload a 15 GB model"
-    _REBUILD_STARTED_AT.append(time.perf_counter())
-    time.sleep(REBUILD_S)
-    return {"ok": True, "bundle_ids": [], "count": 0}
+    return _hold_rebuild()
 
 
 def test_health_is_answered_while_a_rebuild_is_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,19 +73,22 @@ def test_health_is_answered_while_a_rebuild_is_running(tmp_path: Path, monkeypat
                     await asyncio.sleep(0.01)
                 health = await http.get("/api/health")
                 # If the loop is blocked, the wait above cannot even wake until the
-                # rebuild returns, so this reads >= REBUILD_S. Off the loop it is ~0.
+                # rebuild returns. Off the loop, health answers while the rebuild holds.
+                rebuild_already_ended = bool(_REBUILD_ENDED)
+                _HEALTH_ANSWERED.set()
                 waited = time.perf_counter() - _REBUILD_STARTED_AT[0]
                 response = await rebuild
-                return waited, response.status_code, health.status_code
+                return rebuild_already_ended, waited, response.status_code, health.status_code
 
-        _REBUILD_STARTED_AT.clear()
-        waited, rebuild_status, health_status = asyncio.run(scenario())
+        _reset()
+        rebuild_already_ended, waited, rebuild_status, health_status = asyncio.run(scenario())
 
     assert rebuild_status == 200 and health_status == 200
-    assert waited < REBUILD_S / 2, (
-        f"/api/health was answered {waited:.2f}s after a {REBUILD_S}s host rebuild BEGAN — "
+    assert not rebuild_already_ended, (
+        "/api/health was answered only after the host rebuild had returned — "
         "the rebuild ran on the event loop and nothing else could be served"
     )
+    timing_budget(waited, REBUILD_S / 2, "/api/health behind a running host rebuild")
 
 
 # R16.2: every route that writes a workflow registry reloads OFF the event loop — the
@@ -97,9 +118,7 @@ def test_every_publish_route_reloads_off_the_event_loop(route: str, tmp_path: Pa
             assert res.status_code == 200, res.text
 
         def _slow(self, *, full: bool = False):  # noqa: ARG001
-            _REBUILD_STARTED_AT.append(time.perf_counter())
-            time.sleep(REBUILD_S)
-            return {"ok": True, "bundle_ids": [], "count": 0}
+            return _hold_rebuild()
 
         monkeypatch.setattr(WorkflowBundleGatewayHost, "reload_bundles_from_disk", _slow)
 
@@ -118,12 +137,15 @@ def test_every_publish_route_reloads_off_the_event_loop(route: str, tmp_path: Pa
                 while not _REBUILD_STARTED_AT:
                     await asyncio.sleep(0.01)
                 health = await http.get("/api/health")
+                rebuild_already_ended = bool(_REBUILD_ENDED)
+                _HEALTH_ANSWERED.set()
                 waited = time.perf_counter() - _REBUILD_STARTED_AT[0]
                 response = await task
-                return waited, response.status_code, health.status_code
+                return rebuild_already_ended, waited, response.status_code, health.status_code
 
-        _REBUILD_STARTED_AT.clear()
-        waited, status, health_status = asyncio.run(scenario())
+        _reset()
+        rebuild_already_ended, waited, status, health_status = asyncio.run(scenario())
 
     assert status == 200 and health_status == 200
-    assert waited < REBUILD_S / 2, f"{route}: /api/health waited {waited:.2f}s behind a reload — it ran on the event loop"
+    assert not rebuild_already_ended, f"{route}: /api/health answered only after the reload returned — it ran on the event loop"
+    timing_budget(waited, REBUILD_S / 2, f"{route}: /api/health behind a running reload")

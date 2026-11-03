@@ -26,6 +26,7 @@ from typing import Dict
 import pytest
 
 from abstractgateway import apps_manager as am
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -171,7 +172,7 @@ def _free_range() -> str:
 
 
 def _wait(pred, timeout=10.0):
-    end = time.time() + timeout
+    end = time.time() + patient(timeout)
     while time.time() < end:
         if pred():
             return True

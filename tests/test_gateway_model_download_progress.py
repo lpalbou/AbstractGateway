@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 pytestmark = pytest.mark.basic
 
@@ -100,7 +101,7 @@ def three_sources(monkeypatch, core_jobs):
 
 
 def _wait(pred, timeout=10.0):
-    deadline = time.time() + timeout
+    deadline = time.time() + patient(timeout)
     while time.time() < deadline:
         if pred():
             return True

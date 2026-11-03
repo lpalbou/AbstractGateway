@@ -10,6 +10,7 @@ import pytest
 
 from abstractgateway import model_host as mh
 from model_host_fakes import FakeOpenAIServer
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 def _settings(data: Path, *, legacy=False, direct=False):
@@ -26,7 +27,7 @@ def _http(sup):
 
 
 def _until(pred, timeout=20):
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + patient(timeout)
     while time.monotonic() < deadline:
         if pred():
             return

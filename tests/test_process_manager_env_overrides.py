@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,7 @@ def _managed_test_var(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _wait_until(predicate, *, timeout_s: float = 4.0, poll_s: float = 0.05) -> None:
-    end = time.time() + float(timeout_s)
+    end = time.time() + float(patient(timeout_s))
     while time.time() < end:
         if predicate():
             return

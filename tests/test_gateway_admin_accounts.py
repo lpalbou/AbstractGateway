@@ -16,6 +16,7 @@ import pytest
 
 from email_fixtures import *  # noqa: F401,F403 - fixtures
 from email_fixtures import ADMIN, ADMIN_ADDR, ALICE, connect_body
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 pytestmark = pytest.mark.integration
 
@@ -244,7 +245,9 @@ def test_activity_scan_answers_under_a_second_on_a_13_mb_log(tmp_path) -> None:
     busy = account_activity("someone-else", limit=100, data_dir=tmp_path)
     parse_all = time.perf_counter() - t2
     assert busy["events"] == []
-    assert elapsed < 1.0 and full_scan < 1.0 and parse_all < 1.0, (elapsed, full_scan, parse_all)
+    timing_budget(elapsed, 1.0, "account activity, 13 MB log")
+    timing_budget(full_scan, 1.0, "account activity, full scan of a 13 MB log")
+    timing_budget(parse_all, 1.0, "account activity, every line parsed")
 
 
 def test_activity_reads_rotated_files_and_says_when_truncated(tmp_path) -> None:

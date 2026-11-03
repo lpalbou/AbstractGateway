@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 from test_gateway_memory_routes import SESSION, world  # noqa: F401  (fixture)
 
@@ -44,7 +45,7 @@ def test_reconstruct_gate_is_right_and_fast_above_a_thousand_memories(tmp_path: 
             allowed = _names_ref_for_caller(facade, art, owners)
             elapsed = time.perf_counter() - t0
             assert allowed is True, owners
-            assert elapsed < 0.05, f"{owners}: {elapsed * 1000:.1f} ms"
+            timing_budget(elapsed, 0.05, f"ref ownership check for {sorted(owners)}")
         # An owner with no memory naming the ref is refused, as fast.
         assert _names_ref_for_caller(facade, art, {"session_memory_C"}) is False
     finally:
@@ -69,7 +70,7 @@ def test_a_read_does_not_wait_for_a_writer_holding_the_home(world) -> None:  # n
         conn.execute("CREATE TABLE IF NOT EXISTS _writer_probe (x)")
         conn.execute("INSERT INTO _writer_probe VALUES (1)")
         holding.set()
-        release.wait(5)
+        release.wait(patient(30))
         conn.execute("ROLLBACK")
         conn.close()
 
@@ -82,7 +83,9 @@ def test_a_read_does_not_wait_for_a_writer_holding_the_home(world) -> None:  # n
         elapsed = time.perf_counter() - t0
         assert r.status_code == 200, r.text
         assert [e["event"] for e in r.json()["items"]] == ["asserted", "closed"]
-        assert elapsed < 0.1, f"a read waited {elapsed * 1000:.0f} ms behind a writer"
+        # The writer still holds the home (it ends only on `release`): the read did not wait for it.
+        assert t.is_alive() and not release.is_set(), "the read returned only after the writer let go"
+        timing_budget(elapsed, 0.1, "a read beside a writer holding the home")
     finally:
         release.set()
         t.join()

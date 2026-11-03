@@ -159,9 +159,19 @@ def is_paused() -> bool:
     return _paused
 
 
+def stop_begun() -> bool:
+    """True once this process is stopping: a stop signal reached uvicorn (`shutdown_drain`), or a
+    restart or shutdown was requested from the tray or the console."""
+    from . import shutdown_drain
+
+    return bool(_restart_requested or _shutdown_requested or shutdown_drain.began())
+
+
 def step_gate() -> bool:
-    """The gate handed to ``Runtime.tick(step_gate=...)``: open unless paused."""
-    return not _paused
+    """The gate handed to ``Runtime.tick(step_gate=...)``: open unless paused or stopping. Once a
+    stop begins no new workflow step starts; the drain waits only for the step each run is
+    executing (ADR 0002 §5), and the run continues from there at the next start."""
+    return not _paused and not stop_begun()
 
 
 def pause_snapshot() -> Dict[str, Any]:

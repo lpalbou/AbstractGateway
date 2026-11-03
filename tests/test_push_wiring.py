@@ -22,7 +22,7 @@ from typing import List
 
 import pytest
 
-from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 from push_fakes import REG, TOKEN_A, WATCH_TOPIC, FakeRelay, raise_approval
 from test_gateway_principal_isolation_matrix import _client, _create_user
@@ -44,7 +44,7 @@ def _relay_flag():
 
 def _wait(pred, timeout: float = 15.0) -> float:
     t0 = time.monotonic()
-    while time.monotonic() - t0 < timeout:
+    while time.monotonic() - t0 < patient(timeout):
         if pred():
             return time.monotonic() - t0
         time.sleep(0.02)
@@ -78,7 +78,13 @@ def test_an_approval_reaches_the_fake_relay_through_the_wired_gateway(tmp_path: 
             assert devices[0]["device_id"] == "aw1"
 
 
-def test_split_mode_append_from_another_process_within_three_seconds(tmp_path: Path) -> None:
+def test_split_mode_append_from_another_process_reaches_the_relay(tmp_path: Path) -> None:
+    """Split mode: an append written by ANOTHER process (no listener fires) reaches the relay through
+    the dispatcher's 2 s poll of the stream's change token. The latency (one poll, about 2 s) is
+    reported through `timing_budget`, not asserted: a shared runner can pause a process for longer,
+    and "within three seconds" was never a product contract, only the poll interval plus a margin.
+    The race that made this flaky (an append landing while a pass ran was folded into the token the
+    wait then compared against) is fixed in the dispatcher and pinned by the test below."""
     plane = tmp_path / "plane"
     stream = stream_for(plane, "default", "alice")
     store = DeviceStore(plane, tmp_path)
@@ -102,6 +108,43 @@ def test_split_mode_append_from_another_process_within_three_seconds(tmp_path: P
             timing_budget(time.monotonic() - appended, 3.0, "split-mode append to relay call", inclusive=True)
             assert relay.calls[0]["kind"] == "question"
             del t0
+        finally:
+            d.stop()
+
+
+def test_an_append_from_another_process_during_a_pass_is_not_missed(tmp_path: Path) -> None:
+    """The race behind the 3.11 flake of the test above (CI run 41533484163): the dispatcher took the
+    stream's change token when its wait STARTED, after the pass read the stream; an append written by
+    another process while the pass ran was already in that token, so the wait slept past it (in split
+    mode no listener wakes it). Here the append lands inside the pass on purpose: right after the first
+    pass read the stream, before its wait begins."""
+    plane = tmp_path / "plane"
+    stream = stream_for(plane, "default", "alice")
+    DeviceStore(plane, tmp_path).put(principal="default:alice", device_id="aw1", token=TOKEN_A, topic=WATCH_TOPIC,
+                                     env="sandbox", app="watch", reg=REG, name=None)
+    code = (
+        "import sys; from abstractgateway.events_stream import UserEventStream, record_wait_raised;"
+        "s = UserEventStream(sys.argv[1], 'default', 'alice');"
+        "record_wait_raised(s, {'run_id': 'rz', 'wait_key': 'wz', 'step_id': 's1', 'kind': 'question',"
+        " 'wait_kind': 'ask_user', 'record_key': 'step:rz:s1'}, session_id=None)"
+    )
+    with FakeRelay() as relay:
+        d = PushDispatcher(plane_dir=plane, root_dir=tmp_path, stream=stream, relay_url=relay.url, poll_when_idle=True)
+        real_tick = d.tick
+        appended = {"done": False}
+
+        def tick_then_another_process_appends(*args, **kwargs):
+            out = real_tick(*args, **kwargs)
+            if not appended["done"]:
+                appended["done"] = True
+                subprocess.run([sys.executable, "-c", code, str(plane)], check=True, timeout=60)
+            return out
+
+        d.tick = tick_then_another_process_appends  # type: ignore[method-assign]
+        d.start()
+        try:
+            _wait(lambda: len(relay.calls) >= 1, timeout=10)
+            assert appended["done"] and relay.calls[0]["kind"] == "question"
         finally:
             d.stop()
 

@@ -22,6 +22,9 @@ import sys
 
 STRICT_ENV = "ABSTRACTGATEWAY_TIMING_STRICT"
 PATIENCE = 5.0
+# Every budget measured this session, (held, line): conftest's terminal summary lists them (pytest
+# captures the stderr line of a passing test, so the summary is where a run shows its timings).
+REPORT: list = []
 
 
 def timing_strict() -> bool:
@@ -47,6 +50,7 @@ def timing_budget(actual: float, limit: float, what: str, *, unit: str = "s", in
         ok = actual <= limit if inclusive else actual < limit
     word = "at least" if at_least else "limit"
     line = f"[timing] {what}: {_fmt(actual, unit)} vs {word} {_fmt(limit, unit)}{'' if ok else ' (OVER)' if not at_least else ' (UNDER)'}"
+    REPORT.append((ok, line))
     if timing_strict():
         assert ok, line
     print(line, file=sys.stderr, flush=True)

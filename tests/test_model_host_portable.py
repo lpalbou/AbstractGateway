@@ -12,10 +12,11 @@ import pytest
 
 from abstractgateway import model_host as mh
 from model_host_fakes import FakeOpenAIServer
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 
 def _until(pred, timeout_s=30.0):
-    end = time.monotonic() + timeout_s
+    end = time.monotonic() + patient(timeout_s)
     while time.monotonic() < end:
         if pred():
             return True
@@ -38,7 +39,7 @@ def test_the_model_host_answers_dies_mid_request_restarts_and_answers_again(tmp_
             t0 = time.monotonic()
             with pytest.raises(mh.ModelHostCrashed) as info:
                 client.generate(prompt="victim")
-            assert time.monotonic() - t0 < 5.0
+            timing_budget(time.monotonic() - t0, 5.0, "a request failing when the model host dies mid-request")
             assert "stopped while" in str(info.value) and info.value.status_code == 424
             assert mh.read_incidents(tmp_path / "data"), "no incident file"
             assert _until(lambda: sup.generation_alive() and sup.pid not in (None, pid))

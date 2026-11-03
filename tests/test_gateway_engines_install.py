@@ -864,13 +864,14 @@ def test_a_new_llamacpp_restarts_the_model_host_child(tmp_path, monkeypatch):
     import abstractgateway.model_host as mh
 
     killed = []
-    monkeypatch.setattr(mh, "supervisor", lambda: type("S", (), {"kill": lambda self, reason: killed.append(reason)})())
+    # A restart the gateway asks for: `requested=True` (backlog 1103: a run in flight is interrupted, not failed).
+    monkeypatch.setattr(mh, "supervisor", lambda: type("S", (), {"kill": lambda self, reason, *, requested=False: killed.append((reason, requested))})())
     sysd = FakeSystem(tmp_path)
     sysd.on(lambda a: a[:1] == ["/gw/bin/python"] and "gpu_offload" in a[-1], lambda a: (0, '__AG_VERIFY__{"version": "0.3.28", "gpu_offload": true}'))
     reg = _registry(_installer(tmp_path, sysd), tmp_path)
     snap, _ = reg.start("llamacpp", run_inline=True)
     job = reg.get(snap["job_id"]).snapshot()
-    assert job["state"] == "done" and killed and "llama.cpp updated" in killed[0]
+    assert job["state"] == "done" and killed and "llama.cpp updated" in killed[0][0] and killed[0][1] is True
     assert job["result"]["message"] == "The model host restarts with the new llama.cpp; the next model load uses it"
 
 

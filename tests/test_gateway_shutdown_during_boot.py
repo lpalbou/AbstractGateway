@@ -23,10 +23,11 @@ from typing import Any, Callable, List
 import pytest
 
 from abstractgateway import service as service_mod
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 def _wait_until(pred: Callable[[], bool], timeout_s: float = 10.0) -> bool:
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + patient(timeout_s)
     while time.monotonic() < deadline:
         if pred():
             return True
