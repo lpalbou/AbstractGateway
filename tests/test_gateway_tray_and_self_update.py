@@ -69,7 +69,14 @@ def test_tray_decision_table_names_every_refusal() -> None:
     linux_desktop = {"DISPLAY": ":0"}
     # Hermetic: inject the StatusNotifier probe (a real Linux runner without a
     # tray host would otherwise answer "headless").
-    assert tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok, probes={"sni": True}) == TrayDecision(True, "ok", None)
+    service = "systemd (abstractgateway.service)"
+    assert tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok, probes={"sni": True},
+                         service=service) == TrayDecision(True, "ok", None)
+    assert tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok, probes={"sni": True},
+                         tray=True) == TrayDecision(True, "ok", None)
+    # Operator ruling 2026-10-29: not the machine's service and no --tray: no icon.
+    d = tray_decision(platform="linux", env=linux_desktop, dependencies=deps_ok, probes={"sni": True})
+    assert d.reason == "not_service" and "--tray" in str(d.hint)
 
     d = tray_decision(reload=True, platform="linux", env=linux_desktop, dependencies=deps_ok)
     assert d.reason == "dev_reload"
@@ -77,13 +84,13 @@ def test_tray_decision_table_names_every_refusal() -> None:
     d = tray_decision(runner_only=True, platform="linux", env=linux_desktop, dependencies=deps_ok)
     assert d.reason == "runner_only"
 
-    d = tray_decision(platform="linux", env={}, dependencies=deps_ok)
+    d = tray_decision(platform="linux", env={}, dependencies=deps_ok, service=service)
     assert d.reason == "headless" and "DISPLAY" in str(d.hint)
 
-    d = tray_decision(platform="darwin", env={"SSH_CONNECTION": "1"}, dependencies=deps_ok)
+    d = tray_decision(platform="darwin", env={"SSH_CONNECTION": "1"}, dependencies=deps_ok, service=service)
     assert d.reason == "headless"
 
-    d = tray_decision(platform="darwin", env={}, dependencies=(False, "pystray is not installed"))
+    d = tray_decision(platform="darwin", env={}, dependencies=(False, "pystray is not installed"), service=service)
     assert d.reason == "missing_dependency" and 'abstractgateway[tray]' in str(d.hint)
 
     # No argument can turn the icon off: what is left is only what the machine

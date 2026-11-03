@@ -1963,6 +1963,7 @@ pub fn catalog_scope(row: &RouteRow) -> &'static str {
         ("output", "sound") => "sound effects generation",
         (_, "scene3d") => "3D scene generation",
         ("output", "music") => "music generation",
+        ("output", "decision") => "decision",
         _ => "text generation",
     }
 }

@@ -64,6 +64,7 @@ from ..memory_store import (
 )
 from ..embeddings_config import resolve_embedding_config
 from ..core_config import (
+    stamp_server_engine_missing,
     apply_recommended_gateway_capability_defaults,
     clear_gateway_capability_default,
     gateway_capability_defaults_payload,
@@ -81,6 +82,7 @@ from ..provider_defaults import (
 )
 from ..provider_endpoint_profiles import (
     ProviderEndpointProfileError,
+    ProviderEndpointProfileExistsError,
     ProviderEndpointProfileStore,
     effective_endpoint_profiles,
     endpoint_profile_store_authority,
@@ -2685,6 +2687,10 @@ class StartRunRequest(_SpeculationControlRequest):
         description="Agent interface id; required with flow_id '@default' (e.g. abstractcode.agent.v1). Ignored otherwise.",
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)
+    conversation: Optional[bool] = Field(
+        default=None, strict=True,
+        description="Opt in to public conversational updates; omitted preserves legacy behavior.",
+    )
     thinking: Optional[Union[bool, str]] = Field(
         default=None,
         description="Optional run-scoped reasoning/thinking control inherited by Flow LLM and Agent nodes when supported.",
@@ -4256,6 +4262,18 @@ def _principal_catalog_tenant(principal: GatewayPrincipal, svc: Any, explicit_te
 def _catalog_scope_requested(value: Any) -> bool:
     raw = str(value or "").strip().lower().replace("-", "_")
     return raw in {"catalog", "tenant", "tenant_catalog", "framework", "framework_catalog", "global"}
+
+
+def _apply_conversation_opt_in(input_data: Dict[str, Any], enabled: Optional[bool]) -> None:
+    runtime_ns = input_data.get("_runtime")
+    conversation = runtime_ns.get("conversation") if isinstance(runtime_ns, dict) else None
+    if enabled is None and conversation is not None:
+        if (not isinstance(conversation, dict) or set(conversation) != {"enabled"}
+                or not isinstance(conversation.get("enabled"), bool)):
+            raise HTTPException(status_code=422, detail="_runtime.conversation must be {enabled: boolean}")
+        enabled = conversation["enabled"]
+    if enabled is not None:
+        _ensure_input_runtime_namespace(input_data)["conversation"] = {"enabled": enabled}
 
 
 def _strip_client_workflow_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -6649,11 +6667,13 @@ def _artifact_rows_from_store_search(
     if not callable(search_fn) or post_filter_needed:
         if post_filter_needed:
             warnings.append("query_or_scope_requires_gateway_post_filter")
+        from ..voice_artifacts import is_voice_transport
+
         rows = _artifact_search_candidates(store, scope=scope0, session_id=session_id, run_id=run_id)
         rows = [
             item
             for item in rows
-            if (include_voice or item.tags.get("purpose") != "voice_playback") and _artifact_matches_filters(
+            if (include_voice or not is_voice_transport(item.tags)) and _artifact_matches_filters(
                 item,
                 query=query0,
                 modality=modality,
@@ -9391,6 +9411,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+        _apply_conversation_opt_in(input_data, req.conversation)
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         if req.workspace is not None:
             # The one-off workspaces of this run (round 11); the body field and input_data.workspace are one.
@@ -13034,8 +13055,16 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
 
 
 @router.post("/runs/{run_id}/voice/tts/stream")
-async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingResponse:
-    """Stream Runtime-owned TTS events as JSON Lines."""
+async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) -> StreamingResponse:
+    """Stream Runtime-owned TTS events as JSON Lines.
+
+    The audit entry (written by the security middleware after the body has
+    finished) carries `voice_stream`: the resolved provider/model/voice plus
+    the lines, audio bytes and keep-alives sent and how the stream ended
+    (done / error / watchdog / disconnected) — filled in place by the body
+    into `request.state.audit_detail` (2026-11-01 watch incident: the audit
+    showed only "200, 253 s").
+    """
     if getattr(req, "one_shot", None):
         # AbstractCore renders a one-shot take whole; a stream would deliver it in pieces.
         raise HTTPException(status_code=422, detail="one_shot is not available on the streamed route; use POST /runs/{run_id}/voice/tts.")
@@ -13058,8 +13087,10 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
 
     request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
-    text = str(getattr(req, "text", "") or "").strip()
-    if not text:
+    # The text goes to the engine exactly as sent: the stream's segment offsets
+    # (`text_start`/`text_end`) index the client's own text (resume after a break).
+    text = str(getattr(req, "text", "") or "")
+    if not text.strip():
         raise HTTPException(status_code=400, detail="text is required")
 
     fmt = str(getattr(req, "format", "wav") or "wav").strip().lower()
@@ -13140,7 +13171,21 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
     # R13.1: bounded admission, engine setup and event pulling strictly off
     # the event loop, a "queued" line when the engine is busy, an idle
     # watchdog line, clean-up even when the client leaves (voice_stream.py).
-    from ..voice_stream import open_voice_stream
+    from ..voice_stream import new_stream_stats, open_voice_stream
+
+    # One dict object: the body fills the counters while it streams, the
+    # security middleware reads request.state.audit_detail after the body.
+    stream_stats = new_stream_stats()
+    stream_stats.update(
+        {
+            "provider": provider_name,
+            "model": model_name,
+            "voice": voice_name,
+            "profile": profile_name,
+            "text_chars": len(text),
+        }
+    )
+    request.state.audit_detail = {"voice_stream": stream_stats}
 
     return await open_voice_stream(
         setup=lambda: stream_voice(parent_run_id, text=text, output=output_spec, params=params),
@@ -13160,6 +13205,7 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest) -> StreamingRespon
             ),
         ),
         encode=_voice_stream_jsonl,
+        stats=stream_stats,
     )
 
 
@@ -13401,6 +13447,47 @@ class MusicGenerateResponse(BaseModel):
     request_id: str
     child_run_id: Optional[str] = None
     music_artifact: Optional[Dict[str, Any]] = None
+    code: Optional[str] = None
+    error: Optional[str] = None
+
+
+class DecisionRequest(BaseModel):
+    """One calibrated decision (AbstractCore 2.32.0 `decision` output modality): text in,
+    typed answers out, no text generation and no artifact."""
+
+    state: str = Field(
+        ...,
+        description="The text the decision is about (the decision model's state): a message, a document, a transcript.",
+        examples=["Subject: invoice overdue\n\nHi, the March invoice is still unpaid; please settle it this week."],
+    )
+    questions: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Named questions: {name: {type: choice|noul|score, instructions, criteria}}. Shorthand: a yes/no "
+            "sentence (noul) or a list of options (choice)."
+        ),
+        examples=[{"urgent": "Does the sender need an answer today?", "topic": ["billing", "support", "other"]}],
+    )
+    model: Optional[str] = Field(
+        default=None,
+        max_length=240,
+        description="Optional decision model as `provider/model` or a bare model id; without it the output.decision capability default answers.",
+        examples=["mlx/jaredpalmer/kev-4b"],
+    )
+    truncate: Optional[bool] = Field(default=None, description="Cut the state to the model's context instead of failing on overflow.")
+    request_id: Optional[str] = Field(default=None, max_length=160, description="Optional idempotency key (UUID recommended).")
+
+
+class DecisionResponse(BaseModel):
+    ok: bool = Field(default=True)
+    supported: bool = Field(default=True)
+    run_id: str
+    request_id: str
+    child_run_id: Optional[str] = None
+    decision: Optional[Dict[str, Any]] = Field(default=None, description="The System One body: model, answers, usage, latency_ms[, truncated].")
+    answers: Optional[Dict[str, Any]] = Field(default=None, description="The answers by question name (= decision.answers).")
+    provider: Optional[str] = None
+    model: Optional[str] = None
     code: Optional[str] = None
     error: Optional[str] = None
 
@@ -15398,6 +15485,116 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
         request_id=request_id,
         child_run_id=str(child.run_id),
         music_artifact=music_ref,
+    )
+
+
+@router.post("/runs/{run_id}/decisions", response_model=DecisionResponse)
+async def run_decision(run_id: str, req: DecisionRequest) -> DecisionResponse:
+    """Delegate one calibrated decision to a Runtime-owned durable child run: an LLM_CALL whose
+    output spec is `decision` (`run_facade.decide`). No artifact: the answers come back in the body."""
+    svc = get_gateway_service()
+    rs = svc.host.run_store
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+
+    try:
+        run = rs.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+
+    request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
+    state = str(getattr(req, "state", "") or "").strip()
+    if not state:
+        raise HTTPException(status_code=400, detail="state is required")
+    questions = req.questions if isinstance(req.questions, dict) else {}
+    if not questions:
+        raise HTTPException(status_code=400, detail="questions is required: at least one named question")
+
+    run_facade, err = _gateway_abstractcore_run_facade()
+    if err or run_facade is None:
+        return DecisionResponse(
+            ok=False,
+            supported=False,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="decision_unavailable",
+            error=err or "Gateway runtime does not expose AbstractCore durable helpers.",
+        )
+
+    session_id = str(getattr(run, "session_id", "") or "")
+    params: Dict[str, Any] = {
+        "trace_metadata": {
+            "run_id": str(getattr(run, "run_id", rid)),
+            "workflow_id": str(getattr(run, "workflow_id", "") or ""),
+            "session_id": session_id,
+            "request_id": request_id,
+        },
+    }
+    model = str(getattr(req, "model", "") or "").strip() or None
+
+    try:
+        child = await off_loop("watchers",
+            run_facade.decide,
+            str(getattr(run, "run_id", rid)),
+            state=state,
+            questions=questions,
+            model=model,
+            truncate=req.truncate,
+            params=params,
+        )
+    except Exception as e:
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=None,
+            code="decision_error",
+            error=str(e),
+        )
+
+    if child.status != RunStatus.COMPLETED:
+        # The model refused or failed (no output.decision default, bad questions, state over the
+        # limit): the child run records the reason; answer it, do not turn it into a 500.
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="decision_error",
+            error=str(child.error or child.status.value),
+        )
+    result = _gateway_completed_child_result(child, operation="decision")
+    decision = result.get("decision") if isinstance(result.get("decision"), dict) else None
+    answers = result.get("answers") if isinstance(result.get("answers"), dict) else None
+    if decision is None or answers is None:
+        return DecisionResponse(
+            ok=False,
+            supported=True,
+            run_id=str(getattr(run, "run_id", rid)),
+            request_id=request_id,
+            child_run_id=str(child.run_id),
+            code="decision_no_answers",
+            error="The decision completed without a decision body and answers.",
+        )
+
+    return DecisionResponse(
+        ok=True,
+        supported=True,
+        run_id=str(getattr(run, "run_id", rid)),
+        request_id=request_id,
+        child_run_id=str(child.run_id),
+        decision=decision,
+        answers=answers,
+        provider=str(result.get("provider")) if result.get("provider") else None,
+        model=str(result.get("model")) if result.get("model") else None,
     )
 
 
@@ -18910,6 +19107,41 @@ def _generated_media_contract(caps: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _decision_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
+    """The `decision` capability (AbstractCore 2.32.0): text in, calibrated typed answers out. It
+    produces no bytes and needs no artifact store, so it is a sibling of the media contract, not
+    part of it. Two doors: the VisualFlow `decide` node (lowered to an LLM_CALL with a `decision`
+    output spec) and the run-scoped direct endpoint, both through `run_facade.decide`."""
+    _ = caps
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    route_available = bool(run_facade is not None and not run_err)
+    hint = (
+        {"config_hint": str(run_err or "Gateway runtime is not wired to AbstractCore durable helpers.")}
+        if not route_available
+        else {}
+    )
+    return {
+        "workflow": {
+            "available": route_available,
+            "node": "decide",
+            "effect": "LLM_CALL",
+            "output_modality": "decision",
+            **hint,
+        },
+        "direct_endpoint": {
+            "available": route_available,
+            "route_available": route_available,
+            "endpoint": _api_gateway_path("/runs/{run_id}/decisions"),
+            "openai_endpoint": "/v1/decisions",
+            "capability_route": "output.decision",
+            "durability": "runtime_child_run",
+            "returns_child_run_id": True,
+            "returns": ["decision", "answers"],
+            **hint,
+        },
+    }
+
+
 def _memory_contract_descriptor(caps: Dict[str, Any]) -> Dict[str, Any]:
     abstractmemory = caps.get("abstractmemory") if isinstance(caps.get("abstractmemory"), dict) else {}
     try:
@@ -19233,6 +19465,8 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "memory": _memory_contract_descriptor(caps),
     }
     generated_media = _generated_media_contract(caps)
+    decision_contract = _decision_contract_descriptor(caps)
+    common["decision"] = decision_contract
     tts_contract = _voice_contract_descriptor(caps, kind="tts")
     stt_contract = _voice_contract_descriptor(caps, kind="stt")
     assistant_voice = {
@@ -19324,6 +19558,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "voice": assistant_voice,
         "model_residency": common["model_residency"],
         "media": generated_media,
+        "decision": decision_contract,
         "helpers": {
             "providers": common["discovery"]["providers"],
             "tools": common["discovery"]["tools"],
@@ -19355,6 +19590,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "artifacts": common["artifacts"],
         "voice": assistant_voice,
         "media": generated_media,
+        "decision": decision_contract,
         "model_residency": common["model_residency"],
         "prompt_cache": {
             "provider_controls": True,
@@ -19459,6 +19695,8 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
     plugin_caps = {
         "voice": {"available": bool(run_facade is not None and not run_err)},
         "audio": {"available": bool(run_facade is not None and not run_err)},
+        # The decision modality (AbstractCore 2.32.0): run_facade.decide, no artifact.
+        "decision": {"available": bool(run_facade is not None and not run_err)},
         "vision": {"available": bool((run_facade is not None and not run_err) or (discovery_facade is not None and not discovery_err))},
         "music": {
             "available": bool(music_route_available and music_configured),
@@ -26442,6 +26680,9 @@ class _GatewayProviderEndpointProfileCreateRequest(BaseModel):
     capabilities: List[str] = Field(default_factory=lambda: ["text"])
     allowed_models: List[str] = Field(default_factory=list)
     enabled: bool = True
+    # The setup guide's cloud provider cards: create a NEW connection or fail with 409,
+    # never overwrite one with the same id (the console picks a fresh id; this makes it safe).
+    create_only: bool = False
 
 
 class _GatewayProviderEndpointProfileUpdateRequest(BaseModel):
@@ -27061,6 +27302,11 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "held_by": _row_v1_held_by_for_caller(record.get("held_by")),
         "expires_at": record.get("expires_at") if record.get("expires_at") is not None else record.get("expiresAt"),
         "context_length": _row_v1_int(record, "context_length", "contextLength"),
+        # The context is explicit (AbstractCore ADR 0010 point 8): what the model advertises and
+        # why the loaded one differs ("memory", "configured", "explicit", "advertised").
+        "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
+        "context_source": _row_v1_str(record, "context_source"),
+        "memory_buffer": record.get("memory_buffer") if isinstance(record.get("memory_buffer"), (int, float)) and not isinstance(record.get("memory_buffer"), bool) else None,
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =
@@ -27673,7 +27919,7 @@ async def model_downloads_stream(
 #   GET  /engines?probe=                             contract B (+ install_allowed)
 #   GET  /engines/{id}?probe=                        one contract-B row
 #   POST /engines/{id}/install {dry_run, force}      contract E job   403 / 404 / 409
-#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=  contract C
+#   GET  /models/catalog?q=&engine=&fits=&hub=&tag=&hub_page=&hub_page_size=&extended=  contract C
 #   GET  /models/installed?provider=                 contract D
 #   POST /models/delete {provider, artifact, dry_run, force}   job   404 / 409 (delete_blockers)
 #   GET  /jobs?kind=&status=                         host_jobs_v1, newest first
@@ -27771,24 +28017,31 @@ async def models_catalog_get(
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
     hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
     hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
+    extended: bool = Query(False, description="With hub: every quant the rows' own GGUF repos ship (AbstractCore 0865)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
     from ..core_config import core_model_catalog
+    from ..catalog_reads import catalog_read
 
     # An empty `q` / `engine` (the terminal console always sends `q`) means "no filter".
-    paging = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
-    return await _core_host_call(
+    paging: Dict[str, Any] = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
+    if extended:
+        paging["extended"] = True
+    key = ("catalog", q or "", engine or "", fits, hub, tuple(sorted(tag or [])), hub_page, hub_page_size, extended)
+    return await catalog_read(key, lambda: _core_host_call(
         core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
         **paging,
-    )
+    ))
 
 
 @router.get("/models/installed")
 async def models_installed_get(provider: Optional[str] = Query(None, description="Only this engine/provider.")) -> Any:
     """Every model the local engines hold on this host, with sizes (contract D)."""
     from ..core_config import core_installed_models
+    from ..catalog_reads import catalog_read
 
-    return await _core_host_call(core_installed_models, (provider or "").strip() or None)
+    provider = (provider or "").strip() or None
+    return await catalog_read(("installed", provider), lambda: _core_host_call(core_installed_models, provider))
 
 
 @router.post("/models/delete")
@@ -27915,7 +28168,8 @@ async def capability_defaults_get() -> Dict[str, Any]:
 
 
 def _capability_defaults_payload_for(svc: Any) -> Dict[str, Any]:
-    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    # 0958: a route on an LM Studio / Ollama this computer has not installed says "engine missing".
+    payload = stamp_server_engine_missing(gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir)))
     problems = capability_defaults_route_problems(Path(svc.config.data_dir))
     if problems:
         payload = dict(payload)
@@ -27978,7 +28232,10 @@ async def provider_endpoint_profiles_create(request: Request, req: _GatewayProvi
             capabilities=req.capabilities,
             allowed_models=req.allowed_models,
             enabled=req.enabled,
+            create_only=bool(req.create_only),
         )
+    except ProviderEndpointProfileExistsError as exc:
+        raise HTTPException(status_code=409, detail={"reason_code": "connection_exists", "message": str(exc)}) from exc
     except ProviderEndpointProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -28052,7 +28309,7 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        raise HTTPException(status_code=502, detail=redact_provider_key(str(e), provider_api_key)) from e
     raw_models = payload.get("models") if isinstance(payload, dict) else None
     models = _dedupe_strings([str(m).strip() for m in raw_models if isinstance(m, str) and str(m).strip()]) if isinstance(raw_models, list) else []
     models.sort()
@@ -28071,8 +28328,48 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
     if isinstance(payload, dict) and isinstance(payload.get("source"), str) and payload.get("source"):
         body["upstream_source"] = str(payload.get("source"))
     if isinstance(payload, dict) and payload.get("error"):
-        body["error"] = str(payload.get("error"))
+        # The provider's own words can quote the key (OpenAI: "Incorrect API key provided:
+        # sk-abcd****1234"): never echoed back.
+        body["error"] = redact_provider_key(str(payload.get("error")), provider_api_key)
+    if not models:
+        body["error_kind"] = provider_key_error_kind(body.get("error"))
     return body
+
+
+_MASKED_KEY_RE = re.compile(r"[A-Za-z0-9_\-]*\*{3,}[A-Za-z0-9_\-]*")
+
+
+def redact_provider_key(text: str, api_key: Optional[str]) -> str:
+    """`text` with the key, and any provider-masked echo of it (`sk-abcd****1234`), replaced
+    by "[key]". A key check's answer never carries the key back to the page."""
+    out = str(text or "")
+    key = str(api_key or "").strip()
+    if key:
+        out = out.replace(key, "[key]")
+        if len(key) >= 12:
+            # Fragments a provider may quote: its first or last 8 characters.
+            for frag in {key[:8], key[-8:]}:
+                out = out.replace(frag, "[key]")
+    return re.sub(r"(?:\[key\])+", "[key]", _MASKED_KEY_RE.sub("[key]", out))
+
+
+_KEY_ERROR_KINDS = (
+    ("auth", re.compile(r"\b40[13]\b|authenticat|unauthori[sz]ed|invalid[ _-]?(x-)?api[ _-]?key|incorrect api key|user not found|forbidden", re.I)),
+    ("rate_limited", re.compile(r"\b429\b|rate[ _-]?limit|quota|insufficient[ _-]?(credits|balance)", re.I)),
+    ("unreachable", re.compile(r"timed? ?out|timeout|connect|resolve|name or service|network|unreachable|ssl|certificate|dns", re.I)),
+)
+
+
+def provider_key_error_kind(error: Optional[str]) -> str:
+    """Why a key check listed no model, for the card's sentence: auth | rate_limited |
+    unreachable | other (a reason we cannot classify) | no_models (no reason given)."""
+    text = str(error or "").strip()
+    if not text:
+        return "no_models"
+    for kind, rx in _KEY_ERROR_KINDS:
+        if rx.search(text):
+            return kind
+    return "other"
 
 
 def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
@@ -28111,23 +28408,34 @@ def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[D
     capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
     knows none of these: Ask on a run failed at once with "Unknown provider:
     endpoint:<id>" on a gateway whose runs used that default fine."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+    from ..generation_pool import PoolGeneration, generation_client
 
     svc = get_gateway_service()
     current_base, root_base = _gateway_profile_dirs()
     routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
-    llm = LocalAbstractCoreLLMClient(
+    # R2 (2026-10-29): the principal's runtime pool, so an in-process model is ONE resident instance
+    # shared with the runs (a client per request was a full extra copy). Without a pool, a client of
+    # its own as before (in the model host child when this process has one, ADR 0002).
+    llm = generation_client(
         provider=routed_provider,
         model=model,
         llm_kwargs=llm_kwargs or None,
-        artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
-        # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
-        # `runtime_core_config_file` is the seam the bundle host uses (this
-        # scope's overlay when it has one, else THE Core store), never the
-        # retired `<data_dir>/config/abstractcore.json`.
-        core_config_file=runtime_core_config_file(current_base),
-        capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        local_ctor=dict(
+            provider=routed_provider,
+            model=model,
+            llm_kwargs=llm_kwargs or None,
+            artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
+            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
+            # `runtime_core_config_file` is the seam the bundle host uses (this
+            # scope's overlay when it has one, else THE Core store), never the
+            # retired `<data_dir>/config/abstractcore.json`.
+            core_config_file=runtime_core_config_file(current_base),
+            capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+        ),
     )
+    if isinstance(llm, PoolGeneration):
+        # The pool resolves endpoint profiles with the host's resolver already.
+        return llm, routed_provider, profile_public
 
     def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
         try:
@@ -28649,6 +28957,33 @@ async def model_residency_unlock(request: Request, req: _GatewayModelResidencyLo
         unavailable_code="model_residency_unavailable",
         error_code="model_residency_error",
     )
+
+
+class _GatewayModelContextRequest(BaseModel):
+    provider: str = Field(description="Provider of the local model.")
+    model: str = Field(description="Model id.")
+    context_length: Optional[int] = Field(default=None, ge=512, description="Tokens to reserve at load; null clears the setting (the fit rule chooses again).")
+
+
+@router.put("/models/context")
+async def model_context_set(request: Request, req: _GatewayModelContextRequest) -> Any:
+    """Set (or clear) the context a local model is LOADED with (admin; AbstractCore ADR 0010
+    point 8). A set context is a pin: loaded as is, refused with the readable sentence when it
+    does not fit, never shrunk. It applies at the model's next load."""
+    _require_admin_principal(request)
+    from .. import core_config
+
+    svc = get_gateway_service()
+    cfg = core_config.runtime_core_config_file(Path(svc.config.data_dir))
+    try:
+        out = await _core_host_call(core_config.set_model_context, req.provider, req.model, req.context_length, config_file=cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if isinstance(out, JSONResponse):
+        return out  # an older Runtime or Core: 501 in words
+    what = f"{req.context_length:,} tokens" if req.context_length else "the fit to this computer's memory"
+    return {"ok": True, "provider": req.provider, "model": req.model, "context_length": req.context_length,
+            "message": f"{req.model} will load with {what} at its next load; unload it to reload it now."}
 
 
 @router.get("/models/context_estimate")
@@ -29701,6 +30036,15 @@ def _host_state_payload() -> Dict[str, Any]:
     # the memory snapshot carries one; absent means this runtime predates it.
     host_block = memory.get("host") if isinstance(memory, dict) and isinstance(memory.get("host"), dict) else None
 
+    # Additive system observations share a bounded sampler, on this worker.
+    # Individual probes degrade in-band; model/memory truth remains Runtime's.
+    from ..host_system_metrics import get_host_system_metrics
+
+    try:
+        system = get_host_system_metrics(gateway_data_dir_from_env())
+    except Exception as exc:
+        system = {"supported": False, "reason": f"System metrics unavailable: {exc}"}
+
     return {
         "ok": True,
         "ts": time.time(),
@@ -29708,6 +30052,7 @@ def _host_state_payload() -> Dict[str, Any]:
         # Install facts: which data dir and why, the
         # auth posture, the login service, the first-run wizard state.
         "gateway": _gateway_install_block_cached(),
+        "system": system,
         "memory": memory,
         "gpu": gpu,
         "models": models,
@@ -29973,7 +30318,7 @@ async def host_tray_show(request: Request) -> Dict[str, Any]:
     ctx = serve_context()
     if not ctx:
         raise HTTPException(status_code=409, detail="this process was not started by `abstractgateway serve`; there is no tray to show")
-    decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")))
+    decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")), tray=bool(ctx.get("tray")), service=ctx.get("service"))
     if not decision.start:
         raise HTTPException(status_code=409, detail=f"the tray cannot start here ({decision.reason}): {decision.hint or ''}".strip())
     await off_loop(
@@ -30889,6 +31234,11 @@ async def attachments_upload(
 
     # Prefix client uploads to avoid collisions with server workspace virtual paths.
     handle = _normalize_client_source_path(source_path, filename_final)
+    # A spoken question's recording (the reserved voice/dictation/ path) is voice
+    # transport, never an attachment of the conversation (ADR 0047): stamp it so
+    # every default listing and the history bundle hide it like read-aloud audio.
+    from ..voice_artifacts import dictation_tags
+
     stored = _store_session_artifact(
         svc=svc,
         session_id=sid,
@@ -30899,6 +31249,7 @@ async def attachments_upload(
         source="upload",
         source_path=handle,
         kind="attachment",
+        extra_tags=dictation_tags(handle) or None,
     )
     return {**stored, "attachment": stored.get("artifact")}
 
@@ -30961,6 +31312,22 @@ def _check_automation_wait_answer(svc: Any, *, run_id: str, command_payload: Dic
                 "field": "payload",
             },
         )
+
+
+def _check_conversation_wait_answer(svc: Any, *, run_id: str, command_payload: Dict[str, Any]) -> None:
+    """Reject malformed current-question replies before accepting a command."""
+    from abstractruntime.core.questions import question_of
+
+    run = svc.runner.run_store.load(run_id)
+    if run is None or question_of(run.waiting) is None:
+        return
+    key = command_payload.get("wait_key") or command_payload.get("waitKey")
+    answer = command_payload.get("payload")
+    if not isinstance(key, str) or not key.startswith("question:"):
+        raise HTTPException(status_code=422, detail="Answer this question with its exact wait_key.")
+    if (not isinstance(answer, dict) or "approved" in answer
+            or not isinstance(answer.get("response"), str) or not answer["response"].strip()):
+        raise HTTPException(status_code=422, detail="Please provide a non-empty response; this question is not an approval.")
 
 
 def _require_automation_controller(svc: Any, automation_id: str) -> Any:
@@ -31049,13 +31416,23 @@ async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
             raise HTTPException(status_code=403, detail=_visit_rite_detail)
 
     if typ == "resume" and isinstance(req.payload, dict) and "payload" in req.payload:
+        _check_conversation_wait_answer(svc, run_id=str(req.run_id), command_payload=dict(req.payload))
         _check_automation_wait_answer(svc, run_id=str(req.run_id), command_payload=dict(req.payload))
 
+    command_payload = dict(req.payload or {})
+    if typ == "inject_guidance":
+        command_payload.pop("_public_speaker", None)
+        if command_payload.get("display_text") is not None:
+            shown = command_payload["display_text"]
+            if not isinstance(shown, str) or not shown.strip() or len(shown) > 65_536:
+                raise HTTPException(status_code=422, detail="display_text must contain 1–65536 characters of human input")
+            principal = current_gateway_principal() or local_admin_principal()
+            command_payload["_public_speaker"] = "person:" + principal.user_id
     record = CommandRecord(
         command_id=str(req.command_id),
         run_id=str(req.run_id),
         type=typ,
-        payload=dict(req.payload or {}),
+        payload=command_payload,
         ts=str(req.ts) if isinstance(req.ts, str) and req.ts else "",
         client_id=str(req.client_id) if isinstance(req.client_id, str) and req.client_id else None,
         seq=0,

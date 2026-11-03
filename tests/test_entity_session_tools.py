@@ -22,6 +22,7 @@ OPTIONS = [{"name": "read_memory"}, {"name": "send_email"}]
 class Host:
     def __init__(self, tmp_path, modes):
         self.calls = []
+        self.public_action = None
         self.grant = {"read_memory", "send_email"}
         self.db = SqliteDatabase(tmp_path / "visit.sqlite3")
         self.store = SqliteRunStore(self.db)
@@ -44,9 +45,11 @@ class Host:
                                effect_handlers={EffectType.TOOL_CALLS: handler})
 
         def act(run, ctx):
-            return StepPlan(node_id="act", effect=Effect(type=EffectType.TOOL_CALLS,
-                payload={"tool_calls": [{"name": "send_email", "arguments": {}, "call_id": "email-1"},
-                                         {"name": "read_memory", "arguments": {}, "call_id": "read-1"}], "act_seq": 1},
+            payload = {"tool_calls": [{"name": "send_email", "arguments": {}, "call_id": "email-1"},
+                                      {"name": "read_memory", "arguments": {}, "call_id": "read-1"}], "act_seq": 1}
+            if self.public_action is not None:
+                payload["public_action"] = copy.deepcopy(self.public_action)
+            return StepPlan(node_id="act", effect=Effect(type=EffectType.TOOL_CALLS, payload=payload,
                 result_key="tool_results"), next_node="park")
 
         def park(run, ctx):
@@ -173,3 +176,45 @@ def test_automation_defaults_import_actual_runtime_constant():
     from abstractgateway.routes.session_tools import automation_defaults
 
     assert automation_defaults() == {"growing_max_tokens": HISTORY_REPLAY_MAX_TOKENS}
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_entity_approval_preserves_only_bound_public_reason_and_narrows_targets(tmp_path, foreign):
+    host = Host(tmp_path, {"send_email": "approve", "read_memory": "off"})
+    host.folder = tmp_path
+    try:
+        host.public_action = {"run_id": "foreign" if foreign else host.run_id,
+            "update_id": f"{host.run_id}:public_update:1", "iteration": 1,
+            "text": "I want to send the appointment you asked me to arrange.",
+            "call_ids": ["email-1", "read-1"]}
+        state = host.runtime.tick(workflow=host.wf, run_id=host.run_id)
+        assert state.status == RunStatus.WAITING and host.calls == []
+        details = session_state(host, "castor", host.run_id)["pending_wait"]["details"]
+        assert "original_payload" not in details
+        assert [call["call_id"] for call in details["tool_calls"]] == ["email-1"]
+        if foreign:
+            assert "public_action" not in details
+        else:
+            assert details["public_action"] == {**host.public_action, "call_ids": ["email-1"]}
+        decide(host, "castor", host.run_id, wait_key=state.waiting.wait_key, approved=False)
+        assert host.calls == []
+    finally:
+        host.db.close()
+
+
+def test_entity_forwarded_action_reason_matches_filtered_delegate_batch(host):
+    run = host.store.load(host.run_id)
+    run.vars["_runtime"]["entity_session_tools"]["modes"] = {"send_email": "auto", "read_memory": "off"}
+    calls = [{"name": "send_email", "arguments": {}, "call_id": "email-1"},
+             {"name": "read_memory", "arguments": {}, "call_id": "read-1"}]
+    action = {"run_id": host.run_id, "update_id": f"{host.run_id}:public_update:1", "iteration": 1,
+              "text": "I want to send the appointment you asked me to arrange.", "call_ids": ["email-1", "read-1"]}
+    seen = []
+    def delegate(_run, effect, _next=None):
+        seen.append(effect.payload)
+        return EffectOutcome.completed({"mode": "executed", "results": [{"call_id": "email-1", "success": True}]})
+    effect = Effect(type=EffectType.TOOL_CALLS, payload={"tool_calls": calls, "public_action": action})
+    wrap_entity_tool_handler(delegate)(run, effect)
+    assert seen[0]["tool_calls"] == calls[:1]
+    assert seen[0]["public_action"] == {**action, "call_ids": ["email-1"]}
+    assert host.calls == []

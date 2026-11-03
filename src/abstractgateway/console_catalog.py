@@ -10,19 +10,20 @@ console UI layer (``console_ui.py``), inside the same main script, so its
 functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 ``uiProgressMarkup``, ``trackDownloadJob``, ``dlCancel``...).
 
-- ONE CARD PER MODEL. Header: name, organisation, parameters, licence,
-  capability tags, a "Starter" badge when the row carries ``starter``. Body:
-  the model's artifacts as compact rows (provider, artifact id in mono with
-  ellipsis + tooltip + copy on click, quantization, download size, weights
-  and fit pills, one action per state). The recommended artifact is first
-  and primary; the others are quieter.
+- RESPONSIVE MODEL GRID. Header: name, organisation, parameters; licence
+  lives in the info help. Build rows show provider, precision, publisher, size
+  and fit, with standard download/default/delete/detail icon actions. Full ids
+  and technical metadata are on demand, with exact-id copying. The recommended
+  build is first. Downloaded is the quick library control; advanced
+  kit filters start collapsed. Downloaded includes every precision.
 - ONE DOWNLOAD RENDERER. A running download is N's job
   (``state.downloadJobs``, fed by the SSE stream or polling in
   ``console_ui.py``) drawn by ``uiProgressMarkup`` -- the same component the
   guide's download cards use.
-- FILTERS: search, quantization (All / 4-bit / 8-bit / Other), provider,
-  capability, "Fits this computer", Downloaded / Not downloaded. Filters
-  hide, they never cap (ADR-0026): every matching model is drawn. The tab's
+- FILTERS: source, search and quick switches on the first toolbar row; provider
+  and capability on the second. Asset type and quantization stay advanced. Filters
+  hide, they never cap (ADR-0026): every matching model is drawn. Each card
+  shows one primary build; its counted header chevron exposes all matching builds. The tab's
   filters live in the URL hash (``#catalog?quant=8bit&provider=mlx``).
 - HUGGING FACE SEARCH: a "Catalog / Hugging Face" switch next to the search
   box. In Hugging Face mode Enter asks the same catalog route with
@@ -38,125 +39,145 @@ from __future__ import annotations
 
 CATALOG_CSS = r"""
     /* ================= Model catalog as cards ================= */
-    #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 18px; min-width: 0; }
-    .mc-root { display: grid; gap: 18px; min-width: 0; }
+    #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 10px; min-width: 0; }
+    .mc-root { display: grid; gap: 10px; min-width: 0; }
     .mc-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .mc-host b { color: var(--text-primary); font-weight: 600; }
     .mc-host__facts { margin-right: auto; min-width: 0; }
-    /* The filter bar: its top row (search, fits, count, the active filters in
-       words) stays under the tab header while the cards scroll; the chip
-       panel below it scrolls away, so a 1024 x 768 window keeps its cards.
-       The two read as one surface at the top. Opaque (the card tone laid over
-       the page tone): the cards pass underneath. Sticky honours the
-       scroller's padding, so inside the console's scrolling <main>
-       (padding-top 20px) the row lifts by that much to sit flush under the
-       header; the guide's scroller has no padding. */
-    .mc-bar { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; padding: 14px 16px 12px; border: 1px solid var(--ui-border-1); border-bottom-color: transparent; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background-color: var(--bg-primary); background-image: linear-gradient(var(--bg-card, var(--bg-secondary)), var(--bg-card, var(--bg-secondary))); }
-    .shell_content .mc-bar { top: -20px; }
-    /* No chip panel (the data is not there yet, or the Hub search failed): the row closes itself. */
-    .mc-bar:has(+ .mc-filters:empty) { border-bottom-color: var(--ui-border-1); border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); }
-    .mc-bar.is-stuck { border-bottom-color: var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); box-shadow: 0 10px 22px -16px rgba(0, 0, 0, .6); }
-    .mc-mode { display: inline-flex; flex: 0 0 auto; padding: 3px; gap: 2px; border: 1px solid var(--ui-border-2); border-radius: 999px; background: var(--ui-surface-1); }
-    .mc-mode button { min-height: 30px; padding: 4px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 600; white-space: nowrap; box-shadow: none; cursor: pointer; }
-    .mc-mode button:hover:not([aria-pressed="true"]) { background: var(--ui-surface-2); color: var(--text-primary); filter: none; }
-    .mc-mode button[aria-pressed="true"] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text-primary); }
-    .mc-mode button:focus-visible, .mc-hf-go:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
-    .mc-bar .mc-hf-go[hidden] { display: none; }
-    .mc-bar input.mc-search { flex: 1 1 340px; min-width: min(100%, 260px); width: auto; margin: 0; }
-    .mc-bar .ui-switch { flex: 0 0 auto; }
-    .mc-bar__end { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-left: auto; min-width: 0; }
+    /* Shared AfFilterBar shell: two sticky primary rows, followed by optional
+       advanced facets. Search, source and quick switches lead; provider/capability
+       selectors sit below with the summary and actions. Advanced facets scroll away
+       while the primary rows remain visible. Honour the console scroller's 20px
+       top padding; the first-run scroller has no padding. */
+    .shell_content .mc-filterbar { --af-filterbar-top: -20px; }
+    /* The console's form `label` rule (uppercase caption) must not reach the kit's native switches. */
+    @media (min-width: 768px) { .mc-filterbar .af-filterbar__line { flex-grow: .875; } }
+    .mc-filterbar label.af-switch { text-transform: none; letter-spacing: normal; }
+    /* Sticky mode: the bar's two parts are items of .mc-root (gap 10px); they read as one surface. */
+    .mc-filterbar > .af-filterbar__facets { margin-top: -10px; }
     .mc-count { color: var(--text-secondary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .mc-count b { color: var(--text-primary); font-weight: 650; }
     .mc-active { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: 4px 10px; min-width: min-content; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
     .mc-active:empty { display: none; }
     .mc-active span + span::before { content: "\00B7"; margin-right: 10px; color: var(--text-muted); font-weight: 400; }
-    .mc-bar .mc-to-filters { visibility: hidden; }
-    .mc-bar.is-stuck .mc-to-filters { visibility: visible; }
-    .mc-filters { margin-top: -18px; padding: 4px 16px 16px; border: 1px solid var(--ui-border-1); border-top: 0; border-bottom-left-radius: var(--radius-lg); border-bottom-right-radius: var(--radius-lg); background: var(--bg-card, var(--bg-secondary)); min-width: 0; }
-    .mc-groups { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 26px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--ui-border-1); }
     .mc-root > [data-mc-part]:empty { display: none; }
-    .mc-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
-    .mc-group__label { margin-right: 4px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
-    button.mc-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 12px; border: 1px solid var(--ui-border-2); border-radius: 999px; background: transparent; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 600; white-space: nowrap; box-shadow: none; cursor: pointer; }
-    button.mc-chip:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); filter: none; }
-    button.mc-chip[aria-pressed="true"] { background: var(--accent-subtle); border-color: var(--accent); color: var(--text-primary); }
-    button.mc-chip:disabled { opacity: .45; cursor: not-allowed; }
-    button.mc-chip.is-zero:not([aria-pressed="true"]) { color: var(--text-muted); border-style: dashed; }
-    button.mc-chip:focus-visible, .mc-id:focus-visible, .mc-search:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
-    .mc-chip__n { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
-    button.mc-chip[aria-pressed="true"] .mc-chip__n { color: var(--text-secondary); }
+    .mc-id:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .mc-seam strong { font-weight: 650; }
-    /* Cards: one per model, condensed (R5.2): the header is one line (name,
-       organisation, parameters, licence, capability tags, badges) and each
-       artifact is one 44 px row. */
-    .mc-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; min-width: 0; }
-    .mc-hub-beside { display: grid; gap: 10px; min-width: 0; margin-top: 6px; }
-    .mc-hub-beside__title { margin: 6px 0 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-secondary); }
-    .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--text-secondary); font-size: var(--font-size-sm); }
-    .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 8px 14px 4px; }
-    .mc-card.is-starter { border-color: var(--accent-border, var(--ui-border-2)); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; padding: 2px 0; }
-    .mc-card__title { margin: 0; font-size: var(--font-size-md, 1rem); font-weight: 650; line-height: 1.3; color: var(--text-primary); letter-spacing: -.01em; overflow-wrap: break-word; min-width: 0; }
-    .mc-card__meta { color: var(--text-secondary); font-size: var(--font-size-sm); }
+    /* A library grid: one model per card, concise build identity, actions at the edge. */
+    .mc-root:not(.mc-filters-open) .af-filterbar__facets { display: none; }
+    .mc-root:not(.mc-filters-open) .af-filterbar__lead { border-bottom-color: var(--ui-border-1); border-radius: var(--radius-lg); }
+    .mc-filter-actions { display: inline-flex; align-items: center; flex: none; gap: 4px; }
+    .mc-filterbar .af-filterbar__end { column-gap: 8px; flex: none; margin-left: auto; }
+    .mc-quick-row { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; min-width: 0; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
+    .mc-quick-filters { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px 20px; flex: 1 1 auto; min-width: 0; }
+    .mc-filterbar label.mc-quick-filter { display: flex; align-items: center; gap: 8px; flex: 0 1 240px; min-width: 0; margin: 0; color: var(--text-secondary); font-size: var(--font-size-sm); font-weight: 500; text-transform: none; letter-spacing: normal; }
+    .mc-quick-filter > span { flex: 0 0 64px; }
+    .mc-quick-filter select { flex: 1 1 auto; width: auto; min-width: 0; font-size: var(--font-size-sm); }
+    @media (max-width: 767.98px) { .mc-quick-filters { flex-basis: 100%; flex-wrap: wrap; } .mc-filterbar .af-filterbar__end { flex: 1 1 100%; } }
+
+    .mc-filterbar .mc-to-filters { visibility: visible; display: inline-flex; gap: 6px; align-items: center; }
+    .mc-filterbar .mc-to-filters svg { width: 16px; height: 16px; }
+    .mc-filterbar .mc-to-filters[aria-expanded="true"] { color: var(--accent); }
+    .mc-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); align-items: start; min-width: 0; }
+    .mc-hub-more, .mc-extra, .mc-list > .ui-empty, .mc-list > .ui-alert { grid-column: 1 / -1; }
+    .mc-hub-more { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-card { container: mc-card / inline-size; display: grid; gap: 8px; min-width: 0; padding: 0 12px 8px; }
+    .mc-card.is-starter { border-color: var(--accent-border); }
+    .mc-card__head { display: grid; grid-template-columns: minmax(max-content, 1fr) max-content 44px 44px; align-items: center; gap: 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; min-width: 0; margin: 0 -12px; padding: 8px 12px; background: var(--ui-surface-2); border-bottom: 1px solid var(--ui-border-1); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .mc-card__head.is-expandable { cursor: pointer; transition: background-color .15s ease; }
+    .mc-card__head.is-expandable:hover, .mc-card__head.is-expandable:focus-within { background: color-mix(in srgb, var(--text-primary) 7%, var(--ui-surface-2)); }
+    .mc-card__head.is-expandable:hover .mc-versions, .mc-card__head.is-expandable:focus-within .mc-versions { color: var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .mc-card__head.is-expandable { transition: none; } }
+    .mc-card__title-wrap { display: flex; align-items: center; gap: 8px; min-width: max-content; min-height: 28px; }
+    .mc-card__title-wrap .mc-badge { margin-left: auto; }
+    .mc-version-count { font-size: var(--font-size-xs); font-variant-numeric: tabular-nums; }
+    .mc-card__title { margin: 0; flex: 0 1 auto; min-width: 0; white-space: nowrap; font-size: var(--font-size-lg); font-weight: 650; color: var(--text-primary); line-height: 1.35; }
+    .mc-card__meta { flex: none; width: 44px; text-align: right; font-size: var(--font-size-xs); color: var(--text-secondary); }
     .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
-    .mc-badge { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent-border, var(--ui-border-2)); }
-    .mc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
-    .mc-tag { padding: 1px 8px; border-radius: 999px; background: var(--ui-surface-2); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; white-space: nowrap; }
-    .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.45; }
-    /* Artifact rows: one grid line per row with fixed columns, so the columns
-       line up across every card: engine · id · quant · size · status chips ·
-       actions. Narrower cards (container queries) put the facts under the id. */
-    .mc-arts { display: grid; margin: 0 -8px; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; gap: 0 12px; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: var(--radius-md);
-      grid-template-columns: 96px minmax(0, 1fr) 72px 84px 236px 188px;
-      grid-template-areas: "prov id quant size chips action" "job job job job job job"; }
+    .mc-caps { justify-self: end; display: grid; grid-template-columns: repeat(9, 24px); align-items: center; justify-content: end; gap: 2px; flex: none; color: var(--text-secondary); }
+    .mc-cap-slot { display: grid; place-items: center; width: 24px; height: 24px; }
+    .mc-versions-slot { width: 44px; height: 28px; }
+    .mc-cap { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border-radius: 999px; color: var(--info); background: color-mix(in srgb, currentColor 10%, transparent); }
+    .mc-cap[data-mc-cap="text"] { color: var(--text-secondary); }
+    .mc-cap[data-mc-cap="thinking"] { color: var(--success); }
+    .mc-cap[data-mc-cap="vision"] { color: var(--warning); }
+    .mc-cap[data-mc-cap="voice"], .mc-cap[data-mc-cap="audio"] { color: var(--accent); }
+    .mc-brand { display: inline-flex; flex: none; }
+    .mc-card__meta:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+    .mc-cap svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-cap:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+    .mc-badge { flex: none; border-radius: var(--radius-sm); padding: 2px 6px; font-size: var(--font-size-xs); color: var(--accent); background: var(--accent-subtle); }
+    .mc-badge--kind { color: var(--text-primary); background: var(--ui-surface-1); border: 1px solid var(--ui-border-2); }
+    .mc-badge--recommended { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--accent); color: var(--text-primary); background: var(--ui-surface-1); font-weight: 650; }
+    .mc-badge--recommended svg { width: 12px; height: 12px; fill: none; stroke: var(--warning); stroke-width: 1.8; }
+    .mc-arts { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; }
+    .mc-art { display: grid; align-items: center; min-height: 44px; padding: 4px 6px; min-width: 0; gap: 0 10px; border-radius: var(--radius-md); grid-template-columns: minmax(0, 1fr) 54px max-content auto; grid-template-areas: "id size chips action" "details details details details" "job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
-    .mc-art.is-primary { background: var(--ui-surface-1); box-shadow: inset 3px 0 0 var(--accent); }
-    .mc-art.is-primary + .mc-art { border-top-color: transparent; }
-    .mc-art__facts { display: contents; }
-    .mc-art__prov { grid-area: prov; min-width: 0; }
-    .mc-prov { display: inline-flex; max-width: 100%; padding: 1px 8px; border-radius: var(--radius-sm); background: var(--ui-surface-2); border: 1px solid var(--ui-border-1); color: var(--text-primary); font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-art__id { grid-area: id; display: flex; align-items: center; gap: 7px; min-width: 0; }
-    .mc-id { display: block; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; font-family: var(--font-mono); font-size: var(--font-size-sm); line-height: 44px; color: var(--text-primary); background: transparent; border: 0; padding: 0; cursor: copy; }
-    .mc-art:not(.is-primary) .mc-id { color: var(--text-secondary); }
-    /* The recommended build: a small accent dot before its id (plus the row's accent edge). */
-    .mc-rec { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); }
-    .mc-art__quant { grid-area: quant; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-art__quant b { font-weight: 650; }
-    .mc-art__size { grid-area: size; color: var(--text-primary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
-    .mc-art__chips .ui-pill[title] { cursor: help; }
-    .mc-art__action { grid-area: action; display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
-    .mc-art__action .ui-btn { min-height: 44px; padding: 6px 12px; white-space: nowrap; }
-    .mc-art__action .ui-btn.mc-del { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
-    .mc-art__action .ui-pill { white-space: nowrap; }
-    .mc-del .button-icon { display: inline-flex; }
-    .mc-del .button-icon svg { width: 18px; height: 18px; }
-    .mc-del[aria-busy="true"] .button-icon { animation: mc-del-busy 1s ease-in-out infinite alternate; }
+    .mc-art.is-primary { background: var(--ui-surface-1); }
+    .mc-art__id { grid-area: id; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+    .mc-art__id .mc-build-inspect { width: auto; flex: 0 1 auto; }
+    .mc-build-name { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px; min-width: 0; font-size: var(--font-size-sm); color: var(--text-primary); }
+    .mc-build-name strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-build-publisher { display: inline; max-width: 104px; flex: 0 2 auto; color: var(--text-secondary); font-size: var(--font-size-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 0; }
+    .mc-prov { font-size: var(--font-size-xs); font-weight: 650; color: var(--text-secondary); white-space: nowrap; }
+    .mc-rec { flex: none; width: 5px; height: 5px; border-radius: 999px; background: var(--accent); }
+    .mc-art__size { grid-area: size; font-size: var(--font-size-sm); color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; gap: 4px; }
+    .mc-fit { font-size: var(--font-size-xs); color: var(--text-secondary); white-space: nowrap; }
+    .mc-fit.tone-ok { color: var(--success); }
+    .mc-fit.tone-warn { color: var(--warning); }
+    .mc-fit.tone-err { color: var(--error); }
+    .mc-installed, .mc-loaded { display: inline-flex; flex: none; align-items: center; justify-content: center; color: var(--info); }
+    .mc-installed svg, .mc-loaded svg, .mc-to-filters svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-installed svg, .mc-loaded svg { width: 14px; height: 14px; }
+    .mc-loaded { min-height: 24px; padding: 2px; background: none; border: 0; }
+    .mc-art__action { grid-area: action; display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+    .mc-icon-wrap { display: inline-flex; }
+    .mc-art__action .ui-btn.mc-icon-action, .mc-refresh .ui-btn.mc-icon-action { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: var(--radius-md); background: transparent; border: 1px solid transparent; color: var(--text-secondary); }
+    .mc-icon-action svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .mc-art__action .mc-icon-action:hover:not(:disabled) { background: var(--ui-surface-2); color: var(--text-primary); border-color: var(--ui-border-1); }
+    .mc-art__action .mc-icon-action.is-primary { color: var(--accent); background: var(--accent-subtle); }
+    .mc-art__action .mc-icon-action.is-current { color: var(--accent); }
+    .mc-icon-action.is-current svg { fill: currentColor; }
+    .mc-icon-action[aria-busy="true"] svg { animation: mc-del-busy 1s ease-in-out infinite alternate; }
+    .mc-icon-action:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
     @keyframes mc-del-busy { from { opacity: 1; } to { opacity: .3; } }
-    .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
-    .mc-del-confirm__q { flex: 1 1 260px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.45; }
-    .mc-del-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-    .mc-del-confirm__actions .ui-btn { min-height: 44px; padding: 6px 14px; }
-    .mc-art__action .mc-muted { color: var(--text-muted); font-size: var(--font-size-xs); text-align: right; }
-    .mc-art__job { grid-area: job; display: grid; gap: 6px; min-width: 0; padding-bottom: 6px; }
+    .mc-build-inspect { display: flex; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-width: 0; min-height: 28px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+    .mc-build-inspect:hover .mc-build-name strong, .mc-build-inspect[aria-expanded="true"] .mc-build-name strong { text-decoration: underline; text-underline-offset: 3px; }
+    .mc-build-inspect:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+    .mc-art__details { grid-area: details; margin-top: 8px; padding: 12px; border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); background: var(--ui-surface-1); font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .mc-art__details[hidden] { display: none; }
+    .mc-art__details p { margin: 8px 0 0; line-height: 1.5; }
+    .mc-id { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-xs); color: var(--text-primary); cursor: copy; padding: 6px 0; }
+    .mc-id:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+    .mc-art__job { grid-area: job; display: grid; min-width: 0; gap: 6px; }
     .mc-art__job:empty { display: none; }
-    .mc-art:not(.is-primary) .ui-pill.tone-muted { opacity: .85; }
-    @container mc-card (max-width: 1000px) {
-      .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id action" "facts action" "job job"; padding-bottom: 6px; }
-      .mc-art__facts { grid-area: facts; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
-      .mc-id { line-height: 1.4; padding: 6px 0 2px; }
+    .mc-art__job .ui-dl-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .mc-art__job .ui-dl-confirm .ui-btn { min-height: 36px; }
+    .mc-art__action .mc-muted { color: var(--text-secondary); font-size: var(--font-size-xs); }
+    .mc-del-confirm { display: grid; gap: 10px; padding: 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); font-size: var(--font-size-sm); }
+    .mc-del-confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .mc-del-confirm__actions .ui-btn { min-height: 40px; }
+    .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
+    @container mc-card (max-width: 360px) {
+      .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id id" "size action" "chips action" "details details" "job job"; }
+      .mc-art__chips { justify-content: flex-start; }
+      .mc-art__size { text-align: left; }
     }
-    @container mc-card (max-width: 560px) {
-      .mc-art { grid-template-areas: "id action" "facts facts" "job job"; }
-      .mc-id { line-height: 44px; padding: 0; }
-    }
+    @media (pointer: coarse) { .mc-art__action .ui-btn.mc-icon-action, .mc-refresh .ui-btn.mc-icon-action { min-width: 44px; min-height: 44px; height: 44px; } }
+    @media (max-width: 479.98px) { .mc-card { padding: 0 12px 8px; } .mc-host__facts { display: none; } .mc-count { white-space: normal; } .mc-art__action .ui-btn.mc-icon-action { width: 36px; min-height: 40px; height: 40px; } }
     /* Downloaded models no catalog entry knows: plain rows under a small heading. */
     .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
     .mc-empty strong { color: var(--text-primary); font-weight: 650; }
-    /* Phones: filter chips and the mode switch are touch targets too. */
-    @media (max-width: 767.98px) { button.mc-chip, .mc-mode button { min-height: 44px; } }
+    .mc-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: var(--text-secondary); font-size: var(--font-size-sm); }
+    .mc-loading__wheel { width: 18px; height: 18px; flex: none; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 999px; animation: mc-loading-spin .8s linear infinite; }
+    @keyframes mc-loading-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .mc-loading__wheel { animation: none; } }
+    .mc-card__head .mc-versions { display: inline-flex; align-items: center; justify-content: center; gap: 2px; width: 44px; height: 28px; min-height: 28px; padding: 0; margin-left: 0; color: var(--text-secondary); }
+    .mc-versions svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; transition: transform .15s; }
+    .mc-versions[aria-expanded="true"] svg { transform: rotate(180deg); }
+    @media (pointer: coarse) { .mc-card__head .mc-versions, .mc-versions-slot { min-width: 44px; min-height: 44px; } }
 """
 
 CATALOG_JS = r"""
@@ -173,10 +194,8 @@ CATALOG_JS = r"""
     const MC_QUANT_LABEL = { "2bit": "2-bit", "3bit": "3-bit", "4bit": "4-bit", "5bit": "5-bit", "6bit": "6-bit", "8bit": "8-bit", "16bit": "16-bit", full: "Full precision", unknown: "Not stated" };
     const MC_QUANT_CHIPS = [["all", "All"], ["4bit", "4-bit"], ["8bit", "8-bit"], ["other", "Other"]];
     const MC_STATUS_CHIPS = [["all", "All"], ["downloaded", "Downloaded"], ["not_downloaded", "Not downloaded"]];
-    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
-    // Catalog mode asks Hugging Face for the same words once typing pauses (AbstractCore caches 24 h).
-    const MC_HUB_BESIDE_MIN = 3;
-    const MC_HUB_BESIDE_MS = 700;
+    const MC_ASSET_KINDS = [["model", "Models"], ["adapter", "Adapters"], ["component", "Components"], ["unknown", "Unclassified"], ["all", "All assets"]];
+    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"], ["decision", "Decision"]];
     const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images & video", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
     const MC_WEIGHTS = { installed: ["Downloaded", "ok"], absent: ["Not downloaded", "muted"], unknown: ["Unknown", "muted"], not_applicable: ["Remote", "muted"] };
     // needs_gpu_limit (AbstractCore 2.18): fits once the Mac's GPU memory limit
@@ -189,43 +208,51 @@ CATALOG_JS = r"""
       // "Delete download": `del` = key -> {phase: checking|confirm|deleting, plan, at};
       // `deleted` = keys whose files this page deleted (a finished download job
       // in the shared feed must not draw them as Downloaded again).
-      del: new Map(), deleted: new Set(),
+      del: new Map(), deleted: new Set(), defaultBusy: new Set(),
       // GET /models/installed (models_installed_v1): what the local engines
       // hold. Rows no catalog artifact accounts for are drawn as plain rows
       // under "Not in the catalog" (status All / Downloaded).
       installed: null, installedError: "", extraNotice: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
-    function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
+    // Catalogue = local curated/installed facts; online versions require explicit Hub mode.
+    const MC_CATALOG_PATH = "/api/gateway/models/catalog";
+    const MC_VERSION_PREVIEW = 1;
+    function mcDefaultFilters() { return { q: "", kind: "model", quant: "4bit", provider: "all", cap: "all", status: "all", fits: true, hf: null }; }
     function mcHfMode(f) { return typeof (f || {}).hf === "string"; }
     // ---- URL hash: `#catalog?q=...&quant=8bit&provider=mlx&cap=vision&status=downloaded&fits=1`
     function mcParseHash(hash) {
       const f = mcDefaultFilters();
       const m = /^#catalog(?:\?(.*))?$/.exec(String(hash || ""));
       if (!m || !m[1]) return f;
+      const given = new Set();
       for (const part of m[1].split("&")) {
         const eq = part.indexOf("=");
         if (eq < 1) continue;
         let key = ""; let value = "";
         try { key = decodeURIComponent(part.slice(0, eq)); value = decodeURIComponent(part.slice(eq + 1).replace(/\+/g, " ")); } catch { continue; }
+        given.add(key);
         if (key === "q") f.q = value;
-        else if (key === "quant" && ["4bit", "8bit", "other"].includes(value)) f.quant = value;
+        else if (key === "kind" && MC_ASSET_KINDS.some(([id]) => id === value)) f.kind = value;
+        else if (key === "quant" && ["all", "4bit", "8bit", "other"].includes(value)) f.quant = value;
         else if (key === "provider" && value) f.provider = value;
         else if (key === "cap" && MC_CAPS.some((c) => c[0] === value)) f.cap = value;
         else if (key === "status" && ["downloaded", "not_downloaded"].includes(value)) f.status = value;
         else if (key === "fits") f.fits = value === "1" || value === "true";
         else if (key === "hf") f.hf = value;
       }
+      if (f.kind !== "model" || mcHfMode(f)) { if (!given.has("quant")) f.quant = "all"; if (!given.has("fits")) f.fits = false; }
       return f;
     }
     function mcHashFor(f) {
       const parts = [];
       if (f.q) parts.push(`q=${encodeURIComponent(f.q)}`);
-      if (f.quant !== "all") parts.push(`quant=${encodeURIComponent(f.quant)}`);
+      if (f.kind && f.kind !== "model") parts.push(`kind=${encodeURIComponent(f.kind)}`);
+      if (f.quant !== "4bit") parts.push(`quant=${encodeURIComponent(f.quant)}`);
       if (f.provider !== "all") parts.push(`provider=${encodeURIComponent(f.provider)}`);
       if (f.cap !== "all") parts.push(`cap=${encodeURIComponent(f.cap)}`);
       if (f.status !== "all") parts.push(`status=${encodeURIComponent(f.status)}`);
-      if (f.fits) parts.push("fits=1");
+      if (!f.fits) parts.push("fits=0");
       if (mcHfMode(f)) parts.push(`hf=${encodeURIComponent(f.hf)}`);
       return parts.length ? `#catalog?${parts.join("&")}` : "#catalog";
     }
@@ -263,7 +290,7 @@ CATALOG_JS = r"""
     }
     function mcWithView(view, fn) {
       const before = mcSrc;
-      mcSrc = { data: mcViewData(view) };
+      mcSrc = { data: mcViewData(view), view };
       try { return fn(); } finally { mcSrc = before; }
     }
     function mcData() { return mcSrc ? mcSrc.data : mcStore.data; }
@@ -275,8 +302,10 @@ CATALOG_JS = r"""
     function mcJobDone(job) { return !!job && (job.state === "done" || job.status === "completed"); }
     function mcInstalled(a) {
       if (mcStore.deleted.has(mcKey(a))) return false;
+      if (a.inventory && a.inventory.complete !== true) return mcJobDone(mcJob(a));
       return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a));
     }
+    function mcHasLocalFiles(a) { return !mcStore.deleted.has(mcKey(a)) && (mcInstalled(a) || !!(a.inventory && a.inventory.present)); }
     function mcFits(a) { return a.supported_on_host !== false && MC_FITS_FILTER_VERDICTS.includes(String((a.fit || {}).verdict || "")); }
     // needs_gpu_limit: AbstractCore's gpu_limit_instruction, with the command
     // to copy. Nothing when the verdict or the command is absent.
@@ -286,7 +315,7 @@ CATALOG_JS = r"""
       if (String(f.verdict || "") !== "needs_gpu_limit" || typeof gl.command !== "string" || !gl.command) return "";
       const gib = uiNum(gl.required_mb) ? ` ${Math.round(Number(gl.required_mb) / 1024)} GiB` : " more memory";
       return `<div class="mc-note" data-mc-gpu-limit="1">It fits once macOS lets the GPU use${esc(gib)}: run `
-        + `<code class="mc-id" tabindex="0" role="button" title="Click to copy" data-mc-copy="${esc(gl.command)}">${esc(gl.command)}</code>`
+        + `<code class="mc-id" tabindex="0" role="button" data-af-tip="Copy GPU limit command" data-mc-copy="${esc(gl.command)}">${esc(gl.command)}</code>`
         + ` in a terminal (asks for your password; lasts until the Mac restarts), then load it.</div>`;
     }
     // quant_class is AbstractCore's. A payload where ANY artifact
@@ -298,6 +327,7 @@ CATALOG_JS = r"""
     }
     function mcQuantBucket(a) { return a.quant_class === "4bit" || a.quant_class === "8bit" ? a.quant_class : "other"; }
     function mcRowCaps(row) {
+      if (row.asset_kind && row.asset_kind !== "model") return [];
       const c = row.capabilities || {};
       const out = [];
       if (c.text === true) out.push("text");
@@ -309,6 +339,9 @@ CATALOG_JS = r"""
       if (c.speech_synthesis === true) out.push("voice");
       if (c.image_generation === true) out.push("image");
       if (c.video_generation === true) out.push("video");
+      // AbstractCore 2.32.0 decision models (kev, lev, laya): the catalog row carries the
+      // `decision` tag; a `decision` capability flag counts the same way.
+      if (c.decision === true || (Array.isArray(row.tags) && row.tags.includes("decision"))) out.push("decision");
       return out;
     }
     function mcProviderLabel(p) { return MC_PROVIDER_LABEL[p] || String(p || ""); }
@@ -320,21 +353,28 @@ CATALOG_JS = r"""
     function mcTokens(q) { return String(q || "").toLowerCase().split(/\s+/).filter(Boolean); }
     function mcSearchHit(row, a, tokens) {
       if (!tokens.length) return true;
-      const hay = [row.display_name, row.id, row.vendor, row.family, a.artifact].map((x) => String(x || "").toLowerCase()).join(" ");
+      const hay = [row.display_name, row.id, row.vendor, row.family, row.asset_kind, (row.tags || []).join(" "), a.artifact].map((x) => String(x || "").toLowerCase()).join(" ");
       return tokens.every((t) => hay.includes(t));
+    }
+    function mcKindOf(row) { return row.asset_kind || "model"; }
+    function mcKindMatches(row, kind) { return kind === "all" || mcKindOf(row) === (kind || "model"); }
+    function mcKindFilters(view, kind) {
+      if (kind === (view.filters.kind || "model")) return {...view.filters};
+      return Object.assign({}, view.filters, kind === "model" ? (view.modelFilters || {quant:view.filters.status === "downloaded" ? "all" : "4bit",fits:view.filters.status !== "downloaded",cap:"all"}) : {quant:"all",fits:false,cap:"all"}, {kind});
     }
     function mcArtMatches(row, a, f, quantOn, tokens) {
       if (quantOn && f.quant !== "all" && mcQuantBucket(a) !== f.quant) return false;
       if (f.provider !== "all" && a.provider !== f.provider) return false;
       if (f.fits && !mcFits(a)) return false;
-      if (f.status === "downloaded" && !mcInstalled(a)) return false;
-      if (f.status === "not_downloaded" && mcInstalled(a)) return false;
+      if (f.status === "downloaded" && !mcHasLocalFiles(a)) return false;
+      if (f.status === "not_downloaded" && mcHasLocalFiles(a)) return false;
       return mcSearchHit(row, a, tokens);
     }
-    // The recommended artifact first; the rest in the catalog's own order.
+    // Surface a live job/current default/installed build before proposing another download.
     function mcOrdered(row) {
-      const arts = mcArts(row);
-      return arts.filter((a) => a.recommended).concat(arts.filter((a) => !a.recommended));
+      const current = mcCurrentDefault();
+      const priority = a => dlActive(mcJob(a)) ? -1 : current && current.provider === a.provider && current.model === servedModelId(a.provider,a.artifact) && mcInstalled(a) ? 0 : mcInstalled(a) ? 1 : a.recommended ? 2 : mcHasLocalFiles(a) ? 3 : 4;
+      return mcArts(row).map((a,i)=>({a,i})).sort((x,y)=>priority(x.a)-priority(y.a)||x.i-y.i).map(x=>x.a);
     }
     function mcVisible(f) {
       const quantOn = mcQuantReported();
@@ -342,8 +382,13 @@ CATALOG_JS = r"""
       const tokens = mcHfMode(f) ? [] : mcTokens(f.q);
       const out = [];
       for (const row of mcRows()) {
+        if (!mcKindMatches(row, f.kind)) continue;
         if (f.cap !== "all" && !mcRowCaps(row).includes(f.cap)) continue;
-        const arts = mcOrdered(row).filter((a) => mcArtMatches(row, a, f, quantOn, tokens));
+        const versionKey = `${row.source || "catalog"}:${row.id}`;
+        const view = mcSrc && mcSrc.view;
+        const order = view && view.buildOrders && view.buildOrders.get(versionKey);
+        const ordered = order ? mcArts(row).slice().sort((a,b)=>(order.indexOf(mcKey(a))<0?1e9:order.indexOf(mcKey(a)))-(order.indexOf(mcKey(b))<0?1e9:order.indexOf(mcKey(b)))) : mcOrdered(row);
+        const arts = ordered.filter((a) => mcArtMatches(row, a, f, quantOn, tokens));
         if (arts.length) out.push({ row, arts });
       }
       return out;
@@ -368,7 +413,7 @@ CATALOG_JS = r"""
       const aa = mcNorm(a.artifact); const ra = mcNorm(r.artifact);
       if (rp === "ollama") return ap === "ollama" && mcOllamaFull(aa) === mcOllamaFull(ra);
       if (MC_HF_FAMILY.has(rp)) return MC_HF_FAMILY.has(ap) && (aa === ra || mcRepoOf(aa) === ra);
-      if (rp === "lmstudio") return ap === "lmstudio" && (aa === ra || aa.split("@")[0] === ra.split("@")[0]);
+      if (rp === "lmstudio") return ap === "lmstudio" && (aa === ra || ((!aa.includes("@") || !ra.includes("@")) && aa.split("@")[0] === ra.split("@")[0]));
       return ap === rp && aa === ra;
     }
     function mcInstalledRows() {
@@ -380,7 +425,7 @@ CATALOG_JS = r"""
     function mcCovered(r) {
       for (const row of mcRowsOf(mcStore.data)) {
         for (const a of mcArts(row)) {
-          if ((((a.presence || {}).status === "installed") || mcStore.deleted.has(mcKey(a)) || mcJobDone(mcJob(a))) && mcSameFiles(a, r)) return true;
+          if ((mcHasLocalFiles(a) || mcStore.deleted.has(mcKey(a))) && mcSameFiles(a, r)) return true;
         }
       }
       return false;
@@ -398,6 +443,8 @@ CATALOG_JS = r"""
       if (f.quant !== "all" && f.quant !== "other" && mcQuantReported()) return [];
       const tokens = mcTokens(f.q);
       return mcInstalledRows().filter((r) => {
+        const kind = r.kind === "embedding" ? "model" : r.kind === "encoder" ? "component" : r.kind || "unknown";
+        if (f.kind !== "all" && kind !== (f.kind || "model")) return false;
         if (mcStore.deleted.has(mcKey(r))) return false;
         if (f.provider !== "all" && r.provider !== f.provider) return false;
         if (tokens.length) {
@@ -414,44 +461,75 @@ CATALOG_JS = r"""
       const bits = [];
       const chip = p.gpu_name || p.accelerator || "";
       if (chip) bits.push(`<b>${esc(chip)}</b>`);
-      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : "memory"}`);
-      if (uiNum(p.ceiling_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
+      // A GPU with its own memory: VRAM and RAM side by side (QA 2026-10-28 (e): "28.7 GB memory ·
+      // models up to 16.1 GB" hid a 16 GB card behind the RAM figure). Unified memory: one figure.
+      const vram = !p.unified_memory && uiNum(p.vram_bytes) && p.vram_bytes > 0;
+      if (vram) bits.push(`${esc(uiBytes(p.vram_bytes))} VRAM`);
+      if (uiNum(p.ram_bytes)) bits.push(`${esc(uiBytes(p.ram_bytes))} ${p.unified_memory ? "unified memory" : vram ? "RAM" : "memory"}`);
+      // The model ceiling only when it says something the figures above do not.
+      if (uiNum(p.ceiling_bytes) && !(vram && p.ceiling_bytes === p.vram_bytes)) bits.push(`models up to about ${esc(uiBytes(p.ceiling_bytes))}`);
       return bits.length ? `<span class="mc-host__facts">This computer: ${bits.join(" · ")}</span>` : "";
     }
-    function mcChip(group, value, label, on, count, disabled) {
-      const n = count === null || count === undefined ? "" : `<span class="mc-chip__n">${esc(count)}</span>`;
-      return `<button type="button" class="mc-chip${count === 0 ? " is-zero" : ""}" data-mc-filter="${esc(group)}" data-mc-value="${esc(value)}" aria-pressed="${on ? "true" : "false"}"${disabled ? " disabled" : ""}>${esc(label)}${n}</button>`;
+    // ---- The filter bar: abstractuic's AfFilterBar (ui-kit backlog 0074) ----
+    // Render through the vendored kit; no copied filter markup or CSS.
+    function mcFilterKit() {
+      const lib = typeof window !== "undefined" && window.AfConsoleIslands;
+      if (!lib || typeof lib.filterBarFacetsHtml !== "function" || typeof lib.filterBarScopeButtonsHtml !== "function") throw new Error("The shared UI kit filter bar did not load. Reload the console.");
+      return lib;
+    }
+    function mcTooltipAttrs(content) {
+      const lib = mcFilterKit();
+      if (typeof lib.tooltipAttributes !== "function") throw new Error("The shared structured tooltip kit did not load. Reload the console.");
+      return Object.entries(lib.tooltipAttributes(content)).map(([key,value]) => `${key}="${esc(value)}"`).join(" ");
+    }
+    function afFilterFacetsHtml(facets, trailing) { return mcFilterKit().filterBarFacetsHtml(facets, trailing); }
+    function afFilterScopeButtonsHtml(options, value) { return mcFilterKit().filterBarScopeButtonsHtml(options, value); }
+    // The kit's native switch (af-switch--native: a checkbox with role="switch"), small.
+    function mcSwitchMarkup(dataAttr, on, label, attrs) {
+      return `<label class="af-switch af-switch--native af-switch--sm"${attrs || ""}><input type="checkbox" role="switch" class="af-switch__input" ${dataAttr}="1"${on ? " checked" : ""}>`
+        + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(label)}</span></span></label>`;
     }
     // A chip's count = the artifacts the view would show with that chip on.
     function mcChipCount(view, group, value) {
+      if (group === "kind") { const f = mcKindFilters(view, value); return mcVisible(f).length + mcExtras(view, f).length; }
       const f = Object.assign({}, view.filters, { [group]: value });
       return mcCountArts(mcVisible(f)) + mcExtras(view, f).length;
     }
-    function mcControlsMarkup(view) {
+    function mcFilterFacets(view) {
       const f = view.filters;
       const quantOn = mcQuantReported();
-      const rows = mcRows();
+      const rows = mcRows().filter(r => mcKindMatches(r,f.kind));
       const providers = [];
       for (const r of rows) for (const a of mcArts(r)) if (a.provider && !providers.includes(a.provider)) providers.push(a.provider);
       for (const r of mcExtras(view, Object.assign({}, f, { provider: "all" }))) if (!providers.includes(r.provider)) providers.push(r.provider);
       if (f.provider !== "all" && !providers.includes(f.provider)) providers.push(f.provider);
       const caps = MC_CAPS.filter(([id]) => rows.some((r) => mcRowCaps(r).includes(id)) || f.cap === id);
-      const quant = MC_QUANT_CHIPS.map(([id, label]) => mcChip("quant", id, label, quantOn && f.quant === id, quantOn && id !== "all" ? mcChipCount(view, "quant", id) : null, !quantOn)).join("");
-      const prov = [["all", "All"]].concat(providers.map((p) => [p, mcProviderLabel(p)])).map(([id, label]) => mcChip("provider", id, label, f.provider === id, id === "all" ? null : mcChipCount(view, "provider", id), false)).join("");
-      const cap = [["all", "All"]].concat(caps).map(([id, label]) => mcChip("cap", id, label, f.cap === id, id === "all" ? null : mcChipCount(view, "cap", id), false)).join("");
-      const status = MC_STATUS_CHIPS.map(([id, label]) => mcChip("status", id, label, f.status === id, id === "all" ? null : mcChipCount(view, "status", id), false)).join("");
-      const group = (label, body, extra) => `<div class="mc-group" role="group" aria-label="${esc(label)}"${extra || ""}><span class="mc-group__label" aria-hidden="true">${esc(label)}</span>${body}</div>`;
-      return `<div class="mc-groups">`
-        + group("Quantization", quant, quantOn ? "" : ' data-mc-quant="unreported"')
-        + group("Provider", prov)
-        + group("Capability", cap)
-        + group("Status", status)
-        + `</div>`;
+      // A chip's count = the artifacts the view would show with it on ("All" carries none).
+      const options = (group, pairs) => pairs.map(([id, label]) => ({ value: id, label, count: id === "all" ? null : mcChipCount(view, group, id) }));
+      const facets = [
+        { id: "kind", label: "Asset type", value: f.kind || "model", options: MC_ASSET_KINDS.map(([value,label]) => ({value,label,count:mcChipCount(view,"kind",value)})) },
+        // No quant_class in the payload: the facet is shown, disabled, never guessed.
+        { id: "quant", label: "Quantization", value: f.quant, disabled: !quantOn, options: quantOn ? options("quant", MC_QUANT_CHIPS) : MC_QUANT_CHIPS.map(([id, label]) => ({ value: id, label })) },
+        { id: "provider", label: "Provider", value: f.provider, options: [["all", "All providers"]].concat(providers.map((p) => [p, mcProviderLabel(p)])).map(([value,label])=>({value,label})) },
+        { id: "cap", label: "Capability", value: f.cap, options: [["all", "All capabilities"]].concat(caps).map(([value,label])=>({value,label})) },
+      ];
+      // No "Every quant" switch on any tab (operator ruling, AbstractGateway #79).
+      return facets;
+    }
+    function mcControlsMarkup(facets) {
+      return afFilterFacetsHtml(facets.filter(f => f.id === "kind" || f.id === "quant"), null);
+    }
+    function mcQuickFiltersMarkup(view, facets) {
+      return facets.filter(f => f.id === "provider" || f.id === "cap").map(f => {
+        const options = f.options.map(o => `<option value="${esc(o.value)}"${o.value === f.value ? " selected" : ""}>${esc(o.label)}</option>`).join("");
+        return `<label class="mc-quick-filter"><span>${esc(f.label)}</span>`
+          + `<select data-mc-filter="${esc(f.id)}" aria-label="${esc(f.label)}"${!mcData() || f.options.length < 2 ? " disabled" : ""}>${options}</select></label>`;
+      }).join("");
     }
     function mcCountMarkup(view, list, extras) {
-      const total = mcRows().length;
-      const arts = mcCountArts(list) + (extras || []).length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> ${arts === 1 ? "artifact" : "artifacts"} shown`;
+      const kind = view.filters.kind || "model", total = mcRows().filter(r => mcKindMatches(r,kind)).length;
+      const words = ({model:["model","models"],adapter:["adapter","adapters"],component:["component","components"],unknown:["unclassified asset","unclassified assets"],all:["asset","assets"]})[kind];
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, words[0], words[1]))}`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -460,9 +538,7 @@ CATALOG_JS = r"""
       if (mcHfMode(f)) out.push(f.hf ? `Hugging Face: “${f.hf}”` : "Hugging Face");
       else if (f.q) out.push(`“${f.q}”`);
       if (f.quant !== "all" && mcQuantReported()) out.push((MC_QUANT_CHIPS.find((c) => c[0] === f.quant) || [f.quant, f.quant])[1]);
-      if (f.provider !== "all") out.push(mcProviderLabel(f.provider));
-      if (f.cap !== "all") out.push((MC_CAPS.find((c) => c[0] === f.cap) || [f.cap, f.cap])[1]);
-      if (f.status !== "all") out.push((MC_STATUS_CHIPS.find((c) => c[0] === f.status) || [f.status, f.status])[1]);
+      if (f.status !== "all" && (view.guide || f.status !== "downloaded")) out.push((MC_STATUS_CHIPS.find((c) => c[0] === f.status) || [f.status, f.status])[1]);
       return out.map((t) => `<span>${esc(t)}</span>`).join("");
     }
     // Hugging Face mode: the Hub answered only in part (offline, rate limited).
@@ -485,24 +561,121 @@ CATALOG_JS = r"""
       return `<div class="ui-alert tone-warn mc-seam" role="alert" data-mc-notice="quant_class"><strong>This gateway's catalog does not report quant_class yet.</strong>`
         + `<span>The 4-bit / 8-bit filter needs it, so it is off. Every model and every artifact is still listed below. Updating AbstractCore on the gateway host turns the filter on.</span></div>`;
     }
-    function mcFitTitle(fit) {
-      const f = fit || {};
-      const lines = [];
-      // The verdict compares the need with `usable_bytes` (the ceiling minus
-      // what is kept free for the system), so that is the number said here.
-      if (uiNum(f.need_bytes) && uiNum(f.usable_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)} of the ${uiBytes(f.usable_bytes)} this computer can give a model`);
-      else if (uiNum(f.need_bytes) && uiNum(f.ceiling_bytes)) lines.push(`Needs about ${uiBytes(f.need_bytes)}; this computer lets a model use at most ${uiBytes(f.ceiling_bytes)}, minus what the system keeps free`);
-      if (uiNum(f.free_now_bytes)) lines.push(`Free right now: ${uiBytes(f.free_now_bytes)}`);
-      if (f.disk_ok === false) lines.push("Not enough free disk space for the download");
-      if (uiNum(f.max_context)) lines.push(`Longest context that fits: ${Number(f.max_context).toLocaleString()} tokens`);
-      for (const note of Array.isArray(f.notes) ? f.notes : []) lines.push(String(note));
-      return lines.join("\n");
+    // Fit fields are the authority; raw estimator notes belong in explicit build details.
+    function mcFitTooltip(a) {
+      const inv = a.inventory;
+      if (inv && (inv.complete !== true || a.asset_kind && a.asset_kind !== "model")) {
+        const kind = a.asset_kind || inv.kind;
+        const adapter = inv.adapter || {};
+        const adapterFacts = kind === "adapter" ? [
+          ...(adapter.type && adapter.type !== "unknown" ? [{label:"Adapter type",value:adapter.type === "lora" ? "LoRA" : adapter.type === "controlnet" ? "ControlNet" : adapter.peft_type || adapter.type}] : []),
+          ...(adapter.base_models && adapter.base_models.length ? [{label:"Declared base",value:adapter.base_models.join(", ")}] : []),
+          ...(adapter.tasks && adapter.tasks.length ? [{label:"Task",value:adapter.tasks.map(t=>t.replaceAll("_"," ")).join(", ")}] : [])] : [];
+        const description = inv.complete !== true ? "Local files are cached, but a complete checkpoint has not been verified." : kind === "adapter" ? "Requires a compatible base model. Its cache size does not describe the full pipeline’s memory needs." : kind === "component" ? "Used inside a larger pipeline. Its cache size does not describe the full pipeline’s memory needs." : "Its role and runtime requirements could not be identified from the available local metadata.";
+        return {title:inv.complete !== true ? "Cached files" : kind === "adapter" ? "Base model required" : kind === "component" ? "Pipeline component" : "Unclassified asset",description,
+          ...(kind === "adapter" && adapter.trigger_words && adapter.trigger_words.length ? {sections:[{label:"Trigger words",items:adapter.trigger_words}]} : {}),
+          ...(kind === "adapter" ? {note:"Base names are declarations from local metadata, not a verified engine compatibility check."} : {}),
+          facts:[...adapterFacts,...(uiNum(inv.bytes) ? [{label:"Cache size",value:uiBytes(inv.bytes)}] : []),...(uiNum(inv.files) ? [{label:"Cached files",value:String(inv.files)}] : []),...(inv.incomplete_files ? [{label:"Pending files",value:String(inv.incomplete_files),tone:"warning"}] : []),...(inv.missing_shards ? [{label:"Missing shards",value:String(inv.missing_shards),tone:"warning"}] : [])]};
+      }
+      const f = a.fit || {}, verdict = String(f.verdict || "unknown");
+      const title = a.supported_on_host === false ? "Unsupported engine" : ({fits:"Fits this computer",tight:"Tight memory fit",needs_gpu_limit:"GPU limit change needed",partial_offload:"Partial GPU offload",too_large:"Exceeds the memory budget"})[verdict] || "Fit not known";
+      let description = ({fits:"Within this computer's model-memory budget.",tight:"Little memory headroom remains.",needs_gpu_limit:"Increase the GPU memory limit before loading.",partial_offload:"Some layers use system RAM, which is slower.",too_large:"Choose a smaller build or lower precision."})[verdict] || "Not enough data for a reliable fit estimate.";
+      if (["fits","tight"].includes(verdict) && f.fits_now === false) description = "Free more memory before loading.";
+      if (a.supported_on_host === false) description = "This build's engine does not run on this host.";
+      const facts = [];
+      if (uiNum(f.need_bytes)) facts.push({label:"Memory needed",value:uiBytes(f.need_bytes)});
+      if (uiNum(f.usable_bytes)) facts.push({label:"Model budget",value:uiBytes(f.usable_bytes)});
+      else if (uiNum(f.ceiling_bytes)) facts.push({label:"Memory limit",value:uiBytes(f.ceiling_bytes)});
+      if (uiNum(f.free_now_bytes)) facts.push({label:"Available now",value:uiBytes(f.free_now_bytes),...(f.fits_now === false ? {tone:"warning"} : {})});
+      if (uiNum(f.max_context)) facts.push({label:"Max. context",value:Number(f.max_context).toLocaleString()+" tokens"});
+      const sections = !mcInstalled(a) && f.disk_ok === false ? [{label:"Before downloading",items:["Free disk space for this download."]}] : [];
+      return {title,description,facts,sections,...(f.confidence && f.confidence !== "exact" ? {note:"Memory and context are estimates. See build details."} : {})};
     }
     function mcCurrentDefault() {
       const text = (state.defaults || []).find((r) => r && r.key === "output.text") || null;
       return text && text.provider && text.model ? { provider: String(text.provider), model: String(text.model) } : null;
     }
-    function mcCanBeDefault(row) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true; }
+    function mcCanBeDefault(row, art) { const c = row.capabilities || {}; return c.text === true && c.embedding !== true && (!row.asset_kind || row.asset_kind === "model") && (!art || !art.inventory || art.inventory.complete === true); }
+    // A GGUF this computer's llama.cpp cannot load (AbstractCore 0867/0868): the catalog
+    // artifact says so from the Hub's architecture (`loadable: false`), a downloaded one from its
+    // file (the installed row of GET /models/installed). The sentence, or "".
+    function mcUnloadable(a) {
+      if (a && a.loadable === false) return String(a.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      for (const r of mcInstalledRows()) {
+        if (r.loadable === false && mcSameFiles(a, r)) return String(r.unloadable_reason || "This computer's llama.cpp cannot load this model.");
+      }
+      return "";
+    }
+    // A NEWER llama.cpp loads it (AbstractCore `llamacpp_update`: the newest llama-cpp-python
+    // release knows the architecture): the row offers "Update llama.cpp" (one click, the engine
+    // install path) instead of only greying. `{architecture, installed, update_to}` or null.
+    function mcLlamaUpdate(a) {
+      if (a && a.llamacpp_update && a.llamacpp_update.update_to) return a.llamacpp_update;
+      for (const r of mcInstalledRows()) {
+        if (r.llamacpp_update && r.llamacpp_update.update_to && mcSameFiles(a, r)) return r.llamacpp_update;
+      }
+      return null;
+    }
+    function mcLlamaUpdateMarkup(a, unloadable, admin) {
+      const up = mcLlamaUpdate(a);
+      if (!up) return "";
+      if (mcStore.llamaUpdating) return mcIconButton("", "retry", "Updating llama.cpp", "Updating llama.cpp", 'aria-busy="true"', true);
+      const tip = `${unloadable} Installs llama-cpp-python ${up.update_to} through the engine installer (it keeps this computer's GPU build).`;
+      return mcIconButton("llama-update", "retry", "Update llama.cpp", admin ? tip : "Only an admin can update llama.cpp", "", !admin, " is-primary");
+    }
+    // A model outside the catalog: the engine's own answer (AbstractCore 0866 reads a GGUF's header)
+    // says it generates text (QA 2026-10-28 (c): such a model was never offered as the default).
+    function mcExtraCanBeDefault(r) { return r.kind !== "embedding" && Array.isArray(r.tasks) && r.tasks.includes("text_generation"); }
+    function mcIconButton(action, icon, label, tip, attrs, disabled, extra) {
+      return `<span class="mc-icon-wrap" data-af-tip="${esc(tip || label)}"><button type="button" class="ui-btn mc-icon-action${extra || ""}"${action ? ` data-mc-action="${esc(action)}"` : ""} ${attrs || ""} aria-label="${esc(label)}" data-af-tip="${esc(tip || label)}"${disabled ? " disabled" : ""}>${ICONS[icon]}</button></span>`;
+    }
+    const MC_CAP_ICON = { text:"text", thinking:"brain", tools:"tool", vision:"eye", audio:"waveform", embedding:"embedding", voice:"mic", image:"image", video:"video", decision:"check" };
+    const MC_CAP_HELP = {
+      text: { title: "Text generation", description: "Produces text responses from prompts, such as chat, summaries and code." },
+      thinking: { title: "Thinking", description: "Can reason through a problem before giving its final answer. Useful for complex questions, but may take longer to respond." },
+      tools: { title: "Tool use", description: "Can request calls to tools supplied by the app, such as search or calculations. The app runs them under its permission rules." },
+      vision: { title: "Image input", description: "Understands images attached to a prompt, so you can ask about screenshots, photos and diagrams." },
+      audio: { title: "Audio input", description: "Accepts audio as part of a prompt. The kinds of audio it understands depend on the model." },
+      embedding: { title: "Embeddings", description: "Turns content into numerical vectors for semantic search, similarity matching and retrieval." },
+      voice: { title: "Speech generation", description: "Converts text into spoken audio for read-aloud responses and narration. Available voices and languages depend on the model." },
+      image: { title: "Image generation", description: "Creates images from a prompt. Editing and reference-image support depend on the model." },
+      video: { title: "Video generation", description: "Creates video clips from a prompt. Supported length and reference inputs depend on the model." },
+      decision: { title: "Decisions", description: "Answers yes/no, choice and score questions about a text with calibrated confidence. Generates no text." }
+    };
+    function mcCapabilityHelp(cap, row) {
+      if (cap === "tools" && row.capabilities.tools === "prompted") return { title: "Tool use (prompted)", description: "Can request tools through instructions in its prompt. The app interprets those requests and runs tools under its permission rules." };
+      return MC_CAP_HELP[cap];
+    }
+    function mcCapabilityMarkup(row) {
+      const caps = mcRowCaps(row);
+      return `<span class="mc-caps" role="group" aria-label="Model capabilities"${caps.length ? "" : ' aria-hidden="true"'}>${MC_CAPS.map(([c]) => {
+        if (!caps.includes(c)) return `<span class="mc-cap-slot" data-mc-slot="${c}" aria-hidden="true"></span>`;
+        const help = mcCapabilityHelp(c, row);
+        return `<span class="mc-cap-slot" data-mc-slot="${c}"><span class="mc-cap" data-mc-cap="${esc(c)}" role="img" tabindex="0" aria-label="${esc(help.title)}" ${mcTooltipAttrs(help)}>${ICONS[MC_CAP_ICON[c]]}</span></span>`;
+      }).join("")}</span>`;
+    }
+    function mcBuildIdentity(a, extra) {
+      const id = String(a.artifact || "");
+      const publisher = id.includes("/") ? id.split("/")[0] : extra ? mcProviderLabel(a.provider) : "";
+      const provider = ({huggingface:"HF"})[a.provider] || mcProviderLabel(a.provider);
+      const quant = extra ? id.split("/").pop() : a.inventory && !a.quant ? "Files" : a.quant ? (MC_QUANT_LABEL[a.quant] || String(a.quant)) : (MC_QUANT_LABEL[a.quant_class] || "Unspecified");
+      return `<span class="mc-build-name"><span class="mc-prov"${a.provider === "huggingface" ? ' data-af-tip="Hugging Face"' : ""}>${esc(provider)}</span><strong>${esc(quant)}</strong>${a.recommended ? '<span class="mc-rec" role="img" aria-label="Recommended for this computer" data-af-tip="Recommended for this computer"></span>' : ""}</span>${publisher ? `<span class="mc-build-publisher">${esc(publisher)}</span>` : ""}`;
+    }
+    function mcBuildDetails(a, text, view) {
+      const open = !!view && view.details.has(mcKey(a));
+      const id = `mc-build-${encodeURIComponent(view ? view.key : "model")}-${encodeURIComponent(mcKey(a))}`;
+      const notes = [...new Set((Array.isArray((a.fit || {}).notes) ? a.fit.notes : []).map(String).filter(Boolean))];
+      const diagnostics = notes.length ? `<details class="ui-details mc-estimate-notes"><summary>Raw estimate notes</summary><ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></details>` : "";
+      return { attrs: `data-mc-action="details" aria-label="Build details" data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}" aria-expanded="${open}" aria-controls="${esc(id)}"`,
+        body: `<div class="mc-art__details" id="${esc(id)}"${open ? "" : " hidden"}><code class="mc-id" role="button" tabindex="0" data-af-tip="Copy model ID" aria-label="Copy model ID" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code><p>${esc(text)}</p>${diagnostics}</div>` };
+    }
+    function mcDefaultMarkup(provider, artifact, attrs, admin) {
+      const cur = mcCurrentDefault();
+      const current = !!cur && cur.provider === provider && cur.model === servedModelId(provider, artifact);
+      const saving = mcStore.defaultBusy.has(downloadJobKey(provider, artifact));
+      const label = saving ? "Saving default text model" : current ? "Default text model" : "Use as default text model";
+      return mcIconButton(current ? "" : "default", "star", label, current || admin ? label : "Only an admin can change the default text model", attrs + ` aria-pressed="${current}"${current ? ' aria-disabled="true"' : ""}${saving ? ' aria-busy="true"' : ""}`, !admin || saving, current ? " is-current" : "");
+    }
     function mcActionMarkup(row, a, job) {
       const key = mcKey(a);
       const admin = !!(state.principal && state.principal.admin);
@@ -510,23 +683,26 @@ CATALOG_JS = r"""
       if (job && dlActive(job)) {
         const jid = dlJobId(job);
         // Two steps (console_ui.py dlCancelMarkup): a click only asks.
-        return dlCancelMarkup(jid, "Cancel", { attrs: ` data-mc-action="cancel" data-job="${esc(jid)}"` });
+        if (dlConfirming(jid)) return "";
+        if (dlFeed.cancelling.has(jid)) return mcIconButton("", "close", "Cancelling download", "Cancelling download", 'aria-busy="true"', true);
+        return mcIconButton("cancel", "close", "Cancel download", "Cancel this download", `data-job="${esc(jid)}"`);
       }
-      if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
-      if (mcInstalled(a)) {
+      if (mcStore.busy.has(key)) return mcIconButton("", "download", "Starting download", "Starting download", 'aria-busy="true"', true);
+      const unloadable = mcUnloadable(a);
+      if (mcHasLocalFiles(a)) {
         const del = mcDeleteButton(a, attrs, admin);
-        if (!mcCanBeDefault(row)) return del;
-        const cur = mcCurrentDefault();
-        if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
-        return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
+        if (!mcInstalled(a) || !mcCanBeDefault(row, a) || a.supported_on_host === false) return del;
+        // Greyed with the reason: a default it cannot load would fail at the first call.
+        if (unloadable) return (mcLlamaUpdateMarkup(a, unloadable, admin) || mcIconButton("", "star", "Use as default text model", unloadable, 'data-mc-unloadable="1"', true)) + del;
+        return mcDefaultMarkup(a.provider, a.artifact, attrs, admin) + del;
       }
+      if (unloadable) return mcLlamaUpdateMarkup(a, unloadable, admin) || mcIconButton("", "download", "Download", unloadable, 'data-mc-unloadable="1"', true);
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
-        return `<span class="mc-muted" title="${esc(why)}">Not available here</span>`;
+        return mcIconButton("", "download", "Download unavailable", why, "", true);
       }
-      const label = job && job.status === "failed" ? "Try again" : "Download";
-      const tone = a.recommended ? "is-primary" : "is-ghost";
-      return `<button type="button" class="ui-btn ${tone}" data-mc-action="download" ${attrs}${admin ? "" : ' disabled title="Only an admin can download models"'}>${label}</button>`;
+      const label = job && job.status === "failed" ? "Retry download" : "Download";
+            return mcIconButton("download", label === "Download" ? "download" : "retry", label, admin ? label : "Only an admin can download models", attrs, !admin, a.recommended ? " is-primary" : "");
     }
     // Delete (a trash-bin icon button, tooltip "Delete"; the row already
     // names the model) on every downloaded row. The first click asks the
@@ -534,12 +710,9 @@ CATALOG_JS = r"""
     // confirmation below the row states that size.
     function mcDeleteButton(a, attrs, admin) {
       const cur = mcStore.del.get(mcKey(a));
-      const icon = `<span class="button-icon" aria-hidden="true">${ICONS.trash}</span>`;
-      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Checking" data-af-tip="Checking what a delete would free">${icon}</button>`;
-      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Deleting" data-af-tip="Deleting the downloaded files">${icon}</button>`;
       if (cur && cur.phase === "confirm") return "";
-      const tip = admin ? `Delete ${a.artifact || "this model"} from this computer (files only)` : "Only an admin can delete downloaded models";
-      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs} aria-label="Delete" data-af-tip="${esc(tip)}"${admin ? "" : " disabled"}>${icon}</button>`;
+      if (cur && ["checking", "deleting"].includes(cur.phase)) return mcIconButton("", "trash", cur.phase === "checking" ? "Checking" : "Deleting", "Checking or deleting downloaded files", 'aria-busy="true"', true, " mc-del");
+      return mcIconButton("delete-ask", "trash", "Delete", admin ? "Delete downloaded files; asks for confirmation" : "Only an admin can delete downloaded models", attrs, !admin, " mc-del");
     }
     function mcDeleteConfirmMarkup(a) {
       const cur = mcStore.del.get(mcKey(a));
@@ -560,6 +733,7 @@ CATALOG_JS = r"""
       if (job && dlActive(job)) {
         const phase = uiJobPhase(job);
         out += uiProgressMarkup(job, job.parent_job ? `${UI_PHASE_LABELS[phase] || "Downloading"} · part of Download all` : (UI_PHASE_LABELS[phase] || "Downloading"));
+        if (dlConfirming(dlJobId(job))) out += dlCancelMarkup(dlJobId(job), "Cancel", {attrs:` data-mc-action="cancel" data-job="${esc(dlJobId(job))}"`});
       } else if (job && job.status === "failed") {
         const said = String(job.ended_reason || job.message || "Try again.").trim();
         const why = String(job.error || job.message || "").trim();
@@ -571,61 +745,60 @@ CATALOG_JS = r"""
       if (notice) out += `<div class="ui-alert tone-${esc(notice.tone)}" role="status">${esc(notice.text)}</div>`;
       return out;
     }
-    function mcArtMarkup(row, a, alone) {
-      const job = mcJob(a);
-      const presence = a.presence || {};
-      const installed = mcInstalled(a);
-      const gone = mcStore.deleted.has(mcKey(a));
-      const [wLabel, wTone] = installed ? MC_WEIGHTS.installed : gone ? MC_WEIGHTS.absent : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
-      const wTitle = gone ? "" : [presence.location, presence.evidence].filter(Boolean).join(" · ");
-      const weights = job && dlActive(job) ? dlStatePill(job) : uiPill(wLabel, wTone, wTitle);
-      const verdict = String((a.fit || {}).verdict || "unknown");
-      const [fLabel, fTone] = a.supported_on_host === false ? ["Not for this computer", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
-      const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
-      const raw = a.quant ? String(a.quant) : "";
-      const bits = uiNum(a.bits) ? `${a.bits} bits` : "";
-      // With quant_class: its label ("8-bit"). Without it: the catalog's own
-      // quant string as sent -- never a class guessed from that string.
-      const quantMain = quantOn ? (MC_QUANT_LABEL[a.quant_class] || a.quant_class) : (raw || "Not stated");
-      const quantTitle = [raw ? `Quantization: ${raw}` : "The catalog does not name a quantization", bits].filter(Boolean).join(" · ");
-      const exact = ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
-      const size = uiNum(a.download_bytes) ? `${exact ? "" : "about "}${uiBytes(a.download_bytes)}` : "Size unknown";
-      const sizeTitle = uiNum(a.download_bytes) ? (exact ? "Download size" : "Estimated from the parameter count and quantization") : "The catalog has no size for this build";
-      const primary = !!a.recommended;
-      // The marker only means something next to other builds of the same model.
-      const rec = primary && !alone ? `<span class="mc-rec" role="img" aria-label="Recommended for this computer" title="Recommended for this computer"></span>` : "";
-      return `<li class="mc-art${primary ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
-        + `<div class="mc-art__id">${rec}<code class="mc-id" tabindex="0" role="button" title="${esc(a.artifact)} (click to copy)" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code></div>`
-        + `<div class="mc-art__facts">`
-        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(a.engine && a.engine !== a.provider ? `${mcProviderLabel(a.provider)} (runs on ${mcProviderLabel(a.engine)})` : mcProviderLabel(a.provider))}">${esc(mcProviderLabel(a.provider))}</span></div>`
-        + `<div class="mc-art__quant" title="${esc(quantTitle)}"><b>${esc(quantMain)}</b></div>`
-        + `<div class="mc-art__size" title="${esc(sizeTitle)}">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${weights}${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
-        + `</div>`
-        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
-        + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div>`
-        + `</li>`;
+    // Residency lives on the Resources page (operator ruling 2026-10-29): the catalog row only
+    // says that this build is in memory now, as a small badge that opens Resources (keep it
+    // loaded, unload it, its context). Read from the host snapshot the top bar already polls.
+    function mcResidentRow(a) {
+      const hs = state.hostState;
+      const rows = hs && Array.isArray(hs.models) ? hs.models : [];
+      const prov = String(a.provider || "").toLowerCase();
+      const raw = String(a.artifact || "");
+      const repo = mcNorm(raw.split(":")[0]);
+      const quant = raw.includes(":") ? raw.split(":").slice(1).join(":").toUpperCase() : "";
+      return rows.find((m) => {
+        if (!m || m.resident !== true || String(m.provider || "").toLowerCase() !== prov) return false;
+        if (mcNorm(m.model) !== repo && mcNorm(m.model) !== mcNorm(raw)) return false;
+        const path = String(m.model_path || (m.details || {}).model_path || "").toUpperCase();
+        return !quant || !path || path.includes(quant);
+      }) || null;
     }
-    // A downloaded model no catalog entry accounts for: the same row, with
-    // what the engine says (provider, id, quant, size on disk), Downloaded
-    // (and Loaded) chips, and the same Delete.
-    function mcExtraArtMarkup(r) {
+    function mcLoadedBadge(a) {
+      const m = mcResidentRow(a);
+      if (!m) return "";
+      const kept = m.locked === true;
+      const held = Array.isArray(m.held_by) ? m.held_by.map(String).filter(Boolean) : [];
+      const content = {title:kept ? "Kept loaded" : "Loaded in memory",description:kept ? "Protected from automatic eviction." : "Available for inference now.",sections:held.length ? [{label:"Held by",items:held}] : [],note:"Open Resources to manage residency."};
+      return `<button type="button" class="mc-loaded" data-mc-open-resources="1" ${mcTooltipAttrs(content)} aria-label="${kept ? "Kept loaded" : "Loaded"}. Open Resources">${kept ? ICONS.lock : ICONS.gear}</button>`;
+    }
+    function mcRecommendedBadge() { return `<span class="mc-badge mc-badge--recommended" tabindex="0" ${mcTooltipAttrs({title:"Recommended for this computer",description:"Selected for this computer’s hardware and available engines. Check its fit status before loading."})}>${ICONS.star}Recommended</span>`; }
+    function mcArtMarkup(row, a, alone, view, featured) {
+      const job = mcJob(a), installed = mcHasLocalFiles(a), presence = a.presence || {};
+      const verdict = String((a.fit || {}).verdict || "unknown");
+      const [fLabel, fTone] = a.inventory && a.inventory.complete !== true ? [a.inventory.incomplete_files || a.inventory.missing_shards ? "Partial" : "Cache", "muted"] : a.asset_kind === "adapter" ? ["Needs base", "muted"] : a.asset_kind === "component" ? ["Pipeline", "muted"] : a.asset_kind === "unknown" ? ["Unrated", "muted"] : a.supported_on_host === false ? ["Unsupported", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
+      const quantOn = typeof a.quant_class === "string" && MC_QUANT_CLASSES.includes(a.quant_class);
+      const cachedBytes = a.inventory && uiNum(a.inventory.bytes) ? a.inventory.bytes : null;
+      const exact = cachedBytes !== null || ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
+      const bytes = cachedBytes !== null ? cachedBytes : a.download_bytes;
+      const size = uiNum(bytes) ? `${exact ? "" : "~"}${uiBytes(bytes)}` : "—";
+      const text = [row.license ? "License: " + row.license : "", ...(a.inventory ? ["Type: " + (a.asset_kind || a.inventory.kind || "unknown"), "Metadata: " + (a.inventory.tasks_source || "not reported"), Array.isArray(a.inventory.tasks) && a.inventory.tasks.length ? "Tasks: " + a.inventory.tasks.map(t => t.replaceAll("_", " ")).join(", ") : ""] : []), presence.location, presence.evidence].filter(Boolean).join(" · ");
+      const details = mcBuildDetails(a, text, view);
+      return `<li class="mc-art${a.recommended ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}" data-mc-featured="${featured ? "1" : "0"}">`
+        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(a)}</button>${row.starter && featured ? mcRecommendedBadge() : ""}</div>`
+        + `<div class="mc-art__size" data-af-tip="${a.inventory ? "Cache size on this host" : exact ? "Download size" : "Estimated download size"}">${esc(size)}</div>`
+        + `<div class="mc-art__chips">${installed ? `<span class="mc-installed" role="img" aria-label="${mcInstalled(a) ? "Downloaded" : "Cached files"}" >${ICONS.folder}</span>` : ""}${mcLoadedBadge(a)}<span class="mc-fit tone-${esc(fTone)}" tabindex="0" ${mcTooltipAttrs(mcFitTooltip(a))} aria-label="Fit: ${esc(fLabel)}">${esc(({"Fit unknown":"?","Needs GPU limit":"GPU limit","Partial offload":"Partial"})[fLabel] || fLabel)}</span></div>`
+        + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
+        + details.body + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div></li>`;
+    }
+    function mcExtraArtMarkup(r, view) {
       const admin = !!(state.principal && state.principal.admin);
       const attrs = `data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}"`;
-      const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "Size unknown";
-      const quant = r.quant ? String(r.quant) : "Not stated";
-      const chips = uiPill("Downloaded", "ok", String(r.location || "")) + (r.loaded === true ? uiPill("Loaded", "info") : "");
+      const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "—";
+      const details = mcBuildDetails(r, `Downloaded · ${r.quant || "Quantization not reported"} · ${r.location || "Location not reported"}`, view);
       return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
-        + `<div class="mc-art__id"><code class="mc-id" tabindex="0" role="button" title="${esc(r.artifact)} (click to copy)" data-mc-copy="${esc(r.artifact)}">${esc(r.artifact)}</code></div>`
-        + `<div class="mc-art__facts">`
-        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(mcProviderLabel(r.provider))}">${esc(mcProviderLabel(r.provider))}</span></div>`
-        + `<div class="mc-art__quant" title="${esc(r.quant ? `Quantization: ${r.quant}` : "The engine does not name a quantization")}"><b>${esc(quant)}</b></div>`
-        + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
-        + `<div class="mc-art__chips">${chips}</div>`
-        + `</div>`
-        + `<div class="mc-art__action">${mcDeleteButton(r, attrs, admin)}</div>`
-        + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
-        + `</li>`;
+        + `<div class="mc-art__id"><button type="button" class="mc-build-inspect" ${details.attrs}>${mcBuildIdentity(r, true)}</button></div><div class="mc-art__size">${esc(size)}</div>`
+        + `<div class="mc-art__chips"><span class="mc-installed" role="img" aria-label="Downloaded">${ICONS.folder}</span>${mcLoadedBadge(r)}</div>`
+        + `<div class="mc-art__action">${mcExtraCanBeDefault(r) ? (mcUnloadable(r) ? (mcLlamaUpdateMarkup(r, mcUnloadable(r), admin) || mcIconButton("", "star", "Use as default text model", mcUnloadable(r), 'data-mc-unloadable="1"', true)) : mcDefaultMarkup(r.provider, r.artifact, attrs, admin)) : ""}${mcDeleteButton(r, attrs, admin)}</div>`
+        + details.body + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div></li>`;
     }
     function mcExtrasMarkup(view, extras) {
       const f = view.filters;
@@ -635,26 +808,40 @@ CATALOG_JS = r"""
       return `<section class="ui-card mc-card mc-extra" data-mc-extra="1" aria-label="Not in the catalog"><h4 class="mc-extra__title">Not in the catalog</h4>`
         + (note ? `<div class="ui-alert tone-${esc(note.tone)}" role="status">${esc(note.text)}</div>` : "")
         + (err ? `<div class="ui-alert tone-warn" role="alert" data-mc-installed-error="1"><strong>The models outside the catalog could not be listed.</strong><span>${esc(err)}</span></div>` : "")
-        + (extras.length ? `<ul class="mc-arts">${extras.map(mcExtraArtMarkup).join("")}</ul>` : "")
+        + (extras.length ? `<ul class="mc-arts">${extras.map(r => mcExtraArtMarkup(r, view)).join("")}</ul>` : "")
         + `</section>`;
     }
-    // One line of facts per model: name · organisation · parameters · licence, the capability tags and badges inline.
-    function mcCardMarkup(item) {
+    // One compact header: model, accessible capability glyphs, parameters and disclosure.
+    const MC_MODEL_BRANDS = {qwen:"qwen", deepseek:"deepseek", google:"google", meta:"meta", "mistral ai":"mistral", microsoft:"microsoft", nvidia:"nvidia", "hugging face":"huggingface"};
+    function mcModelBrand(row) {
+      const name = String(row.vendor || "").trim();
+      if (!name) return "";
+      const id = MC_MODEL_BRANDS[name.toLowerCase()] || name.toLowerCase();
+      return `<span class="mc-brand">${uiBrandMark(id, name, "sm")}</span>`;
+    }
+    function mcCardMarkup(item, view) {
       const row = item.row;
+      const versionKey = `${row.source || "catalog"}:${row.id}`;
+      const expanded = !!view && view.expanded.has(versionKey);
+      const arts = expanded ? item.arts : item.arts.slice(0, MC_VERSION_PREVIEW);
+      const versionsId = `mc-versions-${encodeURIComponent(view ? view.key : "catalog")}-${encodeURIComponent(versionKey)}`;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
-      const meta = [row.vendor, params ? `${params} params${active ? ` (${active} active)` : ""}` : "", row.license].filter(Boolean);
-      const caps = mcRowCaps(row).map((c) => (MC_CAPS.find((x) => x[0] === c) || [c, c])[1]);
+      const parameterTip = params ? `${params} total parameters${active ? ` · ${active} active parameters` : ""}` : "Parameter count not reported";
       const badges = [];
-      if (row.starter) badges.push(`<span class="mc-badge" title="Part of the recommended starter set for this computer">Starter</span>`);
+      if (["adapter","component","unknown"].includes(row.asset_kind)) {
+        const kind = row.asset_kind, title = ({adapter:"Adapter",component:"Component",unknown:"Unclassified"})[kind];
+        badges.push(`<span class="mc-badge mc-badge--kind" tabindex="0" ${mcTooltipAttrs({title,description:kind === "adapter" ? "Modifies a compatible base model; use it with the matching pipeline." : kind === "component" ? "A supporting part of a larger pipeline, rather than a chat model." : "Cached locally. Its role has not been identified from the available metadata."})}>${title}</span>`);
+      }
+
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
-      return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>`
-        + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
-        + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
-        + badges.join("")
+      return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}"${row.asset_kind ? ` data-mc-kind="${esc(row.asset_kind)}"` : ""}>`
+        + `<header class="mc-card__head${item.arts.length > MC_VERSION_PREVIEW ? " is-expandable" : ""}"><div class="mc-card__title-wrap">${mcModelBrand(row)}<h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>${badges.join("")}</div>`
+        + mcCapabilityMarkup(row)
+        + `<span class="mc-card__meta" tabindex="0" data-af-tip="${esc(parameterTip)}" aria-label="${esc(parameterTip)}">${esc(params || "—")}</span>`
+        + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show the primary build" : `Compare all ${item.arts.length} builds`)}"><span class="mc-version-count" aria-hidden="true">${item.arts.length}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : '<span class="mc-versions-slot" aria-hidden="true"></span>')
         + `</header>`
-        + `<ul class="mc-arts">${item.arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1)).join("")}</ul>`
+        + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a,i) => mcArtMarkup(row, a, mcArts(row).length === 1, view, i === 0)).join("")}</ul>`
         + `</article>`;
     }
     function mcListMarkup(view, list, extras) {
@@ -668,23 +855,23 @@ CATALOG_JS = r"""
             + `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(hub.error)}</pre></details>`
             + `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-mc-action="hf-search">Search again</button></div></div>`;
         }
-        if (!mcData()) return `<div class="ui-empty" data-mc-hf="loading">Searching Hugging Face for “${esc(q)}”...</div>`;
+        if (!mcData()) return `<div data-mc-hf="loading">${mcLoadingMarkup(`Searching Hugging Face for “${q}”…`)}</div>`;
         if (!mcRows().length) {
           return `<div class="ui-empty mc-empty" data-mc-empty="hf"><strong>Hugging Face has no model matching “${esc(q)}”.</strong><span>Try another name, or fewer words.</span></div>`;
         }
       }
-      if (mcStore.error && !mcStore.data) {
+      if (mcStore.error && !mcData()) {
         return `<div class="ui-alert tone-err" role="alert"><strong>The model catalog did not load.</strong><span>${esc(mcStore.error)}</span></div>`;
       }
-      if (!mcStore.data) return `<div class="ui-empty">Loading the model catalog...</div>`;
+      if (!mcData()) return mcLoadingMarkup("Loading the model catalog…");
       if (!list.length && extras.length) return mcExtrasMarkup(view, extras);
       if (!list.length) {
         return `<div class="ui-empty mc-empty" data-mc-empty="1"><strong>No model matches these filters.</strong>`
           + `<span>${esc(mcRows().length ? "Change or clear the filters to see the rest of the catalog." : "This gateway's catalog is empty.")}</span>`
           + (mcRows().length ? `<button type="button" class="ui-btn is-ghost" data-mc-action="clear">Clear filters</button>` : "") + `</div>` + mcExtrasMarkup(view, extras);
       }
-      return list.map(mcCardMarkup).join("") + mcExtrasMarkup(view, extras)
-        + (mcHfMode(view.filters) ? mcHubMoreMarkup(mcData()) : mcHubBesideMarkup(view));
+      return list.map(item => mcCardMarkup(item, view)).join("") + mcExtrasMarkup(view, extras)
+        + (mcHfMode(view.filters) ? mcHubMoreMarkup(mcData()) : "");
     }
     // ---- Hugging Face pages (AbstractCore's `hub.search`) ----
     function mcHubSearchInfo(d) { const s = d && d.hub && d.hub.search; return s && typeof s === "object" ? s : null; }
@@ -708,51 +895,35 @@ CATALOG_JS = r"""
       if (hub.moreError) parts.push(`<span class="tone-err" role="alert">The next page did not load: ${esc(hub.moreError)}</span>`);
       return `<div class="mc-hub-more" role="status" aria-live="polite">${parts.join("")}</div>`;
     }
-    // Catalog mode: the Hugging Face results for the same words, below the
-    // catalog's cards (the same cards, the same filters).
-    function mcHubBesideMarkup(view) {
-      const q = String(view.filters.q || "").trim();
-      const hub = mcStore.hub;
-      if (q.length < MC_HUB_BESIDE_MIN || hub.q !== q) return "";
-      const title = `<h4 class="mc-hub-beside__title">From Hugging Face</h4>`;
-      if (hub.loading) return `<section class="mc-hub-beside" data-mc-hub-beside="loading">${title}<div class="ui-empty">Searching Hugging Face for “${esc(q)}”...</div></section>`;
-      if (hub.error && !hub.data) {
-        return `<section class="mc-hub-beside" data-mc-hub-beside="error">${title}<div class="ui-alert tone-warn" role="alert"><strong>Hugging Face could not be searched right now.</strong>`
-          + `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(hub.error)}</pre></details></div></section>`;
-      }
-      if (!hub.data) return "";
-      const quantOn = mcQuantReported();
-      const items = [];
-      for (const row of mcRowsOf(hub.data)) {
-        if (row.source !== "hf_search") continue;
-        if (view.filters.cap !== "all" && !mcRowCaps(row).includes(view.filters.cap)) continue;
-        const arts = mcOrdered(row).filter((a) => mcArtMatches(row, a, view.filters, quantOn, []));
-        if (arts.length) items.push({ row, arts });
-      }
-      return `<section class="mc-hub-beside" data-mc-hub-beside="${esc(items.length)}">${title}`
-        + items.map(mcCardMarkup).join("")
-        + (items.length || !mcHubRowCount(hub.data) ? "" : `<div class="ui-empty">No Hugging Face result matches these filters.</div>`)
-        + mcHubMoreMarkup(hub.data) + `</section>`;
-    }
-    function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search by model, organisation or artifact id"; }
+    function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search models…"; }
     function mcModeMarkup(view) {
       const hf = mcHfMode(view.filters);
-      return `<button type="button" data-mc-action="mode" data-mc-mode="catalog" aria-pressed="${hf ? "false" : "true"}">Catalog</button>`
-        + `<button type="button" data-mc-action="mode" data-mc-mode="hf" aria-pressed="${hf ? "true" : "false"}">Hugging Face</button>`;
+      return afFilterScopeButtonsHtml([{ value: "catalog", label: "Catalog" }, { value: "hf", label: "Hugging Face" }], hf ? "hf" : "catalog");
+    }
+    function mcLoadingMarkup(label) { return `<div class="mc-loading" role="status" aria-live="polite"><span class="mc-loading__wheel" aria-hidden="true"></span><span>${esc(label)}</span></div>`; }
+    function mcRefreshMarkup(view) {
+      const online = mcHfMode(view.filters), busy = online ? mcStore.hub.loading : mcStore.loading;
+      return mcIconButton("refresh", "refresh", online ? busy ? "Searching Hugging Face" : "Refresh search" : busy ? "Refreshing models" : "Refresh models", online ? "Refresh these Hugging Face results" : "Refresh the host model inventory", busy ? 'aria-busy="true"' : "", busy || online && !view.filters.hf)
+        + (view.guide ? '<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in Models</button>' : "");
     }
     function mcShellMarkup(view) {
       const f = view.filters;
-      return `<div class="mc-root" data-mc-view="${esc(view.key)}">`
-        + `<div class="mc-host" data-mc-part="host"></div>`
-        + `<div class="mc-bar" role="search" aria-label="Filter the model catalog">`
-        + `<div class="mc-mode" role="group" aria-label="Search in" data-mc-part="mode"></div>`
-        + `<input type="search" class="mc-search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false">`
-        + `<button type="button" class="ui-btn is-ghost mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
-        + `<label class="ui-switch"><input type="checkbox" data-mc-fits="1"${f.fits ? " checked" : ""}><span>Fits this computer</span></label>`
-        + `<div class="mc-bar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
-        + `<button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters">Filters</button></div></div>`
-        + `<div class="mc-filters" data-mc-part="controls"></div>`
+      return `<div class="mc-root${view.filtersOpen ? " mc-filters-open" : ""}" data-mc-view="${esc(view.key)}">`
+        // The kit's filter bar: two primary rows, then optional advanced facets.
+        + `<div class="af-filterbar af-filterbar--sticky mc-filterbar">`
+        + `<div class="af-filterbar__lead" role="search" aria-label="Filter the model catalog">`
+        + `<div class="af-filterbar__scope" role="group" aria-label="Search in" data-mc-part="mode"></div>`
+        + `<div class="af-filterbar__line">`
+        + `<input type="search" class="af-filterbar__search" data-mc-search="1" value="${esc(mcHfMode(f) ? f.hf : f.q)}" placeholder="${esc(mcSearchPlaceholder(f))}" aria-label="${esc(mcHfMode(f) ? "Search Hugging Face" : "Search the model catalog")}" autocomplete="off" spellcheck="false" enterkeyhint="search">`
+        + `<button type="button" class="af-filterbar__submit mc-hf-go" data-mc-action="hf-search"${mcHfMode(f) ? "" : " hidden"}>Search</button>`
+        + `<span class="af-filterbar__toggles">${mcSwitchMarkup("data-mc-fits", f.fits, "Fits this computer")}${view.guide ? "" : mcSwitchMarkup("data-mc-downloaded", f.status === "downloaded", "Downloaded")}</span>`
+        + `</div>`
+        + `<div class="mc-quick-row"><div class="mc-quick-filters" data-mc-part="quick"></div><div class="af-filterbar__end"><span class="mc-active" data-mc-part="active"></span><span class="mc-count" role="status" aria-live="polite" data-mc-part="count"></span>`
+        + `<span class="mc-filter-actions"><button type="button" class="ui-btn is-quiet mc-to-filters" data-mc-action="filters" aria-expanded="${!!view.filtersOpen}">${ICONS.filter}<span>Filters</span></button><span class="mc-refresh" data-mc-part="refresh"></span></span></div></div></div>`
+        + `<div class="af-filterbar__facets" data-mc-part="controls"></div>`
+        + `</div>`
         + `<div data-mc-part="notice"></div>`
+        + `<div data-mc-part="loading"></div>`
         + `<div data-mc-part="message"></div>`
         + `<div class="mc-list" data-mc-part="list"></div>`
         + `</div>`;
@@ -768,15 +939,17 @@ CATALOG_JS = r"""
       const have = !!mcData();
       const list = have ? mcVisible(view.filters) : [];
       const extras = have ? mcExtras(view, view.filters) : [];
+      const facets = mcFilterFacets(view);
       const parts = {
-        host: mcHostMarkup() + `<button type="button" class="ui-btn is-quiet" data-mc-action="refresh">${mcStore.loading ? "Checking..." : "Check again"}</button>`
-          + (view.guide ? `<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in the Models tab</button>` : ""),
+        quick: mcQuickFiltersMarkup(view, facets),
+        refresh: mcRefreshMarkup(view),
         mode: mcModeMarkup(view),
         count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
-        controls: have ? mcControlsMarkup(view) : "",
-        notice: mcNoticeMarkup(view),
+        controls: have ? mcControlsMarkup(facets) : "",
+        notice: mcNoticeMarkup(view) + (!mcHfMode(view.filters) && mcStore.data && mcStore.error ? `<div class="ui-alert tone-warn" role="alert"><strong>Models could not be refreshed.</strong><details class="ui-details"><summary>Details</summary><pre class="ui-log">${esc(mcStore.error)}</pre></details></div>` : ""),
         message: view.message ? `<div class="ui-alert tone-${esc(view.message.tone)}" role="status">${esc(view.message.text)}</div>` : "",
+        loading: have && mcHfMode(view.filters) && mcStore.hub.loading ? mcLoadingMarkup("Searching Hugging Face…") : "",
         list: mcListMarkup(view, list, extras),
       };
       if (!mcPart(view, "list")) {
@@ -785,12 +958,18 @@ CATALOG_JS = r"""
         return;
       }
       // Later paints keep the search box and the fits switch (focus, caret)
-      // and redraw the rest; a focused chip keeps the focus.
+      // and redraw the rest; a focused chip, scope button or switch keeps the focus.
       let focus = null;
+      let versionFocus = null;
+      let actionFocus = null;
       try {
         const a = document.activeElement;
-        if (a && el.contains(a) && a.dataset && a.dataset.mcFilter) focus = [a.dataset.mcFilter, a.dataset.mcValue];
-        else if (a && el.contains(a) && a.dataset && a.dataset.mcMode) focus = ["mode", a.dataset.mcMode];
+        const q = (v) => String(v).replace(/"/g, "");
+        if (a && el.contains(a) && a.dataset && a.dataset.mcFilter) focus = `[data-mc-filter="${q(a.dataset.mcFilter)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.afFacet) focus = `[data-af-facet="${q(a.dataset.afFacet)}"][data-af-value="${q(a.dataset.afValue)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.afScope) focus = `[data-af-scope="${q(a.dataset.afScope)}"]`;
+        else if (a && el.contains(a) && a.dataset && a.dataset.mcAction === "versions") versionFocus = a.dataset.mcVersionKey;
+        else if (a && el.contains(a) && a.dataset && a.dataset.mcAction) actionFocus = { action:a.dataset.mcAction, provider:a.dataset.provider, artifact:a.dataset.artifact, library:a.dataset.mcLibrary };
       } catch { focus = null; }
       for (const name of Object.keys(parts)) {
         const p = mcPart(view, name);
@@ -798,6 +977,8 @@ CATALOG_JS = r"""
       }
       const box = el.querySelector("[data-mc-fits]");
       if (box) box.checked = !!view.filters.fits;
+      const downloaded = el.querySelector("[data-mc-downloaded]");
+      if (downloaded) downloaded.checked = view.filters.status === "downloaded";
       const search = el.querySelector("[data-mc-search]");
       const hf = mcHfMode(view.filters);
       const want = hf ? view.filters.hf : view.filters.q;
@@ -806,15 +987,18 @@ CATALOG_JS = r"""
       const go = el.querySelector(".mc-hf-go");
       if (go) go.hidden = !hf;
       if (focus) {
-        const again = focus[0] === "mode"
-          ? el.querySelector(`[data-mc-mode="${String(focus[1]).replace(/"/g, "")}"]`)
-          : el.querySelector(`[data-mc-filter="${focus[0]}"][data-mc-value="${String(focus[1]).replace(/"/g, "")}"]`);
+        const again = el.querySelector(focus);
         if (again && typeof again.focus === "function") again.focus();
       }
+      if (versionFocus !== null) Array.from(el.querySelectorAll('[data-mc-action="versions"]')).find(b => b.dataset.mcVersionKey === versionFocus)?.focus();
+      if (actionFocus) Array.from(el.querySelectorAll('[data-mc-action]')).find(b => b.dataset.mcAction === actionFocus.action && b.dataset.provider === actionFocus.provider && b.dataset.artifact === actionFocus.artifact && b.dataset.mcLibrary === actionFocus.library)?.focus();
+      const shell = el.querySelector(".mc-root"), filters = el.querySelector('[data-mc-action="filters"]');
+      if (shell) shell.classList.toggle("mc-filters-open", !!view.filtersOpen);
+      if (filters) filters.setAttribute("aria-expanded", String(!!view.filtersOpen));
     }
     function mcRender() { for (const view of mcStore.views.values()) mcRenderView(view); }
-    // `is-stuck` once the chip panel has scrolled under the sticky row: the
-    // row then gets its own bottom edge and a "Filters" button back up.
+    // `af-filterbar--stuck` once the facet rows have scrolled under the sticky
+    // first line: the line then gets its own bottom edge and a "Filters" button back up.
     function mcWatchStuck(view) {
       const el = view.el;
       if (view.watching || !el || typeof el.closest !== "function") return;
@@ -824,10 +1008,11 @@ CATALOG_JS = r"""
       let pending = false;
       view.checkStuck = () => {
         pending = false;
-        const bar = el.querySelector(".mc-bar");
-        const panel = el.querySelector(".mc-filters");
-        if (!bar || !panel || !panel.getClientRects().length) return;
-        bar.classList.toggle("is-stuck", panel.getBoundingClientRect().bottom <= bar.getBoundingClientRect().bottom + 1);
+        const wrap = el.querySelector(".mc-filterbar");
+        const bar = el.querySelector(".af-filterbar__lead");
+        const panel = el.querySelector(".af-filterbar__facets");
+        if (!wrap || !bar || !panel || !panel.getClientRects().length) return;
+        wrap.classList.toggle("af-filterbar--stuck", panel.getBoundingClientRect().bottom <= bar.getBoundingClientRect().bottom + 1);
       };
       scroller.addEventListener("scroll", () => {
         if (pending) return;
@@ -852,7 +1037,7 @@ CATALOG_JS = r"""
         el.querySelectorAll("li[data-mc-art]").forEach((li) => {
           const hit = byKey.get(li.dataset.mcArt);
           if (!hit) return;
-          const html = mcArtMarkup(hit[0], hit[1], mcArts(hit[0]).length === 1);
+          const html = mcArtMarkup(hit[0], hit[1], mcArts(hit[0]).length === 1, view, li.dataset.mcFeatured === "1");
           if (li.outerHTML !== html) li.outerHTML = html;
         });
         const count = mcPart(view, "count");
@@ -870,16 +1055,24 @@ CATALOG_JS = r"""
       for (const v of mcStore.views.values()) if (!v.guide) return true;
       return false;
     }
-    async function mcLoad() {
+    function mcLoad() {
+      // Multiple views/refreshes share the same discovery work.
+      if (mcStore.pending) return mcStore.pending;
+      mcStore.pending = mcLoadOnce().finally(() => { mcStore.pending = null; });
+      return mcStore.pending;
+    }
+    async function mcLoadOnce() {
       const seq = ++mcStore.seq;
       mcStore.loading = true;
       mcRender();
       // The engines' own list, in parallel with the catalog (the Models tab only).
-      const installedP = mcWantsInstalled()
+      let installedP = mcWantsInstalled()
         ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
         : null;
       try {
-        const data = await api("/api/gateway/models/catalog", { slow: true });
+        // Catalogue browsing reads local/curated facts only. Online discovery
+        // and upstream quant enumeration belong to explicit Hugging Face search.
+        const data = await api(MC_CATALOG_PATH, { slow: true });
         if (seq !== mcStore.seq) return;
         if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
           throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
@@ -892,6 +1085,13 @@ CATALOG_JS = r"""
       } catch (err) {
         if (seq !== mcStore.seq) return;
         mcStore.error = String((err && err.message) || err);
+      }
+      // Paint the complete catalog as soon as it arrives. Optional installed
+      // discovery must never leave usable catalog data behind the initial spinner.
+      mcRender();
+      // A Models view may have joined a load started by the setup guide.
+      if (!installedP && mcWantsInstalled()) {
+        installedP = api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }));
       }
       if (installedP) {
         const got = await installedP;
@@ -913,7 +1113,8 @@ CATALOG_JS = r"""
     // Hugging Face mode: the catalog route with `hub=true` and the query.
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
-      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
+      // An explicit online search enumerates all upstream versions (`extended=true`).
+      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
       }
@@ -962,31 +1163,58 @@ CATALOG_JS = r"""
       }
       mcRender();
     }
-    // Catalog mode: the same words asked of Hugging Face once typing pauses.
-    function mcHubBeside(view) {
-      if (mcHfMode(view.filters)) return;
-      const q = String(view.filters.q || "").trim();
-      const hub = mcStore.hub;
-      if (q.length < MC_HUB_BESIDE_MIN || (hub.q === q && (hub.data || hub.loading))) return;
-      mcHubLoad(q);
-    }
     function mcSetMode(view, mode) {
       const hf = mode === "hf";
       if (hf === mcHfMode(view.filters)) return;
       if (hf) {
-        const q = String(view.filters.q || "").trim();
-        view.filters = Object.assign({}, view.filters, { q: "" });
-        const hub = mcStore.hub;
-        if (q && hub.q === q && (hub.data || hub.loading)) { mcSetFilter(view, { hf: q }); return; }  // already asked beside the catalog
-        mcHubSearch(view, q);
-        return;
+        clearTimeout(view.debounce);
+        const input = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector("[data-mc-search]") : null;
+        const q = String(input ? input.value : view.filters.q || "").trim();
+        view.catalogFilters = {...view.filters,q};
+        view.filters = Object.assign({}, view.filters, {q:"",quant:"all",fits:false,cap:"all",provider:"all",status:"all"});
+        mcHubSearch(view, q); return;
       }
-      mcSetFilter(view, { hf: null });
+      view.filters = view.catalogFilters ? {...view.catalogFilters} : mcDefaultFilters();
+      mcWriteHash(view); mcRenderView(view);
+    }
+    function mcSetLibrary(view, mine) {
+      if (mine) {
+        if (view.filters.status !== "downloaded") view.browseFilters = {...view.filters};
+        mcSetFilter(view,{quant:"all",provider:"all",cap:"all",fits:false,status:"downloaded",hf:null});
+      } else {
+        view.filters = view.browseFilters ? {...view.browseFilters} : mcDefaultFilters();
+        mcWriteHash(view); mcRenderView(view);
+      }
     }
     function mcSetFilter(view, patch) {
+      if (patch.kind && patch.kind !== view.filters.kind) {
+        if ((view.filters.kind || "model") === "model") view.modelFilters = {quant:view.filters.quant,fits:view.filters.fits,cap:view.filters.cap};
+        view.filters = mcKindFilters(view, patch.kind);
+      }
       view.filters = Object.assign({}, view.filters, patch);
       mcWriteHash(view);
       mcRenderView(view);
+    }
+    // "Update llama.cpp": the engine installer's own job (POST /engines/llamacpp/install), polled
+    // until it ends; then the catalog and the installed rows are read again.
+    async function mcLlamaUpdateRun() {
+      if (mcStore.llamaUpdating) return;
+      mcStore.llamaUpdating = true;
+      mcRender();
+      try {
+        const res = await api("/api/gateway/engines/llamacpp/install", { slow: true, method: "POST", body: JSON.stringify({ dry_run: false, location: "auto" }) });
+        let job = (res && res.job_id) ? res : ((res && res.job) || null);
+        const deadline = Date.now() + 30 * 60 * 1000;
+        while (job && job.job_id && !["done", "failed", "cancelled", "succeeded", "completed"].includes(String(job.status || job.state || "")) && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          job = await api(`/api/gateway/engines/jobs/${encodeURIComponent(job.job_id)}`);
+        }
+      } catch (e) {
+        mcStore.message = `Could not update llama.cpp: ${String((e && e.message) || e)}`;
+      } finally {
+        mcStore.llamaUpdating = false;
+        await mcLoad();
+      }
     }
     async function mcDownload(view, provider, artifact) {
       const key = downloadJobKey(provider, artifact);
@@ -1012,7 +1240,9 @@ CATALOG_JS = r"""
     }
     async function mcUseDefault(view, provider, artifact, btn) {
       const model = servedModelId(provider, artifact);
-      if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+      const key = downloadJobKey(provider, artifact);
+      const returnFocus = !!btn && document.activeElement === btn;
+      mcStore.defaultBusy.add(key); mcRender();
       try {
         // EXACTLY THE CHOSEN MODEL. The gateway merges a route save field by
         // field (core_config `_merge_over_stored_route`: an unnamed field keeps
@@ -1020,7 +1250,8 @@ CATALOG_JS = r"""
         // the previous route's base_url, reasoning and options: a new provider
         // pointed at the old server's port. The terminal console sends the same.
         await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model, base_url: "", reasoning: "", options: {} }) });
-        const text = `Default text model: ${mcProviderLabel(provider)} · ${model}.`;
+        const selected = mcRowsOf(mcStore.data).concat(mcRowsOf(mcStore.hub.data)).find(r => mcArts(r).some(a => a.provider === provider && a.artifact === artifact));
+        const text = selected ? `Default text model set to ${selected.display_name || selected.id}.` : "Default text model updated.";
         view.message = { tone: "ok", text };
         if (view.guide) { $("first-run-message").textContent = text; $("first-run-message").className = "message ok"; }
         try { await renderDefaults(await api("/api/gateway/config/capability-defaults")); } catch { /* saved; the grid refreshes on its next visit */ }
@@ -1028,7 +1259,10 @@ CATALOG_JS = r"""
       } catch (err) {
         view.message = { tone: "err", text: `Could not set the default: ${String((err && err.message) || err)}` };
       }
-      mcRender();
+      mcStore.defaultBusy.delete(key); mcRender();
+      if (returnFocus && (!document.activeElement || document.activeElement === document.body) && view.el && typeof view.el.querySelectorAll === "function") {
+        Array.from(view.el.querySelectorAll('button[data-provider]')).find(b => b.dataset.provider === provider && b.dataset.artifact === artifact && (b.getAttribute("aria-label") === "Default text model" || b.dataset.mcAction === "default"))?.focus();
+      }
     }
     const MC_DELETE_URL = "/api/gateway/models/delete-download";
     function mcDeleteNotice(err) {
@@ -1056,7 +1290,7 @@ CATALOG_JS = r"""
       }
       mcRender();
     }
-    async function mcDeleteConfirm(provider, artifact) {
+    async function mcDeleteConfirm(provider, artifact, view) {
       const key = downloadJobKey(provider, artifact);
       const cur = mcStore.del.get(key);
       if (!cur || cur.phase !== "confirm") return;
@@ -1070,7 +1304,11 @@ CATALOG_JS = r"""
         mcStore.deleted.add(key);
         const freed = res && uiNum(res.freed_bytes) ? ` ${uiBytes(res.freed_bytes)} freed.` : "";
         if (extra) mcStore.extraNotice = { tone: "ok", text: `Deleted ${artifact}.${freed}` };
-        else mcStore.notices.set(key, { tone: "ok", text: `Download deleted.${freed}` });
+        else {
+          mcStore.notices.set(key, { tone: "ok", text: `Download deleted.${freed}` });
+          const row = view && mcRowsOf(mcViewData(view)).find(r=>mcArts(r).some(a=>mcKey(a)===key));
+          if (view && (view.filters.status === "downloaded" || !row || !view.expanded.has(`${row.source || "catalog"}:${row.id}`))) view.message = {tone:"ok",text:`Download deleted.${freed}`};
+        }
         clearTimeout(mcStore.reloadTimer);
         mcStore.reloadTimer = setTimeout(() => { mcLoad(); }, 300);
       } catch (err) {
@@ -1080,44 +1318,72 @@ CATALOG_JS = r"""
       mcRender();
     }
     function mcAction(view, action, b) {
+      if (action === "versions") {
+        const key = b.dataset.mcVersionKey;
+        if (view.expanded.has(key)) { view.expanded.delete(key); if (view.buildOrders) view.buildOrders.delete(key); }
+        else { view.expanded.add(key); if (!view.buildOrders) view.buildOrders = new Map(); const row = mcRowsOf(mcViewData(view)).find(r=>`${r.source || "catalog"}:${r.id}`===key); if(row) view.buildOrders.set(key,mcOrdered(row).map(mcKey)); }
+        mcRenderView(view); return;
+      }
       if (action === "hub-more") { mcHubMore(); return; }
-      if (action === "refresh") { view.message = null; mcStore.extraNotice = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
-      if (action === "clear") { view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf }); mcWriteHash(view); mcRenderView(view); return; }
-      if (action === "mode") { mcSetMode(view, b.dataset.mcMode); return; }
+      if (action === "refresh") { view.message = null; mcStore.extraNotice = null; if (mcHfMode(view.filters)) { if (view.filters.hf) mcHubSearch(view, view.filters.hf); } else mcLoad(); return; }
+      if (action === "clear") {
+        view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf });
+        mcWriteHash(view);
+        mcRenderView(view);
+        return;
+      }
       if (action === "hf-search") {
         const box = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector("[data-mc-search]") : null;
         mcHubSearch(view, box ? box.value : view.filters.hf);
         return;
       }
       if (action === "filters") {
-        const host = view.el && typeof view.el.querySelector === "function" ? view.el.querySelector(".mc-host") : null;
-        if (host && typeof host.scrollIntoView === "function") host.scrollIntoView({ block: "start", behavior: "smooth" });
+        view.filtersOpen = !view.filtersOpen; mcRenderView(view);
+        const panel = mcPart(view, "controls");
+        if (view.filtersOpen && panel && typeof panel.scrollIntoView === "function") panel.scrollIntoView({block:"nearest"});
         return;
+      }
+      if (action === "details") {
+        const key = downloadJobKey(b.dataset.provider,b.dataset.artifact);
+        view.details.has(key) ? view.details.delete(key) : view.details.add(key);
+        mcRenderView(view); return;
       }
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
+      if (action === "llama-update") { mcLlamaUpdateRun(); return; }
       if (action === "cancel") { dlCancel(b.dataset.job, b, b.dataset.dlStep); return; }
       if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); return; }
       if (action === "delete-ask") { mcDeleteAsk(b.dataset.provider, b.dataset.artifact); return; }
       if (action === "delete-keep") { mcStore.del.delete(downloadJobKey(b.dataset.provider, b.dataset.artifact)); mcRender(); return; }
-      if (action === "delete-confirm") { mcDeleteConfirm(b.dataset.provider, b.dataset.artifact); }
+      if (action === "delete-confirm") { mcDeleteConfirm(b.dataset.provider, b.dataset.artifact, view); }
     }
     function mountModelCatalog(key, el, opts) {
       if (!el) return;
       const o = opts || {};
       const known = mcStore.views.get(key);
-      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), syncHash: !!o.syncHash, guide: !!o.guide, message: null };
+      const view = known && known.el === el ? known : { key, el, filters: mcDefaultFilters(), expanded: new Set(), details: new Set(), filtersOpen: false, syncHash: !!o.syncHash, guide: !!o.guide, message: null };
       if (o.filters) view.filters = Object.assign(mcDefaultFilters(), o.filters);
       mcStore.views.set(key, view);
       el.onclick = (event) => {
         const t = event && event.target;
         if (!t || typeof t.closest !== "function") return;
-        const chip = t.closest("[data-mc-filter]");
-        if (chip && !chip.disabled) { mcSetFilter(view, { [chip.dataset.mcFilter]: chip.dataset.mcValue }); return; }
+        // The kit filter bar's hooks: a chip names its facet and value, a scope button its mode.
+        const chip = t.closest("[data-af-facet]");
+        if (chip && !chip.disabled) { mcSetFilter(view, { [chip.dataset.afFacet]: chip.dataset.afValue }); return; }
+        const scope = t.closest("[data-af-scope]");
+        if (scope) { mcSetMode(view, scope.dataset.afScope); return; }
         const b = t.closest("[data-mc-action]");
         if (b && !b.disabled) { mcAction(view, b.dataset.mcAction, b); return; }
+        // Keep one native keyboard control; the whole header shares its
+        // pointer target. Handle direct button clicks above to avoid toggling twice.
+        const header = t.closest(".mc-card__head.is-expandable");
+        if (header) {
+          const toggle = header.querySelector('[data-mc-action="versions"]');
+          if (toggle && !toggle.disabled) { toggle.click(); return; }
+        }
         const copy = t.closest("[data-mc-copy]");
-        if (copy) uiCopy(copy.dataset.mcCopy);
+        if (copy) { uiCopy(copy.dataset.mcCopy); return; }
+        if (t.closest("[data-mc-open-resources]")) $("tab-button-models").click();  // the Resources page
       };
       el.oninput = (event) => {
         const t = event && event.target;
@@ -1125,12 +1391,12 @@ CATALOG_JS = r"""
         if (mcHfMode(view.filters)) return;  // Hugging Face: one search per Enter
         clearTimeout(view.debounce);
         view.debounce = setTimeout(() => mcSetFilter(view, { q: String(t.value || "") }), 120);
-        clearTimeout(view.hubDebounce);
-        view.hubDebounce = setTimeout(() => mcHubBeside(view), MC_HUB_BESIDE_MS);
       };
       el.onchange = (event) => {
         const t = event && event.target;
-        if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
+        if (t && t.dataset && ["provider","cap"].includes(t.dataset.mcFilter)) mcSetFilter(view, {[t.dataset.mcFilter]: t.value || "all"});
+        else if (t && t.dataset && t.dataset.mcFits) mcSetFilter(view, { fits: !!t.checked });
+        else if (t && t.dataset && t.dataset.mcDownloaded) mcSetLibrary(view, !!t.checked);
       };
       el.onkeydown = (event) => {
         const t = event && event.target;
@@ -1148,7 +1414,6 @@ CATALOG_JS = r"""
       mcWriteHash(view);
       mcLoad();
       if (mcHfMode(view.filters) && view.filters.hf && !(mcStore.hub.q === view.filters.hf && (mcStore.hub.data || mcStore.hub.loading))) mcHubSearch(view, view.filters.hf);
-      else mcHubBeside(view);
       // A reload re-attaches to running downloads, so their bars come back.
       if (!known) uiRestoreDownloads();
     }

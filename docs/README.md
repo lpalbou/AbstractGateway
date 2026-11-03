@@ -9,6 +9,10 @@ tray icon.
 New here? Start with [first-run.md](./first-run.md) on your own machine, or
 [getting-started.md](./getting-started.md) for an explicit setup.
 
+AI agents can register and use the
+[AbstractGateway agent skill](../skills/abstractgateway/SKILL.md) for the
+authenticated run, replay and approval workflow and inference service limits.
+
 ## AbstractFramework ecosystem
 
 - **AbstractRuntime** (required): durable runs, workflow registry, stores.
@@ -44,10 +48,11 @@ Related repos:
 | [automations.md](./automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, wakes an agent schedules (`schedule_run`), discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
 | [events-examples.md](./events-examples.md) | events and triggers, three end-to-end examples with the exact commands: watch a mailbox and tell me when something important arrives, a digest of a news feed, run a flow when an external system calls my webhook (signed curl); following your event stream |
 | [push.md](./push.md) | alerts on the Apple Watch and iPhone while the app is closed: nothing to configure for people, the Push forwarder setting and the `--push-relay` flag, alerts that choose their channels, running your own relay with your own Apple key, what the relay and Apple see, the fixed messages |
-| [openai-api.md](./openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
+| [openai-api.md](./openai-api.md) | optional Gateway `/v1` and direct Core HTTP: distinct credentials, lifecycle and native run boundaries; SDK connections, supported calls, access, errors and request logs |
 | [console.md](./console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts, My email (mailboxes, notifications, watch and iPhone devices, the push forwarder), Workflows and Triggers (well-known feeds, Handled by); responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity, Note), Code's terminal app and the desktop Assistant |
 | [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
+| [engines-install.md](./engines-install.md) | per engine and per OS: what Install runs, what it requires, where files go, prebuilt only, GPU backend |
 | [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
 | [tray.md](./tray.md) | the desktop tray icon: sessions, automation and approval notifications, apps, models, pause, start at login, network, restart and update |
 | [security.md](./security.md) | user accounts, who sees which account and entity, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |

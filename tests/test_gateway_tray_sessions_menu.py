@@ -171,12 +171,14 @@ def test_sections_in_order_with_headers_and_the_empty_cases() -> None:
     assert labels[0] == "Running (3)"
     assert labels[1:4] == [mm.run_row_label(RUNNING), mm.run_row_label(TIMER), mm.run_row_label(PAUSED)]
     assert labels[4] == "Need attention (2)" and labels[5:7] == [mm.run_row_label(APPROVAL), mm.run_row_label(QUESTION)]
-    assert labels[7] == "Scheduled (2)" and labels[8:10] == [mm.automation_row_label(DAILY), mm.automation_row_label(TRIAGE)]
+    assert labels[7] == "Scheduled (1)" and labels[8:10] == [mm.automation_row_label(DAILY), "Paused (1)"]
+    # ADR 0048: the paused automation is folded into its own submenu.
+    assert _labels(next(n for n in _sessions(full) if n.label == "Paused (1)").children) == [mm.automation_row_label(TRIAGE)]
     assert labels[10] == "Recent — 1 done" and labels[11] == mm.run_row_label(DONE)
     assert labels[-1] == "Open Conversations in Console"
     # Every header is an information line, every row a submenu.
     nodes = _sessions(full)
-    assert all(n.enabled is False for n in nodes if n.label in {"Running (3)", "Need attention (2)", "Scheduled (2)", "Recent — 1 done"})
+    assert all(n.enabled is False for n in nodes if n.label in {"Running (3)", "Need attention (2)", "Scheduled (1)", "Recent — 1 done"})
     assert all(n.children for n in nodes if n.label[:1] in {"🟢", "🟡", "⏸", "⏱", "✅"})
 
     # Empty: Running says none; Need attention and Scheduled are absent, not "(0)".
@@ -238,7 +240,8 @@ def test_each_row_kind_opens_the_right_submenu() -> None:
         ("Run now", ("auto_run_now", "a1"), True),
         ("Pause", ("auto_pause", "a1"), True),
     ]
-    triage = sub("⏸ Inbox triage")
+    # The paused automation lives in the folded "Paused (1)" submenu (ADR 0048).
+    triage = [(c.label, c.action, c.enabled) for c in _row_node(_row_node(nodes, "Paused (").children, "⏸ Inbox triage").children]
     assert triage[2:] == [("Run now", ("auto_run_now", "a2"), True), ("Resume", ("auto_resume", "a2"), True)]
 
     # The gateway's capabilities gate the automation actions; Observer's page link gates "Open in Observer".

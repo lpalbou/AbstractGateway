@@ -139,6 +139,43 @@ conversation continues.
 - `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
   on a breakpoint); it is never active with `--reload`.
 
+### A reply failed with "The model host ... stopped while answering"
+
+On Linux, macOS and Windows, models run in a child process by default (`--model-host process`, see
+[configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process)). That
+child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
+kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. The gateway kept running
+and restarted it. Inspect the failed run before resubmitting any request with side effects;
+an in-flight request is not automatically replayed. The cause is in the incident file the sentence names
+(`<data dir>/incidents/model-host-*.json`: `kind`, `signal`, `rss_bytes_last`, `inflight`, `log_tail`)
+and in `<data dir>/logs/model-host.log`. The same request crashing it again points at the model or its
+settings (a context larger than the KV cache, a broken GGUF): choose another model or a smaller context.
+After 5 crashes in 10 minutes the gateway stops restarting it (`GET /api/health`: `model_host.state:
+failed`, `status: degraded`); restart the gateway once the cause is fixed. "is restarting" (status 503)
+means a request arrived during the restart: try again in a few seconds.
+
+### An optional inference endpoint failed, but native chat works
+
+Read `GET /api/gateway/admin/core-endpoint` as an admin. `enabled` controls
+Gateway `/v1`; `direct_enabled` controls the separate direct Core listener.
+The `http_services` rows report the actual listener state, URL and error.
+A failed bind or missing HTTP dependency does not make native RPC unavailable.
+For direct serving, check Core's server bind and Core token; Gateway keys do
+not authenticate that listener. After correcting the cause, toggle the affected
+switch off and on if its bounded restart limit was reached. A `stopping` row
+means cleanup has not finished; do not assume that port is closed yet.
+
+### A request fails before inference starts
+
+Schema-preparation and native request-encoding failures are deterministic
+request errors and are not retried. Correct the schema or unsupported Python
+object in the request; restarting the model host does not fix that data.
+Run calls carry original schema data across the process boundary and create
+provider validators in the execution process. Use the request error's available
+run, step, request and attempt identifiers to locate the corresponding ledger
+attempt; a preparation failure does not itself mean the process crashed.
+A healthy process ping alone does not establish inference progress.
+
 ## Network access
 
 ### A change of network mode "needs a restart"

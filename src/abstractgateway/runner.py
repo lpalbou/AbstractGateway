@@ -473,6 +473,12 @@ class GatewayRunner:
         self._user_stream = stream
         self._user_stream_rebuilt = False
 
+    #: The user whose plane this runner serves (set by the service; None = not known).
+    _plane_owner_user: Optional[str] = None
+
+    def set_plane_owner(self, tenant_id: str, user_id: str) -> None:
+        self._plane_owner_user = str(user_id or "").strip() or None
+
     @property
     def user_stream(self) -> Optional[Any]:
         return self._user_stream
@@ -2235,7 +2241,7 @@ class GatewayRunner:
             return
 
         if typ == "inject_guidance":
-            self._apply_inject_guidance(payload, run_id=run_id)
+            self._apply_inject_guidance(payload, run_id=run_id, client_message_id=str(rec.command_id))
             return
 
         if typ == "conclude":
@@ -2304,6 +2310,26 @@ class GatewayRunner:
         )
         if result.get("status") == "applied" and not result.get("duplicate") and typ == "automation.archive":
             self._stream_wake_cancelled(automation_id)
+        if result.get("status") == "applied" and not result.get("duplicate") and typ == "automation.revise":
+            # A revision that now grants a waiting run's tools answers that wait, for every client
+            # (operator QA 2026-10-29), by the person who saved it.
+            # Only the automation's OWNER answers its waits this way: an admin revising another
+            # owner's automation (acting in that plane) leaves them (merge desk review).
+            owner = self._automation_owner(automation_id)
+            owner_user = owner.split(":", 1)[1] if owner and ":" in owner else self._plane_owner_user
+            actor = str(rec.client_id or "").strip()
+            if actor and owner_user and actor != owner_user:
+                logger.info(
+                    "GatewayRunner: revision %s of %s by %s is not the owner's (%s): its waits stay",
+                    rec.command_id, automation_id, actor, owner_user,
+                )
+            else:
+                try:
+                    from .automation_wait_resolver import resolve_covered_waits
+
+                    resolve_covered_waits(self.run_store, self.command_store, automation_id, actor=rec.client_id)
+                except Exception:  # noqa: BLE001 - never fails the revise; the wait stays answerable by hand
+                    logger.warning("GatewayRunner: resolving the waits revision %s grants failed", rec.command_id, exc_info=True)
         if result.get("status") == "applied" and not result.get("duplicate"):
             for listener in list(self._automation_command_listeners):
                 try:
@@ -2316,7 +2342,8 @@ class GatewayRunner:
         if fn not in self._automation_command_listeners:
             self._automation_command_listeners.append(fn)
 
-    def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
+    def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str,
+                               client_message_id: Optional[str] = None) -> None:
         """Steer a running agent through the DURABLE steer sidecar (H4, hooks plan).
 
         The gateway no longer writes run vars for steering: `Runtime.steer()`
@@ -2383,7 +2410,12 @@ class GatewayRunner:
                 continue
             found_injectable = True
             try:
-                runtime.steer(rid, guidance)
+                if rid == run_id and payload.get("display_text") is not None:
+                    runtime.steer(rid, guidance, display_text=payload["display_text"],
+                                  speaker=str(payload.get("_public_speaker") or "person:operator"),
+                                  client_message_id=client_message_id)
+                else:
+                    runtime.steer(rid, guidance)
                 applied += 1
             except PermissionError as e:
                 # Entity visit run: the H5 refusal is the correct outcome and

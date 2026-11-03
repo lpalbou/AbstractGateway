@@ -1,0 +1,66 @@
+{
+  "themes": [
+    {
+      "theme": "dark",
+      "checks": {
+        "visible": true,
+        "twoRows": true,
+        "headers": true,
+        "advanced": true,
+        "provider": true,
+        "capability": true,
+        "reload": true,
+        "downloaded": true,
+        "restore": true,
+        "desktop1024": true,
+        "viewport390": true,
+        "controls390": true,
+        "headers390": true,
+        "viewport320": true,
+        "controls320": true,
+        "headers320": true,
+        "localOnly": true,
+        "healthy": true
+      },
+      "reads": [
+        "",
+        ""
+      ]
+    },
+    {
+      "theme": "light",
+      "checks": {
+        "visible": true,
+        "twoRows": true,
+        "headers": true,
+        "advanced": true,
+        "provider": true,
+        "capability": true,
+        "reload": true,
+        "downloaded": true,
+        "restore": true,
+        "desktop1024": true,
+        "viewport390": true,
+        "controls390": true,
+        "headers390": true,
+        "viewport320": true,
+        "controls320": true,
+        "headers320": true,
+        "localOnly": true,
+        "healthy": true
+      },
+      "reads": [
+        "",
+        ""
+      ]
+    }
+  ],
+  "errors": [],
+  "writes": [],
+  "touch": {
+    "selection": true,
+    "viewport": true,
+    "headers": true,
+    "localOnly": true
+  }
+}

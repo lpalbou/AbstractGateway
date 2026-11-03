@@ -78,7 +78,8 @@ def test_systemd_user_unit(tmp_path: Path) -> None:
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "--now", "abstractgateway.service"],
     ]
-    assert any("loginctl enable-linger" in n for n in plan.notes)
+    # 0957: the lingering sentence is printed only when lingering is OFF (autostart.linger_note).
+    assert not any("loginctl enable-linger" in n for n in plan.notes)
 
 
 def test_systemd_quotes_paths_with_spaces(tmp_path: Path) -> None:
@@ -232,7 +233,8 @@ def test_windows_launcher_redirects_output_and_runs_the_cli(tmp_path: Path, monk
     log = tmp_path / "logs" / "gateway.log"
     os_service.launch_main(["launch", "--log-file", str(log), "--data-dir", str(tmp_path / "d"), "--", "serve", "--host", "127.0.0.1", "--port", "8080"])
     sys.stdout.flush()
-    assert seen["argv"] == ["serve", "--host", "127.0.0.1", "--port", "8080"]
+    # The launcher starts the machine's gateway service: it shows the tray, also after a relaunch.
+    assert seen["argv"] == ["serve", "--tray", "--host", "127.0.0.1", "--port", "8080"]
     text = log.read_text(encoding="utf-8")
     assert "hello from the gateway" in text and "and its stderr" in text
 

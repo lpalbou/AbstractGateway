@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-30",
+  "implementation": "55763bab",
+  "pytest": {
+    "passed": 35,
+    "modules": [
+      "test_gateway_console_catalog.py",
+      "test_gateway_console_browser_catalog_cards.py",
+      "test_gateway_console_models_merged.py",
+      "test_gateway_console_catalog_loaded_badge.py"
+    ]
+  },
+  "browser": {
+    "checks": 212,
+    "failures": []
+  },
+  "redeploy": {
+    "health": "healthy",
+    "model_inflight": 0,
+    "runner_inflight_ticks": 0,
+    "restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Deploy model-only summary and inline downloaded/fit status (0997)"
+    }
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "count": "82 of 96 models",
+        "downloadedCount": "19 of 96 models",
+        "desktop": {
+          "count": 11,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "downloadDesktop": {
+          "count": 23,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "mobile": {
+          "count": 23,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "checks": {
+          "modelsOnly": true,
+          "desktopInline": true,
+          "downloadedModelsOnly": true,
+          "downloadedCountAccurate": true,
+          "downloadedInline": true,
+          "mobileInline": true,
+          "mobileNoOverflow": true,
+          "healthy": true
+        }
+      },
+      {
+        "theme": "light",
+        "count": "82 of 96 models",
+        "downloadedCount": "19 of 96 models",
+        "desktop": {
+          "count": 11,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "downloadDesktop": {
+          "count": 23,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "mobile": {
+          "count": 23,
+          "labels": [
+            "Fits",
+            "Tight"
+          ],
+          "ok": true
+        },
+        "checks": {
+          "modelsOnly": true,
+          "desktopInline": true,
+          "downloadedModelsOnly": true,
+          "downloadedCountAccurate": true,
+          "downloadedInline": true,
+          "mobileInline": true,
+          "mobileNoOverflow": true,
+          "healthy": true
+        }
+      }
+    ],
+    "pageErrors": [],
+    "managementWrites": []
+  }
+}

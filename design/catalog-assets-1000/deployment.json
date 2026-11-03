@@ -1,0 +1,13 @@
+{
+  "before": {
+    "status": "healthy",
+    "model_inflight": 0,
+    "runner_inflight": 0
+  },
+  "response": {
+    "ok": true,
+    "restart": true,
+    "requested_by": "default/admin",
+    "reason": "Deploy Core 0875 and Gateway 1000: discovered cached assets in catalogue"
+  }
+}

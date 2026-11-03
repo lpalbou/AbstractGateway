@@ -175,15 +175,25 @@ def test_idle_poll_is_stat_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     opened: List[str] = []
     real_open = Path.open
+    ledger_dir = tmp_path.resolve()
 
     def _counting_open(self, *a, **kw):
-        opened.append(str(self))
+        # Only THIS store's files count. `Path.open` is patched process-wide, so another thread of
+        # the test process (a gateway runner from an earlier test reading its `<data>/runner.takeover`
+        # on a timer, runner.py's ownership check; CI 3.13) can open a file of its own during the
+        # idle window: that is neither a ledger file nor this tail's doing.
+        if Path(self).resolve().is_relative_to(ledger_dir):
+            opened.append(str(self))
         return real_open(self, *a, **kw)
 
     monkeypatch.setattr(Path, "open", _counting_open)
     for _ in range(20):
         assert tail.read_new() == []
     assert opened == [], f"idle polls opened the ledger file: {opened}"
+    # The check is live: opening this store's ledger is counted (absent-input case is not a PASS).
+    with (tmp_path / "ledger_run-idle.jsonl").open("rb"):
+        pass
+    assert opened == [str(tmp_path / "ledger_run-idle.jsonl")]
 
 
 @pytest.mark.basic

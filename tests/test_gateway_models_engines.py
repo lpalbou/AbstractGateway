@@ -202,6 +202,8 @@ def test_reads_serve_the_core_payloads_with_their_arguments(facade, tmp_path, mo
             "engine": None, "fits_only": False, "hub": True, "tags": None, "hub_page": 2, "hub_page_size": 10,
         }
         assert client.get("/api/gateway/models/catalog?q=qwen&hub=1&hub_page=0", headers=h).status_code == 422
+        client.get("/api/gateway/models/catalog?hub=1&extended=1", headers=h)
+        assert facade.calls["model_catalog"][-1][1]["extended"] is True
 
         # An AbstractRuntime whose facade has no `hub_page` (0.15.3): a page beyond the first is
         # refused in words (501), never a 500 and never page 1 again; no page asked still works.
@@ -787,3 +789,20 @@ def test_the_console_crate_request_shapes_are_accepted(facade, tmp_path, monkeyp
         assert ins["schema"] == "engine_install_job_v1" and ins["job_id"] and ins["status"] in {"queued", "running", "completed"}
         legacy = client.get(f"/api/gateway/jobs/{ins['job_id']}", headers=h).json()
         assert legacy["schema"] == "host_job_v1" and legacy["kind"] == "engine_install" and legacy["engine"] == "ollama"
+
+
+def test_llamacpp_update_is_refused_while_a_gguf_is_loaded(facade, tmp_path, monkeypatch) -> None:
+    """Merge desk review: llama.cpp cannot be replaced under a model it holds (in-process or
+    in the model host child). MUTANT: no guard -> the install starts -> RED."""
+    import abstractgateway.routes.engines as eng
+
+    monkeypatch.setattr(eng, "loaded_llamacpp_models", lambda: ["mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF"])
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        r = client.post("/api/gateway/engines/llamacpp/install", headers=h, json={"dry_run": False})
+        assert r.status_code == 409, r.text
+        body = r.json()
+        assert body["reason"] == "llamacpp_model_loaded"
+        assert body["message"] == ("Unload mradermacher/Qwen3.5-9B-Kimi-k3-Distilled-GGUF first: "
+                                   "llama.cpp cannot be updated while it holds a model.")
+        assert client.post("/api/gateway/engines/llamacpp/install", headers=h, json={"dry_run": True}).status_code == 200

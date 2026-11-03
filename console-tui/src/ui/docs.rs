@@ -1084,46 +1084,21 @@ fn body_view(scx: Scope, ctx: &Ctx) -> View {
         }
         return col.build();
     }
-    let mut rows: Vec<View> = Vec::new();
-    for turn in turns {
-        match turn.role {
-            Role::User => {
-                rows.push(line(vec![span_bold("You", t.accent)]));
-                for l in wrap_text(&turn.text, w) {
-                    rows.push(line(vec![span(l, t.text)]));
-                }
-            }
-            Role::Assistant => {
-                rows.push(line(vec![span_bold("Assistant", t.ok)]));
-                rows.push(MarkdownView::new(turn.text.clone()).view(scx));
-            }
-            Role::Pending => {
-                rows.push(line(vec![span(
-                    "⟳ Answering… (docs-qa run in progress)",
-                    t.info,
-                )]));
-            }
-            Role::Notice => {
-                for l in wrap_text(&turn.text, w) {
-                    rows.push(line(vec![span(l, t.warn)]));
-                }
-            }
-            Role::Error => {
-                for l in wrap_text(&turn.text, w) {
-                    rows.push(line(vec![span(l, t.error)]));
-                }
-            }
-        }
-        rows.push(line(vec![]));
-    }
-    Scroll::new(
-        Element::new()
-            .style(LayoutStyle::column())
-            .children(rows)
-            .build(),
-    )
-    .scrollbar_auto_hide(true)
-    .view(scx)
+    let messages = turns
+        .into_iter()
+        .map(|turn| {
+            let role = match turn.role {
+                Role::User => ChatRole::User,
+                Role::Assistant => ChatRole::Assistant,
+                Role::Pending | Role::Notice => ChatRole::Notice,
+                Role::Error => ChatRole::Error,
+            };
+            ChatMessage::new(role, turn.text)
+        })
+        .collect();
+    ChatTranscript::new(messages)
+        .assistant_label("Docs assistant")
+        .view(scx)
 }
 
 fn history_view(scx: Scope, ctx: &Ctx, t: &TokenSet, w: usize) -> View {

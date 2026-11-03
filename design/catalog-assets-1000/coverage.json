@@ -1,0 +1,25 @@
+{
+  "seconds": 0.855,
+  "counts": {
+    "rows": 224,
+    "artifacts": 522,
+    "installed": 140,
+    "discovered": 122
+  },
+  "inventory": 162,
+  "unaccounted": [],
+  "kinds": {
+    "model": 142,
+    "adapter": 44,
+    "unknown": 26,
+    "component": 12
+  },
+  "discovered_kinds": {
+    "adapter": 44,
+    "model": 40,
+    "unknown": 26,
+    "component": 12
+  },
+  "incomplete": 26,
+  "coverage_rule": "Exact provider/reference or shared HF repository among Core HF-repo providers"
+}

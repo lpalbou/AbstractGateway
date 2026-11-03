@@ -1,0 +1,13 @@
+{
+  "before": {
+    "healthy": true,
+    "model_inflight": 0,
+    "runner_inflight": 0
+  },
+  "response": {
+    "ok": true,
+    "restart": true,
+    "requested_by": "default/admin",
+    "reason": "Deploy single-line model headers (1003)"
+  }
+}

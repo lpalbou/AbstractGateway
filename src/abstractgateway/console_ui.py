@@ -132,13 +132,62 @@ CONSOLE_UI_CSS = r"""
     .ui-log { margin: 8px 0 0; max-height: 240px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--text-secondary); background: var(--ui-surface-3); border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 10px 12px; }
     .ui-cmd { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ui-cmd code { min-width: 0; }
-    /* ---- App cards: icon + name + pill / one line / ONE action
-       row at the same level across the grid. `.is-aligned` makes every card
-       five subgrid rows (head, blurb, body, actions, tech) so each row's
+    /* ---- App cards: illustration / icon + name + pill / description /
+       ONE launcher row at the same level across the grid. `.is-aligned`
+       makes every app card six subgrid rows (art, head, blurb, body,
+       actions, tech; other cards five, without the art) so each row's
        tracks are shared: the action rows line up even when one card has a
        progress bar or a Technical-details line and its neighbour has none.
        A command is ONE mono line with an ellipsis + Copy, never wrapped. ---- */
-    .ui-card__blurb.is-oneline { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* The illustration (16:9, registry `illustration`) bleeds to the card's
+       edges; empty when no card of the grid has one. */
+    .ui-app-card__art { position: relative; margin: -18px -18px 12px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: var(--radius-lg) var(--radius-lg) 0 0; background: var(--accent-subtle); }
+    /* The picture fades into the card body (an overlay: the image is never edited). */
+    .ui-app-card__art::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 45%; background: linear-gradient(to bottom, transparent, var(--bg-card, var(--bg-secondary))); pointer-events: none; }
+    .ui-app-card__art:empty { display: none; margin: 0; aspect-ratio: auto; }
+    .ui-app-card__art:empty::after { display: none; }
+    .ui-app-card__art > img { display: block; width: 100%; height: 100%; max-width: 100%; object-fit: cover; }
+    .ui-app-card__artmark { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 750; font-size: 40px; letter-spacing: -.03em; color: var(--accent); opacity: .55; }
+    /* Without an illustration: a smaller, lighter mark tile in the head. */
+    .ui-app-card .ui-card__head .ui-mark { flex-basis: 34px; width: 34px; height: 34px; font-size: 12px; opacity: .85; }
+    .ui-app-card .ui-card__titles { min-height: 34px; }
+    /* Exactly two lines of description on every card (the registry's sentences fill them). */
+    .ui-app-card .ui-card__blurb { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; box-sizing: content-box; min-height: 2.9em; }
+    /* A quieter status badge: text and dot, a thin border, no fill. */
+    .ui-app-card .ui-card__status .ui-pill, .ui-app-member .ui-pill { background: transparent; border-color: var(--ui-border-1); font-weight: 550; }
+    .ui-app-card .ui-card__status .ui-pill.tone-ok, .ui-app-member .ui-pill.tone-ok { border-color: var(--success-border, var(--ui-border-1)); }
+    .ui-app-card { transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+    @media (hover: hover) {
+      .ui-app-card:hover { border-color: var(--ui-border-2); box-shadow: 0 8px 24px rgba(0, 0, 0, .16); transform: translateY(-2px); }
+    }
+    @media (prefers-reduced-motion: reduce) { .ui-app-card, .ui-app-card:hover { transition: none; transform: none; } }
+    /* The Apps toolbar: icon buttons at the top right of the page content. */
+    .ui-apps-toolbar { justify-content: flex-end; gap: 8px; }
+    .ui-icon-btn.is-loading svg { animation: afspin .8s linear infinite; }
+    @media (prefers-reduced-motion: reduce) { .ui-icon-btn.is-loading svg { animation: none; } }
+    /* Node.js when it is ready (Technical details on): one quiet line, no card. */
+    .ui-runtime-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; color: var(--text-secondary); font-size: var(--font-size-sm); }
+    .ui-runtime-line__dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 999px; background: var(--success); }
+    .ui-runtime-line > code { max-width: 100%; font-size: var(--font-size-xs); }
+    /* A launcher's badge: where it opens (globe: the web browser; monitor: an app on the computer). */
+    .ui-btn.ui-app-launch { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+    .ui-app-launch__icon { display: inline-flex; }
+    .ui-app-launch__icon svg { width: 16px; height: 16px; }
+    /* A family card's one badge: a segment per member (icon, dot, state), thin separators; it wraps, never truncates. */
+    .ui-app-card .ui-card__status { max-width: 100%; min-width: 0; }
+    .ui-app-badges { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; max-width: 100%; padding: 2px 8px; border: 1px solid var(--ui-border-1); border-radius: 999px; }
+    .ui-app-badges > .ui-pill.ui-app-seg { border: 0; background: transparent; padding: 1px 2px; gap: 5px; }
+    .ui-app-badges > .ui-pill.ui-app-seg::before { order: 1; }
+    .ui-app-seg__icon { order: 0; display: inline-flex; }
+    .ui-app-seg__icon svg { width: 14px; height: 14px; }
+    .ui-app-seg__label { order: 2; white-space: nowrap; }
+    .ui-app-badges__sep { align-self: stretch; width: 1px; margin-block: 3px; background: var(--ui-border-2); }
+    /* A family member's launcher with its notes beside it. */
+    .ui-app-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+    .ui-app-member__line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+    .ui-app-member__notes { flex: 1 1 100%; display: grid; gap: 6px; min-width: 0; }
+    /* A sentence from the gateway may hold a long path or address: it wraps inside the card. */
+    .ui-app-card .ui-card__note, .ui-app-card .ui-field-msg { overflow-wrap: anywhere; }
     .ui-card__body, .ui-card__tech { display: grid; gap: 10px; min-width: 0; align-content: start; }
     .ui-card__body:empty, .ui-card__tech:empty { display: none; }
     .ui-card__tech { gap: 8px; padding-top: 10px; border-top: 1px solid var(--ui-border-1); }
@@ -167,6 +216,10 @@ CONSOLE_UI_CSS = r"""
     @supports (grid-template-rows: subgrid) {
       .ui-card-grid.is-aligned { row-gap: 0; }
       .ui-card-grid.is-aligned > .ui-card { display: grid; grid-row: span 5; grid-template-rows: subgrid; row-gap: 0; margin-bottom: 16px; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card { grid-row: span 6; grid-template-columns: minmax(0, 1fr); }
+      .ui-card-grid.is-aligned > .ui-card > .ui-app-card__art:empty { display: block; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card > .ui-card__blurb { padding-top: 6px; }
+      .ui-card-grid.is-aligned > .ui-card.ui-app-card > .ui-card__actions { padding-top: 12px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__blurb { padding-top: 10px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:not(:empty) { padding-top: 12px; }
       .ui-card-grid.is-aligned > .ui-card > .ui-card__body:empty, .ui-card-grid.is-aligned > .ui-card > .ui-card__tech:empty { display: block; }
@@ -454,12 +507,64 @@ CONSOLE_UI_CSS = r"""
     .first-run-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .first-run-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
     .first-run-content { width: 100%; max-width: 1560px; margin: 0 auto; padding: clamp(24px, 4vh, 44px) clamp(20px, 3.4vw, 60px) 36px; display: grid; gap: 24px; }
-    .first-run-head { display: grid; gap: 8px; max-width: 920px; }
+    .first-run-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; row-gap: 8px; }
+    .first-run-head > :not(.first-run-head__actions) { grid-column: 1; max-width: 920px; }
+    .first-run-head__actions { grid-column: 2; grid-row: 1 / span 3; align-self: end; }
+    .first-run-head__actions:empty { display: none; }
+    .dm-badge--loading { cursor: default; opacity: .72; }
+    .dm-badge--loading .dm-badge__state { color: var(--text-muted, var(--text-secondary)); }
     .first-run-kicker { color: var(--accent); font-size: var(--font-size-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     .first-run-head h3 { font-size: calc(26px * var(--font-scale)); font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
     .first-run-head p { color: var(--text-secondary); font-size: calc(15px * var(--font-scale)); line-height: 1.55; }
     .first-run-panel { display: grid; gap: 22px; min-width: 0; border: 0; background: transparent; padding: 0; box-shadow: none; border-radius: var(--radius-sm); }
     .first-run-panel.hidden { display: none !important; }
+    /* 1069: the Default models table. The table scrolls inside its wrap on a narrow screen; the
+       actions wrap inside their cell instead of pushing the table past the panel. */
+    .first-run-default-models { width: 100%; border-collapse: collapse; }
+    .first-run-default-models th, .first-run-default-models td { vertical-align: top; padding: 10px 8px; text-align: left; }
+    .first-run-default-models td.actions { width: 1%; }
+    .first-run-default-models .dm-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 9.5em; }
+    .first-run-default-models .chip { white-space: nowrap; }
+    #first-run-default-models .ui-section-title .ui-sub { white-space: normal; }
+    /* 1069 Simple mode: the guide's model step shows only the hero and the badges (Advanced shows
+       the table, the download cards and the catalog). */
+    #first-run-model-body.dm-simple > :not(#first-run-default-models) { display: none; }
+    .dm-mode { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--ui-overlay-bg, rgba(127,127,127,.12)); justify-self: end; }
+    .dm-mode button { border: 0; background: transparent; color: var(--text-secondary); padding: 6px 14px; border-radius: 999px; font-weight: 600; cursor: pointer; }
+    .dm-mode button[aria-pressed="true"] { background: var(--bg-card, var(--bg-secondary)); color: var(--text-primary); box-shadow: var(--ui-shadow-1); }
+    #first-run-default-models { display: grid; gap: 20px; }
+    .dm-hero { display: flex; align-items: center; justify-content: space-between; gap: 18px 28px; flex-wrap: wrap; padding: 22px 24px; border-radius: var(--radius-md);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), color-mix(in srgb, #6366f1 16%, transparent));
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+    .dm-hero__text { flex: 1 1 340px; min-width: 0; }
+    .dm-hero h3 { margin: 0 0 6px; font-size: var(--font-size-xl); }
+    .dm-hero p { margin: 0; color: var(--text-secondary); }
+    .dm-hero__btn { font-size: var(--font-size-lg); padding: 12px 26px; }
+    .dm-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; }
+    .dm-group h4 { margin: 0 0 10px; font-size: var(--font-size-md); text-transform: uppercase; letter-spacing: .06em; }
+    .dm-group h4 span { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-secondary); margin-left: 6px; }
+    .dm-badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr)); gap: 10px; min-width: 0; }
+    .dm-group { min-width: 0; }
+    .dm-badge { --dm-hue: #6366f1; display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-width: 0; width: 100%; padding: 12px; min-height: 84px; border-radius: var(--radius-md); cursor: pointer;
+      background: color-mix(in srgb, var(--dm-hue) 13%, var(--bg-card, transparent)); border: 1px solid color-mix(in srgb, var(--dm-hue) 38%, transparent); color: var(--text-primary); }
+    .dm-badge:hover, .dm-badge:focus-visible { border-color: var(--dm-hue); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-hue) 35%, transparent); outline: none; }
+    .dm-badge__mark { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: var(--radius-sm); background: var(--dm-hue); color: #fff; }
+    .dm-badge__icon { width: 20px; height: 20px; }
+    .dm-badge__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; }
+    .dm-badge__label { font-weight: 650; }
+    .dm-badge__state { font-size: var(--font-size-sm); font-weight: 600; color: color-mix(in srgb, var(--dm-hue) 75%, var(--text-primary)); }
+    .dm-badge--none .dm-badge__state { color: var(--text-secondary); }
+    .dm-badge--none .dm-badge__mark { background: color-mix(in srgb, var(--dm-hue) 45%, var(--text-secondary)); }
+    .dm-badge__model { font-size: var(--font-size-sm); color: var(--text-secondary); overflow-wrap: anywhere; white-space: normal; }
+    .dm-progress { min-width: 0; }
+    .dm-choice { width: min(640px, 100%); max-height: calc(100vh - 48px); overflow: auto; }
+    .dm-choice__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .dm-choice__head h2 { margin: 0; font-size: var(--font-size-lg); }
+    .dm-choice__body { display: grid; gap: 18px; margin-top: 12px; }
+    .dm-choice__part h3 { margin: 0 0 8px; font-size: var(--font-size-md); }
+    .dm-choice__pick { display: grid; gap: 2px; }
+    .dm-choice__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow: auto; }
+    .dm-choice__list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--ui-overlay-bg, rgba(127,127,127,.08)); }
     .first-run-footer { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 14px clamp(20px, 3.4vw, 60px); border-top: 1px solid var(--ui-border-1); background: var(--bg-secondary); }
     .first-run-footer .message { flex: 1 1 auto; margin: 0; min-width: 0; font-size: var(--font-size-md); }
     .first-run-footer button { min-width: 96px; }
@@ -497,6 +602,8 @@ CONSOLE_UI_CSS = r"""
     @media (max-width: 767.98px) {
       .first-run-content { padding: 20px var(--gutter, 16px) 28px; gap: 18px; }
       .first-run-head h3 { font-size: calc(22px * var(--font-scale)); }
+      .first-run-head { grid-template-columns: minmax(0, 1fr); }
+      .first-run-head__actions { grid-column: 1; grid-row: auto; justify-self: start; }
       .first-run-footer { padding-left: var(--gutter, 16px); padding-right: var(--gutter, 16px); }
       .first-run-footer .message { flex-basis: 100%; order: 3; }
     }
@@ -512,16 +619,18 @@ CONSOLE_UI_CSS = r"""
        focused field), 14 px reading text. The visual glyphs keep their size;
        the boxes grow. The target floor is !important on purpose: it is a
        floor, and several control recipes (.ui-btn.is-quiet, #sandbox-reasoning,
-       the catalog's chips, later in this sheet) pin a desktop height with a
-       more specific selector. Exceptions (DESIGN §3.2): inline text links in
-       prose, disabled controls, the kit About dialog's link list. */
+       later in this sheet) pin a desktop height with a more specific selector.
+       Exceptions (DESIGN §3.2): inline text links in prose, disabled controls,
+       the kit About dialog's link list, and the kit's pills (af-chip--button,
+       the filter bar's scope buttons): they keep their pill geometry and the
+       kit grows an invisible 44 px hit area instead. */
     @media (pointer: coarse) {
-      button, .ui-btn, .af-topbar__btn, .af-topbar__pill, .mc-mode button, button.mc-chip, .entity-subtab,
+      button:not(.af-chip--button):not(.af-filterbar__scope-btn), .ui-btn, .af-topbar__btn, .af-topbar__pill, .entity-subtab,
       .first-run-step, .tab-button.shell_nav_item, .af-select-trigger, summary, .ui-card__actions a.ui-link,
       .acc-root .acc-btn, .acc-root .acc-tabs button { min-height: var(--tap-min, 44px) !important; }
       .ui-card__actions a.ui-link { display: inline-flex; align-items: center; }
       .mc-art .mc-id { min-height: var(--tap-min, 44px); display: flex; align-items: center; }
-      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close, .mc-chip { min-width: var(--tap-min, 44px) !important; }
+      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close { min-width: var(--tap-min, 44px) !important; }
       .sandbox-speak { height: var(--tap-min, 44px); }
       input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: var(--font-size-input, 16px) !important; min-height: var(--tap-min, 44px) !important; }
       input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
@@ -1155,7 +1264,27 @@ CONSOLE_UI_JS = r"""
     // (engine_install_job_v1) on /engines/jobs/{id}, with
     // /continue {approve_admin|install_tools|recheck} and /cancel. The
     // job's `message` is already one plain sentence; `details` is the log.
-    const ENGINE_MARKS = { ollama: "Ol", lmstudio: "LM", mlx: "MLX", llamacpp: "cpp", vllm: "vL", huggingface: "HF" };
+    // An engine's (or cloud provider's) mark: the brand's official logo from the kit (islands
+    // `brandMarks`, ui-kit 0.9.9: brand_icons.tsx inlines each mark with its source, licence and
+    // date; a brand whose terms forbid its logo keeps a readable text badge there). A bundle without
+    // brandMarks is a vendoring defect: logged once, and the card shows the name's initials.
+    let uiBrandMarksMissingLogged = false;
+    function uiKitBrandMarks() {
+      try {
+        const w = typeof window !== "undefined" ? window : null;
+        const lib = w && w.AfConsoleIslands;
+        return lib && lib.brandMarks && typeof lib.brandMarks.html === "function" ? lib.brandMarks : null;
+      } catch { return null; }
+    }
+    function uiBrandMark(id, name, size) {
+      const marks = uiKitBrandMarks();
+      if (marks) return marks.html(String(id || ""), String(name || id || ""), size);
+      if (!uiBrandMarksMissingLogged) {
+        uiBrandMarksMissingLogged = true;
+        console.error("AbstractGateway console: the abstractuic islands bundle has no brandMarks (ui-kit 0.9.9+ required); engine cards show initials instead of logos.");
+      }
+      return `<span class="ui-mark" aria-hidden="true">${esc(String(name || id || "?").slice(0, 2))}</span>`;
+    }
     const ENGINE_DOWNLOAD_LINKS = [
       { id: "ollama", name: "Ollama", url: "https://ollama.com/download" },
       { id: "lmstudio", name: "LM Studio", url: "https://lmstudio.ai/download" },
@@ -1191,13 +1320,13 @@ CONSOLE_UI_JS = r"""
       const p = engineStore.plans.get(e.id);
       if (!p || p.loading) return `<p class="ui-card__note ui-working">Checking where ${esc(e.name || e.id)} can go on this computer...</p>`;
       if (p.error) return `<div class="ui-alert tone-warn"><strong>Could not check the install locations.</strong><span>${esc(p.error)}</span>`
-        + `<span>Install still works: the gateway picks /Applications when your account can write it, else your own Applications folder.</span></div>`;
+        + `<span>Install still works: the gateway picks /Applications when the account it runs as can write it, else that account's own Applications folder.</span></div>`;
       const sys = p.system || {};
       const user = p.user || {};
       return `<ul class="ui-choice-list">`
-        + `<li><b>Install</b> puts it in your own Applications folder: only your account sees it, no password needed.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
+        + `<li><b>Install</b> puts it in the Applications folder of the account the gateway runs as: no password needed, and the gateway serves it to every user.<code class="ui-advanced ui-ellip is-block" title="${esc(user.target || "")}">${esc(user.target || "")}</code></li>`
         + `<li><b>${esc(sys.needs_admin ? "Install for all users (administrator)" : "Install for all users")}</b> puts it in /Applications for every account on this computer.`
-        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "Your account cannot write there, so an administrator password is asked first.")}` : "")
+        + (sys.needs_admin ? ` ${esc(sys.admin_reason || "The account the gateway runs as cannot write there, so an administrator password is asked first.")}` : "")
         + `<code class="ui-advanced ui-ellip is-block" title="${esc(sys.target || "")}">${esc(sys.target || "")}</code></li></ul>`;
     }
     function engineLocationButtons(e) {
@@ -1238,7 +1367,8 @@ CONSOLE_UI_JS = r"""
     function engineAction_(e, id) { return (Array.isArray(e.actions) ? e.actions : []).find((a) => a && a.id === id) || null; }
     function engineState(e, job) {
       if (job && job.state === "needs_admin") return { key: "waiting", pill: uiPill("Needs your approval", "warn") };
-      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill("Needs Apple tools", "warn") };
+      // Apple's command-line tools only on a Mac; anywhere else the job names its own prerequisite.
+      if (job && job.state === "needs_tools") return { key: "waiting", pill: uiPill((job.tools_prompt && job.tools_prompt.action && job.tools_prompt.action.kind === "xcode_select_install") ? "Needs Apple tools" : "Needs a prerequisite", "warn") };
       if (engineJobActive(job)) return { key: "installing", pill: uiPill("Installing", "info tone-busy") };
       if (e.supported === false) return { key: "unsupported", pill: uiPill("Not for this computer", "muted") };
       if (e.installed !== true) return { key: "absent", pill: uiPill("Not installed", "muted") };
@@ -1305,6 +1435,12 @@ CONSOLE_UI_JS = r"""
           const msg = (job.error && job.error.message) || job.message || "The install did not finish.";
           body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(msg)}</strong></div>`;
         }
+        // A failed UPDATE leaves the installed engine as it was (OVH 8080, 2026-10-29): the card
+        // stays Ready and says why the update did not happen, in the job's one sentence.
+        if (job && job.state === "failed" && e.installed === true) {
+          const msg = (job.error && job.error.message) || job.message || "The update did not finish; the installed version is unchanged.";
+          body += `<div class="ui-alert tone-warn" role="status" data-engine-update-failed><strong>${esc(msg)}</strong></div>`;
+        }
         // Install / Start / Stop are an admin's actions: a non-admin's card does
         // not render them (UX rule: unavailable actions are not shown); Browse
         // models and Learn more stay.
@@ -1332,7 +1468,7 @@ CONSOLE_UI_JS = r"""
       const learn = docs && docs.url ? `<span class="ui-spacer"></span><a class="ui-link" href="${esc(docs.url)}" target="_blank" rel="noopener noreferrer">Learn more</a>` : "";
       const tone = view.key === "installing" ? " is-busy" : (failed || view.key === "waiting" ? " is-attention" : "");
       return `<article class="ui-card engine-card${tone}" data-engine-card="${esc(e.id)}">`
-        + `<div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[e.id] || String(e.name || e.id || "?").slice(0, 2))}</span>`
+        + `<div class="ui-card__head">${uiBrandMark(e.id, e.name)}`
         + `<div class="ui-card__titles"><div class="ui-card__title">${esc(e.name || e.id)}</div>`
         + `<span class="ui-card__status">${view.pill}</span></div></div>`
         + `<div class="ui-card__blurb">${esc(e.description || "")}</div>`
@@ -1344,6 +1480,14 @@ CONSOLE_UI_JS = r"""
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
+    // ---- Who installs engines (operator ruling 2026-10-29): engines are installed ONCE per
+    // computer by the gateway's administrator and shared by every user; there is no switch here.
+    // An account that is not an admin reads one sentence; an admin sees the install actions.
+    function engineInstallSettingMarkup() {
+      const admin = !!(state.principal && state.principal.admin);
+      if (admin) return "";
+      return `<div class="ui-alert tone-info" data-engine-install-note><span>An administrator installs engines for this computer.</span></div>`;
+    }
     function engineViewMarkup(key) {
       const extra = engineStore.extras.get(key);
       if (engineStore.error && !engineStore.data) {
@@ -1351,7 +1495,7 @@ CONSOLE_UI_JS = r"""
         // offer the two desktop engines' own downloads (never a dead end).
         const upgrade = CORE_CONSOLE.available ? "" : ` ${coreConsoleUnavailableText()}`;
         // A view's extras (the Providers tab: the server connection) still apply.
-        const links = ENGINE_DOWNLOAD_LINKS.map((d) => { const more = (typeof extra === "function" && extra({ id: d.id, name: d.name })) || {}; return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[d.id] || "")}</span>`
+        const links = ENGINE_DOWNLOAD_LINKS.map((d) => { const more = (typeof extra === "function" && extra({ id: d.id, name: d.name })) || {}; return `<article class="ui-card"><div class="ui-card__head">${uiBrandMark(d.id, d.name)}`
           + `<div class="ui-card__titles"><div class="ui-card__title">${esc(d.name)}</div></div></div>`
           + (more.body ? `<div class="ui-card__body">${more.body}</div>` : "")
           + `<div class="ui-card__actions"><a class="ui-btn is-ghost" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">Download ${esc(d.name)}</a>${more.actions || ""}</div></article>`; }).join("");
@@ -1365,8 +1509,7 @@ CONSOLE_UI_JS = r"""
       const installed = engines.filter((e) => e.installed === true).length;
       const running = engines.filter((e) => e.running === true).length;
       const when = engineStore.data.generated_at ? new Date(engineStore.data.generated_at).toLocaleTimeString() : "";
-      const policy = engineStore.data.install_allowed === false
-        ? `<div class="ui-alert tone-info"><strong>Installing engines is turned off on this gateway.</strong><span>An admin can allow it in the gateway settings (allow engine install). You can still install an engine yourself and check again.</span></div>` : "";
+      const policy = engineInstallSettingMarkup();
       const summary = `<div class="ui-toolbar"><span>${installed} of ${engines.length} installed${running ? `, ${running} running` : ""}${when ? ` · checked ${esc(when)}` : ""}</span>`
         + `<button type="button" class="ui-btn is-quiet" data-engine-action="refresh">${engineStore.loading ? "Checking..." : "Check again"}</button>`
         + `<span class="ui-advanced ui-sub">CLI: <code>abstractgateway engines status --probe</code></span></div>`;
@@ -1542,16 +1685,18 @@ CONSOLE_UI_JS = r"""
     // details, log_tail). A row of kind "desktop" (the Assistant)
     // has no address: `desktop` {location, launch_command, install_command,
     // launch_available, launch_blocked_reason}; Open = POST /apps/{id}/launch.
-    const APP_COPY = {
-      // One line on the card (ellipsis + the whole sentence on hover).
-      flow: { mark: "Fl", blurb: "Design workflows visually and run them here." },
-      code: { mark: "Co", blurb: "A coding assistant whose sessions survive restarts." },
-      observer: { mark: "Ob", blurb: "Watch runs live, replay them, steer running work." },
-      continuum: { mark: "Cn", blurb: "Your backlog, inbox and long-running processes." },
-      entity: { mark: "En", blurb: "Create entities and talk with them as they learn." },
-      note: { mark: "No", blurb: "Capture anything; see how it connects and changes over time." },
-      assistant: { mark: "As", blurb: "A menu-bar assistant: chat or talk hands-free." },
-    };
+    // A card's words and picture (name, description, mark, illustration)
+    // come from the gateway's app registry (overview `cards[]`, docs/apps.md
+    // "Registering an app"): the console holds no per-app copy. A launcher's
+    // badge says WHERE it opens: in the web browser (globe), as an app on
+    // the gateway's computer (monitor), in a terminal (the `>_` glyph).
+    const APP_LAUNCH_ICON = { browser: "globe", desktop: "monitor" };
+    function appLaunchIcon(kind) {
+      const icon = APP_LAUNCH_ICON[kind];
+      if (!icon) return "";
+      if (!ICONS[icon]) throw new Error(`AbstractGateway console: ICONS.${icon} is missing (the apps launcher badge)`);
+      return `<span class="button-icon ui-app-launch__icon" data-app-launch-badge="${esc(kind)}" aria-hidden="true">${ICONS[icon]}</span>`;
+    }
     // An app that holds nothing yet on this gateway opens where its first
     // thing is made. Keyed by app id; `when` reads the row's
     // content_summary (apps_manager.content_summary): a count of exactly 0,
@@ -1593,10 +1738,11 @@ CONSOLE_UI_JS = r"""
       return `<div class="ui-cmdline"><code class="ui-ellip" title="${esc(cmd)}">${esc(cmd)}</code>`
         + `<button type="button" class="ui-btn is-quiet" data-app-action="tui-copy" data-cmd="${esc(cmd)}" aria-label="${esc(label || `Copy: ${cmd}`)}">Copy</button></div>`;
     }
-    // A card is icon + name + pill / one line / ONE action row, pinned at
-    // the same level across the grid (`.ui-card-grid.is-aligned`: five subgrid rows).
-    // The action row holds the primary action for the state and, right next
-    // to it, the terminal action. Stop, Show log, Update, versions, commands,
+    // A card is illustration / icon + name + pill / its description / ONE
+    // launcher row, pinned at the same level across the grid
+    // (`.ui-card-grid.is-aligned`: six subgrid rows). The launcher row holds
+    // the primary action for the state and, right next to it, the other
+    // launchers (the terminal, a family's desktop app). Stop, Show log, Update, versions, commands,
     // the address and the log panel exist only with "Technical details" ON
     // (not rendered at all otherwise; uiSetAdvanced re-renders the cards).
     // Result boxes are transient (APP_NOTICE_MS) unless they report an error.
@@ -1752,14 +1898,26 @@ CONSOLE_UI_JS = r"""
         if (pre) pre.scrollTop = pre.scrollHeight;  // newest lines in view
       }
     }
-    // Node.js: its own row with its own Install (POST /apps/runtime/install),
-    // the same job bar as the apps, and the source it was found in.
+    // Node.js: a card ONLY when it needs the user — missing (its Install,
+    // POST /apps/runtime/install, the same job bar as the apps), installing,
+    // or a failed install (the reason, and Install again). Ready, it is one
+    // quiet line under the toolbar, with Technical details on only: version,
+    // where it was found, the path.
     function appRuntimeMarkup(d) {
       const node = ((d && d.runtime) || {}).node || {};
       const admin = !!(state.principal && state.principal.admin);
       const job = appStore.jobs.get("__node__") || node.active_job || null;
       const busy = appStore.busy.has("__node__");
       const SOURCES = { system: "found on this computer", managed: "installed by the gateway", none: "" };
+      if (node.available && !appJobActive(job)) {
+        if (!uiShowAdvanced()) return appNoticeMarkup("__node__");
+        const facts = [`Node.js${node.version ? ` ${esc(node.version)}` : ""}`];
+        if (SOURCES[node.source]) facts.push(esc(SOURCES[node.source]));
+        return `<div class="ui-runtime-line" data-app-runtime="node" data-runtime-state="ready" role="status">`
+          + `<span class="ui-runtime-line__dot" aria-hidden="true"></span><span class="ui-runtime-line__text">${facts.join(" · ")}</span>`
+          + (node.path ? `<code class="ui-ellip" title="${esc(node.path)}">${esc(node.path)}</code>` : "")
+          + `</div>` + appNoticeMarkup("__node__");
+      }
       let pill;
       let body = "";
       let buttons = "";
@@ -1767,8 +1925,6 @@ CONSOLE_UI_JS = r"""
         pill = uiPill("Installing", "info tone-busy");
         body = uiProgressMarkup(appJobAsProgress(job), "Installing Node.js");
         if (admin) buttons += `<button type="button" class="ui-btn is-ghost" data-app-action="cancel" data-app="__node__"${busy ? " disabled" : ""}>${busy && appStore.pending.get("__node__") ? esc(appStore.pending.get("__node__")) : "Cancel"}</button>`;
-      } else if (node.available) {
-        pill = uiPill("Ready", "ok");
       } else {
         pill = uiPill("Not installed", "muted");
         body = `<p class="ui-card__note">Node.js will be installed for you: the gateway puts it in its own folder (about 56 MB, no password, no terminal) the first time you install an app, or now.</p>`
@@ -1783,7 +1939,7 @@ CONSOLE_UI_JS = r"""
       if (node.version) facts.push(`<li>Version <b>${esc(node.version)}</b></li>`);
       if (SOURCES[node.source]) facts.push(`<li>${esc(SOURCES[node.source])}</li>`);
       if (node.path) facts.push(`<li class="ui-advanced">Path <code class="ui-ellip" title="${esc(node.path)}">${esc(node.path)}</code></li>`);
-      return `<article class="ui-card ui-runtime-row${appJobActive(job) ? " is-busy" : ""}" data-app-runtime="node">`
+      return `<article class="ui-card ui-runtime-row${appJobActive(job) ? " is-busy" : ""}" data-app-runtime="node" data-runtime-state="${appJobActive(job) ? "installing" : "missing"}">`
         + `<div class="ui-runtime-row__main"><span class="ui-mark" aria-hidden="true">JS</span>`
         + `<div class="ui-runtime-row__text"><div class="ui-card__titles"><div class="ui-card__title">Node.js</div><span class="ui-card__status">${pill}</span></div>`
         + `<div class="ui-card__blurb">The engine the browser apps run on.</div>${facts.length ? `<ul class="ui-facts">${facts.join("")}</ul>` : ""}</div>`
@@ -1816,32 +1972,65 @@ CONSOLE_UI_JS = r"""
     // reason) for an app started outside the gateway or a non-admin. A plain
     // pill when tip is null (not installed, starting, stopping).
     const APP_BADGE_PENDING = { stop: "Stopping…", launch: "Starting…", open: "Starting…", "desktop-open": "Starting…" };
-    function appBadgeMarkup(app, job, pend) {
-      if (appJobActive(job)) return uiPill("Installing", "info tone-busy");
+    // `seg` (a launcher kind: "browser" | "desktop"): this badge is one
+    // SEGMENT of a family card's single badge (appFamilyBadgeMarkup): the
+    // kind's icon, the state dot, the label; `data-member` names the app it
+    // stops/starts (R11.3, per segment).
+    function appBadgeMarkup(app, job, pend, seg) {
+      const cls = seg ? " ui-app-seg" : "";
+      const member = seg ? ` data-member="${esc(app.id)}"` : "";
+      const body = (label) => seg ? `${appLaunchIcon(seg).replace("ui-app-launch__icon", "ui-app-seg__icon")}<span class="ui-app-seg__label">${esc(label)}</span>` : esc(label);
+      const pill = (label, tone) => seg ? `<span class="ui-pill tone-${esc(tone)}${cls}"${member}>${body(label)}</span>` : uiPill(label, tone);
+      if (appJobActive(job)) return pill("Installing", "info tone-busy");
       if (pend && APP_BADGE_PENDING[pend.action] && (pend.action !== "open" || !app.running)) {
-        return `<button type="button" class="ui-pill tone-info tone-busy ui-app-badge" data-app-badge="${esc(app.id)}" disabled aria-busy="true">${esc(APP_BADGE_PENDING[pend.action])}</button>`;
+        return `<button type="button" class="ui-pill tone-info tone-busy ui-app-badge${cls}"${member} data-app-badge="${esc(app.id)}" disabled aria-busy="true">${body(APP_BADGE_PENDING[pend.action])}</button>`;
       }
       const sc = app.status_control;
       if (!sc || typeof sc !== "object") throw new Error(`AbstractGateway console: the apps row "${app.id}" has no status_control (gateway older than the console?)`);
       const tone = `${sc.tone || "muted"}${sc.busy ? " tone-busy" : ""}`;
-      if (!sc.tip) return uiPill(sc.label, tone);
+      if (!sc.tip) return pill(sc.label, tone);
       const off = !sc.enabled;
-      return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge" data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
-        + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${esc(sc.label)}</button>`;
+      return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge${cls}"${member} data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
+        + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${body(sc.label)}</button>`;
     }
-    function appCardMarkup(app) {
-      const copy = APP_COPY[app.id] || { mark: String(app.name || app.id || "?").slice(0, 2), blurb: "" };
+    // A family card's ONE status badge: every member's state, in member
+    // order, each segment with its launcher's icon and its own dot, a thin
+    // separator between them. Its name says each place: "Browser: Running.
+    // This Mac: Stopped."
+    function appFamilyBadgeMarkup(rows, parts) {
+      const where = (r) => r.kind === "desktop" ? ((r.desktop && r.desktop.where_label) || "This computer") : "Browser";
+      const said = (r) => {
+        const job = appStore.jobs.get(r.id) || r.active_job || null;
+        if (appJobActive(job)) return "Installing";
+        const pend = appStore.busy.has(r.id) ? appStore.pending.get(r.id) : null;
+        if (pend && APP_BADGE_PENDING[pend.action] && (pend.action !== "open" || !r.running)) return APP_BADGE_PENDING[pend.action];
+        return (r.status_control && r.status_control.label) || "";
+      };
+      const name = rows.map((r) => `${where(r)}: ${said(r)}.`).join(" ");
+      return `<span class="ui-app-badges" role="group" aria-label="${esc(name)}">`
+        + rows.map((r) => parts.get(r.id).segment).join(`<span class="ui-app-badges__sep" aria-hidden="true"></span>`)
+        + `</span>`;
+    }
+    // One member of a card (an apps row), in parts: its status badge, its
+    // body (progress, a failure, notes), its launcher (the state's one
+    // action: Install, Cancel, Open...), Update, the terminal parts, the
+    // settings gear and its technical details. `lead`: the card's lead (its
+    // launcher is the card's primary button); any other member's launcher is
+    // a ghost button with its own badge and notes beside it. `shared`: the
+    // card has more than one member, so Install says what it installs.
+    function appMemberParts(app, techOn, lead, shared) {
       const admin = !!(state.principal && state.principal.admin);
-      const techOn = uiShowAdvanced();
       const job = appStore.jobs.get(app.id) || app.active_job || null;
       const actions = Array.isArray(app.actions) ? app.actions : [];
       const busy = appStore.busy.has(app.id);
       const name = app.name || app.id;
       const crashed = (app.status === "crashed" || app.status === "crash_loop");
+      const main = lead ? "is-primary" : "is-ghost";
       // The body: only what the user must see now (progress, a failure, a
       // result they just caused). Never a box that restates the pill.
       let body = appNoticeMarkup(app.id);
       const desk = app.kind === "desktop" ? (app.desktop || {}) : null;
+      const kind = desk ? "desktop" : "browser";
       if (appJobActive(job)) {
         body += uiProgressMarkup(appJobAsProgress(job), job.title || `Installing ${name}`) + appPartsMarkup(job);
       } else if (job && job.state === "failed") {
@@ -1870,20 +2059,25 @@ CONSOLE_UI_JS = r"""
       if (desk && desk.source_checkout && desk.version_reason) body += `<p class="ui-card__note" data-app-version-reason="${esc(app.id)}">${esc(desk.version_reason)}</p>`;
       if (updateElsewhere && app.update_available && app.latest_version) body += `<p class="ui-card__note" data-app-update-external="${esc(app.id)}">Latest ${esc(app.latest_version)} · ${esc(app.update_tip || "")}</p>`;
       if (desk && app.installed && desk.restart_note) body += `<p class="ui-card__note" data-app-desktop-restart="${esc(app.id)}">${esc(desk.restart_note)}</p>`;
+      // An app older than a release's pin (the gateway's one sentence): an action to take.
+      if (app.installed && app.pin_warning) body += `<p class="ui-field-msg tone-warn" data-app-pin-warning="${esc(app.id)}">${esc(app.pin_warning)}</p>`;
       const tui = appTuiParts(app, techOn);
       body += tui.body;
       const pend = busy ? appStore.pending.get(app.id) : null;
-      const b = (action, text, cls, title, appPath) => {
+      // `launch`: a launcher kind ("browser" | "desktop") puts its badge on the button.
+      const b = (action, text, cls, title, appPath, launch) => {
         const mine = pend && pend.action === action;
         // The tooltip is the kit's (data-af-tip, bound once by islands bindTooltips), never a native title.
-        return `<button type="button" class="ui-btn ${cls}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${esc(mine ? pend.label : text)}</button>`;
+        return `<button type="button" class="ui-btn ${cls}${launch ? " ui-app-launch" : ""}" data-app-action="${esc(action)}" data-app="${esc(app.id)}"${launch ? ` data-app-launch="${esc(launch)}"` : ""}${appPath ? ` data-app-path="${esc(appPath)}"` : ""}${title ? ` data-af-tip="${esc(title)}"` : ""}${busy ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${launch ? appLaunchIcon(launch) : ""}${esc(mine ? pend.label : text)}</button>`;
       };
       const first = appFirstRun(app);
-      const off = (text, title) => `<button type="button" class="ui-btn is-primary" disabled title="${esc(title)}">${esc(text)}</button>`;
-      // The action row: ONE primary action for the state + the terminal one.
-      let primary = "";
+      const off = (text, title, launch) => `<button type="button" class="ui-btn ${main}${launch ? " ui-app-launch" : ""}"${launch ? ` data-app-launch="${esc(launch)}"` : ""} disabled title="${esc(title)}">${launch ? appLaunchIcon(launch) : ""}${esc(text)}</button>`;
+      // The launcher: ONE action for the state.
+      const openWeb = "Open in browser";
+      const openDesk = (desk && desk.open_label) || "Open";
+      let launch = "";
       if (appJobActive(job)) {
-        primary = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
+        launch = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
       } else if (!app.installed) {
         // ONE button, "Install". It
         // installs the browser app and, when the app has one for this
@@ -1891,23 +2085,24 @@ CONSOLE_UI_JS = r"""
         const withTui = Array.isArray(app.install_parts) && app.install_parts.includes("tui");
         const what = desk ? `Install the ${name} on the gateway's computer (into the gateway's own Python)`
           : `Install ${name}${withTui ? " for the browser and the terminal" : ""}${app.needs_node_install ? " (Node.js is installed for you first: about 56 MB, no password needed)" : ""}`;
-        primary = actions.includes("install") && admin
-          ? b("install", "Install", "is-primary", what)
-          : off("Install", app.install_blocked_reason || (admin ? "Installing is not available right now" : "Only an admin can install apps"));
+        const label = shared ? (desk ? "Install desktop app" : "Install browser app") : "Install";
+        launch = actions.includes("install") && admin
+          ? b("install", label, main, what)
+          : off(label, app.install_blocked_reason || (admin ? "Installing is not available right now" : "Only an admin can install apps"));
       } else if (desk) {
         // A desktop app: Open starts it on the gateway computer (or brings it
         // forward); from another computer there is no button (note above).
-        if (desk.launch_available) primary = b("desktop-open", "Open", "is-primary", app.running ? `Bring the ${name} to the front on this computer` : `Start the ${name} on this computer`);
-        else if (desk.launch_blocked === "admin") primary = off("Open", desk.launch_blocked_reason || "Only an admin can start apps");
+        if (desk.launch_available) launch = b("desktop-open", openDesk, main, app.running ? `Bring the ${name} to the front on this computer` : `Start the ${name} on this computer`, "", kind);
+        else if (desk.launch_blocked === "admin") launch = off(openDesk, desk.launch_blocked_reason || "Only an admin can start apps", kind);
       } else if (app.running) {
-        primary = first ? b("open", first.label, "is-primary", first.title(name), first.path)
-          : b("open", "Open", "is-primary", `Open ${name} in a new tab, signed in`);
+        launch = first ? b("open", first.label, main, first.title(name), first.path, kind)
+          : b("open", openWeb, main, `Open ${name} in a new browser tab, signed in`, "", kind);
       } else {
         // Installed but stopped (or crashed): Open starts it, then opens it.
-        primary = actions.includes("launch") && admin
-          ? (first ? b("open", first.label, "is-primary", `Start ${name}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}`, first.path)
-            : b("open", "Open", "is-primary", `Start ${name} and open it in a new tab, signed in`))
-          : off("Open", admin ? "Starting is not available right now" : "Only an admin can start apps");
+        launch = actions.includes("launch") && admin
+          ? (first ? b("open", first.label, main, `Start ${name}, then ${first.title(name).charAt(0).toLowerCase()}${first.title(name).slice(1)}`, first.path, kind)
+            : b("open", openWeb, main, `Start ${name} and open it in a new browser tab, signed in`, "", kind))
+          : off(openWeb, admin ? "Starting is not available right now" : "Only an admin can start apps", kind);
       }
       // Round 8: an app's own settings sit behind a gear beside Open (admin only),
       // opening the settings modal (APP_SETTINGS_DOORS); never a disclosure on the page.
@@ -1920,7 +2115,6 @@ CONSOLE_UI_JS = r"""
       const update = app.update_available && actions.includes("update") && admin && !appJobActive(job)
         ? b("update", app.update_label || "Update", "is-ghost", app.update_tip || "")
         : "";
-      const row = primary + update + tui.button + gear;
       // Technical details ON: the secondary line (text buttons + facts), the
       // terminal commands, the address, the npx line, the logs.
       let tech = "";
@@ -1958,39 +2152,94 @@ CONSOLE_UI_JS = r"""
           + (doneLog ? `<details class="ui-details"><summary>Install log</summary><pre class="ui-log">${esc(doneLog)}</pre></details>` : "")
           + appLogMarkup(app);
       }
-      const blurb = copy.blurb || app.description || "";
-      const tint = appJobActive(job) ? " is-busy" : ((job && job.state === "failed") || app.status === "crash_loop" ? " is-attention" : "");
-      return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(app.id)}"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
-        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(name)}</div><span class="ui-card__status">${appBadgeMarkup(app, job, pend)}</span></div></div>`
-        + `<div class="ui-card__blurb is-oneline" title="${esc(blurb)}">${esc(blurb)}</div>`
-        + `<div class="ui-card__body">${body}</div>`
+      const attention = (job && job.state === "failed") || app.status === "crash_loop";
+      return { badge: appBadgeMarkup(app, job, pend), segment: appBadgeMarkup(app, job, pend, kind), body, launch, update, tui, gear, tech, kind, busy: appJobActive(job), attention };
+    }
+    // A card (overview `cards[]`): illustration, mark + title + the
+    // identity's status badge, the description, then ONE launcher row
+    // built from `launchers[]` (by member kind: browser, desktop, terminal),
+    // then the lead's body and every member's technical details. The lead
+    // (members[0]) is the first installed member (apps_manager.app_cards);
+    // every other member keeps its own status badge and notes beside its own
+    // launcher (data-app-member). A family card is `data-app-card="family:<id>"`
+    // (never an app id: the desktop Assistant's id is also "assistant"). `withArt`: some card of the
+    // grid has an illustration, so a card without one shows its mark there.
+    function appCardMarkup(card, withArt) {
+      const techOn = uiShowAdvanced();
+      const rows = (Array.isArray(card.members) ? card.members : []).map((id) => {
+        const r = appRowById(id);
+        if (!r) throw new Error(`AbstractGateway console: the apps card "${card.id}" names "${id}", which the apps overview does not list`);
+        return r;
+      });
+      if (!rows.length) throw new Error(`AbstractGateway console: the apps card "${card.id}" has no members`);
+      const lead = rows[0];
+      const shared = rows.length > 1;
+      const parts = new Map(rows.map((r, i) => [r.id, appMemberParts(r, techOn, i === 0, shared)]));
+      const head = parts.get(lead.id);
+      let row = "";
+      let leadDone = false;
+      for (const l of (Array.isArray(card.launchers) ? card.launchers : [])) {
+        const p = parts.get(l.app);
+        if (!p) throw new Error(`AbstractGateway console: the apps card "${card.id}" has a launcher for "${l.app}", not one of its members`);
+        if (l.app === lead.id) {
+          row += l.kind === "terminal" ? p.tui.button : p.launch + p.update;
+          continue;
+        }
+        if (!leadDone) { row += head.gear; leadDone = true; }
+        if (l.kind === "terminal") { row += p.tui.button; continue; }
+        // Its state is a segment of the card's one badge; its notes stay here, beside its button.
+        row += `<div class="ui-app-member" data-app-member="${esc(l.app)}"><div class="ui-app-member__line">${p.launch}${p.update}${p.gear}</div>`
+          + (p.body ? `<div class="ui-app-member__notes">${p.body}</div>` : "")
+          + `</div>`;
+      }
+      if (!leadDone) row += head.gear;
+      let tech = shared ? "" : head.tech;
+      if (shared) for (const r of rows) {
+        const t = parts.get(r.id).tech;
+        if (t) tech += `<div class="ui-card__techrow" data-app-member-tech="${esc(r.id)}"><span class="ui-card__techlabel">${r.kind === "desktop" ? "Desktop app" : "Browser app"}</span></div>` + t;
+      }
+      const all = Array.from(parts.values());
+      const tint = all.some((p) => p.busy) ? " is-busy" : (all.some((p) => p.attention) ? " is-attention" : "");
+      // The mark: never on an illustration; the large mark in its place when
+      // the card has none but a neighbour has, a tile in the head only when no
+      // card of the grid has an illustration.
+      const art = card.illustration_url
+        ? `<img src="${esc(card.illustration_url)}" alt="" width="768" height="432" loading="lazy" decoding="async">`
+        : (withArt ? `<span class="ui-app-card__artmark" aria-hidden="true">${esc(card.mark || "")}</span>` : "");
+      const desc = card.description || "";
+      return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(card.family ? `family:${card.family}` : card.id)}"${card.family ? ` data-app-family="${esc(card.family)}"` : ""}>`
+        + `<div class="ui-app-card__art">${art}</div>`
+        + `<div class="ui-card__head">${art ? "" : `<span class="ui-mark" aria-hidden="true">${esc(card.mark || "")}</span>`}`
+        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(card.name || lead.name || lead.id)}</div><span class="ui-card__status">${shared ? appFamilyBadgeMarkup(rows, parts) : head.badge}</span></div></div>`
+        + `<div class="ui-card__blurb">${esc(desc)}</div>`
+        + `<div class="ui-card__body">${head.body}</div>`
         + `<div class="ui-card__actions">${row}</div>`
         + `<div class="ui-card__tech">${tech}</div>`
         + `</article>`;
     }
     function appViewMarkup() {
       const url = gatewayBaseUrl();
+      // No overview: the error only. Every app's words and pictures come
+      // from the gateway's registry, so the console has none of its own.
       if (appStore.error && !appStore.data) {
-        const rows = FIRST_RUN_APPS.map((a) => `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(a.mark)}</span>`
-          + `<div class="ui-card__titles"><div class="ui-card__title">${esc(a.name)}</div></div></div><div class="ui-card__blurb">${esc(a.what)}</div>`
-          + `<div class="ui-advanced"><div class="ui-cmd"><code class="ui-ellip">npx ${esc(a.pkg)}</code></div></div></article>`).join("");
-        return `<div class="ui-alert tone-warn" role="alert"><strong>This gateway cannot manage apps right now.</strong><span>${esc(appStore.error)}</span></div><div class="ui-card-grid">${rows}</div>`;
+        return `<div class="ui-alert tone-warn" role="alert"><strong>This gateway cannot manage apps right now.</strong><span>${esc(appStore.error)}</span></div>`;
       }
       if (!appStore.data) return `<div class="ui-empty">Looking for the apps...</div>`;
       const d = appStore.data;
       const node = ((d.runtime || {}).node) || {};
-      const apps = Array.isArray(d.apps) ? d.apps : [];
-      // Apps are served THROUGH the gateway (app_proxy.py): the address is
-      // this browser's own origin + /apps/<id>/, wherever it reached us.
-      const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
-      let intro = `<div class="ui-toolbar"><span data-apps-base>Apps open in your browser at <code class="ui-ellip">${esc(appsBase)}…</code>, already signed in to this gateway.</span>`
-        + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button>`
+      // ONE line, top right, as on every list page: Refresh (spinning while it
+      // reads) and the Apps settings gear. Nothing explanatory.
+      let intro = `<div class="ui-toolbar ui-apps-toolbar">`
+        + `<button type="button" class="ui-btn is-ghost ui-icon-btn${appStore.loading ? " is-loading" : ""}" data-app-action="refresh" aria-label="Refresh" data-af-tip="Check installed apps and updates again"${appStore.loading ? ' disabled aria-busy="true"' : ""}><span class="button-icon" aria-hidden="true">${ICONS.refresh}</span></button>`
         + (state.principal && state.principal.admin ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="apps-settings" aria-label="Apps settings" data-af-tip="Settings shared by every app (Node.js, ports, registries)"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>` : "")
         + `</div>`;
       intro += appRuntimeMarkup(d);
       if (d.registry && d.registry.reachable === false) intro += `<div class="ui-alert tone-warn" role="alert"><strong>The app store (npm) is not reachable.</strong><span>Installed apps keep working; installing needs the internet.</span></div>`;
       const msg = appStore.message ? `<div class="ui-alert tone-err" role="alert">${esc(appStore.message)}</div>` : "";
-      return intro + msg + `<div class="ui-card-grid is-aligned">${apps.map(appCardMarkup).join("")}</div>`;
+      // The gateway groups the rows into cards (apps_manager.app_cards).
+      if (!Array.isArray(d.cards)) throw new Error("AbstractGateway console: the apps overview has no cards (a gateway older than the console?)");
+      const withArt = d.cards.some((c) => c && c.illustration_url);
+      return intro + msg + `<div class="ui-card-grid is-aligned">${d.cards.map((c) => appCardMarkup(c, withArt)).join("")}</div>`;
     }
     function appRender() { for (const el of appStore.views.values()) if (el) el.innerHTML = appViewMarkup(); }
     function appBrowserOrigin() {
@@ -3777,7 +4026,7 @@ CONSOLE_UI_JS = r"""
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
-    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null, warming: false };
+    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, about: null, warming: false };
     function islandsLib() {
       try {
         const w = typeof window !== "undefined" ? window : null;
@@ -3830,11 +4079,17 @@ CONSOLE_UI_JS = r"""
           // cluster carries the memory/compute widget (#topbar-resources);
           // the addresses, with Copy, live on the Network page.
           // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
-          { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
+        // The kit's ONE account widget (ui-kit 0.9.6): person icon, name and
+        // status light; its menu says who and which gateway, Copy user id and
+        // Disconnect (which calls onDisconnect below). It reads the console's
+        // own GET /api/gateway/me body (connection.me, held by renderAccount);
+        // no "Signed in as" text extra beside the pill any more.
+        identity: "menu",
         connection: {
           phase: islands.phase,
           signingOut: islands.signingOut,
+          me: state.me || null,
           onConnect: () => { const t = $("login-token"); if (t && t.focus) t.focus(); },
           onDisconnect: () => { islands.signingOut = true; renderIslands(); signOut(); },
         },
@@ -3890,7 +4145,7 @@ CONSOLE_UI_JS = r"""
     function topbarResourcesView(data, error) {
       if (!data || typeof data !== "object") {
         const why = error ? `Host resources unavailable: ${error}` : "Reading host resources…";
-        return { mem: "—", memShort: "—", memFrac: null, gpu: "—", gpuFrac: null, models: "—", tip: `${why}\nClick to open Resources.`, label: `${why}. Open Resources.` };
+        return { machine: "Host", mem: "—", memShort: "—", memFrac: null, gpu: "—", gpuFrac: null, models: "—", tip: `${why}\nClick to open Resources.`, label: `${why}. Open Resources.` };
       }
       const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
       const mem = (data.memory && typeof data.memory === "object") ? data.memory : {};
@@ -3899,6 +4154,8 @@ CONSOLE_UI_JS = r"""
       const pct = num(ram.percent) !== null ? num(ram.percent) : (used !== null && total ? (used / total) * 100 : null);
       const gpuBlock = (data.gpu && typeof data.gpu === "object") ? data.gpu : {};
       const gpuPct = gpuBlock.supported === true ? num(gpuBlock.utilization_gpu_pct) : null;
+      const machines = [...new Set((Array.isArray(gpuBlock.gpus) ? gpuBlock.gpus : []).map(g => String(g && g.name || "").trim()).filter(Boolean))];
+      const machine = machines.join(" / ") || String((data.host || {}).host_name || "Host");
       const totals = (data.totals && typeof data.totals === "object") ? data.totals : {};
       const loaded = num(totals.models_resident);
       const memText = used !== null && total !== null ? `${_fmtBytes(used)} / ${_fmtBytes(total)} (${_fmtPct(pct)})` : (pct !== null ? _fmtPct(pct) : "—");
@@ -3915,9 +4172,11 @@ CONSOLE_UI_JS = r"""
       const kv = view.items.filter((i) => i.key === "model_caches" || i.key === "session_caches");
       lines.push(`KV caches: ${kv.length ? kv.map((i) => `${_fmtBytes(i.bytes)} ${i.key === "model_caches" ? "for models" : "in sessions"}`).join(" · ") : "unknown"}`);
       lines.push(`GPU load: ${gpuPct === null ? (gpuBlock.supported === true ? "unknown" : "not measured on this host") : `${_fmtPct(gpuPct)}${gpuBlock.source ? ` (via ${gpuBlock.source})` : ""}`}`);
+      lines.push(`Machine: ${machine}`);
       if (error) lines.push(`Last refresh failed: ${error}`);
       lines.push("Click to open Resources.");
       return {
+        machine,
         mem: memText,
         memShort: pct === null ? "—" : _fmtPct(pct),
         memFrac: pct === null ? null : Math.min(1, pct / 100),
@@ -3925,7 +4184,7 @@ CONSOLE_UI_JS = r"""
         gpuFrac: gpuPct === null ? null : Math.min(1, gpuPct / 100),
         models: modelsText,
         tip: lines.join("\n"),
-        label: `Memory ${memText}, GPU ${gpuPct === null ? "unknown" : _fmtPct(gpuPct)} busy, ${modelsText} loaded. Open Resources.`,
+        label: `Memory ${memText}, GPU ${gpuPct === null ? "unknown" : _fmtPct(gpuPct)} busy, ${modelsText} loaded. Machine: ${machine}. Open Resources.`,
       };
     }
     function renderTopbarResources(data, error) {
@@ -3934,6 +4193,7 @@ CONSOLE_UI_JS = r"""
       btn.classList.toggle("hidden", !state.principal);
       const v = topbarResourcesView(data, error);
       const set = (id, text) => { const el = $(id); if (!el) throw new Error(`AbstractGateway console: #${id} is missing from the top-bar widget.`); el.textContent = text; };
+      set("topbar-res-machine", v.machine);
       set("topbar-res-mem", v.mem);
       set("topbar-res-mem-short", v.memShort);
       set("topbar-res-gpu", v.gpu);
@@ -3976,9 +4236,8 @@ CONSOLE_UI_JS = r"""
       // The Docs assistant island follows the session (connected) and its open state.
       if (typeof renderDocsAssistant === "function") renderDocsAssistant();
     }
-    function islandsSetConnection(ok, text) {
+    function islandsSetConnection(ok) {
       islands.phase = ok ? "connected" : "disconnected";
-      islands.identity = ok ? String(text || "") : "";
       renderIslands();
     }
     function mountConsoleIslands() {
@@ -4001,6 +4260,7 @@ CONSOLE_UI_JS = r"""
       islands.topbar = lib.mountTopBar(host, topBarIslandProps());
       islands.appearance = lib.mountAppearance($("af-appearance-root"), appearanceIslandProps());
       renderDocsAssistant();
+      renderEntityChatComposer();
       host.classList.remove("hidden");
       legacy.classList.add("hidden");
       applyAppearanceSettings();

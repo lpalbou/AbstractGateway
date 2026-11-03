@@ -53,6 +53,7 @@ EVENT_TYPES = frozenset(
         "notification.failed",
         "run.started",
         "run.finished",
+        "session.read",
     }
 )
 CHANNELS = frozenset({"console", "email", "tray", "assistant", "code", "watch", "phone"})

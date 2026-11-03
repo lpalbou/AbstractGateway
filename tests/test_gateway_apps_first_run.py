@@ -241,6 +241,14 @@ def test_the_count_is_unknown_when_the_registry_is_not_reachable(monkeypatch) ->
 # ---------------------------------------------------------------------------
 
 _CARD_SCENARIO = r"""
+// The whole console initializes its Resources DOM too. These Apps tests use
+// the wizard's minimal elements; support that initialization without a layout engine.
+Element.prototype.querySelector = function (selector) { return new Element(selector); };
+Element.prototype.remove = function () {};
+Element.prototype.insertAdjacentHTML = function () {};
+document.querySelectorAll = () => [];
+document.addEventListener = () => {};
+context.ResizeObserver = context.MutationObserver = class { observe() {} };
 // R11.3: every gateway row carries its status badge (apps_manager.status_control).
 const badgeOf = (r) => r.status === "running" ? { label: "Running", tone: "ok", busy: false, action: "stop", enabled: true, tip: "Running — click to stop" }
       : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
@@ -259,7 +267,9 @@ context.fetch = async (path, options = {}) => {
   const method = options.method || "GET";
   if (path === "/api/gateway/me") return res(200, { ok: true, principal: { user_id: "admin", roles: ["admin"], admin: true } });
   if (path === "/api/gateway/host/first-run") return res(200, { ok: true, completed: true });
-  if (path.startsWith("/api/gateway/apps?")) return res(200, { ok: true, gateway_url: "http://127.0.0.1:18823", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: true } }, apps: appsPayload });
+  // One card per row (apps_manager.app_cards for apps of no family).
+  if (path.startsWith("/api/gateway/apps?")) return res(200, { ok: true, gateway_url: "http://127.0.0.1:18823", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: true } }, apps: appsPayload,
+    cards: appsPayload.map((r) => ({ id: r.id, family: null, name: r.name, description: "", mark: r.id.slice(0, 2), illustration_url: null, members: [r.id], launchers: [{ app: r.id, kind: "browser" }] })) });
   if (path === "/api/gateway/apps/entity/open" && method === "POST") { posts.push(JSON.parse(String(options.body || "{}"))); return res(200, { ok: true, open_url: "/apps/handover/c0de" }); }
   if (path === "/api/gateway/apps/entity/launch" && method === "POST") return res(200, { ok: true, app: rowFor(0) });
   return res(200, {});
@@ -298,6 +308,7 @@ def _drive_card() -> dict:
 
     from abstractgateway.console import gateway_console_html
     from tests.test_gateway_console_first_run import _HARNESS, WIZARD_IDS
+    from abstractgateway.console_islands import ISLANDS_JS
 
     marker = "vm.runInContext(source, context);"
     assert marker in _HARNESS, "the console node harness changed shape (tests/test_gateway_console_first_run.py)"
@@ -305,7 +316,8 @@ def _drive_card() -> dict:
     html = gateway_console_html()
     scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
     harness = (
-        prefix.replace("__SOURCE__", json.dumps("\n".join(scripts)))
+        prefix.replace("__ISLANDS__", json.dumps(ISLANDS_JS))
+        .replace("__SOURCE__", json.dumps("\n".join(scripts)))
         .replace("__SCENARIO__", json.dumps({"name": "apps-first-run", "hash": "", "completed": True}))
         .replace("__CLASSES__", json.dumps({k: "" for k in WIZARD_IDS}))
         + _CARD_SCENARIO
@@ -322,7 +334,7 @@ def _drive_card() -> dict:
 def _primary(row_html: str) -> str:
     import re
 
-    buttons = re.findall(r"<button[^>]*>[^<]*</button>", row_html)
+    buttons = re.findall(r"<button[^>]*>.*?</button>", row_html, flags=re.S)  # a launcher holds its badge (an inline SVG)
     primary = [b for b in buttons if "is-primary" in b]
     assert len(primary) == 1, row_html  # GG's rule: one primary action per card
     return primary[0]
@@ -336,11 +348,11 @@ def test_console_card_says_create_your_first_entity_only_at_zero() -> None:
     assert ">Create your first entity</button>" in stopped and 'data-app-path="/#new"' in stopped
     for key in ("one", "unknown", "absent"):
         p = _primary(out[key]["entity"])
-        assert ">Open</button>" in p and "data-app-path" not in p, (key, p)
+        assert ">Open in browser</button>" in p and "data-app-path" not in p, (key, p)
     # Keyed by app: another app's summary never turns its button into Entity's.
     for key in ("zero", "one"):
         p = _primary(out[key]["flow"])
-        assert ">Open</button>" in p and "data-app-path" not in p
+        assert ">Open in browser</button>" in p and "data-app-path" not in p
 
 
 def test_console_card_click_sends_the_path_through_the_handover() -> None:

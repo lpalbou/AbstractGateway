@@ -66,6 +66,8 @@ async function routeEngines(page) {
 async function signIn(page, user = "admin", token = ADMIN) {
   await page.waitForSelector("#login-form");
   await page.fill("#login-user", user);
+  // The sign-in card is password-first; the token sits behind its link.
+  if (!(await page.isVisible("#login-token"))) await page.click("#login-method-switch");
   await page.fill("#login-token", token);
   await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
@@ -103,7 +105,7 @@ try {
   check(JSON.stringify(order) === JSON.stringify(["huggingface", "llamacpp", "lmstudio", "mlx", "ollama", "vllm"]), "one card per engine id the API returns", order);
   // Sections in order: Local providers, Remote providers, Available Providers.
   const heads = await page.$$eval("#tab-providers h2.section-title", (els) => els.map((e) => e.textContent.replace(/[^A-Za-z ]/g, "").trim()));
-  check(JSON.stringify(heads) === JSON.stringify(["Local providers", "Remote providers", "Available Providers"]), "sections in order", heads);
+  check(JSON.stringify(heads) === JSON.stringify(["Local providers", "Cloud providers", "Available Providers"]), "sections in order", heads);
 
   // 2. Engine states and actions per card (0.10.0 Engines page parity).
   const status = async (id) => (await page.textContent(`${card(id)} .ui-card__status`)).trim();
@@ -174,17 +176,76 @@ try {
   check((await page.inputValue("#endpoint-provider-family")) === "openai-compatible" && (await page.inputValue("#endpoint-profile-id")) === "vllm", "vLLM connection = custom OpenAI-compatible with id vllm");
   await page.evaluate(() => document.getElementById("provider-modal-backdrop").classList.add("hidden"));
 
-  // 5. Remote providers: the five remote families, connection state with a fingerprint only.
+  // 5. Cloud providers: the kit's cards (islands mountCloudProviderCards), one per cloud provider
+  // AbstractCore's registry lists; the key is checked (discover-models, answered HERE: no provider is
+  // ever called) before anything is stored, and saved as a NEW connection (create_only).
+  const cloudPosts = [];
+  await page.route(/\/api\/gateway\/config\/provider-endpoint-profiles\/discover-models$/, async (route) => {
+    const body = route.request().postDataJSON();
+    cloudPosts.push({ path: "discover-models", body });
+    if (body.api_key === "sk-wrong-cloud-key-000") return route.fulfill({ json: { ok: false, provider: body.provider_family, models: [], error: "Anthropic API error (401): invalid x-api-key", error_kind: "auth" } });
+    return route.fulfill({ json: { ok: true, provider: body.provider_family, models: Array.from({ length: 48 }, (_, i) => `model-${i}`) } });
+  });
+  page.on("request", (req) => {
+    if (req.method() === "POST" && /\/api\/gateway\/config\/provider-endpoint-profiles$/.test(new URL(req.url()).pathname)) cloudPosts.push({ path: "create", body: req.postDataJSON() });
+  });
+  await page.waitForSelector("#cloud-providers-root [data-cloud-provider]", { timeout: 20000 });
+  const cloudIds = await page.$$eval("#cloud-providers-root [data-cloud-provider]", (els) => els.map((e) => e.getAttribute("data-cloud-provider")));
+  check(["anthropic", "openai", "openrouter", "portkey"].every((id) => cloudIds.includes(id)) && cloudIds.slice(cloudIds.indexOf("ovh")).join(",") === (cloudIds.includes("systemone") ? "ovh,openai-compatible,systemone" : "ovh,openai-compatible"), "brand cards, OVH, then the compatible cards last (OpenAI-compatible, System One-compatible)", cloudIds);
   const presets = await page.$$eval("#provider-preset-grid .provider-preset", (els) => els.map((e) => e.id.replace(/^provider-preset-/, "")));
-  check(JSON.stringify(presets) === JSON.stringify(["openai", "anthropic", "openrouter", "portkey", "openai-compatible"]), "remote presets (no local family twice)", presets);
-  const openaiState = await page.textContent('#provider-preset-openai .provider-preset__state');
-  check(/^Connected · key [0-9a-f]{8}$/.test(openaiState.trim()), "OpenAI preset: Connected + 8-char fingerprint", openaiState);
-  check((await page.textContent('#provider-preset-anthropic .provider-preset__state')).trim() === "Not connected", "Anthropic preset: Not connected");
-  await page.click('#provider-preset-anthropic');
-  await page.waitForTimeout(300);
-  check((await page.inputValue("#endpoint-provider-family")) === "anthropic", "a preset opens its connection modal");
-  await page.evaluate(() => document.getElementById("provider-modal-backdrop").classList.add("hidden"));
-  check(!(await page.content()).includes(FAKE_KEY), "the API key never reaches the page");
+  check(JSON.stringify(presets) === JSON.stringify(["openai-compatible"]), "only the custom server stays a preset", presets);
+  const cloud = (id) => `#cloud-providers-root [data-cloud-provider="${id}"]`;
+  await page.waitForFunction(() => /Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="openai"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  const openaiStatus = (await page.textContent(`${cloud("openai")} [data-cloud-status]`)).trim();
+  check(/^Connected( · (…|48 models))?$/.test(openaiStatus), "OpenAI card: Connected with its discovered count (no fingerprint on the card)", openaiStatus);
+  check((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim() === "Not connected", "Anthropic card: Not connected");
+  check(await page.$(`${cloud("openrouter")} .af-brand-mark svg`) !== null, "OpenRouter card shows its official mark");
+  check(await page.$(`${cloud("openai")} .af-brand-mark svg`) !== null, "OpenAI card shows its official mark");
+  // Backlog 1100: brands awaiting written permission show their name, no logo.
+  check(await page.$(`${card("ollama")} .af-brand-mark svg`) === null && (await page.textContent(`${card("ollama")} .af-brand-mark--text`)).trim() === "Ollama", "Ollama engine card shows its name badge, no logo");
+  check(await page.$(`${cloud("anthropic")} .af-brand-mark svg`) === null && (await page.textContent(`${cloud("anthropic")} .af-brand-mark--text`)).trim() === "Anthropic", "Anthropic card shows its name badge, no logo");
+  // Kit 0.9.12: ONE button per card (Connect / Edit), no field on the card; the modal does the rest.
+  check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Connect" && (await page.textContent(`${cloud("openai")} button`)).trim() === "Edit", "Connect when nothing is stored, Edit when connected");
+  check((await page.$$(`#cloud-providers-root [data-cloud-provider] input`)).length === 0, "no field on a cloud card");
+  const modal = (name) => page.getByRole("dialog", { name });
+  // A refused key: one sentence in the modal, nothing stored.
+  await page.click(`${cloud("anthropic")} button`);
+  await modal("Connect Anthropic").waitFor({ timeout: 8000 });
+  await modal("Connect Anthropic").getByLabel("API key").fill("sk-wrong-cloud-key-000");
+  await modal("Connect Anthropic").getByRole("button", { name: "Test connection" }).click();
+  const line = () => page.textContent(".af-cloud-modal [data-cloud-modal-line]");
+  await page.waitForFunction(() => /refused this key/.test(document.querySelector(".af-cloud-modal [data-cloud-modal-line]")?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check((await line()).trim() === "Anthropic refused this key. Check that it was copied in full and is still active.", "a refused key says why", await line());
+  check(!cloudPosts.some((c) => c.path === "create"), "nothing stored for a refused key", cloudPosts);
+  // A working key: Test, then Save stores it as a NEW connection.
+  await modal("Connect Anthropic").getByLabel("API key").fill(FAKE_KEY);
+  await modal("Connect Anthropic").getByRole("button", { name: "Test connection" }).click();
+  await page.waitForFunction(() => /Key works/.test(document.querySelector(".af-cloud-modal [data-cloud-modal-line]")?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check((await line()).trim() === "Key works · 48 models", "Key works · 48 models", await line());
+  check(!cloudPosts.some((c) => c.path === "create"), "the test stored nothing", cloudPosts);
+  await modal("Connect Anthropic").getByRole("button", { name: "Save", exact: true }).click();
+  await modal("Connect Anthropic").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  const created = cloudPosts.filter((c) => c.path === "create");
+  check(created.length === 1 && created[0].body.id === "anthropic-key" && created[0].body.create_only === true && created[0].body.provider_family === "anthropic", "save = one create_only POST with a fresh id", created);
+  check(cloudPosts.findIndex((c) => c.path === "create") > cloudPosts.findIndex((c) => c.path === "discover-models" && c.body.api_key === FAKE_KEY), "the key was tested before it was stored", cloudPosts.map((c) => c.path));
+  await page.waitForFunction(() => /^Connected/.test(document.querySelector('#cloud-providers-root [data-cloud-provider="anthropic"] [data-cloud-status]')?.textContent || ""), null, { timeout: 15000 }).catch(() => {});
+  check(/^Connected · 48 models$/.test((await page.textContent(`${cloud("anthropic")} [data-cloud-status]`)).trim()), "Anthropic card now Connected with the models found", await page.textContent(`${cloud("anthropic")} [data-cloud-status]`));
+  check((await page.textContent(`${cloud("anthropic")} button`)).trim() === "Edit", "Anthropic now offers Edit");
+  // Edit OpenAI (connection "openai"): a new key REPLACES that connection's key in place (PUT).
+  const openaiBefore = await page.evaluate(async () => (await (await fetch("/api/gateway/config/provider-endpoint-profiles", { credentials: "same-origin" })).json()).profiles.find((p) => p.id === "openai"));
+  await page.click(`${cloud("openai")} button`);
+  await modal("Edit OpenAI").waitFor({ timeout: 8000 });
+  check((await modal("Edit OpenAI").getByLabel("API key").inputValue()) === "", "Edit starts with an empty key field");
+  await modal("Edit OpenAI").getByLabel("API key").fill(FAKE_KEY + "-2");
+  await modal("Edit OpenAI").getByRole("button", { name: "Save", exact: true }).click();
+  await modal("Edit OpenAI").waitFor({ state: "detached", timeout: 15000 }).catch(() => {});
+  const profilesAfter = await page.evaluate(async () => (await (await fetch("/api/gateway/config/provider-endpoint-profiles", { credentials: "same-origin" })).json()).profiles);
+  const kept = profilesAfter.find((p) => p.id === "openai");
+  check(!!kept && kept.api_key_fingerprint !== openaiBefore.api_key_fingerprint && kept.display_name === openaiBefore.display_name, "Edit replaced the key of the SAME connection", { openaiBefore, kept });
+  check(!profilesAfter.some((p) => p.id === "openai-key"), "Edit created no new connection", profilesAfter.map((p) => p.id));
+  const html = await page.content();
+  check(!html.includes(FAKE_KEY), "the API key never reaches the page");
+  await page.unroute(/\/api\/gateway\/config\/provider-endpoint-profiles\/discover-models$/);
 
   // 6. Available Providers table unchanged.
   const ths = await page.$$eval("#tab-providers table thead th", (els) => els.map((e) => e.textContent.trim()));

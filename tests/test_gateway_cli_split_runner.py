@@ -47,6 +47,22 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     assert process_role() == ROLE_COMBINED
 
 
+def _immediate_cli_stop_event(monkeypatch: pytest.MonkeyPatch, gateway_cli, event_cls) -> None:
+    """Make only the CLI's own stop event return at once.
+
+    `gateway_cli.threading` IS the threading module: patching its `Event` would give every Thread
+    created meanwhile (the optional Core HTTP listener thread) an already-set "started" flag
+    ("threads can only be started once"), and the role/env restore after it would never run.
+    """
+    import threading as _threading
+    import types as _types
+
+    cli_threading = _types.ModuleType("threading")
+    cli_threading.__dict__.update(_threading.__dict__)
+    cli_threading.Event = event_cls
+    monkeypatch.setattr(gateway_cli, "threading", cli_threading)
+
+
 @pytest.mark.basic
 def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractgateway import cli as gateway_cli
@@ -82,10 +98,12 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
             self._set = True
             return True
 
-    monkeypatch.setattr(gateway_cli.threading, "Event", _ImmediateEvent)
+    _immediate_cli_stop_event(monkeypatch, gateway_cli, _ImmediateEvent)
 
     monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
-    gateway_cli.main(["runner"])
+    # In-process models: this test is about the runner's env and lifecycle (the model host child is
+    # covered by test_cli_runner_starts_the_model_host_before_its_runtimes).
+    gateway_cli.main(["runner", "--model-host", "in-process"])
 
     # CLI sets the env var for the process while running, but restores it on exit.
     assert os.environ.get("ABSTRACTGATEWAY_RUNNER") is None
@@ -242,3 +260,50 @@ def test_cli_telegram_auth_uses_runtime_bootstrap(monkeypatch: pytest.MonkeyPatc
     out = capsys.readouterr().out
     assert "TDLib authorization: OK" in out
     assert called == {"login_code": "12345", "two_factor_password": "secret", "timeout_s": 9.0}
+
+
+def test_cli_runner_starts_the_model_host_before_its_runtimes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR 0002: with `--model-host process` the split runner starts the child before it builds its
+    runtimes (so they send their model work there) and stops it last."""
+    from abstractgateway import cli as gateway_cli
+    from abstractgateway import model_host
+    from abstractgateway import service as gateway_service
+
+    calls: list[str] = []
+
+    class _Sup:
+        pid = 4242
+        nice = 5
+        log_path = "model-host.log"
+
+        def snapshot(self):
+            return {"state": "up", "pid": self.pid}
+
+    def _start(data_dir, **kw):
+        calls.append("model_host.start")
+        monkeypatch.setattr(model_host, "_supervisor", _Sup())
+        return _Sup()
+
+    def _stop():
+        calls.append("model_host.stop")
+        monkeypatch.setattr(model_host, "_supervisor", None)
+
+    monkeypatch.setattr(model_host, "start", _start)
+    monkeypatch.setattr(model_host, "stop", _stop)
+    monkeypatch.setattr(gateway_service, "start_gateway_runner", lambda: calls.append("runner.start"))
+    monkeypatch.setattr(gateway_service, "stop_gateway_runner", lambda: calls.append("runner.stop"))
+
+    class _ImmediateEvent:
+        def is_set(self) -> bool:
+            return True
+
+        def set(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> bool:  # noqa: ARG002
+            return True
+
+    _immediate_cli_stop_event(monkeypatch, gateway_cli, _ImmediateEvent)
+    monkeypatch.delenv("ABSTRACTGATEWAY_RUNNER", raising=False)
+    gateway_cli.main(["runner", "--model-host", "process"])
+    assert calls == ["model_host.start", "runner.start", "runner.stop", "model_host.stop"], calls
