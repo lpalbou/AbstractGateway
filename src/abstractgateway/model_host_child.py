@@ -454,14 +454,37 @@ def _watch_parent(stdin) -> None:
     os._exit(0)
 
 
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+# AbstractCore's idle unload (ADR 0012) says what it freed on this logger, at INFO:
+# "unloaded <model> after N min idle; freed X GB" (root backlog 1115).
+RESIDENCY_LOGGER = "abstractcore.residency"
+
+
+def configure_logging() -> None:
+    """This child's log lines go to its stderr, which the gateway writes to <data dir>/logs/model-host.log.
+
+    AbstractCore's idle-unload line needs its own handler: importing AbstractCore replaces the root
+    logger's handlers with its console handler at ERROR (`structured_logging`), so an INFO line that
+    propagates to the root is dropped. Narrowly that one logger, at INFO, with a stderr handler and
+    `propagate` off (never written twice); the root and every other logger are left as they are."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=LOG_FORMAT)
+    residency = logging.getLogger(RESIDENCY_LOGGER)
+    if not any(getattr(h, "_model_host_residency", False) for h in residency.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        handler._model_host_residency = True  # type: ignore[attr-defined]
+        residency.addHandler(handler)
+    residency.setLevel(logging.INFO)
+    residency.propagate = False
+
+
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # Ctrl-C in a terminal is the gateway's to handle
     # A service manager's stop signals the whole group: the gateway stops this child itself (it
     # closes our stdin), so a SIGTERM here is not a crash to record and restart.
     with contextlib.suppress(AttributeError, ValueError, OSError):
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    logging.basicConfig(level=logging.INFO, stream=sys.stderr,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    configure_logging()
     line = sys.stdin.buffer.readline()
     try:
         hs = json.loads(line.decode("utf-8"))

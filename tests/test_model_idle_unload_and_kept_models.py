@@ -352,3 +352,40 @@ def test_the_models_page_line_says_what_the_runtime_reports() -> None:
     assert _line({"resident": True, "idle_unload_s": 3600, "idle_unload_at": None, "locked_by": []}, NOW) == ""
     assert _line({"resident": True}, NOW) == ""
     assert _line({"resident": False, "locked_by": ["admin"]}, NOW) == ""
+
+
+# ------------------------------------------------------------------ the unload line in the gateway's log
+
+
+_CHILD_LOGGING = r"""
+import logging, sys
+from abstractgateway.model_host_child import configure_logging
+
+configure_logging()  # what the model host child does first
+# What happens next in the child: AbstractCore is imported and takes the root logger over
+# (its console handler, ERROR), then configured again by a host; both are real calls.
+from abstractcore.providers import process_residency
+from abstractcore.utils import structured_logging
+
+structured_logging.configure_logging()
+assert logging.getLogger().level >= logging.WARNING, logging.getLogger().level  # the takeover this guards against
+process_residency._idle_log.info("unloaded mlx-community/m after 3 min idle; freed 0.2 GB")
+logging.getLogger("abstractcore.other").info("an INFO line of another AbstractCore logger")
+"""
+
+
+def test_the_idle_unload_line_reaches_the_model_host_log(tmp_path: Path) -> None:
+    """AbstractCore's "unloaded <model> after N min idle; freed X GB" (logger `abstractcore.residency`, INFO) is
+    written to the child's stderr (= <data dir>/logs/model-host.log), once, although AbstractCore puts the root
+    logger at ERROR when it is imported; only that logger is changed (another AbstractCore INFO line stays out)."""
+    import os
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ABSTRACT")}
+    env["HOME"] = str(tmp_path)
+    out = subprocess.run([sys.executable, "-c", _CHILD_LOGGING], capture_output=True, text=True, timeout=120, env=env, cwd=tmp_path)
+    assert out.returncode == 0, out.stderr[-3000:]
+    lines = [line for line in out.stderr.splitlines() if "after 3 min idle" in line]
+    assert len(lines) == 1, out.stderr[-3000:]
+    assert "INFO abstractcore.residency: unloaded mlx-community/m after 3 min idle; freed 0.2 GB" in lines[0]
+    assert "an INFO line of another AbstractCore logger" not in out.stderr + out.stdout
