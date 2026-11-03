@@ -81,6 +81,11 @@ def test_sigterm_with_a_live_stream_exits_zero_within_the_budget(tmp_path: Path)
         took = time.monotonic() - t0
         print(f"\nSIGTERM with a live stream: exit {code} after {took:.2f} s")
         timing_budget(took, BUDGET_S, "SIGTERM with a live stream")
+        # The regression this pins: an open stream held the stop for the whole graceful-shutdown
+        # timeout. Unconditional: the stop never waits for the drain to time out (shutdown_drain.py).
+        from abstractgateway.shutdown_drain import REQUEST_DRAIN_S
+
+        assert took < REQUEST_DRAIN_S, f"stopped after {took:.1f} s: the live stream held the stop until the drain timed out"
         assert code == 0, log.read_text()[-3000:]
         assert ended.wait(patient(5)), "the stream was not ended by the stop"
         assert "survived" not in log.read_text(), log.read_text()[-3000:]

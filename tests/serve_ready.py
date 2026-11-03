@@ -1,10 +1,13 @@
-"""Readiness of a real `abstractgateway serve` started by a test: it ANSWERS HTTP.
+"""Readiness of a real `abstractgateway serve` started by a test: it ANSWERS HTTP and is done booting.
 
 A boot log line, an audit record or a file in the data folder is written before uvicorn binds
 the port, so a test that connects right after seeing one races the bind (`Connection refused`
 on a busy CI runner: `test_a_real_serve_audits_the_flag_at_boot[True]`, main 264ec73, 3.10).
-Every test that starts a real server waits here instead: `GET /api/health` must answer 200
-(and `ready(body)` hold, when given) before the test talks to it.
+And a 200 alone is not ready either: while the services still build, `/api/health` answers 200
+with `status: "starting"` (app.py, so a supervisor never counts a loading gateway as dead; the
+installer once took that for healthy, backlog 1026). Every test that starts a real server waits
+here instead: `GET /api/health` must answer 200 with a status other than "starting" (or
+`ready(body)`, when given, for a stricter state) before the test talks to it.
 
 The bound is a hang guard (`patient`), never a latency assertion; an exited server fails at
 once with the tail of its log.
@@ -25,6 +28,11 @@ from timing import patient  # tests/timing.py (wall-clock budgets)
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+def booted(body: Dict[str, Any]) -> bool:
+    """The default readiness: the boot is over (healthy, or degraded with its reason)."""
+    return str(body.get("status") or "") not in {"", "starting"}
+
+
 def _log_tail(log_path: Optional[Path]) -> str:
     if log_path is None:
         return ""
@@ -41,10 +49,11 @@ def wait_until_answers(
     log_path: Optional[Path] = None,
     timeout_s: float = 120.0,
     path: str = "/api/health",
-    ready: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    ready: Callable[[Dict[str, Any]], bool] = booted,
     poll_s: float = 0.2,
 ) -> Dict[str, Any]:
-    """Block until `GET base_url + path` answers 200 (and `ready(body)` holds); return the body.
+    """Block until `GET base_url + path` answers 200 and `ready(body)` holds (default: the boot is
+    over, `booted`); return the body.
 
     Fails (AssertionError, with the log tail) when `proc` exits first or when `patient(timeout_s)`
     passes without an answer."""
@@ -63,7 +72,7 @@ def wait_until_answers(
                     except ValueError:
                         body = {}
                     body = body if isinstance(body, dict) else {}
-                    if ready is None or ready(body):
+                    if ready(body):
                         return body
                     last = f"answered, not ready yet: {str(body)[:200]}"
                 else:

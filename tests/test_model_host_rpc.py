@@ -86,22 +86,31 @@ def test_provider_exception_keeps_its_type_and_message(tmp_path, fake):
 
 
 def test_a_stop_reaches_the_generation_in_the_child(tmp_path, fake):
-    fake.delay_s = 0.4  # 4 chunks: 1.6 s
+    fake.delay_s = 2.0  # 4 chunks: 8 s, far longer than the Stop needs to land
     sup = _sup(tmp_path)
     try:
         client = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
         client.generate(prompt="warm")
         stop = threading.Event()
-        threading.Timer(0.5, stop.set).start()
+
+        def _stop_once_the_generation_runs() -> None:
+            # An event, not a delay: the Stop is sent once the request has reached the provider.
+            deadline = time.monotonic() + patient(10.0)
+            while time.monotonic() < deadline and not any("stop me" in json.dumps(r) for r in list(fake.requests)):
+                time.sleep(0.01)
+            stop.set()
+
+        threading.Thread(target=_stop_once_the_generation_runs, daemon=True).start()
         t0 = time.monotonic()
         content = ""
         try:
             content = str(client.generate(prompt="stop me", params={"stream": True, "cancel_event": stop}).get("content") or "")
         except Exception:  # noqa: BLE001 - Core may end a cancelled stream either way
             pass
-        # The fake streams "reply:<prompt>" in 4 chunks 0.4 s apart; the Stop (0.5 s) ends it after the first.
+        # The fake streams "reply:<prompt>" in 4 chunks 2 s apart; the Stop, sent as the request arrives,
+        # ends it before the last one.
         assert not content.rstrip().endswith("stop me"), f"the Stop did not reach the child's generation: {content!r}"
-        timing_budget(time.monotonic() - t0, 1.3, "a Stop reaching the child's generation")
+        timing_budget(time.monotonic() - t0, 3.0, "a Stop reaching the child's generation")
     finally:
         sup.stop()
 

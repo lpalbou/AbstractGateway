@@ -11,3 +11,12 @@
   return beside a frozen model-host child, a Stop that leaves the stream unfinished, a watchdog that
   ends the stream before the engine's first audio). Every test-local wait helper's bound is `patient()`
   (x5 unless strict). No product code changes.
+
+### Fixed
+
+- **Push: an event appended by another process while a pass ran is no longer slept past** (split mode). The
+  dispatcher took the event stream's change token when its wait started, after the pass had read the stream,
+  so an append written by another process during the pass (no listener fires across processes) was already
+  in the token and the wait slept until the next registration or setting change. The token is now taken
+  before the pass reads, like the registration and setting tokens (backlog 1009). Pinned by
+  `test_an_append_from_another_process_during_a_pass_is_not_missed`.

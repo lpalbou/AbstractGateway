@@ -228,6 +228,9 @@ class PushDispatcher:
         # the wait still ends the wait (a token taken when the wait starts would already include it).
         self._settings_seen: Any = None
         self._devices_seen: Any = None
+        # The same for the event stream: taken BEFORE a pass reads it, so an append from another
+        # process (split mode: no listener fires) that lands during the pass still ends the wait.
+        self._stream_seen: Any = None
 
     # -- lifecycle ---------------------------------------------------------------------------
 
@@ -314,6 +317,7 @@ class PushDispatcher:
                     self._park()
                     continue
                 self._subscribe()
+                self._stream_seen = self.stream.change_token()
                 result = self.tick()
                 self._wait_active(result.get("next_due"))
             except Exception:  # noqa: BLE001 - the dispatcher never dies on one bad pass
@@ -334,7 +338,10 @@ class PushDispatcher:
                 return
 
     def _wait_active(self, next_due: Optional[float]) -> None:
-        stream_token = self.stream.change_token()
+        # The token from before the pass (see `_stream_seen`): one taken now would already include an
+        # append that landed while the pass ran, and the wait would sleep past it.
+        stream_token = self._stream_seen if self._stream_seen is not None else self.stream.change_token()
+        self._stream_seen = None
         devices_token, settings_token = self._seen_tokens()
         while not self._stop.is_set():
             now = self.clock()
