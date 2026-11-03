@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from abstractcore.exceptions import ModelNotDownloadedError
+# AbstractCore's own class, through the Runtime facade (ADR 0001: the gateway never imports abstractcore).
+from abstractruntime.integrations.abstractcore.discovery_facade import ModelNotDownloadedError
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 _BACKEND_CLASS_NAMES = {
