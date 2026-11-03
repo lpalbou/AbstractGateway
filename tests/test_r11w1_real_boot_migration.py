@@ -21,6 +21,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 
 pytestmark = pytest.mark.basic
 
@@ -61,16 +62,7 @@ def _serve_once(tmp_path: Path, data: Path) -> dict:
         env=env, stdout=log, stderr=subprocess.STDOUT, cwd=str(tmp_path),
     )
     try:
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
-                    if r.status == 200:
-                        break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            raise AssertionError((tmp_path / f"serve-{port}.log").read_text()[-3000:])
+        wait_until_answers(f"http://127.0.0.1:{port}", proc=proc, log_path=tmp_path / f"serve-{port}.log")
     finally:
         proc.terminate()
         try:

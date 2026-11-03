@@ -19,6 +19,7 @@ import pytest
 
 from abstractgateway import voice_stream
 from abstractgateway.voice_stream import new_stream_stats, open_voice_stream
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 pytestmark = pytest.mark.basic
 
@@ -120,7 +121,11 @@ def test_the_watchdog_still_fires_after_timeout_s_of_engine_silence() -> None:
     assert kinds[-1] == "error" and lines[-1]["watchdog_timeout"] is True, lines[-1]
     assert lines[-1]["error"] == "watchdog: the engine said nothing"
     assert kinds.count("keepalive") >= 3, kinds
-    assert 0.35 <= stamps[-1] - started <= 1.5, "the watchdog must fire at timeout_s, not after the engine's delay"
+    # The engine's first audio comes after 2 s: the watchdog ended the stream before it (no audio
+    # line), and never before its own timeout_s (a timer does not fire early).
+    assert "audio" not in kinds, "the watchdog fired only after the engine's delay"
+    assert stamps[-1] - started >= 0.35, "the watchdog fired before timeout_s"
+    timing_budget(stamps[-1] - started, 1.5, "watchdog firing after timeout_s of engine silence", inclusive=True)
     assert stats["ended"] == "watchdog" and stats["keepalives"] == kinds.count("keepalive")
     assert engine.closed.wait(3.0), "the engine iterator is closed once it yields again"
 

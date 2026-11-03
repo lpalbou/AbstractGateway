@@ -63,6 +63,10 @@ def shared_gateway(tmp_path, monkeypatch):
     return flows
 
 
+# The real sign-in rule, kept before any test knocks it out (restored by the test that needs it UP).
+from abstractgateway.security.sessions import principal_barred_from_shared_runtime as _REAL_FIRST_LINE  # noqa: E402
+
+
 def _knock_out_the_first_line(monkeypatch) -> None:
     """Simulate a regression of the sign-in rule so the registry gate is
     tested ALONE (both import sites: the session store and the login route)."""
@@ -155,8 +159,16 @@ def test_a_non_admin_cannot_overwrite_a_shared_workflow_by_upload(shared_gateway
 
 def test_the_first_line_refuses_the_non_admin_at_sign_in(shared_gateway, tmp_path, monkeypatch):
     """With the first line UP (undo the fixture's knock-out), the non-admin
-    never gets a session on a gateway with user accounts off."""
-    monkeypatch.undo()
+    never gets a session on a gateway with user accounts off.
+
+    Only the knock-out is undone: `monkeypatch.undo()` also undid conftest's hermetic patches (same
+    monkeypatch object), and the app's start then launched the Mac's Ollama.app (the subprocess
+    guard refused it: local gate b9149042, 3.10/3.11/3.12 shard 3)."""
+    import abstractgateway.routes.gateway as g
+    import abstractgateway.security.sessions as sessions
+
+    monkeypatch.setattr(sessions, "principal_barred_from_shared_runtime", _REAL_FIRST_LINE)
+    monkeypatch.setattr(g, "principal_barred_from_shared_runtime", _REAL_FIRST_LINE)
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(shared_gateway))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", ADMIN_TOKEN)

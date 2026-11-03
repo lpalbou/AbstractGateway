@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 # These tests are the gateway's side of the AbstractFlow editor contract, over
@@ -137,7 +138,7 @@ def _editor_flow_payload() -> dict:
 
 
 def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + patient(timeout_s)
     last_error: AssertionError | None = None
     while time.monotonic() < deadline:
         try:

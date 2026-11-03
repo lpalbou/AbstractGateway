@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from abstractgateway.tray_supervisor import hermetic_start_reason, tray_decision
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 
 
 def test_the_test_start_shape() -> None:
@@ -84,16 +85,7 @@ def _stop(proc, log) -> None:
 
 
 def _tray_state(port: int, data: Path, log_path: Path) -> dict:
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
-                if r.status == 200:
-                    break
-        except Exception:
-            time.sleep(0.5)
-    else:
-        raise AssertionError(log_path.read_text()[-3000:])
+    wait_until_answers(f"http://127.0.0.1:{port}", log_path=log_path)
     token = (data / "auth" / "bootstrap-admin-token").read_text().strip()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/api/gateway/host/tray", headers={"Authorization": f"Bearer {token}"})
     time.sleep(1.0)  # a tray would be launched right after the bind: give it the chance to appear

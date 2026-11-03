@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -187,7 +188,7 @@ def _start(client: TestClient, **input_data: Any) -> str:
 
 
 def _wait(pred, timeout: float = 10.0) -> None:
-    end = time.time() + timeout
+    end = time.time() + patient(timeout)
     while time.time() < end:
         if pred():
             return

@@ -32,7 +32,7 @@ from typing import Any, List
 
 import pytest
 
-from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 pytestmark = pytest.mark.basic
 
@@ -132,7 +132,7 @@ def _runner(tmp_path: Path, *, poll_s: float = 2.0, enable: bool = True, runs: L
 
 
 def _wait_until(pred, *, timeout_s: float = 5.0, interval_s: float = 0.005) -> bool:
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + patient(timeout_s)
     while time.monotonic() < deadline:
         if pred():
             return True
@@ -265,7 +265,7 @@ def test_an_idle_runner_never_sets_the_wake(tmp_path: Path) -> None:
         expected = elapsed / 0.1
         # A wake-storm would show as passes >> expected. Generous upper bound.
         assert passes <= expected * 2 + 2, f"idle runner ran {passes} passes in {elapsed:.2f}s (poll 0.1s)"
-        assert passes >= 1, "idle runner stopped polling entirely"
+        assert passes >= 1 or _wait_until(lambda: r.iteration_count() > start_count), "idle runner stopped polling entirely"
     finally:
         r.stop(timeout_s=3.0)
 

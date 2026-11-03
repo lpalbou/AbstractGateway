@@ -30,6 +30,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 from node_requirement import require_node
 
 pytestmark = pytest.mark.e2e
@@ -124,18 +125,10 @@ def creator_gateway(tmp_path: Path):
     )
     base = f"http://127.0.0.1:{port}"
     try:
-        deadline = time.time() + 120
-        while True:
-            if proc.poll() is not None:
-                pytest.fail(f"gateway exited: {log.read_text()[-3000:]}", pytrace=False)
-            try:
-                with urllib.request.urlopen(f"{base}/api/health", timeout=2) as r:
-                    if r.status == 200:
-                        break
-            except Exception:
-                if time.time() > deadline:
-                    pytest.fail(f"gateway did not come up: {log.read_text()[-3000:]}", pytrace=False)
-                time.sleep(0.5)
+        try:
+            wait_until_answers(base, proc=proc, log_path=log)
+        except AssertionError as exc:
+            pytest.fail(str(exc), pytrace=False)
         m = re.findall(r"Gateway admin token: (\S+)$", log.read_text(), flags=re.M)
         assert m, log.read_text()[-2000:]
         tokens["admin"] = m[-1]

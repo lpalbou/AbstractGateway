@@ -22,6 +22,7 @@ from test_gateway_principal_isolation_matrix import _client, _create_user, _writ
 
 from abstractgateway.events_stream import UserEventStream, stream_for
 from abstractgateway.routes.me_events import resolve_start, sse_frames
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 def _plane(tmp_path: Path, user: str) -> Path:
@@ -29,7 +30,7 @@ def _plane(tmp_path: Path, user: str) -> Path:
 
 
 def _wait(pred, timeout: float = 15.0) -> None:
-    end = time.time() + timeout
+    end = time.time() + patient(timeout)
     while time.time() < end:
         if pred():
             return

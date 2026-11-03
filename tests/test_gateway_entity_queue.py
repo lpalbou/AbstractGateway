@@ -416,16 +416,24 @@ def test_admitting_crash_reconciles_to_one_run(client: TestClient):
     run_1 = p.json()["run_id"]
 
     # Simulate the crash window: the run + seat exist, but the entry's
-    # admitted write was lost (state rolled back to 'admitting').
+    # admitted write was lost (state rolled back to 'admitting'). Under the
+    # queue's own guard and atomically, like every product write: a plain
+    # truncate-and-write raced the sweeper's read (3.11 main run, KeyError
+    # 'state': the half-written file read as corrupt, was moved aside, and
+    # the entry vanished).
+    from abstractgateway.entity_queue import read_queue, write_queue
+    from abstractgateway.routes.entities import _summon_guard_lock
+
     entities_dir = get_gateway_service().entity_registry.entities_dir
-    qpath = queue_path(entities_dir, "castor")
-    data = json.loads(qpath.read_text(encoding="utf-8"))
-    for e in data["entries"]:
-        if e["queue_id"] == qid:
-            e["state"] = "admitting"
-            e["admitted_run_id"] = None
-            e["admitted_session_id"] = None
-    qpath.write_text(json.dumps(data), encoding="utf-8")
+    assert queue_path(entities_dir, "castor").exists()
+    with _summon_guard_lock("castor"):
+        entries = read_queue(entities_dir, "castor")
+        for e in entries:
+            if e["queue_id"] == qid:
+                e["state"] = "admitting"
+                e["admitted_run_id"] = None
+                e["admitted_session_id"] = None
+        write_queue(entities_dir, "castor", entries)
 
     _attempt_queue_admission("Castor")
     p2 = client.get(f"/api/gateway/entities/Castor/queue/{qid}")

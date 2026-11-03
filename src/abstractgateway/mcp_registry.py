@@ -412,6 +412,10 @@ def _sentence_for(exc: BaseException, *, transport: str, target: str, stage: str
     return f"The connection test failed during {stage}: {first}"
 
 
+#: How far past the connection test's deadline the MCP client's own request timeout is set (a backstop).
+CLIENT_TIMEOUT_GRACE_S = 2.0
+
+
 def run_connection_test(config: Dict[str, Any], header_values: Dict[str, str], *, timeout_s: float = TEST_TIMEOUT_S, scratch_parent: Optional[Path] = None) -> Dict[str, Any]:
     """Connect, run the MCP handshake and list the tools; never raises.
 
@@ -433,13 +437,19 @@ def run_connection_test(config: Dict[str, Any], header_values: Dict[str, str], *
     else:
         target = config["url"]
 
+    # The test's deadline is `timeout_s`, measured here (`done.wait`), and that is what the sentence
+    # reports. The client's own per-request timeout is only a backstop, set past it: with both equal,
+    # the client's timeout could fire first and the answer became "request timed out after 1.0s"
+    # instead of "did not answer initialize within 1 seconds" (local gate b9149042, 3.13).
+    client_timeout_s = timeout_s + CLIENT_TIMEOUT_GRACE_S
+
     def work() -> None:
         try:
             if transport == "stdio":
                 client = open_mcp_client(transport="stdio", command=config["command"], args=config.get("args") or [],
-                                         cwd=config.get("cwd") or scratch, env=_minimal_env(), timeout_s=timeout_s)
+                                         cwd=config.get("cwd") or scratch, env=_minimal_env(), timeout_s=client_timeout_s)
             else:
-                client = open_mcp_client(transport="http", url=config["url"], headers=dict(header_values), timeout_s=timeout_s)
+                client = open_mcp_client(transport="http", url=config["url"], headers=dict(header_values), timeout_s=client_timeout_s)
             holder["client"] = client
             holder["stage"] = "initialize"
             info = client.initialize()

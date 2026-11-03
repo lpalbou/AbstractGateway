@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pytest
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -306,7 +307,7 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
 def wait_until(predicate, *, timeout_s: float = 15.0, poll_s: float = 0.1):
     import time
 
-    end = time.time() + timeout_s
+    end = time.time() + patient(timeout_s)
     last = None
     while time.time() < end:
         last = predicate()

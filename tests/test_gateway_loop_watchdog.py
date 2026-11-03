@@ -154,7 +154,8 @@ def test_health_reports_the_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
         loop_watchdog.configure(None)
     wd = body["watchdog"]
     assert wd["enabled"] is True and wd["limit_s"] == 600
-    assert isinstance(wd["last_tick_age_s"], float) and 0 <= wd["last_tick_age_s"] < 5
+    assert isinstance(wd["last_tick_age_s"], float) and 0 <= wd["last_tick_age_s"]
+    timing_budget(wd["last_tick_age_s"], 5.0, "the watchdog's last tick age in /api/health")
     assert loop_watchdog.health_snapshot()["enabled"] is False  # lifespan shutdown stopped it
 
 

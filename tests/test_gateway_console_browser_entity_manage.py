@@ -25,6 +25,7 @@ import urllib.request
 from pathlib import Path
 
 import pytest
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 from node_requirement import require_node
 
 pytestmark = pytest.mark.e2e
@@ -88,18 +89,13 @@ def _start(port: int, env: dict, log: Path) -> subprocess.Popen:
         env=env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
     )
     base = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            pytest.fail(f"gateway exited: {log.read_text()[-3000:]}", pytrace=False)
-        try:
-            with urllib.request.urlopen(f"{base}/api/health", timeout=2) as r:
-                if r.status == 200:
-                    return proc
-        except Exception:
-            time.sleep(0.5)
-    proc.kill()
-    pytest.fail(f"gateway did not come up: {log.read_text()[-3000:]}", pytrace=False)
+    try:
+        wait_until_answers(base, proc=proc, log_path=log)
+    except AssertionError as exc:
+        if proc.poll() is None:
+            proc.kill()
+        pytest.fail(str(exc), pytrace=False)
+    return proc
 
 
 def _stop(proc: subprocess.Popen) -> None:
