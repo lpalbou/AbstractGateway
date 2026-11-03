@@ -27,6 +27,15 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.20.0** ([CHANGELOG](CHANGELOG.md)): one card per cloud provider (a saved
+key no longer shows as a second card), shorter setup-guide copy with one Connect or Edit
+button per cloud card, OVH AI Endpoints and any OpenAI-compatible endpoint; provider names
+shown as text badges until each owner approves its logo, with a trademark line in the
+console; automations listed active first, then paused; the Mac stays awake while the gateway
+runs; the menu-bar icon lists automation runs under Automations, not Conversations; each
+resident model's Resources row shows its slot pool; read-aloud streams that resume exactly
+after a break; and a started run that keeps its workflow snapshot.
+
 **What's new in 0.19.0** ([CHANGELOG](CHANGELOG.md#0190---2026-11-02); it also ships the
 changes prepared as 0.18.0, which was not published): a fresh gateway is set up from the
 browser with an admin password, and accounts sign in with a password or a token; the models
