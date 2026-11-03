@@ -95,7 +95,7 @@ def direct_local(request: Request) -> bool:
 
 
 SETUP_CODE_REASON = (
-    "The first password takes over this gateway, so it asks for the setup code printed when it was installed."
+    "The first password takes over this gateway, so it asks for the gateway's six-word setup code."
 )
 
 
@@ -209,7 +209,7 @@ async def session_onboarding_claim(request: Request, response: Response, payload
     if not str(payload.setup_code or "").strip():
         raise _refuse(
             403, "setup_code_required",
-            f"{SETUP_CODE_REASON} Enter it, or run `abstractgateway claim --code` on the gateway's machine.",
+            f"{SETUP_CODE_REASON} To see it, run `abstractgateway claim --code` on the gateway's machine.",
             field="setup_code",
         )
     if not await off_loop("light", setup_code_matches, data_dir, payload.setup_code):

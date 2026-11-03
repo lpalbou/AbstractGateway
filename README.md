@@ -212,19 +212,25 @@ sees any content. See [docs/push.md](docs/push.md).
 
 ## Docker server
 
-Release images are published to GHCR. The default image is the light,
-portable server image:
+Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
+
+| Tag | Image | Platforms |
+|---|---|---|
+| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1
+docker pull ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the `-gpu` tag of your
+version exists before you pin it:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:gpu-latest
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
