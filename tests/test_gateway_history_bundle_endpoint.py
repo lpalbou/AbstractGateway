@@ -182,3 +182,49 @@ def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp
         ws2 = bundle2.get("workflow_snapshot")
         assert isinstance(ws2, dict)
         assert str(ws2.get("artifact_id") or "").strip() == artifact_id
+
+
+def test_the_snapshot_ref_is_written_under_the_runs_mutation_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Backlog 0966 (CI flake of the test above: `workflow_snapshot` None). The run is runnable as soon as
+    `runtime.start` returns, and the runner's tick (which holds the run's mutation lock for its whole pass)
+    saves its own copy of the run: the host's load-add-ref-save after the start must hold the same lock, or
+    the two saves overwrite each other (the ref lost, or a finished run back to its first state)."""
+    import threading
+
+    from abstractgateway.hosts import bundle_host
+    from abstractruntime import run_mutation_lock
+
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-history", flow_id="root")
+    for k, v in {"ABSTRACTGATEWAY_DATA_DIR": str(runtime_dir), "ABSTRACTGATEWAY_DB_PATH": str(runtime_dir / "gateway.sqlite3"),
+                 "ABSTRACTGATEWAY_STORE_BACKEND": "sqlite", "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles_dir),
+                 "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_AUTH_TOKEN": "t",
+                 "ABSTRACTGATEWAY_ALLOWED_ORIGINS": "*", "ABSTRACTGATEWAY_POLL_S": "0.05", "ABSTRACTGATEWAY_TICK_WORKERS": "1"}.items():
+        monkeypatch.setenv(k, v)
+    held: list = []
+    real = bundle_host.persist_workflow_snapshot
+
+    def checking(**kw):
+        got = threading.Event()
+
+        def other_writer() -> None:  # what the runner's tick does: take the run's lock
+            with run_mutation_lock(str(kw["run_id"])):
+                got.set()
+
+        t = threading.Thread(target=other_writer, daemon=True)
+        t.start()
+        held.append(not got.wait(0.3))  # blocked while this save runs = the lock is held
+        out = real(**kw)
+        t.join(5)
+        return out
+
+    monkeypatch.setattr(bundle_host, "persist_workflow_snapshot", checking)
+    from abstractgateway.app import app
+
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers={"Authorization": "Bearer t"},
+                            json={"bundle_id": "bundle-history", "flow_id": "root", "session_id": "sess_lock",
+                                  "input_data": {"prompt": "hello"}})
+        assert start.status_code == 200, start.text
+    assert held == [True], "the snapshot ref was written without the run's mutation lock"

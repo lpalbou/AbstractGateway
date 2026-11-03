@@ -23,11 +23,11 @@ can trust without importing local gateway packages.
 
 - Planned: 22
 - Proposed: 52
-- Completed: 68
+- Completed: 70
 - Deprecated: 4
 - Recurrent: 0
 
-<!-- 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-11-03: 1008 and 1009 filed completed (salvaged from PR #22, there 0962 and 0966): completed 70. 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -191,6 +191,8 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 1009 Post-start run update and push dispatcher wait races (completed 2026-11-03, unreleased) | (filed completed; was 0966 on PR #22) | [completed/1009_post_start_run_update_and_push_wait_races.md](completed/1009_post_start_run_update_and_push_wait_races.md) | Post-start load-modify-saves under the run's mutation lock; push change tokens taken before the reads | each new test red without its fix |
+| 1008 `/v1` reuses the pool's resident model: gateway-level test (completed 2026-11-03, unreleased) | (filed completed; was 0962 on PR #22) | [completed/1008_v1_reuses_the_pools_resident_model_test.md](completed/1008_v1_reuses_the_pools_resident_model_test.md) | Test only; the fix is AbstractCore 2.31.1 (0859), under main's floor | `tests/test_v1_reuses_resident_model.py` 2 passed |
 | 1006 App cards: registration template, families, illustrations (completed 2026-11-01, uncommitted) | `planned/1006_app_cards_registration_template_and_families.md` | [completed/1006_app_cards_registration_template_and_families.md](completed/1006_app_cards_registration_template_and_families.md) | One registry template for every app card (description, mark, illustration, family); the Assistant is one card with browser and desktop launchers; illustrations served at `/console/assets/apps/`. | 11 new tests (mutation-checked), suite failures identical to HEAD, Chrome 1280/390 checks on a disposable gateway. |
 | 1005 Accounts action containment (completed 2026-10-30, unreleased) | `planned/1005_accounts_action_layout_containment.md` | [completed/1005_accounts_action_layout_containment.md](completed/1005_accounts_action_layout_containment.md) | Eight accessible actions remain inside rows; remaining-width text columns and responsive cards. | `04a3f981`; 121 Accounts browser assertions, 19 focused tests and healthy live dark/light/touch redeploy; [evidence](../../design/accounts-layout-1005/REVIEW.md) records the unrelated stale catalogue assertion. |
 | 1004 Primary provider and capability filters (completed 2026-10-30, unreleased) | `planned/1004_models_primary_provider_and_capability_filters.md` | [completed/1004_models_primary_provider_and_capability_filters.md](completed/1004_models_primary_provider_and_capability_filters.md) | Two primary toolbar rows; visible Provider/Capability; no duplicate Status facet. | `2dd60d51` / `a6529057`; 51 focused tests, 286 browser assertions and healthy live redeploy; [evidence](../../design/model-filters-1004/REVIEW.md). |
