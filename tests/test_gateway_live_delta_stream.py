@@ -694,7 +694,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     with pytest.raises(ld.RuntimeTooOld) as info:
         ld.require_runtime_features(runtime)
     text = str(info.value)
-    assert "(0.15.2)" in text and "abstractruntime>=0.16.0" in text and "0965" in text
+    assert "(0.15.2)" in text and f"abstractruntime>={ld.ABSTRACTRUNTIME_FLOOR}" in text and "0965" in text
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.3")
     ld.require_runtime_features(runtime)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
