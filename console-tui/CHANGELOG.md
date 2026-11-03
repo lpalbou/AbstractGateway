@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-04
+### Added
+- **Models: one line per loaded model on when it unloads** (AbstractGateway 0.20.0, root backlog 1115). The
+  selected model's facts line ends with what the gateway reports: "Unused for 12 min, unloads in 48 min",
+  "Kept loaded: never unloads", "In use now" or "Stays loaded: unloading unused models is off" (nothing when
+  the gateway reports nothing), the same words as the web Models page.
+
 ## [0.17.0] - 2026-11-02
 ### Added
 - The Docs assistant uses the engine's shared ChatTranscript bubbles and measured
