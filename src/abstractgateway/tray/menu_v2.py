@@ -118,9 +118,17 @@ def header_title(snap: Snapshot) -> str:
 
 
 def _counts(snap: Snapshot) -> Dict[str, int]:
-    out = {"running": 0, "attention": 0, "paused": 0, "done": 0}
+    """Conversation rows by group, plus `automations` = automations' active
+    runs (the gateway's `session_kind`), and `attention` across both."""
+    out = {"running": 0, "attention": 0, "paused": 0, "done": 0, "automations": 0}
     for row in snap.runs:
-        out[mm.run_group(row)] += 1
+        group = mm.run_group(row)
+        if group == "attention":
+            out["attention"] += 1
+        elif mm.is_automation_run(row):
+            out["automations"] += int(group != "done")
+        else:
+            out[group] += 1
     return out
 
 
@@ -136,7 +144,12 @@ def activity_line(snap: Snapshot, *, update_latest: Optional[str] = None) -> str
         parts: List[str] = []
         if snap.slow:
             parts.append("Slow to answer")
-        parts.append(f"{active} conversation{'s' if active != 1 else ''} running" if active else "Idle")
+        if active:
+            parts.append(f"{active} conversation{'s' if active != 1 else ''} running")
+        if c["automations"]:
+            parts.append(f"{c['automations']} automation{'s' if c['automations'] != 1 else ''} running")
+        if not (active or c["automations"]):
+            parts.append("Idle")
         if c["attention"]:
             parts.append(f"{c['attention']} need{'s' if c['attention'] == 1 else ''} you")
         n = len(snap.models)
@@ -251,7 +264,10 @@ def attention_rows(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
     for row in rows[:ATTENTION_ROWS]:
         out.append(Node(mm.run_row_label(row), children=mm.run_submenu(row, observer=observer, reachable=snap.reachable)))
     if len(rows) > ATTENTION_ROWS:
-        out.append(info(f"…and {len(rows) - ATTENTION_ROWS} more under Conversations"))
+        rest = rows[ATTENTION_ROWS:]
+        n_auto = sum(1 for r in rest if mm.is_automation_run(r))
+        where = "Automations" if n_auto == len(rest) else ("Conversations" if not n_auto else "Conversations and Automations")
+        out.append(info(f"…and {len(rest)} more under {where}"))
     return tuple(out)
 
 
@@ -265,11 +281,13 @@ def conversations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
     top-level *Needs you* rows are shortcuts into it): Running, Need
     attention, Recent (the last 24 hours, `MENU_RECENT_ROWS` then one line
     naming the rest), and the console door. Automations have their own
-    section."""
+    section: an automation's run (the gateway's `session_kind`) is listed
+    there, never here."""
     reachable = snap.reachable
     groups: Dict[str, List[mm.RunRow]] = {"running": [], "attention": [], "paused": [], "done": []}
     for row in snap.runs:
-        groups[mm.run_group(row)].append(row)
+        if not mm.is_automation_run(row):
+            groups[mm.run_group(row)].append(row)
     out: List[Node] = []
     if snap.runs_error and not snap.runs:
         out += [info("Conversation list unavailable"), info(mm.middle_ellipsis(str(snap.runs_error), 60))]
@@ -296,7 +314,9 @@ def conversations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
 
 
 def automations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
-    """**Automations ▸** — the standing orders (`GET /automations`): Active
+    """**Automations ▸** — Running (N): the automations' active runs (GET
+    /host/runs rows whose `session_kind` is an automation's, with the classic
+    run submenu), then the standing orders (`GET /automations`): Active
     (`⏱ <title> · Every day at 09:00 · next …`), then **Paused (N) ▸**, a
     folded submenu (ADR 0048), each row with the classic submenu (Open in
     Observer, Run now, Pause / Resume), then the Automations page in Observer.
@@ -308,6 +328,11 @@ def automations_items(snap: Snapshot, *, observer: bool) -> Tuple[Node, ...]:
     active = [a for a in standing if a.section == "active"]
     paused = [a for a in standing if a.section == "paused"]
     out: List[Node] = []
+    running = [r for r in snap.runs if mm.is_automation_run(r) and mm.run_group(r) != "done"]
+    if running:
+        out.append(info(f"Running ({len(running)})"))
+        out.extend(Node(mm.run_row_label(r), children=mm.run_submenu(r, observer=observer, reachable=reachable)) for r in running)
+        out.append(SEP)
     if snap.automations_error and not (active or paused):
         out += [info("Automation list unavailable"), info(mm.middle_ellipsis(str(snap.automations_error), 60))]
     elif not (active or paused):

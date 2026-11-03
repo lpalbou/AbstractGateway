@@ -196,9 +196,14 @@ every console tab with a *Resume* button.
 ## Conversations
 
 **Conversations ▸** is the machine's work as a person sees it. A row is a
-**conversation** — a conversation turn or an automation's occurrence, never a
-sub-run or an automation's controller — under its **title**: the automation's
-name for an occurrence, else the first line of what the person typed (cut at
+**conversation** turn — never a sub-run, an automation's controller or an
+automation's occurrence. An automation's run is listed under **Automations ▸ ·
+Running (N)** instead, with the same row and submenu: the runtime tags every run
+with a `session_kind` (`chat` / `discussion` = a conversation, `automation` /
+`occurrence` = an automation's run; `GET /host/runs` serves it on each row) and
+the menu sorts by that tag alone. A wake that runs in its caller's conversation
+is tagged `chat` and stays a conversation. A row reads under its **title**: the
+automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as
 `title` with `title_source`; the Observer's cards use the same text). The list
 is **host-wide**, not per-principal: memory, GPU and loaded models on this menu
@@ -232,7 +237,9 @@ each under an information line, nothing hidden without saying so:
   full arguments from `GET /host/runs/{run_id}/wait`). `🟡 <title> · a
   question`: the question, one line; free-text answers stay in the clients
   (the Assistant, Code, the console).
-- **Automations ▸** (its own item under Conversations ▸) — the automations
+- **Automations ▸** (its own item under Conversations ▸) — first **Running
+  (N)**, the automations' active runs (the rows above, shown only when one
+  runs), then the automations
   (`GET /automations`) under **Active (N)** and **Paused (N)**: `⏱
   <automation title> · Every day at 09:00 · next Fri 17 Oct 09:00`, `⏱
   <title> · When Python news has a new item` — the trigger in the gateway's

@@ -2954,9 +2954,12 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
-  updated_epoch, observer_path}], count, active_count, has_more, planes,
-  skipped_entity_planes?, warnings?}`. Items are TURN ROOTS (the runtime's
+  activity, role, session_kind, automation_id, created_at, updated_at,
+  ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
+  active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
+  automation's run, `chat` / `discussion` = a conversation); the tray lists
+  the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
   `is_turn_root`: parent-less runs that are not automation controllers, plus
   automation occurrences), in this order: every active root first —
   `activity: "running"` (the root or any run below it is running), then
