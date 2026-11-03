@@ -230,7 +230,9 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
                 continue
             identity = identity if identity.startswith(owned.run_id + ":") else owned.run_id + ":" + identity
             calls = body.get("source_call_ids")
+            # The producer types the update; only an explicit "finding" is one, as in the replay view.
             updates[identity] = {"id": identity, "text": text, "run_id": owned.run_id,
+                                 "update_kind": "finding" if body.get("kind") == "finding" else "progress",
                                  "session_id": owned.session_id, "iteration": body.get("iteration"),
                                  "published_at": published_at, "order": order,
                                  "source_call_ids": [v for v in calls if isinstance(v, str)] if isinstance(calls, list) else []}

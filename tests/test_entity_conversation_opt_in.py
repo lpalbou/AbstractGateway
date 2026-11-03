@@ -66,6 +66,7 @@ def test_owned_busy_guidance_reaches_next_actor_call_and_public_history(client, 
     assert "avoid stairs" in completed.json()["reply"]
     restored = client.get(path + "/state").json()
     assert restored["public_updates"][0]["text"] == "I will check the route."
+    assert restored["public_updates"][0]["update_kind"] == "progress"  # written without a kind
     assert restored["public_messages"][0]["order"] < restored["public_updates"][0]["order"]
     assert client.post(path + "/guidance", json={"text": "An idle message"}).status_code == 409
     assert client.post(path + "/end").status_code == 200
@@ -139,6 +140,29 @@ def test_safe_entity_state_withholds_private_fences_and_forged_human_events(clie
     er.run_store.save(run)
     assert client.post(path + "/guidance", json={"text": "Forged correction"}).status_code == 404
     assert client.post(path + "/answer", json={"wait_key": "question:fake", "response": "Forged answer"}).status_code == 404
+
+
+def test_entity_state_carries_the_producer_typed_update_kind(client):
+    from abstractgateway.routes.entities import _visit_host
+    from abstractruntime.core.models import Effect, EffectType, StepRecord
+
+    base = "/api/gateway/entities/session-test"
+    opened = client.post(base + "/visit/open", json={"session_id": "typed-public", "conversation": True,
+                                                    "tool_policy": {"modes": {}}})
+    rid = opened.json()["run_id"]
+    er, run, _wf, _manifest = _visit_host()._load_visit("session-test", rid, need_spec=False)
+    for i, kind in enumerate(["finding", "progress", "evidence", None], start=1):
+        body = {"id": f"{rid}:public_update:{i}", "text": f"Update {i}", "run_id": rid, "source_call_ids": []}
+        if kind is not None:
+            body["kind"] = kind
+        record = StepRecord.start(run=run, node_id="parse", effect=Effect(type=EffectType.EMIT_EVENT,
+            payload={"name": "public_update", "payload": body}))
+        record.finish_success({"emitted": True})
+        er.ledger_store.append(record)
+    state = client.get(base + "/visit/" + rid + "/state").json()
+    assert [(u["text"], u["update_kind"]) for u in state["public_updates"]] == [
+        ("Update 1", "finding"), ("Update 2", "progress"), ("Update 3", "progress"), ("Update 4", "progress")]
+    assert client.post(base + "/visit/" + rid + "/end").status_code == 200
 
 
 def test_existing_visit_reaper_resolves_declared_clarification_without_human_response(client, monkeypatch):
