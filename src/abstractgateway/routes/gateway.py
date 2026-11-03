@@ -20733,12 +20733,28 @@ async def discovery_providers(
                 if isinstance(name, str) and name.strip():
                     items.append(dict(p))
 
-    known_provider_names = {str(item.get("name") or "").strip().lower() for item in items if isinstance(item.get("name"), str)}
+    # A saved connection lives in Core's provider_profiles (the 2026-08-01 ruling), so AbstractCore
+    # ALSO lists it, as a bare `endpoint:<id>` row. That row must carry the connection's fields
+    # (`provider_endpoint_profile` above all): clients tell a connection from a provider by that
+    # marker, and the kit's cloud provider cards drew a second "Anthropic (API key)" card from the
+    # bare row (2026-11-03). Only virtual rows are merged: a configured built-in (`anthropic` with
+    # a key in Core's config) stays the registry row, which IS the provider.
+    by_name = {str(item.get("name") or "").strip().lower(): item for item in items if isinstance(item.get("name"), str)}
     for item in endpoint_items:
         name = str(item.get("name") or "").strip()
-        if name and name.lower() not in known_provider_names:
+        if not name:
+            continue
+        row = by_name.get(name.lower())
+        if row is None:
             items.append(item)
-            known_provider_names.add(name.lower())
+            by_name[name.lower()] = item
+        elif item.get("virtual") is True:
+            for key, value in item.items():
+                if key == "models":
+                    if not row.get("models") and value:
+                        row["models"] = value
+                elif key == "display_name" or key not in row:
+                    row[key] = value
 
     if include_models:
         # Bulk-route contract fix (code-tui c4235): endpoint-profile items

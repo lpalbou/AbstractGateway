@@ -5565,7 +5565,13 @@ console presents them as provider connections.
   update or delete a profile.
 
 Enabled profiles appear in `GET /api/gateway/discovery/providers` as virtual
-providers such as `endpoint:office-vllm`. Model discovery through
+providers such as `endpoint:office-vllm`. Each such row carries
+`provider_endpoint_profile` (the profile, key as a fingerprint only) and its
+`provider_family`, also when AbstractCore lists the same profile (profiles live in
+Core's `provider_profiles`); a registry provider row (`anthropic`, `openai`, ...)
+never carries it. That marker is how a client tells a saved connection from a
+provider: the console's cloud provider cards show one card per provider, never a
+second card for its connection. Model discovery through
 `GET /api/gateway/discovery/providers/{provider_name}/models` returns either the
 fixed profile allowlist or the live endpoint model catalog.
 
