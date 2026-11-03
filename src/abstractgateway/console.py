@@ -2264,7 +2264,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="onboard-code-field" class="af-gateway-signin__field" hidden>
 	          <label class="af-gateway-signin__label" for="onboard-code">Setup code</label>
 	          <input id="onboard-code" autocomplete="one-time-code" spellcheck="false" autocapitalize="none" aria-describedby="onboard-code-help onboard-code-error">
-	          <p id="onboard-code-help" class="af-gateway-signin__source">Six words. On the gateway's machine, run <code>abstractgateway claim --code</code>; the installer printed it too.</p>
+	          <p id="onboard-code-help" class="af-gateway-signin__source">Six words. To see them, run <code>abstractgateway claim --code</code> on the gateway's machine.</p>
 	          <p id="onboard-code-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
 	        </div>
 	        <div class="af-gateway-signin__submit-row">
@@ -16681,7 +16681,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
         $("onboard-code-field").hidden = !st.setup_code_required;
         if (st.setup_code_required && st.setup_code_reason) {
-          $("onboard-code-help").textContent = `${st.setup_code_reason} Six words: the installer printed them, or run abstractgateway claim --code on the gateway's machine.`;
+          $("onboard-code-help").textContent = `${st.setup_code_reason} To see the six words, run abstractgateway claim --code on the gateway's machine.`;
         }
         setLoginStatus("Not set up yet", "neutral");
       } else {

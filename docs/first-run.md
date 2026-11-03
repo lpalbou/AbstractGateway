@@ -68,7 +68,9 @@ moose bicycle honey camel ankle agent
 ```
 
 `abstractgateway service install` and `abstractgateway service enable` print it
-too, and so does the AbstractFramework installer's summary. Case and
+too. The AbstractFramework installer's summary shows it when the installer did not
+open the console in a browser for you, and under **This server** with `--server`;
+`abstractgateway serve` never prints it (its output often lands in a service log). Case and
 separators do not matter (`Moose-Bicycle-...` works). The code stops working
 once the password is set; `abstractgateway claim --code` then says the gateway
 is already set up.

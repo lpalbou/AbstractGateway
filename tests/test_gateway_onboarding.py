@@ -486,3 +486,23 @@ def test_loopback_is_never_a_trusted_address() -> None:
     for i in range(20):
         lim.failure(ip=f"10.3.0.{i + 1}", account="admin")
     assert lim.check(ip="127.0.0.1", account="admin") is not None
+
+
+def test_the_setup_code_copy_names_the_command_that_shows_it_never_the_installer(fresh: Path) -> None:
+    """The installer prints the setup code only in some cases (no browser opened, or `--server`),
+    and `serve` never does: every sentence that tells a person where the six words are names
+    `abstractgateway claim --code` on the gateway's machine, which always works."""
+    from abstractgateway.console import gateway_console_html
+
+    st = _client().get("/api/gateway/session/onboarding").json()
+    no_code = _client().post("/api/gateway/session/onboarding", json={"password": GOOD, "password_confirm": GOOD}, headers=ORIGIN)
+    message = no_code.json()["detail"]["message"]
+    html = gateway_console_html()
+    start = html.index('id="onboard-code-help"')
+    static_help = html[start:html.index("</p>", start)]
+    dynamic_help = html[html.index("${st.setup_code_reason}"):]
+    dynamic_help = dynamic_help[: dynamic_help.index("`")]
+    for text in (st["setup_code_reason"], message, static_help, dynamic_help):
+        assert "installer" not in text.lower() and "when it was installed" not in text, text
+    for text in (message, static_help, dynamic_help):
+        assert "abstractgateway claim --code" in text and "gateway's machine" in text, text

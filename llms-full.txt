@@ -1247,7 +1247,9 @@ moose bicycle honey camel ankle agent
 ```
 
 `abstractgateway service install` and `abstractgateway service enable` print it
-too, and so does the AbstractFramework installer's summary. Case and
+too. The AbstractFramework installer's summary shows it when the installer did not
+open the console in a browser for you, and under **This server** with `--server`;
+`abstractgateway serve` never prints it (its output often lands in a service log). Case and
 separators do not matter (`Moose-Bicycle-...` works). The code stops working
 once the password is set; `abstractgateway claim --code` then says the gateway
 is already set up.
@@ -13011,19 +13013,25 @@ and the Runtime-owned provider/tool stack together.
 
 ## Published image
 
-Release images are published to GHCR. The default image is the light,
-portable server image:
+Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
+
+| Tag | Image | Platforms |
+|---|---|---|
+| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1
+docker pull ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the `-gpu` tag of your
+version exists before you pin it:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:gpu-latest
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -13590,19 +13598,25 @@ sees any content. See [docs/push.md](docs/push.md).
 
 ## Docker server
 
-Release images are published to GHCR. The default image is the light,
-portable server image:
+Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
+
+| Tag | Image | Platforms |
+|---|---|---|
+| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1
+docker pull ghcr.io/lpalbou/abstractgateway:latest
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the `-gpu` tag of your
+version exists before you pin it:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:gpu-latest
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -14179,7 +14193,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.13.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:gpu-latest` (or `<version>-gpu`, linux/amd64 only) with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
