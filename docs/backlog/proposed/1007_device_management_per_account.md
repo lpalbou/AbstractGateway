@@ -1,12 +1,13 @@
-# 0965-gateway: Device management per account (discussion item)
+# 1007-gateway: Device management per account (discussion item)
 
 > Package: abstractgateway (accounts, sessions, push registrations, API keys, audit); gateway console (web islands via AbstractUIC, TUI `abstractgateway-console`)
 > Type: discussion / feature exploration
 > Status: proposed (operator: "the idea is not fully formulated, value to explore"; filed 2026-10-28, closing pass)
 > Created: 2026-10-28
+> Renumbered: 2026-11-03, filed as 0965 on its branch; 0965 and 0990 are taken on main, 1007 is the next free number
 > Priority: normal
 > Labels: accounts, devices, sessions, push, security, console, privacy
-> Related: root 1060 (gateway security / resilience / latency standing duty), root 1049 (Apple push relay for watch and phone), gateway 0940 (push every registered device), gateway 0964 (first connection sets the admin password), AbstractUIC 0062 (the Devices page as a kit island)
+> Related: root 1060 (gateway security / resilience / latency standing duty), root 1049 (Apple push relay for watch and phone), gateway 0940 (push every registered device), gateway 0964 (first connection sets the admin password, completed in 0.18.0), AbstractUIC 0062 (the Devices page as a kit island)
 
 ## Summary
 

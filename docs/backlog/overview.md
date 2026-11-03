@@ -22,12 +22,12 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 22
-- Proposed: 52
-- Completed: 68
+- Proposed: 53
+- Completed: 67
 - Deprecated: 4
 - Recurrent: 0
 
-<!-- 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
+<!-- 2026-11-03: 0964 filed completed (built by PR #21, 0.18.0) and 1007 proposed (device management, filed as 0965 on its branch); counts recomputed from the directories (completed was 68 for 66 files, now 67). 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
      20→22) across earlier passes that added items without updating this
      block; the skill treats count drift as a real backlog bug to fix in
@@ -148,6 +148,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [1007_device_management_per_account.md](proposed/1007_device_management_per_account.md) | Discussion: a Devices page per account (console web + TUI) listing where the account is used from (device, app, version, last seen, push, address) with revoke/block, rename, push test; questions on what a device is, session-to-device mapping, block vs revoke, address privacy. Root 1060, 1049; gateway 0940. |
 | [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
 | [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
 | [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
@@ -191,6 +192,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 0964 First connection sets the admin password (completed 2026-10-29, released 0.19.0; filed 2026-11-03) | `planned/0964_first_connection_sets_the_admin_password.md` | [completed/0964_first_connection_sets_the_admin_password.md](completed/0964_first_connection_sets_the_admin_password.md) | Fresh data folder is unclaimed: the console sets the admin password with the setup code; password sign-in next to tokens; password routes; decaying attempt limits. | PR #21, merge `b9f2dab6`; CHANGELOG [0.18.0]; adversarial review and 11 mutation checks recorded in the PR. |
 | 1006 App cards: registration template, families, illustrations (completed 2026-11-01, uncommitted) | `planned/1006_app_cards_registration_template_and_families.md` | [completed/1006_app_cards_registration_template_and_families.md](completed/1006_app_cards_registration_template_and_families.md) | One registry template for every app card (description, mark, illustration, family); the Assistant is one card with browser and desktop launchers; illustrations served at `/console/assets/apps/`. | 11 new tests (mutation-checked), suite failures identical to HEAD, Chrome 1280/390 checks on a disposable gateway. |
 | 1005 Accounts action containment (completed 2026-10-30, unreleased) | `planned/1005_accounts_action_layout_containment.md` | [completed/1005_accounts_action_layout_containment.md](completed/1005_accounts_action_layout_containment.md) | Eight accessible actions remain inside rows; remaining-width text columns and responsive cards. | `04a3f981`; 121 Accounts browser assertions, 19 focused tests and healthy live dark/light/touch redeploy; [evidence](../../design/accounts-layout-1005/REVIEW.md) records the unrelated stale catalogue assertion. |
 | 1004 Primary provider and capability filters (completed 2026-10-30, unreleased) | `planned/1004_models_primary_provider_and_capability_filters.md` | [completed/1004_models_primary_provider_and_capability_filters.md](completed/1004_models_primary_provider_and_capability_filters.md) | Two primary toolbar rows; visible Provider/Capability; no duplicate Status facet. | `2dd60d51` / `a6529057`; 51 focused tests, 286 browser assertions and healthy live redeploy; [evidence](../../design/model-filters-1004/REVIEW.md). |
@@ -332,3 +334,5 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1005 Accounts action containment](completed/1005_accounts_action_layout_containment.md), operator screenshot of action buttons escaping their rows.
 
 2026-11-01: [1006 App cards: registration template, families, illustrations](completed/1006_app_cards_registration_template_and_families.md), operator request to merge the two Assistant cards and make the card a template.
+
+2026-11-03: [0964 First connection sets the admin password](completed/0964_first_connection_sets_the_admin_password.md), filed completed by operator ruling (built by PR #21); [1007 Device management per account](proposed/1007_device_management_per_account.md) proposed.

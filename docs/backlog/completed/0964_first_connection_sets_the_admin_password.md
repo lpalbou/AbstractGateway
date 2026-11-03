@@ -2,7 +2,9 @@
 
 > Package: abstractgateway (first run, user accounts, console sign-in, installer summary); clients: gateway console (web + TUI), AbstractAssistant desktop / iPhone / watch, AbstractCode, the web apps' sign-in pages (AbstractUIC identity widget)
 > Type: feature
-> Status: planned (not implemented; filed by the operator's request on 2026-10-28, closing pass)
+> Status: completed (filed planned by the operator's request on 2026-10-28; already built by PR #21, operator ruling 2026-11-03)
+> Completed: 2026-10-29
+> Release: 0.18.0 (not published to PyPI; shipped in 0.19.0)
 > Created: 2026-10-28
 > Priority: P1
 > Labels: first-run, user-accounts, sign-in, installer, security, console, clients
@@ -70,3 +72,23 @@ A long token in the installer's output is copied by hand, pasted into chats, and
 - Tests: no password → password login refused with a typed reason; wrong password ×N → lockout; last-admin
   invariant; recovery sets a password; `must_set_password` cleared exactly once; audit records present.
 - Client items filed in each client's backlog and linked here before this item closes.
+
+## Completion report
+
+Filed completed on 2026-11-03 by operator ruling: the design was built before this item merged.
+
+- Implementation: PR #21 `feat/first-run-onboarding`, merge `b9f2dab6` (2026-10-29), commits `17140c30`,
+  `945f52cd` (adversarial-review fixes), `a75aec0a`; CHANGELOG [0.18.0] "Set up your gateway" and "Password
+  sign-in"; released in 0.19.0 (tag `v0.19.0` contains the merge).
+- Built: a fresh data folder is unclaimed and the console shows a set-the-admin-password form
+  (`GET|POST /api/gateway/session/onboarding`); `POST /session/login` takes `{user_id, password}` or
+  `{user_id, token}`; scrypt hashes on the account record (`src/abstractgateway/passwords.py`);
+  `PUT /me/password`, `PUT|DELETE /admin/accounts/{id}/password`; decaying attempt limits per address, per
+  account+address and per account; a password change ends the account's other sessions; the token keeps
+  working for automation. Docs: `docs/first-run.md` (1b), `docs/security.md` (sign-in, first-run window).
+- Differs from the design above: a six-word setup code is always required by the onboarding form (a header-less
+  proxy looks local; the no-code one-time link stays for the person at the machine); the minimum password length
+  is 10 (`MIN_LENGTH`), not 12; no breach-list check was found in `src/`. The installer-summary wording (point 4 of the summary) was not
+  re-verified in this filing pass.
+- Client sign-in forms (Assistant, Code, web apps) are tracked in root backlog 1068, not here.
+
