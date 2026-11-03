@@ -367,16 +367,18 @@ def _is_turn_root(row: Dict[str, Any]) -> bool:
 
 def _row_from_state(run: Any) -> Dict[str, Any]:
     """A RunState as an index-shaped row (the `list_runs` fallback and the
-    parent walk): the summary plus the attribution `role`."""
+    parent walk): the summary plus the attribution `role`, `session_kind`
+    and `automation_id` (the index columns)."""
     row = _run_summary(run)
-    role = None
+    attribution: Dict[str, Any] = {}
     try:
         from abstractruntime.core.run_attribution import automation_index_fields
 
-        role = automation_index_fields(getattr(run, "vars", None), run_id=row.get("run_id")).get("role")
+        attribution = automation_index_fields(getattr(run, "vars", None), run_id=row.get("run_id"))
     except Exception:
-        role = None
-    row["role"] = role
+        attribution = {}
+    for key in ("role", "session_kind", "automation_id"):
+        row[key] = attribution.get(key)
     waiting = getattr(run, "waiting", None)
     reason = getattr(waiting, "reason", None) if waiting is not None else None
     row["wait_reason"] = getattr(reason, "value", None) or (str(reason) if reason else None)
@@ -522,6 +524,11 @@ def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], pl
     for row in roots.values():
         summary = {k: row.get(k) for k in ("run_id", "workflow_id", "status", "session_id", "parent_run_id", "created_at", "updated_at", "actor_id")}
         summary["role"] = row.get("role")
+        # The runtime's attribution (run_attribution.py): "automation" /
+        # "occurrence" = an automation's run, "chat" / "discussion" = a
+        # conversation. The tray sorts its rows by it.
+        summary["session_kind"] = row.get("session_kind")
+        summary["automation_id"] = row.get("automation_id")
         summary["activity"] = row["activity"]
         summary["plane"] = plane
         summary["label"] = workflow_display_label(row.get("workflow_id"))

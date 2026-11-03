@@ -27323,6 +27323,13 @@ def _normalize_model_residency_row_v1(record: Any) -> Optional[Dict[str, Any]]:
         "advertised_context_length": _row_v1_int(record, "advertised_context_length"),
         "context_source": _row_v1_str(record, "context_source"),
         "memory_buffer": record.get("memory_buffer") if isinstance(record.get("memory_buffer"), (int, float)) and not isinstance(record.get("memory_buffer"), bool) else None,
+        # The model's slot pool (core ADR 0011): generations running / waiting on the one weights
+        # instance, the bound, and why another slot is not built (OVH 8080 pass four).
+        "slots": _row_v1_int(record, "slots"),
+        "slots_max": _row_v1_int(record, "slots_max"),
+        "active": _row_v1_int(record, "active"),
+        "queued": _row_v1_int(record, "queued"),
+        "slot_refusal_reason": _row_v1_str(record, "slot_refusal_reason"),
         "loaded_at": _row_v1_str(record, "loaded_at", "loadedAt"),
         "last_used_at": _row_v1_str(record, "last_used_at", "lastUsedAt"),
         # Additive-optional fields (lock/modality/calibration wave); null =
@@ -30239,8 +30246,11 @@ async def host_runs(
     what the person typed cut at 60 chars, `workflow` = the workflow name) and,
     for a waiting row, `wait` = `{kind: tool_approval | ask_user | paused |
     event | other, summary, tool, wait_key, run_id}` where `run_id` is the run
-    that HOLDS the wait (a sub-run's approval belongs to its parent row). The
-    payload's `caller_plane` names the plane the caller's `POST /commands`
+    that HOLDS the wait (a sub-run's approval belongs to its parent row).
+    `session_kind` and `automation_id` are the runtime's attribution
+    (`run_attribution.py`): `automation` / `occurrence` = an automation's run,
+    which the tray lists under Automations, `chat` / `discussion` = a
+    conversation. The payload's `caller_plane` names the plane the caller's `POST /commands`
     reach (`plane` of each row says where it lives): a desktop tray greys
     Pause / Stop / approve on every other plane's row.
     """
