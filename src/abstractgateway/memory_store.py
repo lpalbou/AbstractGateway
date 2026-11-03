@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# AbstractCore's own class, through the Runtime facade (ADR 0001: the gateway never imports abstractcore).
+from abstractruntime.integrations.abstractcore.discovery_facade import ModelNotDownloadedError
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 _BACKEND_CLASS_NAMES = {
@@ -330,6 +332,9 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
         from .embeddings_config import build_embedding_client, resolve_embedding_config
 
         embedding_route = resolve_embedding_config(base_dir=Path(base_dir))
+    except Exception:
+        return None  # no route configured: nothing to say
+    try:
         emb_client = build_embedding_client(
             embedding_route,
             cache_dir=Path(base_dir) / "abstractcore" / "embeddings",
@@ -351,8 +356,47 @@ def build_gateway_memory_embedder(*, base_dir: Path) -> Optional[Any]:
                 return self._client.embed_texts(texts).embeddings
 
         return _normalize_embedder(_Embedder(emb_client, model=str(embedding_route.model or "")))
-    except Exception:
+    except Exception as exc:
+        say_embedder_unavailable_once(exc)
         return None
+
+
+# One sentence per cause per process (Linux test server, 2026-10-29: an embedding default
+# that was never downloaded logged a stack-free ERROR per account on every boot, and the
+# operator could not tell what to do).
+_EMBEDDER_NOTICES: set = set()
+_EMBEDDER_NOTICES_LOCK = threading.Lock()
+
+
+def embedder_unavailable_sentence(exc: BaseException) -> str:
+    """The one readable sentence for a gateway whose embeddings cannot load.
+
+    A model that is not downloaded is AbstractCore's typed `ModelNotDownloadedError`: its `model`
+    and `provider` attributes name what to download (the message wording is not a contract)."""
+    if isinstance(exc, ModelNotDownloadedError):
+        return (
+            f"Semantic memory search is off: the text embedding model {exc.model} is not downloaded. "
+            "Download it from the console (Multimodal, Embeddings, Download) or run "
+            f"`abstractcore models download {exc.provider} {exc.model}`; structured memory keeps working."
+        )
+    text = str(exc or "").strip()
+    first = text.splitlines()[0] if text else type(exc).__name__
+    return f"Semantic memory search is off: the text embedding model could not be loaded ({first[:300]})."
+
+
+def say_embedder_unavailable_once(exc: BaseException) -> None:
+    sentence = embedder_unavailable_sentence(exc)
+    with _EMBEDDER_NOTICES_LOCK:
+        if sentence in _EMBEDDER_NOTICES:
+            return
+        _EMBEDDER_NOTICES.add(sentence)
+    import logging
+    import sys
+
+    logging.getLogger("abstractgateway.memory").warning(sentence)
+    # The console log level defaults to ERROR: like the other boot lines ("[INFO]
+    # commands: ..."), say it on stderr so the service log shows it.
+    print(f"[WARN] memory: {sentence}", file=sys.stderr, flush=True)
 
 
 def open_gateway_memory_store(
