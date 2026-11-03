@@ -500,8 +500,9 @@ the build's error: the next request answers that error once, then the build is t
    ([the watchdog entry](#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75)).
 3. `run_index` shows how run listings are answered (`serve --run-index verify|trusted`) and
    `gc_tuning` whether the garbage-collector tuning is on (`serve --gc-tuning on`, the default).
-4. From a checkout, `scripts/perf/ci.sh` runs the same load test as CI against a synthetic data
-   folder and fails with the probe that went over its bound.
+4. From a checkout, `scripts/perf/ci.sh --enforce` runs the same load test as the nightly CI against a
+   synthetic data folder and fails with the probe that went over its limit (without `--enforce` it
+   reports the limits and exits 0, as on a pull request).
 
 See [configuration.md](./configuration.md#cli-flags).
 
