@@ -254,6 +254,32 @@ def test_host_state_omits_host_block_when_memory_snapshot_lacks_one(
     assert "host" not in resp.json()
 
 
+def test_host_state_system_observations_are_additive_and_failure_is_isolated(tmp_path, monkeypatch):
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractgateway import host_system_metrics
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_FullStubHostFacade(), None))
+    _patch_gpu(monkeypatch, {"supported": True, "utilization_gpu_pct": 0})
+    expected = {"ts": 123.0, "cpu": {"supported": True, "utilization_pct": None, "reason": "Collecting the first interval"}}
+    monkeypatch.setattr(host_system_metrics, "get_host_system_metrics", lambda data_dir: expected)
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        response = client.get("/api/gateway/host/state", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["system"] == expected
+        assert response.json()["memory"]["ram"] == _MEMORY_SNAPSHOT["ram"]
+
+        def fail(data_dir):
+            raise OSError("volume not readable")
+
+        monkeypatch.setattr(host_system_metrics, "get_host_system_metrics", fail)
+        response = client.get("/api/gateway/host/state", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["system"]["supported"] is False
+        assert "volume not readable" in response.json()["system"]["reason"]
+        assert response.json()["memory"]["ram"] == _MEMORY_SNAPSHOT["ram"]
+
+
 def test_host_state_partial_facade_degrades_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
@@ -499,8 +525,16 @@ def test_models_loaded_carries_row_v1_rows(tmp_path: Path, monkeypatch: pytest.M
         # additive-optional memory wave fields
         "est_weights_bytes",
         "cache_bytes",
+        # additive-optional KV/holder wave (Linux test server, 2026-10-29)
+        "kv_cache_bytes",
+        "kv_cache_estimated",
+        "held_by",
         "expires_at",
         "context_length",
+        # explicit context (AbstractCore ADR 0010 point 8)
+        "advertised_context_length",
+        "context_source",
+        "memory_buffer",
         "loaded_at",
         "last_used_at",
         # additive-optional lock/modality/calibration wave fields
@@ -1031,3 +1065,36 @@ def test_host_state_carries_residency_diagnostics_like_models_loaded(
     with client:
         state = client.get("/api/gateway/host/state", headers=headers).json()
     assert state["residency_diagnostics"] == {}
+
+
+def test_row_v1_carries_the_kv_cache_the_context_and_readable_holders() -> None:
+    """The Models page says what the cache is and who holds the model (ADR 0043).
+    MUTANT: drop the fields from the normalizer -> the console falls back to
+    "+ 8.3 GiB cache" with no context and no holder -> RED."""
+    import abstractgateway.routes.gateway as gateway_routes
+
+    row = gateway_routes._normalize_model_residency_row_v1({
+        "runtime_id": "local:text_generation:huggingface:m", "provider": "huggingface", "model": "m",
+        "resident": True, "est_weights_bytes": 5_769_121_792, "cache_bytes": 2_600_000_000,
+        "kv_cache_bytes": 2_202_370_048, "kv_cache_estimated": True, "context_length": 65536,
+        "held_by": ["the runtime of account default/admin (loaded)"],
+    })
+    assert row["kv_cache_bytes"] == 2_202_370_048 and row["kv_cache_estimated"] is True
+    assert row["context_length"] == 65536
+    assert row["held_by"] == ["the runtime of account default/admin (loaded)"]
+    bare = gateway_routes._normalize_model_residency_row_v1({"provider": "ollama", "model": "q"})
+    assert bare["kv_cache_bytes"] is None and bare["kv_cache_estimated"] is None and bare["held_by"] is None
+
+
+def test_row_v1_held_by_hides_other_accounts_from_a_non_admin(monkeypatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+    from types import SimpleNamespace
+
+    held = ["the runtime of account default/alice (loaded)", "the runtime of account default/bob (loaded)"]
+    bob = SimpleNamespace(tenant_id="default", user_id="bob", is_admin=lambda: False)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: bob)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == [
+        "another account's runtime (loaded)", "the runtime of account default/bob (loaded)"]
+    admin = SimpleNamespace(tenant_id="default", user_id="admin", is_admin=lambda: True)
+    monkeypatch.setattr(gateway_routes, "current_gateway_principal", lambda: admin)
+    assert gateway_routes._row_v1_held_by_for_caller(held) == held

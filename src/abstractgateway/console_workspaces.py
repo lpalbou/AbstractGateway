@@ -33,10 +33,9 @@ Spliced into the console script scope with the UI layer (console.py _console_own
 
 from __future__ import annotations
 
-# The card-list rules, used twice: below ~900 px of viewport, and whenever the table's own
-# width is under its column minimums (3 text columns x 100 px + Active 84 + Actions 356 = 740,
-# e.g. a large font scale; round 14: 7 actions since Preferences, and 740 still keeps the table
-# at 1024 px where the docked sidebar leaves it 750 px).
+# Flat cards are used below the table's column minimums: a 300px text-column
+# budget + Active 84px + Actions 404px = 788px. The drawer range also keeps
+# the existing comfortable card layout below ~900px of viewport.
 _ACCOUNTS_CARD_RULES = r"""
   .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
   .accounts-table thead, .accounts-table colgroup { display: none; }
@@ -68,14 +67,15 @@ ACCOUNTS_CSS = r"""
 .icon-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 
 /* ---- Accounts table (round 8): Name · Email · Runtime · Active · Actions; table-layout fixed,
-   cells wrap (never truncate). Actions = up to 7 icon buttons on one line (7 x 44 + 6 x 4 + 20 = 352;
-   round 14 added Preferences). */
+   cells wrap (never truncate). Eight actions need 8 x 44 + 7 x 4 = 380px,
+   plus cell padding and border space. Text columns share what remains after
+   Active and Actions, rather than competing with their fixed widths. */
 .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
-.accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-.accounts-table col.accounts-c-name { width: 24%; }
-.accounts-table col.accounts-c-runtime { width: 18%; }
-.accounts-table col.accounts-c-active { width: 84px; }
-.accounts-table col.accounts-c-actions { width: 356px; }
+.accounts-table { --accounts-actions-width: 404px; --accounts-active-width: 84px; width: 100%; table-layout: fixed; border-collapse: collapse; }
+.accounts-table col.accounts-c-name { width: calc((100% - var(--accounts-actions-width) - var(--accounts-active-width)) * .4); }
+.accounts-table col.accounts-c-runtime { width: calc((100% - var(--accounts-actions-width) - var(--accounts-active-width)) * .3); }
+.accounts-table col.accounts-c-active { width: var(--accounts-active-width); }
+.accounts-table col.accounts-c-actions { width: var(--accounts-actions-width); }
 .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
 .accounts-table td { vertical-align: middle; padding-top: 8px; padding-bottom: 8px; overflow: hidden; }
@@ -94,16 +94,16 @@ a.accounts-runtime-link:focus-visible { outline: 2px solid var(--info, var(--acc
 .accounts-table td.accounts-active .af-switch__reason { display: none; }
 .accounts-active__archived { font-size: var(--font-size-md); }
 .accounts-table td.accounts-actions { overflow: visible; }
-.accounts-actions__buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; }
+.accounts-actions__buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 /* Cards below ~900 px of viewport: in the drawer range (no docked sidebar, < 1024 px, a named
    breakpoint) the table is the viewport minus ~66 px of gutters, so a table under 834 px = a
-   viewport under ~900 px. At 1024 px and up the docked sidebar leaves >= 750 px: the table fits. */
+   viewport under ~900 px. The container minimum also covers the docked sidebar range. */
 @media (max-width: 1023.98px) {
   @container accounts (max-width: 833.98px) {
 """ + _ACCOUNTS_CARD_RULES + r"""
   }
 }
-@container accounts (max-width: 739.98px) {
+@container accounts (max-width: 787.98px) {
 """ + _ACCOUNTS_CARD_RULES + r"""
 }
 
@@ -138,6 +138,8 @@ WORKSPACES_JS = r"""
       folder: ICONS.folder,
       openai: svgIcon('<path d="M4 8h13"></path><path d="m14 4.5 3.5 3.5-3.5 3.5"></path><path d="M20 16H7"></path><path d="m10 12.5-3.5 3.5 3.5 3.5"></path>'),
       manage: svgIcon('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"></path><circle cx="15" cy="6" r="2"></circle><circle cx="9" cy="12" r="2"></circle><circle cx="17" cy="18" r="2"></circle>'),
+      // Password (0.18.0): a key.
+      key: svgIcon('<circle cx="7.5" cy="15.5" r="3.5"></circle><path d="m10 13 9-9"></path><path d="m16 7 2.5 2.5"></path><path d="m13.5 9.5 2 2"></path>'),
       rotate: svgIcon('<circle cx="8" cy="15" r="3.5"></circle><path d="m10.5 12.5 7-7"></path><path d="m15.5 7.5 2 2"></path><path d="M14 4.5a8 8 0 0 1 5.5 5"></path><path d="M20 6v4h-4"></path>'),
       archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
       unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 17.5v-6"></path><path d="m9.5 14 2.5-2.5 2.5 2.5"></path>'),
@@ -166,6 +168,7 @@ WORKSPACES_JS = r"""
       workspace: (n) => `Workspaces ${n}'s agents may use`,
       preferences: (n) => `Default workflows of ${n}`,
       manage: (n) => `Manage ${n} (mind, voice, prompt…)`,
+      password: (n) => `Set or change ${n}'s password`,
       rotate: (n) => `Rotate ${n}'s sign-in token`,
       archive: (n) => `Archive ${n} (kept, hidden)`,
       unarchive: (n) => `Unarchive ${n} (comes back inactive)`,

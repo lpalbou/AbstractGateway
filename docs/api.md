@@ -20,7 +20,7 @@ serve:
 
 | Routes | Purpose | Reference |
 |---|---|---|
-| `/api/gateway/session/login`, `/session/logout`, `/session/claim`, `/me` | browser sessions, one-time sign-in links, the current principal | [security.md](./security.md), [first-run.md](./first-run.md) |
+| `/api/gateway/session/login` (`{user_id, password}` or `{user_id, token}`), `/session/logout`, `/session/claim`, `/session/onboarding`, `/me`, `/me/password`, `/admin/accounts/{id}/password` | browser sessions, password sign-in, first-run onboarding ("Set up your gateway"), one-time sign-in links, the current principal, passwords | [security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window), [first-run.md](./first-run.md) |
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
@@ -38,6 +38,7 @@ serve:
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
+| `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
 | `/api/gateway/runs/{run_id}/view`, `/view/stream` | the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client) | [below](#replay-view-runsrun_idview) |
 | `/api/gateway/me/events`, `/me/events/stream`, `/me/events/notifications` | your own event stream: what happened for you outside the steps of a run (catch-up, SSE) | [below](#your-event-stream-apigatewaymeevents) |
 | `/api/gateway/me/push/devices` | the watches and iPhones that get your alerts while their app is closed (Apple push) | [below](#push-devices-apigatewaymepushdevices), [push.md](./push.md) |
@@ -60,6 +61,14 @@ sent to any `/api/gateway/` route answers `401`
 Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
 `/api/gateway/admin/core-endpoint`. See [openai-api.md](./openai-api.md) for the
 supported surface, access settings and errors.
+
+The same admin settings route accepts `direct_enabled` (JSON boolean, default
+`false`) for a direct Core HTTP listener. It does not change Gateway `/v1`'s
+`enabled` setting. Admin status includes `http_services`: `legacy` and `direct`
+rows with `{state, url, error}`. The direct listener uses Core's server bind
+and token; it receives inference requests directly without Gateway run APIs
+or Runtime orchestration. Native run clients use neither HTTP inference
+surface. See [endpoint configuration](./configuration.md#openai-compatible-endpoint).
 
 ## Auth
 
@@ -914,10 +923,14 @@ raw bytes or local paths:
 }
 ```
 
-Streamed read-aloud recordings use the logical **`voice/`** artifact space. Normal
+Streamed read-aloud recordings use the logical **`voice/`** artifact space, and so does the
+recording of a spoken question: an upload whose client path is under the reserved
+`voice/dictation/` prefix is tagged `purpose: voice_dictation` and `artifact_space: voice`.
+Voice transport is how the conversation travelled, not an attachment of it: normal
 `GET /runs/{run_id}/artifacts` and `GET /sessions/{session_id}/artifacts` listings
-exclude these playback recordings; `include_voice=true` includes them. Filtering occurs
-before pagination and totals. Uploaded recordings and explicitly generated audio files
+exclude read-aloud audio and dictation recordings; `include_voice=true` includes them.
+AbstractRuntime's history bundle applies the same rule to session turns. Filtering occurs
+before pagination and totals. Other uploaded recordings and explicitly generated audio files
 remain in the normal listing. Existing streamed recordings are classified from their
 producer metadata without rewriting their saved artifact references.
 
@@ -1083,6 +1096,61 @@ same basename, Gateway emits deterministic digest-suffixed aliases so the same
 public path string can round-trip through `/files/*`, artifact import/export,
 and Runtime file nodes.
 
+## Conversational updates, questions and corrections
+
+`POST /api/gateway/runs/start` accepts an optional strict JSON boolean `conversation`.
+`true` enables the actor's public updates and conversational questions before the first
+tick; absent or false preserves the existing presentation. It normalizes to
+`input_data._runtime.conversation: {enabled: true|false}` and inherits through supported
+agent/subworkflow composition. The equivalent input-data config must contain exactly
+`enabled` with a boolean value. `POST /entities/{name}/summon` accepts the same option for
+the ordinary Flow work-session lane.
+
+Render `/runs/{root}/view` messages with `kind: "public_update"` as actor-authored updates.
+They retain `id`, `text`, `run_id`, optional `session_id`, `iteration`, `source_call_ids`,
+`update_kind` (`"finding"` for a fact or piece of evidence the actor established, otherwise
+`"progress"`, as typed by the actor) and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
+An actor's wording remains its statement, not independently verified evidence of completion.
+
+Conversational questions retain `waiting.prompt` and expose
+`waiting.details.question: {id, purpose: "conversation", importance, published_at, deadline, fallback}`.
+`importance: "essential"` has null deadline/fallback and waits indefinitely. A
+`clarification` carries its original absolute deadline and a safe fallback declared when
+the question was issued (120–300 seconds). Answer the actual run shown by the replay
+interaction, using its exact `question:<id>` wait key:
+
+```json
+{"command_id":"<new UUID>","run_id":"<question run>","type":"resume","payload":{"wait_key":"question:<id>","payload":{"response":"Inside, please."}}}
+```
+
+Empty responses and approval payloads answer HTTP 422. At or after the server cutoff,
+expiry wins even before the due scan runs. The continuation contains `timed_out`, `fallback`
+and `question: {id, outcome: "expired"}` with no human `response`. Late recognized replies
+are durably retained and do not answer another question. Pause suppresses continuation while
+preserving the original deadline; after explicit resume an overdue question resolves first.
+Cancellation does not apply a fallback. This uses the existing runner and Runtime's
+single-writer/process-local arbitration, not a new scheduling service. Legacy ASK_USER,
+EVENT deadlines and tool approvals retain their existing behavior. Time passing grants no
+approval or permission. These facts do not implicitly request afterflow notifications.
+
+During ordinary task work, submit `inject_guidance` with
+`payload: {guidance: "context and the correction", display_text: "the person's original words"}`.
+`display_text` is optional, nonblank and at most 65,536 characters; only explicit display text
+becomes public human history. The server stamps its authenticated speaker. Replay exposes
+`role: "user", kind: "guidance", guidance_status: "accepted"` from reserved host receipts.
+Operational guidance without display text remains outside public human history. Acceptance
+means durably queued; the actor's later response is the evidence it considered or adopted the
+correction. Already performed work is not undone. If only the public-receipt append fails,
+the accepted sidecar source is retained and retried before consumption; the host reports a
+repair warning rather than a false refusal. Entity driver visits use their canonical owned
+visit routes described in [entities.md](entities.md#live-conversation-during-a-visit).
+
+The runner copies the authoritative command envelope's `command_id` to the optional
+`client_message_id` on the public human receipt and replay message. Use that field to reconcile
+pending task speech. The `/commands` acknowledgment sequence belongs to the command inbox;
+it is not the guidance sidecar sequence in `<run_id>:guidance:<seq>`. Distinct commands with
+identical words remain distinct messages. Payload-claimed correlation ids are ignored.
+
 ## Durable commands (`POST /api/gateway/commands`)
 
 Commands are appended to a durable inbox and applied asynchronously by the runner.
@@ -1151,7 +1219,7 @@ typed waits, attention and operations, is in [automations.md](./automations.md).
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](./automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, archived_automations}` (older scheduled runs on the last page, `legacy: true`). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](./automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `archived_automations` counts yours. Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](./automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](./automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -1198,6 +1266,12 @@ nothing: the session's runs, ledgers and artifacts stay, and
 | `POST /api/gateway/sessions/{session_id}/unarchive` | `{session_id, archived: false, archived_at: null, archived_by: null, changed}` |
 | `GET /api/gateway/runs?root_only=true` | leaves archived sessions out; every listing carries `archived_sessions` (how many sessions of the listed `kind` you have archived) |
 | `GET /api/gateway/runs?root_only=true&archived_only=true` | only the turns of archived sessions, each with `archived: true` |
+
+**Order.** Turn listings come most recently updated first, so an app that folds the rows by
+`session_id` lists the session with the latest activity first, and a new turn in an older
+session moves it to the top. Apps show that order as served, with archived sessions in their
+own Archived section (the framework's ADR 0048; automations follow the same rule, see
+[Listing order](./automations.md#listing-order)).
 
 **Session purpose (`kind`).** A session is a `conversation` (the default) or a
 `docs` chat (a Docs assistant conversation). `POST /api/gateway/runs/start`
@@ -1425,6 +1499,25 @@ Evidence: `src/abstractgateway/routes/triggers.py` (`receive_webhook`),
 `src/abstractgateway/trigger_connections.py` (lookup across accounts, rate limit),
 AbstractRuntime `triggers/webhook.py` (verification, event mapping).
 
+## Conversation read receipts (`/api/gateway/me/session-reads`)
+
+Read receipts are scoped to the signed-in account and runtime. `GET` returns `{items,
+next_after, more}` in sequence order; use `after` for replay and `limit` (1–1000, default 200)
+for pagination. Repeated `run_id` parameters filter up to 100 visible turns.
+
+`POST` accepts `{receipts: [{session_id, run_id, status}]}` (1–100 items), validates the entire
+batch, and returns its committed `items`. Status is `request`, `completed`, `failed` or
+`cancelled`. Only conversation turn roots in the caller's runtime are accepted; a terminal
+receipt must match the stored outcome (409 otherwise). Duplicate receipts return the original
+immutable event. Reading a request never acknowledges its later answer. Automation results
+continue to use their separate attention cursor.
+
+The append-only read ledger persists independently of execution ledgers and personal-event
+retention. An idempotent delivery projection emits `session.read` into the existing personal
+event stream. Clients refresh canonical receipts after this event and after reconnecting.
+Mark a revision only when the user consumes the loaded content, not when listing or replaying it.
+Clients must retain unread state on write failure; browser-local baselines are not read evidence.
+
 ## Your event stream (`/api/gateway/me/events`)
 
 One ordered stream per person, `user:<tenant>:<user>`, holding what happened **for you** that is
@@ -1444,6 +1537,7 @@ event written twice (a retry, a repair after a crash) is stored once.
 | `type` | `data` | written when |
 |---|---|---|
 | `run.started` | `{run_id, session_id, origin}` | a run of a session (a person's run, an automation occurrence) is saved running; never a child run or an automation's controller |
+| `session.read` | `{sequence, session_id, run_id, status, at, event_id}` | a conversation revision was consumed; canonical receipt remains after event-stream pruning |
 | `run.finished` | `{run_id, session_id, origin, status}` | that run is saved `completed`, `failed` or `cancelled` |
 | `trigger.event` | `{automation_id, occurrence_index, event_id, source_id, source_version, fired_at, run_id, session_id}` | an automation's occurrence starts (before its `run.started`) |
 | `attention.raised` | `{record_key, automation_id, run_id, index, kind, seq, channels}` | an automation records an attention item (`notify` or final failure); `record_key` names the ledger record, no title or body is copied |
@@ -1702,7 +1796,9 @@ inherits the home's grants. Omit `tool_policy` to retain legacy visit behavior.
 These choices apply only to this visit and cannot widen the home's grants.
 
 Use the visit's `/state`, `/tool-policy` and `/decision` routes to read progress,
-change choices between turns and answer the exact pending approval. End through
+change choices between turns and answer the exact pending approval. Optional conversational
+updates, live correction and question answers use the separate `/guidance` and `/answer`
+routes in [entities.md](entities.md#live-conversation-during-a-visit). End through
 `POST .../visit/{run_id}/close` with `{"closed_by":"pause"}`; pending approval
 is cancelled without executing its tools. Managed visits are bound to their
 authenticated owner. `/entities/{name}/sessions` and `/visit/{run_id}/end`
@@ -1844,8 +1940,12 @@ These exist to help thin clients adapt to the deployed gateway.
 The capabilities payload includes package presence (`abstractruntime`,
 `abstractcore`, `abstractmemory`, `abstractvoice`, `abstractvision`), existing
 gateway helpers (`tools`, `visualflow`, `media`), memory-store readiness, and
-AbstractCore capability plugin status for `voice`, `audio`, `vision`, and
-`music`.
+AbstractCore capability plugin status for `voice`, `audio`, `vision`,
+`music` and `decision`. The contracts (`contracts.common`, `flow_editor` and
+`assistant`) carry a `decision` descriptor beside `media`: the VisualFlow
+`decide` node (`workflow`) and the direct endpoint (`direct_endpoint`:
+`endpoint`, `openai_endpoint`, `capability_route`, `returns`), each with
+`available`; see [Decisions](#decisions).
 
 The route paths and contract descriptors are the stable part of this surface.
 Catalog routes also include a stable Gateway-owned envelope:
@@ -2064,6 +2164,7 @@ Current direct Gateway endpoints:
 - `POST /api/gateway/runs/{run_id}/videos/generate`
 - `POST /api/gateway/runs/{run_id}/videos/from_image`
 - `POST /api/gateway/runs/{run_id}/music/generate`
+- `POST /api/gateway/runs/{run_id}/decisions` ([below](#decisions))
 - `GET /api/gateway/voice/defaults`
 - `GET /api/gateway/voice/voices`
 - `GET /api/gateway/voice/languages`, `GET /api/gateway/voice/clones`, `GET /api/gateway/voice/clones/{voice_id}`, `GET /api/gateway/voice/compatibility`
@@ -2127,7 +2228,47 @@ returns JSON Lines stream events for progressive playback when discovery adverti
 `capabilities.contracts.assistant.voice.tts.streaming=true`; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal `done` event's `metrics` carry `ttfb_s`, `rtf`, `device` and, on the CPU, `device_reason`.
 
-Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
+Stream lines (JSON Lines): `runtime_start` (`run_id` = the run named in the path, `child_run_id` = the id the outcome will be recorded under, `schema: abstractruntime.tts_stream.start.v2`), engine events (`start`, `audio` with `sequence` and `audio_b64`, `segment_end`; see [Resuming a broken stream](#resuming-a-broken-stream)), then one terminal line: `done` (with `audio_artifact` and `child_run_status`), `cancelled` or `error` (`error` = the sentence; `watchdog_timeout: true` when the engine went silent past `ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S`). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is `{"type": "queued", "message": "Waiting for the voice engine: …"}`; speech follows when the engine is free. After 10 seconds without any other line, the stream writes `{"type": "keepalive", "ok": true, "request_id": …}`, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose `type` you do not know. The request's audit log line (`<data dir>/audit_log.jsonl`) carries `voice_stream`: `provider`, `model`, `voice`, `profile`, `text_chars`, `lines`, `audio_lines`, `audio_bytes`, `segments` (`segment_end` lines sent), `keepalives` and `ended` (`done`, `error`, `cancelled`, `watchdog` or `disconnected`). The entity route `POST /api/gateway/entities/{name}/voice/tts/stream` streams the same lines. A request past the voice synthesis bound (`ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY`) waits one second, then gets `503` "Read aloud is busy: N voice syntheses are already running on this gateway …".
+
+#### Resuming a broken stream
+
+The engine speaks the text as a sequence of text segments, each one independent synthesis of exactly its
+slice of the text (AbstractVoice ADR 0009). With AbstractVoice as the voice engine:
+
+- every `audio` line carries `segment` (from 0) and that segment's `text_start` / `text_end`: offsets
+  `[start, end)` into the request `text` exactly as you sent it, counted in Unicode code points (Swift
+  `text.unicodeScalars`, JavaScript `Array.from(text)`, Python `str` indexes). All the lines of one segment
+  (audio is sent in slices of at most 2 s) share them;
+- after a segment's last audio comes `{"type": "segment_end", "schema": "abstractvoice.tts_stream.segment_end.v1", "segment": k, "text_start": s, "text_end": e}`;
+- `done` carries `segments`, the number of segments ended.
+
+```json
+{"type":"audio","sequence":0,"segment":0,"text_start":0,"text_end":61,"audio_b64":"UklGR…","sample_rate":24000}
+{"type":"audio","sequence":1,"segment":0,"text_start":0,"text_end":61,"audio_b64":"UklGR…","sample_rate":24000}
+{"type":"segment_end","segment":0,"text_start":0,"text_end":61}
+{"type":"audio","sequence":2,"segment":1,"text_start":62,"text_end":140,"audio_b64":"UklGR…","sample_rate":24000}
+```
+
+When a stream breaks (the connection drops, or an `error` line ends it):
+
+1. Play audio as it arrives (never hold it until its `segment_end`) and keep all you received.
+2. Request the text again from `text_end` of the last `segment_end` you received (from the start when you
+   received none). Offsets in the new stream index the new request's text: add the resume offset to map
+   them back to yours.
+3. When the break fell inside a segment (audio arrived after the last `segment_end`), skip the first seconds
+   of the new stream's audio, as many as you already received of that unfinished segment.
+
+At a segment boundary the seam is exact: each segment is a whole synthesis of exactly its text, so no word
+is repeated or missed, whatever the engine samples on the second try. Inside a segment the seam is
+approximate: a sampling engine (Qwen3-TTS, cloned voices above all) speaks the same text with different
+timing, so the seam can land a few words early or late. Nothing is ever replayed whole. The seconds skip
+matters because a segment can be long: a segment is a base engine's sentence group, or one Qwen3-TTS clone
+generation, and on Apple silicon a clone reply of up to 800 characters is one generation (one voice per
+reply), so a 600-character piece is often a single segment. Send plain text: the voice engine removes `#` to
+`#####` headers at the start of a line and `**bold**` / `*italic*` markers, and such a marker spanning two
+segments would leave its closing marker in the remaining text. Lines without `segment` (an engine that does
+not report segments) mean the whole request is one segment: retry it from the start and skip the seconds
+received.
 
 Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (`done`, or with `errors[0].code` `cancelled`/`stream_error`) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with `errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}`.
 
@@ -2250,6 +2391,44 @@ STT and listen contract notes:
   `capabilities.contracts.assistant.voice.listen` are host-capture contracts,
   not a live microphone socket. They tell higher apps to capture locally and
   emit an event or upload the resulting audio artifact.
+
+### Decisions
+
+A decision is text in, calibrated typed answers out: a decision model (AbstractCore's
+`decision` output modality; models, question kinds and measured quality in AbstractCore's
+[docs/decision-models.md](https://github.com/lpalbou/AbstractCore/blob/main/docs/decision-models.md)) reads a `state` and answers every named question in
+one pass. It generates no text and produces no artifact.
+
+`POST /api/gateway/runs/{run_id}/decisions` runs one durable child run (`run_facade.decide`)
+under the run named in the path:
+
+| Field | Meaning |
+|---|---|
+| `state` (required) | the text the questions are about: a message, a document, a transcript |
+| `questions` (required) | named questions `{name: {type, instructions, criteria}}` with `type` `choice`, `noul` (yes/no) or `score`; shorthand: a yes/no sentence is a `noul` question, a list of option names a `choice` |
+| `model` | `provider/model` (`mlx/jaredpalmer/kev-4b`, `huggingface/ggml-org/Kev-4B-GGUF:Q4_K_M`, `typesafe/jev-latest`) or a bare model id; without it the `output.decision` capability default answers |
+| `truncate` | read only what fits the model's context instead of refusing an over-long state |
+| `request_id` | optional idempotency key |
+
+The answer carries `run_id`, `request_id`, `child_run_id`, `decision` (the System One body:
+`model`, `answers`, `usage`, `latency_ms`, and `truncated` when the state was cut) and
+`answers`, the same answers by question name: `choice` → `{type, choice, confidence,
+probabilities}`, `noul` → `{type, noul}` (the probability that the statement is true),
+`score` → `{type, score, confidence, legend, probabilities}`; plus the `provider` and `model`
+that answered. A refused decision answers `ok: false` with a `code`, like the media routes:
+`decision_unavailable` (the runtime exposes no decision facade), `decision_error` (the
+error sentence from the route or the model) or `decision_no_answers`. An empty `state` or no
+question answers 400.
+
+Thin clients discover the route from `capabilities.contracts.flow_editor.decision` or
+`capabilities.contracts.assistant.decision` (`direct_endpoint.available`; the same descriptor
+names the VisualFlow `decide` node under `workflow`). The model is the `output.decision`
+capability default ([configuration.md](./configuration.md#capability-defaults)); decision
+models are the catalog rows tagged `decision` ([Models and engines](#models-and-engines)).
+Flows use the `decide` node (inputs `state`, `questions`, `model`, `truncate`; outputs
+`answers`, `decision`, `model`, `content`). The same models answer at the OpenAI door as
+`POST /v1/decisions` with the body `{model, state, questions, truncate?}`
+([openai-api.md](./openai-api.md)).
 
 ## KG memory
 
@@ -2400,7 +2579,11 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | `POST /jobs/{id}/cancel` | admin | none (an empty `{}` is accepted) | `host_job_v1`; 404 when unknown |
 
 Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
-`hub` accept `1`/`0` and `true`/`false`.
+`hub` accept `1`/`0` and `true`/`false`. Decision models (AbstractCore's
+`decision` output modality: Kev, Lev, Laya) are the catalog rows tagged
+`decision` (`tag=decision`); their capability route is `output.decision`, and
+the console's Models page filters them with its **Decision** chip. See
+[Decisions](#decisions).
 
 **Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
 unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").

@@ -298,9 +298,9 @@ def test_welcome_computer_tile_reads_host_name_and_service_platform() -> None:
     source = _console_script()
     extra = r"""
 const CORE_CONSOLE = { hostName: "page-server-name" };
-const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
+const FIRST_RUN_STEPS = ["welcome", "engines", "cloud", "model", "apps", "done"];
 const FIRST_RUN_STEP_COPY = {};
-const FIRST_RUN_STEP_TITLES = { engines: "Engines", model: "Model", apps: "Apps" };
+const FIRST_RUN_STEP_TITLES = { engines: "Engines", cloud: "Cloud providers", model: "Model", apps: "Apps" };
 const firstRun = {};
 const box = { innerHTML: "" };
 const $ = () => box;
@@ -465,7 +465,7 @@ def test_catalog_has_a_video_category_and_labels_mlx_gen_for_video() -> None:
     source = _console_script()
     extra = "\n".join(_slice_line_const(source, n) for n in ("MC_CAPS", "MC_PROVIDER_LABEL"))
     out = _run(
-        ["mcRowCaps", "mcDefaultFilters", "mcParseHash", "mcProviderLabel"],
+        ["mcRowCaps", "mcDefaultFilters", "mcHfMode", "mcParseHash", "mcProviderLabel"],
         f"return [mcRowCaps({json.dumps(_VIDEO_ROW)}), mcParseHash('#catalog?cap=video').cap, mcProviderLabel('mlx-gen'),"
         " MC_CAPS.find((c) => c[0] === 'video'), mcRowCaps({ capabilities: { image_generation: true } })];",
         extra,
@@ -613,6 +613,7 @@ const dlFeed = { group: null };
 const dlActive = () => false;
 const dlGroupMarkup = () => "";
 const downloadJobKey = (p, a) => `${p}:${a}`;
+const renderFirstRunDefaultModels = () => {};  // the Default models view (1069) has its own tests
 """
     return _run(
         _ROUTE_HELPERS + ["weightView", "weightReason", "firstRunUnavailableCards", "firstRunRouteUnavailableAlert", "firstRunCap", "renderFirstRunModel"],
@@ -669,6 +670,11 @@ def test_catalog_use_as_default_sets_exactly_the_chosen_model(tmp_path: Path, mo
 const calls = [];
 const api = async (path, opts) => { calls.push({ path, method: opts && opts.method, body: opts && opts.body ? JSON.parse(opts.body) : null }); return { routes: [] }; };
 const servedModelId = (provider, artifact) => artifact;
+const downloadJobKey = (provider, artifact) => `${provider || ""}/${artifact || ""}`;
+const mcStore = { defaultBusy: new Set(), data: null, hub: { data: null } };
+const mcRowsOf = () => [];
+const mcArts = () => [];
+const document = { activeElement: null };
 const mcRender = () => {};
 const renderDefaults = async () => {};
 const $ = () => ({});

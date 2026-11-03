@@ -1212,7 +1212,9 @@ def prepare_serve_bind(
     elif setting["port_source"] == "stored":
         port, port_source = int(setting["port"]), "setting"
     else:
-        port, port_source = DEFAULT_PORT, "default"
+        from .instances import gateway_port
+
+        port, port_source = gateway_port(), "default"
 
     exports: Dict[str, str] = {}
     if host_source == "setting" and mode in ("lan", "internet") and not is_loopback_host(host):
@@ -1398,7 +1400,7 @@ def mode_warnings(
         "Browser apps (Apps page) open through this gateway at /apps/<app>/, with the same address and sign-in; "
         "they never listen on the network themselves.",
         "Engine and app installs default to OFF for other computers on a non-loopback bind; someone at this computer "
-        "can still install (Settings → allow_engine_install).",
+        "can still install (`abstractgateway-config set allow_engine_install on`).",
     ]
     if mode == "lan":
         return common

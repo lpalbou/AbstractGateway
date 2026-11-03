@@ -101,7 +101,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="endpoint-capabilities"' not in console.text
     assert 'id="endpoint-profiles-table"' in console.text
     assert "virtual provider" in console.text
-    assert "Remote providers" in console.text and "Local providers" in console.text
+    assert "Cloud providers" in console.text and "Local providers" in console.text and 'id="cloud-providers-root"' in console.text
     assert "Use Test to preview discovery" in console.text
     assert "Confirm" in console.text
     assert "provider-modal" in console.text
@@ -114,7 +114,10 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "window.prompt(" not in console.text
     assert 'id="login-form"' in console.text
     assert 'id="toggle-token"' in console.text
-    assert "<h2>Sign in</h2>" in console.text and "Use the token your gateway admin gave you." in console.text
+    # 0.18.0: Password first, Token behind one link; a fresh gateway shows the onboarding form.
+    assert '<h2 id="login-title">Sign in</h2>' in console.text and "Sign in with your account and password." in console.text
+    assert 'id="login-method-switch"' in console.text and ">Sign in with a token instead</button>" in console.text
+    assert 'id="onboarding-form"' in console.text and "/api/gateway/session/onboarding" in console.text
     # Operator IA (2026-07-13): Users & Entities | Runtimes | Providers |
     # Multimodal Capabilities | Sandbox. Entities are door principals and
     # live WITH users; runtimes split into their own tab; sandbox is last.
@@ -315,7 +318,10 @@ def test_gateway_console_inline_javascript_submits_login_request() -> None:
 
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     assert scripts
-    script_source = json.dumps("\n".join(scripts))
+    # This VM exercises login/default-routing against a partial fake DOM.
+    # Resources initialization needs real layout/observers and is covered by
+    # test_gateway_console_browser_resources.py, using the served whole page.
+    script_source = json.dumps("\n".join(scripts).replace("initResourcesDashboard();", ""))
     harness = f"""
 import vm from "node:vm";
 const source = {script_source};
@@ -378,6 +384,7 @@ class Element {{
   get options() {{ return this.children; }}
   get selectedOptions() {{ return this.children.filter((child) => child.selected); }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
 }}
 
 const elements = new Map();
@@ -602,6 +609,7 @@ vm.runInContext(source, context);
 await new Promise((resolve) => setTimeout(resolve, 0));
 
 el("login-user").value = "admin";
+el("login-method-switch").onclick();  // Password is the default method; the token is behind the link.
 el("login-token").value = "test-token";
 el("login-form").onsubmit({{ preventDefault() {{}} }});
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1250,6 +1258,7 @@ def test_models_meter_and_residency_primitives_offline() -> None:
 class Element {{
   constructor() {{ this.children = []; this.className = ""; this.textContent = ""; this.style = {{}}; this.title = ""; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{ add(name) {{ self.className = (self.className + " " + name).trim(); }} }};
@@ -1319,6 +1328,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -1386,7 +1396,7 @@ console.log(JSON.stringify(results));
     assert default_view["toggleText"] == "Show configured / cached (2)"
     assert len(default_view["rows"]) == 1, "default view is resident rows ONLY"
     assert default_view["rows"][0]["pill"] == "resident"
-    assert "Unload" in default_view["rows"][0]["buttons"] and "Unlock" in default_view["rows"][0]["buttons"]
+    assert "Unload" in default_view["rows"][0]["buttons"] and "Kept loaded" in default_view["rows"][0]["buttons"]
 
     toggled = steps["toggled"]
     assert toggled["title"] == "Models (1 resident)", "the toggle must not inflate the resident count"
@@ -1409,7 +1419,7 @@ console.log(JSON.stringify(results));
     # and Unload stay absent (nothing is in memory to lock or unload).
     locked_evicted = steps["locked-evicted"]
     assert len(locked_evicted["rows"]) == 1
-    assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "Unlock"]
+    assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "Kept loaded"]
 
 
 def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory() -> None:
@@ -1441,6 +1451,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -1662,6 +1673,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
 }}
 const facts = new El();
 function $(id) {{ return id === "models-host-facts" ? facts : new El(); }}
@@ -2095,9 +2107,8 @@ console.log(JSON.stringify(results));
 
 def test_console_source_carries_the_canonical_wording_and_none_of_the_old() -> None:
     """Belt and braces on the SERVED page, not just the sliced functions: the
-    spec's exact strings ship, and the two banned words ship nowhere — not in a
-    label, not in a tooltip, not in a comment that could be copied back into
-    one."""
+    spec's exact strings ship and accelerator-heap scope stays precise. System
+    RAM/CPU may legitimately use broader scope labels."""
     html = gateway_console_html()
     for exact in (
         "Accelerator heap · ${backend || \"device\"} (${scope})",
@@ -2120,7 +2131,11 @@ def test_console_source_carries_the_canonical_wording_and_none_of_the_old() -> N
         assert exact in html, exact
     # The remainder and the misleading scope name are gone from the whole page.
     assert "nattributed" not in html
-    assert "host-wide" not in html and "Host-wide" not in html
+    # The prohibition belongs to accelerator-heap scope. CPU and system RAM
+    # really are host-wide, and the new dashboard must name that distinction.
+    from test_gateway_console_offline import _slice_function
+    accelerator = _slice_function(html, "deviceMeterView")
+    assert "host-wide" not in accelerator and "Host-wide" not in accelerator
 
 
 def test_models_process_rss_is_stated_exactly_once() -> None:
@@ -2151,6 +2166,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -2245,6 +2261,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -2324,6 +2341,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -2380,7 +2398,7 @@ els["models-table"].children.forEach((tr, i) => {{
   const found = walk(tr);
   rows[visible[i].model] = {{
     buttons: found.map((b) => b.text),
-    lockTitle: (found.find((b) => b.text === "Lock" || b.text === "Unlock") || {{}}).title || "",
+    lockTitle: (found.find((b) => b.text === "Keep loaded" || b.text === "Kept loaded") || {{}}).title || "",
     size: sizeCell(tr),
   }};
 }});
@@ -2389,21 +2407,21 @@ console.log(JSON.stringify([rows]));
     (rows,) = _node(harness)
     # A sweep-resident row (lockable UNREPORTED) now offers Lock: locking
     # adopts the externally loaded model.
-    assert rows["swept"]["buttons"] == ["Estimate", "Lock", "Unload"]
-    assert rows["managed"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    assert rows["swept"]["buttons"] == ["Estimate", "Keep loaded", "Unload"]
+    assert rows["managed"]["buttons"] == ["Estimate", "Keep loaded", "Unload"]
     # Only an explicit refusal withholds the control.
     assert rows["refused"]["buttons"] == ["Estimate", "Unload"]
-    assert rows["locked-swept"]["buttons"] == ["Estimate", "Unlock", "Unload"]
+    assert rows["locked-swept"]["buttons"] == ["Estimate", "Kept loaded", "Unload"]
     # Locked-but-evicted keeps Unlock and nothing else: no lock is stranded.
-    assert rows["locked-evicted"]["buttons"] == ["Estimate", "Unlock"]
+    assert rows["locked-evicted"]["buttons"] == ["Estimate", "Kept loaded"]
     # A configured row that is NOT in memory has nothing to lock or unload.
     assert rows["configured"]["buttons"] == ["Estimate"]
 
     # D1 — the GATE is unchanged (both rows still offer Lock); the WORDING is
     # what `source` now selects.
     adopt = "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
-    plain = "Lock this model in memory so nothing can evict it"
-    assert rows["adopt-me"]["buttons"] == ["Estimate", "Lock", "Unload"]
+    plain = "Keep this model loaded: it is never evicted to make room for another model"
+    assert rows["adopt-me"]["buttons"] == ["Estimate", "Keep loaded", "Unload"]
     assert rows["adopt-me"]["lockTitle"] == adopt
     assert rows["gateway-loaded"]["lockTitle"] == plain, (
         "a gateway-loaded row must not be told the lock adopts anything"
@@ -2465,6 +2483,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); this.options = this.children; }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -2570,6 +2589,7 @@ class El {{
   get textContent() {{ return this._tc; }}
   set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
   append(...items) {{ this.children.push(...items); this.options = this.children; }}
+  prepend(...items) {{ this.children.unshift(...items); }}
   get classList() {{
     const self = this;
     return {{
@@ -2714,6 +2734,9 @@ const cases = {{
     ] }} }}),
   deferredOnly: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [ {{ provider: "mlx", model: "a", deferred: true }} ] }} }}),
   empty: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [] }} }}),
+  refused: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [], refusals: [
+    {{ code: "model_does_not_fit", message: "old refusal" }},
+    {{ code: "model_does_not_fit", message: "b/14b needs 13.7 GB but only 6.1 GB is free on the GPU. Choose a smaller model." }} ] }} }}),
   missing: ejectStatusLines({{ models: [] }}),
   degraded: ejectStatusLines({{ models: null }}),
 }};
@@ -2729,6 +2752,8 @@ console.log(JSON.stringify([cases]));
     ]
     assert out["deferredOnly"] == [{"tone": "warn", "text": "Will eject mlx/a when the in-flight call ends."}]
     assert out["empty"] == []
+    # AbstractCore ADR 0010: the last refused load, its sentence, as an error line (MUTANT: dropped -> RED)
+    assert out["refused"] == [{"tone": "err", "text": "Not loaded: b/14b needs 13.7 GB but only 6.1 GB is free on the GPU. Choose a smaller model."}]
     assert out["missing"] == [
         {"tone": "muted", "text": "Eject status: this gateway's host snapshot does not report residency diagnostics."}
     ]

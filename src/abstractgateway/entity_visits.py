@@ -537,13 +537,15 @@ class EntityVisitHost:
     def reap_now(self) -> int:
         """One sweep, two repairs. Returns the number of acts performed.
 
-        (A) DUE PARKED VISITS: drive every parked visit whose idle deadline
+        (A) DUE PARKED VISITS: drive every parked visit whose idle or explicitly
+        declared conversational clarification deadline
         has PASSED (the per-home run store's indexed due query — never a
         full-store parse). Deliberately narrow: only DUE deadline waits are
         touched. A RUNNING-at-rest run (host crash mid-turn) stays for the
         explicit /tick recovery verb — the reaper never resumes half-driven
-        cognition on its own clock; the one LLM call it can trigger is the
-        idle close's ruled reflection pass.
+        cognition on its own clock. An idle deadline triggers the close's ruled
+        reflection pass; a clarification deadline continues with its predeclared
+        safe fallback. Essential questions and tool approvals have no such deadline.
 
         (B) STALE YIELD POSTURES: a home stuck at asleep(mode=visiting)
         with NO live session anywhere (the 20:39 incident: a hosted chat
@@ -673,6 +675,7 @@ class EntityVisitHost:
         participants: Optional[List[str]] = None,
         session_id: Optional[str] = None,
         session_tools: Optional[Dict[str, Any]] = None,
+        conversation: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """`participants` here is TRUSTED input: the route derives it from
         the authenticated principal (payload claims are refused at the
@@ -685,6 +688,7 @@ class EntityVisitHost:
             session_id=session_id,
             channel_label="operator-visit",
             session_tools=session_tools,
+            conversation=conversation,
         )
         out = {
             "run_id": leg["run_id"],
@@ -725,6 +729,7 @@ class EntityVisitHost:
         session_id: Optional[str],
         channel_label: str,
         session_tools: Optional[Dict[str, Any]] = None,
+        conversation: Optional[bool] = None,
     ) -> Any:
         """Preflight + start ONE visit leg atomically against concurrent
         opens on the same home (the check->create window closes under a
@@ -740,6 +745,7 @@ class EntityVisitHost:
                 session_id=session_id,
                 channel_label=channel_label,
                 session_tools=session_tools,
+                conversation=conversation,
             )
         return pre, leg
 
@@ -959,6 +965,7 @@ class EntityVisitHost:
         session_id: Optional[str],
         channel_label: str,
         session_tools: Optional[Dict[str, Any]] = None,
+        conversation: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Mint -> start -> stamp -> seed -> drive-to-park for ONE visit leg
         (shared by the operator visit and each side of a two-entity meet).
@@ -1018,8 +1025,13 @@ class EntityVisitHost:
                 budget_profile=budget_profile,
                 visit_id=visit_id,
                 model_info=_mi,
+                conversation=conversation is True,
             )
             initial_vars = _seed_run_vars(er)
+            if conversation is not None:
+                if not isinstance(conversation, bool):
+                    raise ValueError("conversation must be a boolean")
+                initial_vars.setdefault("_runtime", {})["conversation"] = {"enabled": conversation}
             if session_tools is not None:
                 from .entity_session_tools import install_policy
 
@@ -1420,7 +1432,7 @@ class EntityVisitHost:
 
     # -------------------------------------------------------------- internal
     def _build_spec(self, er: Any, *, participants: List[str], budget_profile: Optional[Dict[str, Any]],
-                    visit_id: Optional[str], model_info: Optional[Dict[str, str]]) -> Any:
+                    visit_id: Optional[str], model_info: Optional[Dict[str, str]], conversation: bool = False) -> Any:
         from abstractruntime.identity.visit_workflow import build_visit_workflow
 
         return build_visit_workflow(
@@ -1430,10 +1442,10 @@ class EntityVisitHost:
             idle_seconds=self._idle_timeout_s,
             model_info=model_info,
             visit_id=visit_id,
-            react_middle=self._build_react_middle(er, model_info),
+            react_middle=self._build_react_middle(er, model_info, conversation=conversation),
         )
 
-    def _build_react_middle(self, er: Any, model_info: Optional[Dict[str, str]]) -> Any:
+    def _build_react_middle(self, er: Any, model_info: Optional[Dict[str, str]], *, conversation: bool = False) -> Any:
         """Agent's proven two-line construction (commons c347/c349, pinned by
         their test_react_visit_merge.py): the middle arrives as DATA — the
         door builds it from abstractagent's public API and hands it to
@@ -1463,6 +1475,9 @@ class EntityVisitHost:
 
         grant = resolve_tool_grant(Path(er.home.home_dir), "visit")
         tool_defs = _entity_tool_definitions(grant.tools, ToolDefinition)
+        if conversation:
+            from abstractagent.logic.builtins import ASK_USER_TOOL
+            tool_defs.append(ASK_USER_TOOL)
         # The entity's own mailbox tools (round 3 §3.1), offered while its "Agent email tools"
         # switch is active; the door's TOOL_CALLS handler runs them through its account.
         from .mail.runtime_wiring import entity_email_tool_specs
@@ -1491,7 +1506,7 @@ class EntityVisitHost:
             # hand-copy hole). Effective offer + execution allowlist are
             # UNCHANGED (the adapter intersects against logic.tools); only
             # the trace is added.
-            allowed_tools=list(grant.tools) + [s["name"] for s in email_specs],
+            allowed_tools=list(grant.tools) + [s["name"] for s in email_specs] + (["ask_user"] if conversation else []),
             final_next_node=HARVEST_NODE,
         )
         return ReactMiddle(nodes=react.nodes, entry="reason", reset_turn=reset_react_turn)
@@ -1517,6 +1532,7 @@ class EntityVisitHost:
             budget_profile=stamp.get("budget_profile"),
             visit_id=stamp.get("visit_id"),
             model_info=dict(visit_vars.get("model_info") or {}),
+            conversation=(((run.vars or {}).get("_runtime") or {}).get("conversation") or {}).get("enabled") is True,
         )
         with self._lock:
             self._specs[run.run_id] = wf
@@ -1535,6 +1551,9 @@ class EntityVisitHost:
         registry = self._registry
         manifest = registry.manifest_for(name)
         er = registry.get_entity_runtime(manifest.slug)
+        if need_spec:
+            from .steering import attach_steer_store
+            attach_steer_store(er.runtime, er.home.home_dir)
         run = er.run_store.load(str(run_id or ""))
         if run is None or str(getattr(run, "workflow_id", "") or "") != VISIT_WORKFLOW_ID:
             raise VisitRefused(404, f"no visit run {run_id!r} on {manifest.entity_id}", code="visit_not_found")

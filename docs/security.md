@@ -456,6 +456,90 @@ Catalog mutation routes are admin-only under
 `/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
 available at `GET /api/gateway/workflow-catalog`.
 
+## Sign-in: passwords, tokens and the first-run window
+
+Since 0.19.0 an account signs in with its **account id and a password** or with its
+**gateway token**; both open the same browser session (`POST /api/gateway/session/login`
+with `{user_id, password}` or `{user_id, token}`, exactly one of the two). Tokens stay
+for apps, scripts and the OpenAI-compatible API (`/v1` takes named API keys).
+
+**Password storage.** The hash is on the account's registry record
+(`<data dir>/auth/users.json`, `password_hash`): `hashlib.scrypt` (N=2^16, r=8, p=1,
+16-byte salt, 32-byte key) in the self-describing form `scrypt$N$r$p$salt$key`, compared in
+constant time. No password is ever written, logged or returned. The strength rule: at least
+10 characters with at least 5 different ones, not built around the account name, not a
+well-known password.
+
+**Attempt limits** (process-local; a restart clears them, like the token lockout below;
+every counter decays: refusals older than 15 minutes stop counting; an IPv6 address counts
+as its /64). Ten refused passwords from one address in 15 minutes lock that address for 15
+minutes. Five refused passwords in a row for one account FROM ONE ADDRESS lock that (account,
+address) pair for 30 seconds, doubling up to 15 minutes. Every 20 refused passwords for one
+account from all addresses within 15 minutes lock the account for 15 minutes, doubling at each
+further lock up to 24 hours (back to 15 minutes after a quiet 30 minutes past the last lock);
+an address that signed this account in during the last 30 days is not held by that lock, so a
+distributed guesser cannot lock the owner out. Counters are kept per hashed account name and
+never dropped while locked, so a flood of made-up names cannot reset them. Residual: the
+"signed in before" exemption is per address, so callers sharing the owner's address (a shared
+NAT, the same IPv6 /64) share it too and fall back to the per-address limits (never for a
+loopback address, which every caller behind a header-less proxy has).
+A lock answers 429 `too_many_attempts` with `retry_after_s`, even for the right password; the
+account's TOKEN still signs in, so a guesser cannot lock automation out. Residual: with proxy
+trust on (or behind a proxy that passes the header through), the address is the left-most
+`X-Forwarded-For` entry, which a client can vary; the per-account limit still holds. Every refusal is the same sentence (`password_refused`:
+"That account and password don't match.") whether the account is unknown, has no password,
+is deactivated or the password is wrong, and an unknown account costs the same scrypt time.
+
+**Sessions follow credentials.** A browser session is bound to the account's credentials
+(token hash, and the password hash once one is set), and setting, changing or removing a
+password also deletes the account's other sessions at once (so none can revive when a
+credential returns to an earlier value). `PUT /me/password` and an admin's `PUT /admin/accounts/{id}/password`
+give the browser that made the change a fresh session.
+
+**Who sets passwords.** Anyone signed in sets their own (`PUT /me/password`, current password
+required once one exists, under the attempt limits). Admins set or remove anyone's
+(`PUT|DELETE /admin/accounts/{id}/password`) and may give one at creation
+(`POST /admin/users` `password`). Entities never have a password. The last-admin rule is
+unchanged.
+
+**Where tokens come from (automation).** `POST /api/gateway/admin/users` answers the new
+account's token once; an admin rotates another account's token with
+`PATCH /api/gateway/admin/users/{id}` `{"rotate_token": true}` (answered once); anyone rotates
+their own with `POST /api/gateway/me/token/rotate`. The bootstrap admin's token is in
+`<data dir>/auth/bootstrap-admin-token` (0600).
+
+### The first-run window (an unclaimed gateway)
+
+A fresh data folder (the bootstrap admin was just created, with a generated token, on an
+empty registry) is **unclaimed** until an admin signs in or the admin gets a password. While
+unclaimed, `GET /api/gateway/session/onboarding` (public) answers `unclaimed: true` and
+`POST /api/gateway/session/onboarding` sets the admin password and signs the browser in.
+That window is the risk, and it is fenced:
+
+- **browser only**: the POST needs an `Origin` header, and the security middleware has
+  already refused any Origin the gateway does not accept;
+- **the setup code** (six words from a list of 273, about 48 bits, stored in
+  `<data dir>/auth/onboarding.json`, 0600) is ALWAYS required. A gateway behind
+  `tailscale serve`/Funnel, a container's port mapping, a shared LAN, or a proxy that adds
+  no forwarding headers at all (a minimal nginx `proxy_pass`, `tailscale funnel --tcp`,
+  `ssh -R`) looks like a local caller to itself, so nothing about a request proves the person
+  is at the machine. (A first draft skipped the code for a loopback peer without forwarding
+  headers; the adversarial review took the gateway through a header-less proxy.) Someone at
+  the machine has the no-code path anyway: the one-time claim link;
+- **limits**: 5 refused setup codes per address and 20 across all addresses per 15 minutes
+  (then 429 for 15 minutes; the gateway-wide lock never applies to a loopback peer without
+  forwarding headers, so strangers cannot lock the machine's own browser out);
+- **logged**: a warning log line and the audit line's `onboarding` detail with the client
+  address, and `claimed_at / claimed_via / claimed_from` in `onboarding.json`;
+- **closes for good** on the first admin sign-in of any kind (password, token, one-time
+  link, email code), when the admin gets a password, or when an admin creates an account
+  (bearer-token API use alone does not close it; the code still guards it); pending one-time links are deleted
+  then. A data folder that was not fresh when 0.19.0 first ran never has the record, so an
+  upgrade never opens the window.
+
+The one-time claim link (`abstractgateway claim`) stays the loopback-only path: it is
+refused from any non-loopback peer or through a proxy.
+
 ## Origin allowlist (browser/origin defense)
 
 If the request includes an `Origin` header, the middleware allows it only when
@@ -1013,3 +1097,68 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is one of their account's named API keys (or, for compatibility, their gateway token), resolved by the security middleware. A named key is checked against a PBKDF2 hash with its fingerprint in the user registry and valid at `/v1` only (anywhere under `/api/gateway/`, sign-in included, it answers 401 and never counts as a guess), obeys its account's OpenAI API switch and Active state, and is revoked one at a time with effect at the next request; making, revealing or revoking one is an audit line (`openai_key_change`: action, name and fingerprint, never the key). Admins see every account's keys (never a key) and can revoke any; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Request fields that would re-route a provider or carry a credential (`base_url`, `api_key`, `provider`, `headers`, ...) are refused with 400, so a caller cannot make the gateway connect to an address of its choosing. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line naming the account and, for a named key, its name; it records the request and the response with credentials removed (the caller's key, the internal key and fields named like a credential read `[redacted]`), readable by an admin for every request and by each account for its own. See [openai-api.md](./openai-api.md).
 
 **Owner reveal and its trade-off.** By default ("API keys can be revealed by their owner", an admin setting on the OpenAI API page) each named key is also stored encrypted at rest, so its owner, and only its owner, can reveal it again (`POST /api/gateway/me/openai-keys/{fingerprint}/reveal`; anyone else, admins included, gets `403 not_owner`; each reveal and each refused attempt is an audit line). The sealing is the email credentials' own: AES-256-GCM under the data folder's key file (`<data dir>/secrets/sealing.key`; the copies in `<data dir>/auth/openai_key_secrets/`), see [Sealed secrets](#sealed-secrets-one-key-file-per-data-folder). What that protects, honestly: a copy of the data folder without `secrets/` reveals nothing; a copy of the whole folder carries the key, and code running as the gateway's OS user can read it. Keys sealed by 0.13 with the keychain key say "Reveal unavailable: created before the key moved — create a new key" (Revoke still works). The alternative is show-once: with the setting off, every stored copy is erased at once and the gateway keeps only hashes, so a leak of the data folder or a backup never yields a usable key, at the cost that a forgotten key must be replaced in every app. Owner reveal suits a personal gateway, where the person who can read the data folder owns the keys anyway; turn it off for a shared or hosted gateway where data-folder leaks are the larger risk.
+
+## Security incidents
+
+Findings about the gateway's own security posture, newest first: what was exposed, since when, how it was
+found, what was decided. The runtime incident ledger (unavailability, restarts) is a different thing (backlog 0943).
+
+### 2026-10-29: scratch gateways wrote capability defaults into the operator's shared Core store
+
+- **What happened**: during the model-residency audit, two scratch gateways (started directly with their own data
+  dir, no `ABSTRACTCORE_CONFIG_DIR` / `ABSTRACTCORE_CONFIG_FILE` in their environment) answered the console's
+  `PUT /api/gateway/config/capability-defaults/{kind}/{modality}` and wrote the routes into THE Core store,
+  `~/.abstractcore/config/abstractcore.json` — the file the operator's own gateway on 8080 reads — not into their
+  scratch dir. The operator's `input.text` (endpoint:airelay / gpt-5.6-terra, reasoning minimal) and
+  `embedding.text` (lmstudio / text-embedding-qwen3-embedding-0.6b) rows were overwritten with the probe's models.
+- **Effect**: the operator's gateway kept its in-memory routes (it was never restarted or chatted with), so no
+  request was answered by the wrong model; a restart in that window would have booted on the probe's defaults.
+  Scope: the operator's own machine; nothing left it.
+- **Why**: by design the gateway ROOT is not a scope — an admin editing a default edits the source
+  (`core_config._scoped_core_config_path`), and the source is resolved by AbstractCore's own resolver
+  (`ABSTRACTCORE_CONFIG_FILE` / `ABSTRACTCORE_CONFIG_DIR`, else `~/.abstractcore/config/abstractcore.json`).
+  The instances runner derives `<data dir>/core-config` for the children it starts (`instances.py`), but a gateway
+  started by hand with a data dir and no `ABSTRACTCORE_*` variable shares the machine store with every other
+  gateway on the machine. The audit harness set neither variable for its first runs.
+- **Found**: 2026-10-29 ~14:00 by the auditor, reading the shared file after its own PUTs; reported to the lead.
+- **Recovered**: the two rows were put back through the gateway's own writer
+  (`core_config.save_gateway_capability_default`) at ~14:12 — `embedding.text` read back from the live 8080
+  gateway's in-memory route, `input.text` from the profile that holds the relay URL; verified against
+  `GET /api/gateway/config/capability-defaults` on 8080. Later probe runs set `ABSTRACTCORE_CONFIG_FILE` to a file
+  under their scratch dir and the shared store stayed untouched (checked after each run).
+- **Decision**: backlog 0979 — a gateway given a data dir never writes outside it: the Core config dir is derived
+  from the data dir by default (as the instances runner already does), the machine store is used only by a
+  gateway with no explicit data dir, and a test starts a gateway with a data dir, PUTs a capability default and
+  asserts the shared store is byte-identical. Rule for every seat until then: a scratch gateway is started with
+  `ABSTRACTCORE_CONFIG_FILE` (or `_DIR`) pointing inside its scratch dir.
+
+### 2026-10-29: AbstractNote's 14 write routes had no authorization decision
+
+- **Exposed**: with `abstractnote` installed (every install profile; the operator's instances) the gateway mounts
+  `abstractnote.gateway.router` under `/api/gateway/note` (`abstractnote_seam.py`). Its 14 write routes
+  (`POST .../claims/{claim_id}/retract`, `.../communities/recompute`, `.../entities/normalize`,
+  `.../entities/{entity_id}/unmerge`, `.../insights/{note_id}/ack`, `.../notes/{note_id}/archive`,
+  `.../notes/{note_id}/redate`, `.../processor/ensure`, `.../queue/{note_id}/priority`, `.../queue/{note_id}/retry`,
+  `.../refile`, `.../review/{review_id}/confirm`, `.../tasks/{task_id}/close`, `PUT .../settings`) carried no
+  `GATEWAY_ROUTE_POLICIES` row and were not on the contract test's user-level allowlist.
+- **Effect**: no admin requirement applied, so every route was reachable by ANY signed-in principal (member or
+  admin); an anonymous caller got 401 as for every other write. Each handler resolves the caller's principal and
+  plane itself and acts on that plane's own notebook. In a plane of their own a member could only change their own
+  notebook. In a SHARED plane (several accounts bound to one runtime, or an entity's plane) twelve routes are
+  account-stamped, reversible knowledge edits; two act on the whole plane — `PUT /settings` (filing and answering
+  models, schedules) and `POST /processor/ensure` (archives automations another account may have created and
+  recreates them under the caller) — and a member could run them. Nothing was open to the unauthenticated.
+- **Since**: the seam mount (checkpoint 840af7e9, 2026-10-22) with abstractnote 0.2.0 (the routes exist since
+  2026-10-19). Gateway CI never installs abstractnote, so
+  `tests/test_gateway_route_authorization_contract.py::test_every_write_route_has_an_explicit_authorization_decision`
+  stayed green in CI and failed on every real install.
+- **Found**: 2026-10-29 by a worker running that test on a machine with abstractnote installed; confirmed by the
+  merge desk against the PyPI 0.2.0 wheel.
+- **Decision** (PR #55): all 14 recorded user-level with the reason above; no runtime behaviour changed. An admin row
+  would break the Note app for every member, so the shared-plane gate for `PUT /settings` and `POST /processor/ensure`
+  (admin or the plane owner) is an abstractnote handler change (abstractnote backlog, 2026-10-29). Follow-up here:
+  backlog 0972 (CI installs every seam package it mounts so the contract covers seam routes).
+- **Rule since** (backlog 0972): a seam is covered by CI or it is not shipped. The CI test job installs every
+  package a seam mounts (today `abstractnote>=0.2.0`, step "Install the seam packages") and
+  `tests/test_gateway_seams_mounted.py` fails when one of them is not mounted in the route table the
+  authorization contract walks, so a new seam write route without a decision is red in CI the day it lands.

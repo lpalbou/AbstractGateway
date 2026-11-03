@@ -19,10 +19,25 @@ Clients (AbstractFlow, AbstractCode, AbstractObserver, AbstractContinuum,
 AbstractEntity, AbstractAssistant, scripts) talk to the gateway over HTTP, so
 none of them depends on the others.
 
+Native clients use the run APIs and replay views. OpenAI-compatible HTTP access
+is optional: Gateway `/v1` uses Gateway credentials; a direct AbstractCore
+listener uses Core's own bind and authentication. Both can share the supervised
+execution owner's local resources. See [configuration](docs/configuration.md#openai-compatible-endpoint).
+
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.17.2** ([CHANGELOG](CHANGELOG.md)): the console's app manager installs
+**What's new in 0.19.0** ([CHANGELOG](CHANGELOG.md#0190---2026-11-02); it also ships the
+changes prepared as 0.18.0, which was not published): a fresh gateway is set up from the
+browser with an admin password, and accounts sign in with a password or a token; the models
+run in a supervised model host process on every OS; decisions (`POST /v1/decisions`,
+`POST /api/gateway/runs/{run_id}/decisions`) over AbstractCore 2.32.0's decision models;
+several self-contained gateway instances on one machine; the redesigned Models library,
+Resources page and tray menu; Assistant (web) as a managed app; voice streams that send
+keep-alive lines and record what they did in the audit log; and dictation recordings kept out
+of conversation attachments. It requires AbstractCore 2.32.0, AbstractRuntime 0.16.0 and AbstractAgent 0.5.0.
+
+**What's new in 0.17.2**: the console's app manager installs
 the versions the AbstractFramework release pins (a newer one is offered as an update,
 never installed by itself); `network status` reports the user auth a loopback gateway
 turned on itself.
@@ -290,6 +305,8 @@ returns artifacts):
 - video: `POST /api/gateway/runs/{run_id}/videos/generate`,
   `/videos/from_image`
 - music: `POST /api/gateway/runs/{run_id}/music/generate`
+- decisions: `POST /api/gateway/runs/{run_id}/decisions` (yes/no, choice and
+  score answers about a text, with confidence; no artifact)
 - run data: `GET /api/gateway/runs/{run_id}/input_data`,
   `GET /api/gateway/runs/{run_id}/history_bundle`
 
@@ -427,6 +444,13 @@ See [docs/getting-started.md](docs/getting-started.md) for running, split API/ru
 Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
 (`--run-index`) and the garbage-collector tuning (`--gc-tuning`) are in
 [docs/configuration.md](docs/configuration.md#cli-flags).
+
+## For AI agents
+
+Register and use the [AbstractGateway agent skill](https://github.com/lpalbou/AbstractGateway/tree/main/skills/abstractgateway)
+for the authenticated run workflow, replay and approval contracts, model-host
+diagnostics, and optional inference endpoints. Copy `skills/abstractgateway/`
+from the matching source checkout into your agent's skills directory.
 
 ## Docs
 

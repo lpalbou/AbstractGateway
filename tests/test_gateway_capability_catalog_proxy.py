@@ -1237,3 +1237,24 @@ def test_vision_linux_hides_apple_local_engines_only(monkeypatch, source, expect
                'models_by_provider': {'mlx-gen': ['flux'], 'mflux': ['flux'], 'huggingface': ['flux']}}
     result = routes._filter_vision_provider_models_response(payload, provider=None, providers_only=True)
     assert result['providers'] == expected
+
+
+@pytest.mark.parametrize('source', ['abstractruntime.discovery', 'abstractvision_local_cache'])
+def test_vision_linux_hides_apple_engines_in_the_providers_only_answer(monkeypatch, source):
+    """Operator QA 2026-10-28 (d): on the Linux server the capability editor's provider list
+    (`providers_only=true`, source `abstractruntime.discovery`) offered mflux and mlx-gen, and
+    the answer's `details` named them. Both are local catalogs: pruned off a Mac."""
+    import abstractgateway.routes.gateway as routes
+    monkeypatch.setattr(routes.platform, 'system', lambda: 'Linux')
+    payload = {'source': 'abstractruntime.discovery_facade', 'upstream_source': source,
+               'providers': ['openai', 'huggingface', 'mlx-gen', 'mflux', 'sdcpp'], 'available_providers': ['huggingface'],
+               'details': {'huggingface': {}, 'mlx-gen': {}, 'mflux': {}, 'sdcpp': {}}}
+    result = routes._filter_vision_provider_models_response(payload, provider=None, providers_only=True)
+    assert result['providers'] == ['openai', 'huggingface', 'sdcpp']
+    assert sorted(result['details']) == ['huggingface', 'sdcpp']
+    # A remote Core (`base_url`) may be a Mac: its answer is kept as it is.
+    kept = routes._filter_vision_provider_models_response(payload, provider=None, providers_only=True, remote=True)
+    assert 'mflux' in kept['providers'] and 'mlx-gen' in kept['details']
+    # On a Mac nothing is pruned.
+    monkeypatch.setattr(routes.platform, 'system', lambda: 'Darwin')
+    assert 'mflux' in routes._filter_vision_provider_models_response(payload, provider=None, providers_only=True)['providers']

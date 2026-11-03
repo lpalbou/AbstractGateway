@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from .console import gateway_console_html
 
@@ -130,7 +130,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.17.2",
+    version="0.19.0",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -208,6 +208,12 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 from .loop_watchdog import InflightRequests  # noqa: E402
 
 app.add_middleware(InflightRequests)
+
+# Outermost of all (2026-10-29, shutdown_drain.py): when a stop signal arrives, every GET request
+# sees its client leave, so live streams end at once instead of holding the shutdown.
+from .shutdown_drain import EndStreamsOnShutdown  # noqa: E402
+
+app.add_middleware(EndStreamsOnShutdown)
 
 # Entities routers first: their literal paths (/gateway/entities/...) must win
 # over any parametrized /gateway/... routes in the main gateway router.
@@ -287,11 +293,18 @@ app.include_router(triggers_router, prefix="/api")
 # Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
 # /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
 app.include_router(email_router, prefix="/api")
+# First-run onboarding and password sign-in (0.18.0): routes/session_passwords.py.
+from .routes.session_passwords import router as session_passwords_router  # noqa: E402
+
+app.include_router(session_passwords_router, prefix="/api")
 # The caller's own event stream (framework backlog 1046): /gateway/me/events (catch-up),
 # /gateway/me/events/stream (SSE), /gateway/me/events/notifications; literal paths.
 from .routes.me_events import router as me_events_router  # noqa: E402
 
 app.include_router(me_events_router, prefix="/api")
+
+from .routes.session_reads import router as session_reads_router  # noqa: E402
+app.include_router(session_reads_router, prefix="/api")
 # The replay view of a run (framework backlog 0993, AbstractRuntime ADR-0009):
 # /gateway/runs/{run_id}/view and /gateway/runs/{run_id}/view/stream.
 from .routes.replay_view import router as replay_view_router  # noqa: E402
@@ -619,6 +632,24 @@ async def gateway_console() -> HTMLResponse:
     return HTMLResponse(gateway_console_html())
 
 
+@app.get("/console/assets/apps/{name}", include_in_schema=False)
+async def gateway_console_app_illustration(name: str) -> Response:
+    """An Apps-card illustration (apps_manager.registered_illustrations):
+    read-only, public like the console page itself, and only for a file
+    name the app registry declares and the package carries; 404 otherwise.
+    The card's URL carries a version query, so the response is immutable."""
+    from .apps_manager import ILLUSTRATION_TYPES, registered_illustrations
+
+    path = registered_illustrations().get(name)
+    if path is None or not path.is_file():
+        return Response(status_code=404, content="Not found", media_type="text/plain")
+    return FileResponse(
+        path,
+        media_type=ILLUSTRATION_TYPES[path.suffix.lower()],
+        headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 @app.get("/api/health")
 async def health_check():
     """Liveness + runner visibility.
@@ -638,6 +669,17 @@ async def health_check():
         body["watchdog"] = _watchdog_snapshot()
     except Exception:
         pass
+    # Model host (ADR 0002): where the models run; in the `process` mode the child's state, pid,
+    # restarts in the window, memory, and the newest incident. `failed` (it stopped restarting)
+    # degrades the status; the gateway itself still answers.
+    try:
+        from . import model_host as _model_host
+
+        body["model_host"] = _model_host.health_snapshot()
+        if body["model_host"].get("state") == "failed":
+            body["status"] = "degraded"
+    except Exception as e:  # noqa: BLE001 - health stays answerable; the error is shown
+        body["model_host"] = {"error": f"{type(e).__name__}: {e}"}
     # Worker pools (gateway load 2026-10-26): size, threads started, queued work per kind.
     try:
         from .work_pools import pool_stats
@@ -759,4 +801,11 @@ async def health_check():
         pass
     if runner_snapshot.get("degraded"):
         body["status"] = "degraded"
+    # A move to "degraded" leaves an incident record on disk (health_incidents.py).
+    try:
+        from .health_incidents import note as _note_health
+
+        _note_health(body)
+    except Exception:
+        pass
     return body

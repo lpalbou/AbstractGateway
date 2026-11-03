@@ -77,6 +77,10 @@ class ProviderEndpointProfileError(ValueError):
     pass
 
 
+class ProviderEndpointProfileExistsError(ProviderEndpointProfileError):
+    """`create_only` and a connection with that id already exists: nothing was written."""
+
+
 def _gateway_root_data_dir() -> Optional[Path]:
     try:
         from .users import gateway_data_dir_from_env
@@ -142,12 +146,20 @@ class ProviderEndpointProfileStore:
         capabilities: Optional[Iterable[str]] = None,
         allowed_models: Optional[Iterable[str]] = None,
         enabled: Optional[bool] = None,
+        create_only: bool = False,
     ) -> ProviderEndpointProfile:
+        """Create or update the profile `profile_id`. `create_only=True` (the setup guide's
+        cloud provider cards) never touches an existing connection: the same id raises
+        ProviderEndpointProfileExistsError, decided under the store lock, before any write."""
         profile_id = normalize_profile_id(profile_id)
         now = utc_now_iso()
         with self._lock:
             profiles = self._load_profiles_locked()
             existing = next((p for p in profiles if p.id.lower() == profile_id.lower()), None)
+            if existing is not None and create_only:
+                raise ProviderEndpointProfileExistsError(
+                    f"A provider connection named {existing.id!r} already exists; it was left unchanged."
+                )
             if existing is None:
                 created_at = now
                 current_key = ""

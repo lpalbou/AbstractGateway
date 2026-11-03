@@ -18,6 +18,9 @@ import pytest
 
 from abstractgateway import abstractnote_seam as seam
 
+# These tests exercise the seam's workflow packing itself (conftest keeps it off elsewhere).
+pytestmark = pytest.mark.note_workflows
+
 
 @pytest.fixture()
 def without_abstractnote(monkeypatch: pytest.MonkeyPatch):

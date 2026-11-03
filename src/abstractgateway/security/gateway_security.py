@@ -1056,6 +1056,11 @@ class GatewaySecurityMiddleware:
             # codes, rate-limited per account and client address, a constant
             # answer (no enumeration).
             return True
+        if p == "/api/gateway/session/onboarding" and method in {"GET", "HEAD", "POST"}:
+            # First-run onboarding (routes/session_passwords.py): answers only while the data dir
+            # is unclaimed, browser requests only, attempt-limited, and needs the setup code
+            # unless the request comes straight from this machine.
+            return True
         if method in {"GET", "HEAD"} and p == "/api/gateway/session/recovery":
             # Whether the sign-in page offers the email options: one gateway-wide
             # boolean, never per account.

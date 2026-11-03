@@ -7,7 +7,7 @@ per user, without admin rights.
 - Linux: a systemd USER unit `~/.config/systemd/user/abstractgateway.service`
   (`Restart=on-failure`), enabled with `systemctl --user enable --now`. It runs
   only while the user is logged in unless lingering is enabled
-  (`loginctl enable-linger $USER`, printed as a hint, never run for you).
+  (`sudo loginctl enable-linger <user>`, printed when lingering is off, never run for you).
   Where no systemd user manager answers (non-systemd distros, WSL, some
   containers) the fallback is an XDG autostart entry
   `~/.config/autostart/abstractgateway.desktop`, started by the desktop
@@ -72,6 +72,32 @@ WINDOWS_SHORTCUT = "AbstractGateway.lnk"  # an earlier release's mechanism; remo
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 WINDOWS_STARTUP_APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 WINDOWS_RUN_VALUE = "AbstractGateway"
+
+
+# The names above are the DEFAULT instance's. Every reader and writer asks these, which answer for the
+# current instance (instances.py: `--instance NAME` / ABSTRACTGATEWAY_INSTANCE).
+def launchd_label() -> str:
+    from .instances import service_names
+
+    return service_names()["launchd_label"]
+
+
+def systemd_unit() -> str:
+    from .instances import service_names
+
+    return service_names()["systemd_unit"]
+
+
+def xdg_autostart_file() -> str:
+    from .instances import service_names
+
+    return service_names()["xdg_autostart_file"]
+
+
+def windows_run_value() -> str:
+    from .instances import service_names
+
+    return service_names()["windows_run_value"]
 LINUX_MECHANISMS = ("systemd", "xdg")
 SERVICE_RECORD = "service.json"
 SERVICE_SCHEMA = "gateway_service_v1"
@@ -87,6 +113,10 @@ LAUNCHD_POLL_S = 0.25
 LAUNCHD_RETRY_RC = (5, 37)
 LAUNCHD_BOOTSTRAP_ATTEMPTS = 4
 LAUNCHD_BACKOFF_S = 1.0
+# `service uninstall` (backlog 0934): how long the gateway's process tree gets to exit after the
+# service manager stopped the serve process, before SIGTERM (then SIGKILL) for what is left.
+STOP_TREE_WAIT_S = 20.0
+STOP_TREE_STEP = "@stop-gateway-tree"
 # Clock seams (tests drive a fake launchd through them).
 _sleep = time.sleep
 _monotonic = time.monotonic
@@ -168,11 +198,11 @@ def windows_startup_shortcut_path(home: Path, env: Optional[Dict[str, str]] = No
 
 def xdg_autostart_path(home: Path, env: Optional[Dict[str, str]] = None) -> Path:
     env = os.environ if env is None else env
-    return _xdg_config_home(home, env) / "autostart" / XDG_AUTOSTART_FILE
+    return _xdg_config_home(home, env) / "autostart" / xdg_autostart_file()
 
 
 def windows_run_display() -> str:
-    return "HKCU\\" + WINDOWS_RUN_KEY + "\\" + WINDOWS_RUN_VALUE
+    return "HKCU\\" + WINDOWS_RUN_KEY + "\\" + windows_run_value()
 
 
 def service_file_path(platform: str, home: Path, env: Optional[Dict[str, str]] = None, *, linux_mechanism: Optional[str] = None) -> Path:
@@ -182,12 +212,12 @@ def service_file_path(platform: str, home: Path, env: Optional[Dict[str, str]] =
     env = os.environ if env is None else env
     plat = normalize_platform(platform)
     if plat == "darwin":
-        return home / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+        return home / "Library" / "LaunchAgents" / f"{launchd_label()}.plist"
     if plat == "windows":
         return windows_startup_shortcut_path(home, env)
     if linux_mechanism == "xdg":
         return xdg_autostart_path(home, env)
-    return _xdg_config_home(home, env) / "systemd" / "user" / SYSTEMD_UNIT
+    return _xdg_config_home(home, env) / "systemd" / "user" / systemd_unit()
 
 
 def mechanism_name(platform: str, linux_mechanism: Optional[str] = None) -> str:
@@ -265,15 +295,18 @@ def _serve_args(host: str, port: int, *, pinned: bool = False) -> List[str]:
     Plain `serve` (the Network setting decides host and port at each start);
     `serve --host H --port P` only for a registration pinned on purpose
     (`--pin-command-line`): flags on the command line override the setting."""
+    from .instances import current_instance, suffix
+
+    inst = ["--instance", current_instance()] if suffix() else []  # a named instance's unit runs THAT instance
     if not pinned:
-        return ["serve"]
-    return ["serve", "--host", str(host), "--port", str(int(port))]
+        return [*inst, "serve"]
+    return [*inst, "serve", "--host", str(host), "--port", str(int(port))]
 
 
 def render_launchd_plist(*, exe_argv: Sequence[str], host: str, port: int, data_dir: Path, home: Path, pinned: bool = False) -> str:
     logs = log_dir("darwin", home, data_dir)
     payload = {
-        "Label": LAUNCHD_LABEL,
+        "Label": launchd_label(),
         "ProgramArguments": [*exe_argv, *_serve_args(host, port, pinned=pinned)],
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
@@ -561,13 +594,16 @@ def choose_port(
         return {"port": int(requested), "source": "flag", "busy_skipped": []}
     if persisted:
         return {"port": int(persisted), "source": "persisted", "busy_skipped": []}
+    from .instances import gateway_port
+
+    start = gateway_port()  # 8080, or a named instance's own (instances.py)
     skipped: List[int] = []
-    for p in range(DEFAULT_PORT, DEFAULT_PORT + PORT_SEARCH_SPAN):
+    for p in range(start, start + PORT_SEARCH_SPAN):
         if free(host, p):
             return {"port": p, "source": "probe", "busy_skipped": skipped}
         skipped.append(p)
     raise SystemExit(
-        f"No free port in {DEFAULT_PORT}-{DEFAULT_PORT + PORT_SEARCH_SPAN - 1} on {host}; pass --port explicitly."
+        f"No free port in {start}-{start + PORT_SEARCH_SPAN - 1} on {host}; pass --port explicitly."
     )
 
 
@@ -804,7 +840,7 @@ def build_install_plan(
         plan.files.append({"path": str(target), "content": render_launchd_plist(exe_argv=exe_argv, host=host, port=port, data_dir=data_dir, home=home, pinned=pinned), "mode": 0o644})
         domain = f"gui/{uid_v}"
         # bootout first: bootstrap refuses an already-loaded label (a reinstall).
-        plan.commands.append(["launchctl", "bootout", f"{domain}/{LAUNCHD_LABEL}"])
+        plan.commands.append(["launchctl", "bootout", f"{domain}/{launchd_label()}"])
         plan.commands.append(["launchctl", "bootstrap", domain, str(target)])
         plan.notes.append(f"Logs: {log_dir('darwin', home, data_dir)}/gateway.err.log")
         plan.notes.append("A LaunchAgent runs while you are logged in (it starts again at every login).")
@@ -820,20 +856,18 @@ def build_install_plan(
     elif plat == "linux":
         plan.files.append({"path": str(target), "content": render_systemd_unit(exe_argv=exe_argv, host=host, port=port, data_dir=data_dir, home=home, pinned=pinned), "mode": 0o644})
         plan.commands.append(["systemctl", "--user", "daemon-reload"])
-        plan.commands.append(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT])
-        plan.notes.append(f"Logs: journalctl --user -u {SYSTEMD_UNIT} -f")
-        plan.notes.append(
-            "A user unit runs while you are logged in. To keep it running after logout / start it at boot, "
-            "run once: loginctl enable-linger \"$USER\" (may ask for your password)."
-        )
+        plan.commands.append(["systemctl", "--user", "enable", "--now", systemd_unit()])
+        plan.notes.append(f"Logs: journalctl --user -u {systemd_unit()} -f")
+        # 0957: the lingering sentence is printed only when lingering is OFF (`autostart.linger_note`, read
+        # after the install), never as an unconditional hint.
     else:
         plan.experimental = True
         logf = log_dir("windows", home, data_dir) / "gateway.log"
         launch = windows_launch_argv(exe_argv=exe_argv, host=host, port=port, data_dir=data_dir, log_file=logf, pinned=pinned)
-        plan.registry.append({"op": "set", "key": WINDOWS_RUN_KEY, "name": WINDOWS_RUN_VALUE, "value": windows_join(launch)})
+        plan.registry.append({"op": "set", "key": WINDOWS_RUN_KEY, "name": windows_run_value(), "value": windows_join(launch)})
         # A "disabled" switch Task Manager left for an earlier registration
         # would silently veto the new one: registering means ON.
-        plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": WINDOWS_RUN_VALUE, "missing_ok": True})
+        plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": windows_run_value(), "missing_ok": True})
         # An earlier release's Startup shortcut would start a SECOND gateway at login.
         plan.remove.append(str(windows_startup_shortcut_path(home, env)))
         plan.commands.append(["@start-detached", *launch])
@@ -892,7 +926,8 @@ def build_uninstall_plan(
         plan.mechanism = mechanism_name(plat)
         if stop:
             uid_v = os.getuid() if uid is None and hasattr(os, "getuid") else int(uid or 0)
-            plan.commands.append(["launchctl", "bootout", f"gui/{uid_v}/{LAUNCHD_LABEL}"])
+            plan.commands.append(["launchctl", "bootout", f"gui/{uid_v}/{launchd_label()}"])
+            plan.commands.append([STOP_TREE_STEP, f"{STOP_TREE_WAIT_S:g}"])
         else:
             plan.notes.append(keeps_running + " launchd forgets the removed agent at logout.")
         plan.remove.append(str(target))
@@ -903,17 +938,21 @@ def build_uninstall_plan(
         # systemctl only when a unit exists: `disable` of an unknown unit fails
         # (and would abort an uninstall that has nothing to do there).
         if unit.exists():
-            plan.commands.append(["systemctl", "--user", "disable", *(["--now"] if stop else []), SYSTEMD_UNIT])
+            plan.commands.append(["systemctl", "--user", "disable", *(["--now"] if stop else []), systemd_unit()])
             plan.remove.append(str(unit))
             plan.commands.append(["systemctl", "--user", "daemon-reload"])
+        if stop:
+            # systemd stopped the serve process: its tree gets the wait. An XDG-autostart gateway
+            # has no manager that stops it: its tree is stopped at once.
+            plan.commands.append([STOP_TREE_STEP, f"{STOP_TREE_WAIT_S if unit.exists() else 0:g}"])
         plan.remove.append(str(desktop))
-        if not stop or desktop.exists():
+        if not stop:
             plan.notes.append(keeps_running)
     else:
         plan.experimental = True
         plan.mechanism = mechanism_name(plat)
-        plan.registry.append({"op": "delete", "key": WINDOWS_RUN_KEY, "name": WINDOWS_RUN_VALUE, "missing_ok": True})
-        plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": WINDOWS_RUN_VALUE, "missing_ok": True})
+        plan.registry.append({"op": "delete", "key": WINDOWS_RUN_KEY, "name": windows_run_value(), "missing_ok": True})
+        plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": windows_run_value(), "missing_ok": True})
         plan.remove.append(str(windows_startup_shortcut_path(home, env)))
         plan.notes.append(keeps_running)
     plan.remove.append(str(service_record_path(data_dir)))
@@ -979,6 +1018,13 @@ def execute_plan(
     run = runner or _default_runner
     spawn = start_detached or _start_detached
     results: List[Dict[str, Any]] = []
+    # The gateway's process tree, captured before the service manager stops the serve process
+    # (its detached children are linked to it only while it lives; process_tree).
+    tree: Optional[Dict[int, str]] = None
+    if any(c and c[0] == STOP_TREE_STEP for c in plan.commands):
+        from . import process_tree
+
+        tree = process_tree.snapshot(plan.data_dir)
     for d in plan.dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     for f in plan.files:
@@ -1007,6 +1053,20 @@ def execute_plan(
                 results.append({"registry": "delete", "key": op["key"], "name": op["name"], "removed": removed})
                 echo(f"registry: delete {where} -> {'removed' if removed else 'not present (fine)'}")
     for cmd in plan.commands:
+        if cmd and cmd[0] == STOP_TREE_STEP:
+            from . import process_tree
+
+            outcome = process_tree.stop_tree(tree or {}, data_dir=plan.data_dir, wait_s=float(cmd[1]), echo=echo)
+            results.append({"stop_tree": outcome})
+            survivors = outcome.get("survivors") or []
+            if survivors:
+                listed = "\n".join(f"  {s['pid']}  {s['args']}" for s in survivors)  # type: ignore[index]
+                raise SystemExit(
+                    f"service {plan.action} failed: these gateway processes could not be stopped:\n{listed}\n"
+                    "Quit them (Activity Monitor, or `kill -KILL <pid>`), or log out and back in, then run "
+                    "`abstractgateway service uninstall` again."
+                )
+            continue
         if cmd and cmd[0] == "@start-detached":
             spawn(cmd[1:])
             results.append({"argv": cmd, "returncode": 0})
@@ -1022,7 +1082,7 @@ def execute_plan(
                 break
             # The previous job of this label is still being torn down: wait for it, then retry.
             echo(f"ran: {' '.join(shlex.quote(c) for c in cmd[:4])} -> rc={rc} (launchd is still removing the previous gateway); retrying")
-            _launchd_wait_gone(run, f"{cmd[2]}/{LAUNCHD_LABEL}")
+            _launchd_wait_gone(run, f"{cmd[2]}/{launchd_label()}")
             _sleep(LAUNCHD_BACKOFF_S * attempt)
         # `bootout` of a label that is not loaded fails; that is the state we want.
         label = "ok" if rc == 0 else ("not loaded (fine)" if is_bootout else f"FAILED rc={rc}")
@@ -1125,7 +1185,7 @@ def service_status(
         value = None
         if reg is not None:
             try:
-                value = reg.get(WINDOWS_RUN_KEY, WINDOWS_RUN_VALUE)
+                value = reg.get(WINDOWS_RUN_KEY, windows_run_value())
             except Exception:  # noqa: BLE001 - status never raises
                 value = None
         if value:
@@ -1157,9 +1217,9 @@ def service_status(
         run = runner or _default_runner
         if plat == "darwin":
             uid_v = os.getuid() if uid is None and hasattr(os, "getuid") else int(uid or 0)
-            cmd = ["launchctl", "print", f"gui/{uid_v}/{LAUNCHD_LABEL}"]
+            cmd = ["launchctl", "print", f"gui/{uid_v}/{launchd_label()}"]
         else:
-            cmd = ["systemctl", "--user", "is-active", SYSTEMD_UNIT]
+            cmd = ["systemctl", "--user", "is-active", systemd_unit()]
         try:
             cp = run(cmd)
             out["loaded"] = int(cp.returncode) == 0
@@ -1215,6 +1275,16 @@ def launch_main(argv: Optional[List[str]] = None) -> None:
     rest = list(args.rest or [])
     if rest and rest[0] == "--":
         rest = rest[1:]
+    # The Windows Run entry and the XDG autostart entry start the machine's gateway service through
+    # this launcher: that service shows the tray (tray_supervisor.service_launch). `--tray` on the
+    # command line keeps it across a relaunch from the tray, which re-runs `abstractgateway serve`.
+    from .tray_supervisor import mark_service_launch
+
+    mark_service_launch("Windows Run entry" if sys.platform == "win32" else "XDG autostart entry")
+    # `serve ...` or `--instance NAME serve ...` (instances.py).
+    if "serve" in rest and "--tray" not in rest and "--no-tray" not in rest:
+        i = rest.index("serve")
+        rest = [*rest[: i + 1], "--tray", *rest[i + 1:]]
     from .cli import main as gateway_main
 
     gateway_main(rest)

@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-30",
+  "implementation_commit": "e0da0fdc",
+  "intake_commit": "cc1d345b",
+  "regression": {
+    "tests_passed": 81,
+    "final_focused_tests_passed": 43,
+    "note": "Final focused run includes the last responsive and filter reveal adjustments; repeated tests are not additional distinct tests."
+  },
+  "browser": {
+    "catalog_wizard": {
+      "checks": 100,
+      "failures": []
+    },
+    "resources": {
+      "checks": 122,
+      "failures": []
+    }
+  },
+  "live": {
+    "health": "healthy",
+    "models": 83,
+    "filtersCollapsed": true,
+    "fourBitDefault": true,
+    "gridColumns": 2,
+    "iconActions": true,
+    "sharedWidgets": true,
+    "detailsOpen": true,
+    "downloadedAllPrecisions": true,
+    "defaultTextActions": 37,
+    "pageErrors": [],
+    "mutations": []
+  },
+  "deployment": {
+    "method": "Existing authenticated graceful restart endpoint",
+    "preflight_health": "healthy",
+    "inflight": 0,
+    "restart": true,
+    "new_services": false,
+    "registry_release": false
+  },
+  "limitations": [
+    "Management writes were verified against browser fixtures; live verification used read-only navigation.",
+    "Full catalog fetch latency remains proposed backlog 0986."
+  ]
+}

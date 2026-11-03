@@ -26,7 +26,7 @@ No runner process answering = 503 `runner_unavailable`, never a local load.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, replace
 import hmac
 import ipaddress
 import json
@@ -45,6 +45,7 @@ from abstractruntime.integrations.abstractcore.server_facade import serve_core_r
 from .work_pools import off_loop
 from . import network_exposure as ne
 from . import split_mode
+from .endpoint_settings import EndpointSettings, _settings_path, read_settings
 from .asgi_receive import replay_body_receive
 from .runtime_config import resolve_network_setting, store_lock
 from .users import gateway_data_dir_from_env
@@ -70,55 +71,15 @@ REACH_LABELS = {
 
 # Open (no key) mode: anonymous requests run as this account. The built-in guest
 # may USE the models (chat, responses, embeddings, text-to-speech, image
-# generation when routed) but with no tools, no files, attachments or media
-# inputs, no workspace, email or run tools; it never reaches /api/gateway.
+# generation and decisions when routed) but with no tools, no files, attachments
+# or media inputs, no workspace, email or run tools; it never reaches /api/gateway.
 GUEST_ACCOUNT = "guest"
 GUEST_LABEL = "Guest (models only)"
 GUEST_PATHS = frozenset({"/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/embeddings",
-                         "/v1/audio/speech", "/v1/images/generations"})
+                         "/v1/audio/speech", "/v1/images/generations", "/v1/decisions"})
 _GUEST_TOOL_FIELDS = ("tools", "tool_choice", "functions", "function_call")
+_GUEST_HOSTED_DECISION_PROVIDERS = frozenset({"typesafe", "systemone"})
 _TEXT_PARTS = frozenset({"text", "input_text", "output_text"})
-
-
-@dataclass(frozen=True)
-class EndpointSettings:
-    enabled: bool = False
-    access: str = "token"
-    reach: str = "machine"
-    token: str = field(default="", repr=False)
-    open_account: str = GUEST_ACCOUNT
-    # "API keys can be revealed by their owner" (round 16 keys fix): on, each named API key is
-    # also kept encrypted so its owner can reveal it again; off, a key is shown once and the
-    # gateway keeps only its hash (`abstractgateway.openai_keys`).
-    owner_reveal: bool = True
-
-
-def _settings_path(data_dir: Path) -> Path:
-    return Path(data_dir) / "config" / "core_endpoint.json"
-
-
-def read_settings(data_dir: Path) -> EndpointSettings:
-    path = _settings_path(data_dir)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return EndpointSettings()
-    if not isinstance(raw, dict):
-        raise ValueError("Invalid Core endpoint settings; restore config/core_endpoint.json")
-    # A 0.12.0 file has no `reach`: it served every client the listener reached.
-    reach = raw.get("reach", "network")
-    open_account = raw.get("open_account", GUEST_ACCOUNT)
-    owner_reveal = raw.get("owner_reveal", True)
-    if (not isinstance(open_account, str) or not open_account.strip()
-            or type(owner_reveal) is not bool
-            or type(raw.get("enabled")) is not bool
-            or raw.get("access") not in ACCESS_MODES
-            or reach not in REACH_MODES
-            or not isinstance(raw.get("token"), str)
-            or (raw["enabled"] and not raw["token"].strip())):
-        raise ValueError("Invalid Core endpoint settings; restore config/core_endpoint.json")
-    return EndpointSettings(raw["enabled"], raw["access"], reach, raw["token"], open_account.strip(),
-                            owner_reveal=owner_reveal)
 
 
 def open_account_refusal(account: str, *, tenant_id: str = "default") -> Optional[str]:
@@ -171,12 +132,13 @@ def anywhere_allowed(data_dir: Path) -> Optional[str]:
     return None
 
 
-def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, open_account=None,
+def change_settings(data_dir: Path, *, enabled=None, direct_enabled=None, access=None, reach=None, open_account=None,
                     rotate=False, owner_reveal=None) -> EndpointSettings:
     with store_lock(data_dir):
         current = read_settings(data_dir)
         updated = replace(current,
                           enabled=current.enabled if enabled is None else enabled,
+                          direct_enabled=current.direct_enabled if direct_enabled is None else direct_enabled,
                           access=current.access if access is None else access,
                           reach=current.reach if reach is None else reach,
                           open_account=current.open_account if open_account is None else str(open_account).strip(),
@@ -321,6 +283,9 @@ SERVING_ROUTES = {
     "/v1/images/generations": "POST",
     "/v1/images/edits": "POST",
     "/v1/images/variations": "POST",
+    # AbstractCore 2.32.0: the `decision` output modality (text in, calibrated typed
+    # answers out; body {model, state, questions, truncate?}). No bytes, no artifact.
+    "/v1/decisions": "POST",
 }
 
 
@@ -332,7 +297,7 @@ SUPPORT = {
                "POST /v1/embeddings: float and base64"],
     "served": ["POST /v1/responses", "POST /v1/audio/speech", "POST /v1/audio/transcriptions",
                "POST /v1/audio/translations", "POST /v1/images/generations", "POST /v1/images/edits",
-               "POST /v1/images/variations"],
+               "POST /v1/images/variations", "POST /v1/decisions"],
     "not_yet": ["response_format together with tools", "text.format on /v1/responses", "n > 1", "logprobs", "logit_bias",
                 "files, batches, assistants, fine-tuning, moderations, realtime"],
 }
@@ -539,6 +504,11 @@ def refuse_for_guest(doc: Any) -> None:
         if doc.get(name):
             raise RequestRefused(f"Without a key, {name} can't be used (Guest: models only).", name,
                                  "guest_not_allowed", 403)
+    model = doc.get("model")
+    if isinstance(model, str) and model.strip().lower().split("/", 1)[0] in _GUEST_HOSTED_DECISION_PROVIDERS:
+        # A hosted decision model (`typesafe/jev-latest`, `systemone/...`) spends the operator's key.
+        raise RequestRefused("Without a key, hosted decision models can't be used (Guest: local models only).",
+                             "model", "guest_not_allowed", 403)
     turns = doc.get("messages") if isinstance(doc.get("messages"), list) else []
     if isinstance(doc.get("input"), list):
         turns = turns + doc["input"]
@@ -749,7 +719,7 @@ async def serve_core(scope, receive, send, *, token: str, allow_unauthenticated:
     """Core's serving app for one admitted request: in this process (combined `serve`, or the split
     runner), or, in the split API process, forwarded to the runner's model host (never loaded here).
     Raises split_mode.RunnerUnavailable when the API process has no runner to forward to."""
-    if split_mode.is_api_process():
+    if split_mode.forwards_core():
         await split_mode.forward_core_request(
             scope, receive, send, data_dir=Path(data_dir) if data_dir is not None else gateway_data_dir_from_env(),
             allow_unauthenticated=allow_unauthenticated)
@@ -961,7 +931,8 @@ class CoreEndpoint:
             note["ended"] = "stopped"
         except split_mode.RunnerUnavailable:
             note["ended"] = "runner_unavailable"
-            await openai_error(503, RUNNER_UNAVAILABLE, type_="server_error", code="runner_unavailable")(scope, receive, send)
+            await openai_error(503, split_mode.core_unavailable_sentence(), type_="server_error",
+                               code="runner_unavailable")(scope, receive, send)
         finally:
             with _INFLIGHT_LOCK:
                 _INFLIGHT.discard(stop)
@@ -1357,13 +1328,14 @@ async def check_setup(data_dir: Path, *, network: Dict[str, Any]) -> List[Dict[s
     else:
         checks.append({"id": "listener", "ok": False,
                        "text": "The gateway listens on this computer only: change it on the Network page."})
-    if split_mode.is_api_process():
-        # Split mode: Core's server runs in the runner process; importing it here would be the
-        # first step to a second model copy.
+    if split_mode.forwards_core():
+        # Split mode or a model host child (ADR 0002): Core's server runs in another process;
+        # importing it here would be the first step to a second model copy.
         if await off_loop("light", split_mode.read_address, data_dir) is None:
-            checks.append({"id": "core", "ok": False, "text": RUNNER_UNAVAILABLE})
+            checks.append({"id": "core", "ok": False, "text": split_mode.core_unavailable_sentence()})
             return checks
-        checks.append({"id": "core", "ok": True, "text": "AbstractCore's server runs in the runner process."})
+        where = "the runner process" if split_mode.is_api_process() else "the model host process"
+        checks.append({"id": "core", "ok": True, "text": f"AbstractCore's server runs in {where}."})
     else:
         try:
             import importlib

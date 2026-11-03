@@ -113,8 +113,25 @@ def token_fingerprint(token: str) -> str:
 
 
 def registry_credential_fingerprint(record: "GatewayUserRecord") -> str:
-    digest = hashlib.sha256(str(getattr(record, "token_hash", "") or "").encode("utf-8", errors="ignore")).hexdigest()
+    """What a browser session is bound to (security/sessions.py): the account's credentials.
+    Changing the token OR the password ends the account's sessions. An account without a
+    password keeps the token-only formula, so sessions minted before passwords existed stay valid."""
+    material = str(getattr(record, "token_hash", "") or "")
+    password_hash = str(getattr(record, "password_hash", "") or "")
+    if password_hash:
+        material += "|password|" + password_hash
+    digest = hashlib.sha256(material.encode("utf-8", errors="ignore")).hexdigest()
     return digest[:12]
+
+
+DISPLAY_NAME_MAX = 80
+
+
+def normalize_display_name(value: Any) -> str:
+    """One line, trimmed, at most DISPLAY_NAME_MAX characters, no control characters."""
+    text = " ".join(str(value or "").split())
+    text = "".join(ch for ch in text if ch.isprintable())
+    return text[:DISPLAY_NAME_MAX]
 
 
 def generate_gateway_token() -> str:
@@ -268,6 +285,12 @@ class GatewayUserRecord:
     # Named API keys for /v1 (round 16, backlog 1000). Additive: absent in users.json = none,
     # and a record without keys is stored exactly as before.
     openai_keys: tuple[OpenAIKeyRecord, ...] = ()
+    # Password sign-in (0.18.0, passwords.py): the scrypt hash, "" = no password (token only).
+    # Display name: what the console shows for the account, "" = the account id. Additive:
+    # absent in users.json = none, and a record without them is stored exactly as before.
+    password_hash: str = ""
+    password_set_at: str = ""
+    display_name: str = ""
 
     @property
     def key(self) -> str:
@@ -292,6 +315,11 @@ class GatewayUserRecord:
             out["openai_api"] = bool(self.openai_api)
         if self.openai_keys:
             out["openai_keys"] = [k.to_storage_dict() for k in self.openai_keys]
+        if self.password_hash:
+            out["password_hash"] = self.password_hash
+            out["password_set_at"] = self.password_set_at
+        if self.display_name:
+            out["display_name"] = self.display_name
         return out
 
     def _storage_core(self) -> dict[str, Any]:
@@ -330,6 +358,8 @@ class GatewayUserRecord:
             "archived_at": self.archived_at or None,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "password_set": bool(self.password_hash),
+            "display_name": self.display_name or None,
         }
 
     def to_principal(self, *, token_fingerprint_value: str = "") -> GatewayPrincipal:
@@ -418,6 +448,9 @@ def _normalize_record(raw: dict[str, Any]) -> GatewayUserRecord:
         archived_by=str(raw.get("archived_by") or ""),
         openai_api=raw["openai_api"] if isinstance(raw.get("openai_api"), bool) else None,
         openai_keys=_normalize_openai_keys(raw.get("openai_keys")),
+        password_hash=str(raw.get("password_hash") or ""),
+        password_set_at=str(raw.get("password_set_at") or ""),
+        display_name=normalize_display_name(raw.get("display_name")),
     )
 
 
@@ -701,6 +734,9 @@ class GatewayUserRegistry:
                 archived_by=rec.archived_by,
                 openai_api=bool(openai_api) if openai_api is not None else rec.openai_api,
                 openai_keys=rec.openai_keys,
+                password_hash=rec.password_hash,
+                password_set_at=rec.password_set_at,
+                display_name=rec.display_name,
             )
             self._require_runtime_available_unlocked(
                 records,
@@ -821,6 +857,9 @@ class GatewayUserRegistry:
                 archived_by=target.archived_by,
                 openai_api=target.openai_api,
                 openai_keys=target.openai_keys,
+                password_hash=target.password_hash,
+                password_set_at=target.password_set_at,
+                display_name=target.display_name,
             )
             if previous_runtime_id != runtime0:
                 self._reserve_runtime_unlocked(reservations, record=target, reason="runtime-transferred")
@@ -932,6 +971,67 @@ class GatewayUserRegistry:
                 if item.fingerprint == fp and verify_gateway_token(key, item.key_hash):
                     return rec, item
         return None
+
+    def set_password(
+        self, *, user_id: str, tenant_id: str = "default", password_hash: str, display_name: Optional[str] = None
+    ) -> GatewayUserRecord:
+        """Store (or with "" remove) the account's password hash; optionally its display name.
+        Entities never hold a password (their door identity is not a sign-in)."""
+        key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            rec = records.get(key)
+            if rec is None:
+                raise KeyError(f"Gateway user not found: {tenant_id}/{user_id}")
+            if rec.principal_kind == "entity":
+                raise EntityPrincipalGuardError(
+                    f"'{rec.user_id}' is a summoned entity: entities sign in through their door, never with a password"
+                )
+            now = _now_utc_iso()
+            changes: dict[str, Any] = {
+                "password_hash": str(password_hash or ""),
+                "password_set_at": now if password_hash else "",
+                "updated_at": now,
+            }
+            if display_name is not None:
+                changes["display_name"] = normalize_display_name(display_name)
+            updated = dataclasses.replace(rec, **changes)
+            records[key] = updated
+            self._save_store_unlocked(records, reservations)
+            return updated
+
+    def set_display_name(self, *, user_id: str, tenant_id: str = "default", display_name: str) -> GatewayUserRecord:
+        key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            rec = records.get(key)
+            if rec is None:
+                raise KeyError(f"Gateway user not found: {tenant_id}/{user_id}")
+            updated = dataclasses.replace(rec, display_name=normalize_display_name(display_name), updated_at=_now_utc_iso())
+            records[key] = updated
+            self._save_store_unlocked(records, reservations)
+            return updated
+
+    def find_sign_in_account(self, account: str, *, tenant_id: str = "default") -> Optional[GatewayUserRecord]:
+        """The human account a sign-in form's "account" names: its account id, else the ONE
+        account in the tenant whose display name matches (case-insensitive). Any state; the
+        caller checks enabled/archived."""
+        text = str(account or "").strip()
+        if not text:
+            return None
+        tenant0 = safe_principal_component(tenant_id, default="default")
+        with self._lock:
+            records = self._load_unlocked()
+        user0 = safe_principal_component(text, default="")
+        rec = records.get(f"{tenant0}:{user0}") if user0 else None
+        if rec is not None and rec.principal_kind != "entity":
+            return rec
+        wanted = normalize_display_name(text).casefold()
+        matches = [
+            r for r in records.values()
+            if r.tenant_id == tenant0 and r.principal_kind != "entity" and r.display_name and r.display_name.casefold() == wanted
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def authenticate(self, token: str) -> Optional[GatewayPrincipal]:
         if not token:

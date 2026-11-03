@@ -30,7 +30,7 @@ SNAPSHOT = {
         "device": {"backend": "metal", "host_in_use_bytes": 18 * GIB, "wired_limit_bytes": 48 * GIB, "total_bytes": 64 * GIB},
         "process": {"rss_bytes": 3 * GIB},
     },
-    "gpu": {"supported": True, "utilization_gpu_pct": 12.0, "source": "ioreg"},
+    "gpu": {"supported": True, "utilization_gpu_pct": 12.0, "source": "ioreg", "gpus": [{"name":"Apple M5 Max"}]},
     "models": [{"provider": "mlx", "model": "qwen3.6-27b-4bit", "resident": True, "size_bytes": 15 * GIB, "cache_bytes": 1 * GIB}],
     "session_caches": [{"bytes": 512 * 1024**2}],
     "totals": {"models_resident": 1, "model_bytes": 15 * GIB, "cache_bytes_models": 1 * GIB, "session_cache_bytes": 512 * 1024**2},
@@ -56,7 +56,7 @@ function $(id) {
     classList: { toggle(n, f) { const s = new Set(this._o.className.split(/\\s+/).filter(Boolean)); (f ? s.add(n) : s.delete(n)); this._o.className = [...s].join(" "); }, add(n) { this.toggle(n, true); }, contains(n) { return this._o.className.split(/\\s+/).includes(n); } } });
   const e = els.get(id); e.classList._o = e; return e;
 }
-const widget = () => ({ mem: $("topbar-res-mem").textContent, memShort: $("topbar-res-mem-short").textContent, gpu: $("topbar-res-gpu").textContent,
+const widget = () => ({ machine: $("topbar-res-machine").textContent, mem: $("topbar-res-mem").textContent, memShort: $("topbar-res-mem-short").textContent, gpu: $("topbar-res-gpu").textContent,
   models: $("topbar-res-models").textContent, memBar: $("topbar-res-mem-bar").style.height, gpuBar: $("topbar-res-gpu-bar").style.height,
   tip: $("topbar-resources").dataset.afTip, label: $("topbar-resources").ariaLabel, cls: $("topbar-resources").className });
 """
@@ -68,7 +68,7 @@ def test_header_carries_the_widget_and_no_address_control() -> None:
     # The widget sits left of the kit cluster, as a button (a click opens Resources).
     assert header.index('id="topbar-resources"') < header.index('id="af-topbar-root"')
     assert re.search(r'<button id="topbar-resources"[^>]*type="button"[^>]*data-af-tip=', header)
-    for part in ("topbar-res-mem", "topbar-res-mem-short", "topbar-res-gpu", "topbar-res-models", "topbar-res-mem-bar", "topbar-res-gpu-bar"):
+    for part in ("topbar-res-machine", "topbar-res-mem", "topbar-res-mem-short", "topbar-res-gpu", "topbar-res-models", "topbar-res-mem-bar", "topbar-res-gpu-bar"):
         assert f'id="{part}"' in header
     # No address + copy in the top bar any more.
     src = _source()
@@ -111,6 +111,8 @@ console.log(JSON.stringify(out));
 
     assert first["mem"] == "41.2 GiB / 64.0 GiB (64%)"
     assert first["memShort"] == "64%" and first["gpu"] == "12%" and first["models"] == "1 model"
+    assert before["machine"] == "Host" and first["machine"] == "Apple M5 Max"
+    assert "Machine: Apple M5 Max" in first["tip"] and "Machine: Apple M5 Max" in first["label"]
     assert first["memBar"] == "64%" and first["gpuBar"] == "12%"
     assert "hidden" not in first["cls"] and "is-stale" not in first["cls"]
     tip = first["tip"].split("\n")

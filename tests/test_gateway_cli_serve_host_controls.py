@@ -174,6 +174,12 @@ def test_ctrl_c_during_a_restart_drain_never_relaunches(monkeypatch: pytest.Monk
 
 
 def test_startup_failure_exits_with_uvicorn_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import cli as _cli
+
+    belt: list = []
+    monkeypatch.setattr(_cli, "_exit_now_if_nondaemon_stragglers", lambda exit_code=0: belt.append(exit_code))
     with pytest.raises(SystemExit) as exc:
         _serve(monkeypatch, behaviour="never-started")
     assert exc.value.code == 3
+    # The straggler belt exits with that code, never 0 (systemd Restart=on-failure, OVH 2026-10-28).
+    assert belt == [3]

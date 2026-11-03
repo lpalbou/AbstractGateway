@@ -159,12 +159,13 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_triggers import TRIGGERS_CSS, TRIGGERS_JS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
     from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
+    from .console_resources import RESOURCES_HTML, RESOURCES_MODAL_HTML, RESOURCES_CSS, RESOURCES_JS
 
     return (
-        _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
+        _strip_html_comments(_CONSOLE_HTML_TEMPLATE.replace("<!--__RESOURCES_DASHBOARD__-->", RESOURCES_HTML).replace("<!--__RESOURCES_MODAL__-->", RESOURCES_MODAL_HTML)),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + TRIGGERS_CSS + MAILBOXES_CSS + PUSH_DEVICES_CSS + ACCOUNTS_CSS + WORKSPACES_CSS + RESOURCES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + TRIGGERS_JS + MAILBOXES_JS + PUSH_DEVICES_JS + WORKSPACES_JS + RESOURCES_JS),
     )
 
 
@@ -247,6 +248,19 @@ def gateway_console_html() -> str:
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
         .replace("__GATEWAY_ABOUT_JSON__", _script_json(console_about_config()))
     )
+    # A named gateway instance (instances.py) says its name in the tab title, the sidebar brand and the
+    # signed-out heading, so two consoles of one machine are never mistaken for each other.
+    from .instances import current_instance, is_default
+
+    if not is_default():
+        name = html.escape(current_instance())
+        page = (
+            page.replace("<title>AbstractGateway Console</title>", f"<title>AbstractGateway Console · {name}</title>", 1)
+            .replace('<span class="shell_brand_name">AbstractGateway</span>',
+                     f'<span class="shell_brand_name">AbstractGateway</span><span class="shell_brand_instance" data-af-tip="Gateway instance {name}">{name}</span>', 1)
+            .replace('<h1 id="page-title">AbstractGateway Console</h1>', f'<h1 id="page-title">AbstractGateway Console · {name}</h1>', 1)
+            .replace('$("page-title").textContent = "AbstractGateway Console";', f'$("page-title").textContent = "AbstractGateway Console · {name}";', 1)
+        )
     # Fragment content last, each placeholder exactly once. The layer and the
     # kit islands go first (they are console-owned); `<script`/`</` inside the
     # React bundle are hex-escaped (valid in any JS string/regex context) so
@@ -418,6 +432,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .shell_brand { display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
 	    .shell_brand_mark { font-size: var(--font-size-xl); line-height: 1; color: var(--accent); font-weight: 700; }
 	    .shell_brand_name { font-weight: 700; letter-spacing: .3px; white-space: nowrap; font-size: var(--font-size-md); }
+	    .shell_brand_instance { padding: 1px 7px; border-radius: 999px; font-size: var(--font-size-xs, 11px); font-weight: 650; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 	    .shell_nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: var(--font-size-md); opacity: .8; }
 	    .shell_nav_label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -462,13 +477,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .topbar-resources__k { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__v { color: var(--text-primary, var(--text)); }
 	    .topbar-resources__short { display: none; }
+	    .topbar-resources__machine { max-width: 140px; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary, var(--text)); }
 	    .topbar-resources__sep { color: var(--text-tertiary, var(--muted)); }
 	    .topbar-resources__bar { position: relative; width: 4px; height: 14px; border-radius: 999px; background: var(--bg-tertiary, var(--line)); overflow: hidden; }
 	    .topbar-resources__fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: var(--info); }
 	    @media (max-width: 767.98px) {
 	      .topbar-resources { gap: 4px; padding: 3px 8px; }
+	      .topbar-resources__machine { max-width: 76px; }
 	      .topbar-resources__long { display: none; }
 	      .topbar-resources__short { display: inline; }
+	    }
+	    @media (max-width: 479.98px) {
+	      .topbar-resources { flex-wrap: wrap; border-radius: var(--radius-lg); justify-content: flex-start; }
+	      .topbar-resources__machine { flex-basis: 100%; max-width: none; text-align: left; }
+	      .topbar-resources__machine-sep { display: none; }
 	    }
 	    /* The kit tooltip keeps line breaks (the widget's tip is one value per
 	       line; every other tip is one sentence without breaks). */
@@ -597,6 +619,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
     @media (pointer: coarse) { .af-drawer__close { width: var(--tap-min, 44px); height: var(--tap-min, 44px); } }
 		    .workspace-shell { display: grid; gap: 16px; }
+		    .console-footer { margin: 8px 0 0; color: var(--text-secondary); font-size: var(--font-size-xs); text-align: center; }
 		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
 		       tab-button class + ids survive so the wiring and tests hold. */
 		    .tab-button.shell_nav_item {
@@ -958,8 +981,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-chat-bubble { max-width: min(86%, 72ch); }
 	    .entity-chat-bubble .entity-kv-key { display: block; margin-bottom: 3px; }
 	    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-	    .entity-chat-composer { align-items: flex-end; }
-	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: var(--font-size-md); }
+	    .entity-chat-composer { align-items: stretch; }
 	    .model-picker { display: grid; gap: 8px; }
 	    .model-picker__head {
 	      display: flex;
@@ -1414,6 +1436,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .provider-modal-grid { display: grid; gap: 12px; }
 	    .providers-workspace { display: grid; gap: 16px; }
 	    .providers-workspace #provider-preset-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+	    .providers-workspace .cloud-providers-root { margin-bottom: 18px; }
+	    .providers-workspace .provider-custom-head { margin-top: 4px; }
 	    .sandbox-workspace {
 	      display: grid;
 	      grid-template-columns: minmax(0, 1fr);
@@ -2172,6 +2196,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	         with the real values; a click opens Resources. Gateway-owned, so it
 	         shows with the island and with the static fallback alike. -->
 	    <button id="topbar-resources" class="topbar-resources hidden" type="button" aria-label="Host resources. Open Resources." data-af-tip="Reading host resources…">
+	      <span class="topbar-resources__machine" id="topbar-res-machine">Host</span><span class="topbar-resources__sep topbar-resources__machine-sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-mem-bar"></span></span><span class="topbar-resources__k">Mem</span> <span class="topbar-resources__v topbar-resources__long" id="topbar-res-mem">—</span><span class="topbar-resources__v topbar-resources__short" id="topbar-res-mem-short">—</span></span>
 	      <span class="topbar-resources__sep" aria-hidden="true">·</span>
 	      <span class="topbar-resources__item"><span class="topbar-resources__bar" aria-hidden="true"><span class="topbar-resources__fill" id="topbar-res-gpu-bar"></span></span><span class="topbar-resources__k">GPU</span> <span class="topbar-resources__v" id="topbar-res-gpu">—</span></span>
@@ -2204,23 +2229,67 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="af-gateway-signin__hero">
 	        <div>
 	          <div class="af-gateway-signin__kicker">AbstractGateway Console</div>
-	          <h2>Sign in</h2>
-	          <p>Use the token your gateway admin gave you.</p>
+	          <h2 id="login-title">Sign in</h2>
+	          <p id="login-lede">Sign in with your account and password.</p>
 	        </div>
 	      </div>
 	      <div class="af-gateway-signin__status-row">
 	        <span id="login-status" class="af-gateway-signin__status af-gateway-signin__status--neutral" role="status" aria-live="polite">Not signed in</span>
 	      </div>
-	      <form id="login-form" class="af-gateway-signin__form" novalidate>
+	      <!-- First run (0.18.0): a fresh gateway (GET /session/onboarding `unclaimed`) shows this
+	           form instead of the sign-in form. Choosing the admin password claims the gateway and
+	           opens the setup guide. The setup code field shows when the gateway asks for it
+	           (`setup_code_required`, always while unclaimed since review: a header-less proxy looks local). -->
+	      <form id="onboarding-form" class="af-gateway-signin__form" novalidate hidden>
 	        <div class="af-gateway-signin__field">
-	          <label class="af-gateway-signin__label" for="login-user">Gateway user</label>
-	          <input id="login-user" autocomplete="username" value="admin" aria-describedby="login-user-error">
-	          <p id="login-user-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	          <label class="af-gateway-signin__label" for="onboard-name">Your name</label>
+	          <input id="onboard-name" autocomplete="name" spellcheck="false" maxlength="80" aria-describedby="onboard-name-help onboard-name-error">
+	          <p id="onboard-name-help" class="af-gateway-signin__source">Shown in the console. You sign in as <strong id="onboard-account">admin</strong> or with this name.</p>
+	          <p id="onboard-name-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
 	        </div>
 	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="onboard-password">Admin password</label>
+	          <div class="af-gateway-signin__token-input">
+	            <input id="onboard-password" type="password" autocomplete="new-password" aria-describedby="onboard-password-help onboard-password-error">
+	            <button id="toggle-onboard-password" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+	          </div>
+	          <p id="onboard-password-help" class="af-gateway-signin__source">At least 10 characters with at least 5 different ones. A few words make a good one.</p>
+	          <p id="onboard-password-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="onboard-password-confirm">Confirm the password</label>
+	          <input id="onboard-password-confirm" type="password" autocomplete="new-password" aria-describedby="onboard-password-confirm-error">
+	          <p id="onboard-password-confirm-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="onboard-code-field" class="af-gateway-signin__field" hidden>
+	          <label class="af-gateway-signin__label" for="onboard-code">Setup code</label>
+	          <input id="onboard-code" autocomplete="one-time-code" spellcheck="false" autocapitalize="none" aria-describedby="onboard-code-help onboard-code-error">
+	          <p id="onboard-code-help" class="af-gateway-signin__source">Six words. On the gateway's machine, run <code>abstractgateway claim --code</code>; the installer printed it too.</p>
+	          <p id="onboard-code-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__submit-row">
+	          <label class="af-gateway-signin__checkbox"><input id="onboard-remember" type="checkbox"> Remember this browser</label>
+	          <button id="onboard-button" class="af-gateway-signin__primary" type="submit">Set up and sign in</button>
+	        </div>
+	      </form>
+	      <form id="login-form" class="af-gateway-signin__form" novalidate>
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="login-user">Account</label>
+	          <input id="login-user" autocomplete="username" value="admin" spellcheck="false" autocapitalize="none" aria-describedby="login-user-error">
+	          <p id="login-user-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="login-password-field" class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="login-password">Password</label>
+	          <div class="af-gateway-signin__token-input">
+	            <input id="login-password" autocomplete="current-password" type="password" aria-describedby="login-password-error">
+	            <button id="toggle-password" type="button" aria-label="Show password" aria-pressed="false">Show</button>
+	          </div>
+	          <p id="login-password-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div id="login-token-field" class="af-gateway-signin__field" hidden>
 	          <label class="af-gateway-signin__label" for="login-token">Token</label>
 	          <div class="af-gateway-signin__token-input">
-	            <input id="login-token" autocomplete="current-password" type="password" aria-describedby="login-token-error">
+	            <input id="login-token" autocomplete="off" type="password" aria-describedby="login-token-error">
 	            <button id="toggle-token" type="button" aria-label="Show token" aria-pressed="false">Show</button>
 	          </div>
 	          <p id="login-token-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
@@ -2229,11 +2298,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label class="af-gateway-signin__checkbox"><input id="login-remember" type="checkbox"> Remember this browser</label>
 	          <button id="login-button" class="af-gateway-signin__primary" type="submit">Sign in</button>
 	        </div>
+	        <button id="login-method-switch" type="button" class="af-gateway-signin__link">Sign in with a token instead</button>
 	      </form>
 	      <p id="login-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
 	      <!-- Shown only when GET /session/recovery says sign-in by email is on. -->
 	      <div id="recovery-section" class="af-gateway-signin__recovery" hidden>
-	        <button id="recovery-link" type="button" class="af-gateway-signin__link">Forgot your token? Email me a sign-in code</button>
+	        <button id="recovery-link" type="button" class="af-gateway-signin__link">Forgot your password? Email me a sign-in code</button>
 	        <p id="recovery-request-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
 	      </div>
 	      <div id="recovery-code-step" class="af-gateway-signin__code" hidden>
@@ -2247,7 +2317,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <button id="recovery-resend" type="button" class="af-gateway-signin__link">Send a new code</button>
 	          <button id="recovery-use" type="button" class="af-gateway-signin__primary" disabled>Use code</button>
 	        </div>
-	        <button id="recovery-back" type="button" class="af-gateway-signin__link af-gateway-signin__back">Back to token</button>
+	        <button id="recovery-back" type="button" class="af-gateway-signin__link af-gateway-signin__back">Back to sign-in</button>
 	      </div>
 	    </section>
 
@@ -2551,8 +2621,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <section id="provider-setup-section" class="session-only">
 	            <div class="section-head">
 	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Remote providers</span></h2>
-	                <p class="section-note">Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.</p>
+	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Cloud providers</span></h2>
+	                <p class="section-note">Paste a key, check it, save it. Keys stay on the gateway; only fingerprints show.</p>
+	              </div>
+	            </div>
+	            <!-- The kit's CloudProviderCards (islands mountCloudProviderCards), the SAME cards
+	                 as the setup guide's Cloud providers step. -->
+	            <div id="cloud-providers-root" class="cloud-providers-root"></div>
+	            <div class="section-head provider-custom-head">
+	              <div>
+	                <h3 class="section-title">OpenAI-compatible servers</h3>
+	                <p class="section-note">Any other /v1 server: vLLM, llama.cpp, LocalAI.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -2691,6 +2770,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	            </section>
 	            <section id="models-host-section" class="session-only">
+                <!--__RESOURCES_DASHBOARD__-->
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▦</span><span>Memory &amp; GPU</span></h2>
@@ -2814,7 +2894,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div class="switch-list">
 	                  <button type="button" role="switch" id="email-cap-email" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-email-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Mailboxes for users</span><span class="af-switch__desc" id="email-cap-email-desc">Users may connect their own mailbox for their agents, automations and notifications. You never see anyone&#39;s mail.</span></span></button><span id="email-cap-email-reason" class="af-switch__reason" hidden></span>
 	                  <button type="button" role="switch" id="email-cap-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools for users</span><span class="af-switch__desc" id="email-cap-agent-tools-desc">Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.</span></span></button><span id="email-cap-agent-tools-reason" class="af-switch__reason" hidden></span>
-	                  <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your token?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
+	                  <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your password?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
 	                </div>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
@@ -2945,6 +3025,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          </div>
 	        </div>
 	      </div>
+	      <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	    </div>
 	  </main>
 	  </div><!-- /shell_main -->
@@ -3007,6 +3088,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <label title="Point this ONE route at a specific server — a local inference server on a non-default port, say. Blank inherits the provider's own base URL.">Base URL <span class="subtle">(optional)</span>
 	            <input id="modal-default-base-url" type="text" autocomplete="off" spellcheck="false"
 	                   placeholder="inherit from the provider — e.g. http://localhost:1234/v1"></label>
+	          <label id="modal-default-device-label" class="hidden" title="Where the embedding model runs. The GPU is fast; the CPU leaves the GPU memory to the text model. Default: the GPU when there is room.">Device<select id="modal-default-device">
+	            <option value="">GPU when there is room (default)</option><option value="gpu">GPU</option><option value="cpu">CPU</option>
+	          </select><span id="modal-default-device-status" class="subtle"></span></label>
 	          <label id="modal-default-speculation-label" class="hidden" title="Core-owned default policy. Explicit request overrides win; unsupported backends do not enable MTP merely because a default is saved.">MTP<select id="modal-default-speculation">
 	            <option value="">inherit (no override)</option><option value="off">off</option>
 	            <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
@@ -3132,7 +3216,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div class="first-run-brand"><span class="shell_brand_mark" aria-hidden="true">↔</span><span>AbstractGateway</span></div>
 	        <div class="first-run-intro">
 	          <h2 id="first-run-title">Set up AbstractGateway</h2>
-	          <p>Five short, optional steps. Skip anything you do not need: this guide stays one click away (Setup, at the bottom of the sidebar).</p>
+	          <p>Six short, optional steps. Skip anything you do not need: this guide stays one click away (Setup, at the bottom of the sidebar).</p>
 	        </div>
 	        <ol id="first-run-steps" class="first-run-steps" aria-label="Setup steps"></ol>
 	        <div class="first-run-rail-foot">
@@ -3144,9 +3228,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="first-run-scroll" class="first-run-scroll">
 	          <div class="first-run-content">
 	            <header class="first-run-head">
-	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 5</div>
+	              <div id="first-run-kicker" class="first-run-kicker">Step 1 of 6</div>
 	              <h3 id="first-run-step-title">Welcome</h3>
 	              <p id="first-run-step-lede"></p>
+	              <!-- A step's view switch sits on the header line (Default models: Simple / Advanced). -->
+	              <div id="first-run-head-actions" class="first-run-head__actions"></div>
 	            </header>
 	            <!-- DOM CONTRACT (first-run; the ids below are what
 	                 later work embeds into). Local engines render as cards
@@ -3158,8 +3244,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="first-run-step-engines" class="first-run-panel hidden" data-step="engines">
 	              <div id="first-run-engines-body"></div>
 	            </section>
+	            <!-- Cloud providers (operator 2026-10-29: "where do I configure the cloud engines?"):
+	                 the kit's CloudProviderCards (islands mountCloudProviderCards), the SAME cards as the
+	                 Providers tab's Cloud providers section. -->
+	            <section id="first-run-step-cloud" class="first-run-panel hidden" data-step="cloud">
+	              <div id="first-run-cloud-body"></div>
+	            </section>
 	            <section id="first-run-step-model" class="first-run-panel hidden" data-step="model">
-	              <div id="first-run-model-body" class="first-run-panel">
+	              <div id="first-run-model-body" class="first-run-panel dm-simple">
+	                <!-- 1069: one row per capability (the framework's modality vocabulary), AbstractCore's
+	                     pick for this computer, Use recommended / Choose per row, and a subscription
+	                     path for text. The download cards below stay the place downloads run. -->
+	                <div id="first-run-default-models" class="first-run-panel"></div>
 	                <div id="first-run-model-recommended" class="first-run-panel"></div>
 	                <div class="ui-section-title"><h3>Or choose any model that fits this computer</h3><span class="ui-sub">The same catalog as the Models tab, filtered to what fits. Download a model, then use it as your default text model.</span></div>
 	                <div id="first-run-model-catalog"></div>
@@ -3171,6 +3267,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <section id="first-run-step-done" class="first-run-panel hidden" data-step="done">
 	              <div id="first-run-done-body"></div>
 	            </section>
+	            <footer class="console-footer">Product names and logos are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them.</footer>
 	          </div>
 	        </div>
 	        <footer class="first-run-footer">
@@ -3412,6 +3509,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
     </div>
   </div>
+  <!-- Guided choice for one capability (first-run guide, Simple mode; backlog 1069): the
+       recommendation for this computer, other models that fit, an API key (text). Above the
+       full-page guide (.modal-backdrop z-index 1000 > the guide's 800). -->
+  <div id="dm-choice-backdrop" class="modal-backdrop hidden" role="presentation">
+    <div class="modal dm-choice" role="dialog" aria-modal="true" aria-labelledby="dm-choice-title">
+      <div class="dm-choice__head"><h2 id="dm-choice-title">Choose a model</h2>
+        <button id="dm-choice-close" type="button" class="secondary" aria-label="Close">Close</button></div>
+      <div id="dm-choice-body" class="dm-choice__body"></div>
+    </div>
+  </div>
+  <!-- Password (0.18.0): set or change an account's password. Your own row: PUT /me/password
+       (asks the current password once one is set); another account (admins): PUT
+       /admin/accounts/{id}/password, and Remove (DELETE) when one is set. -->
+  <div id="account-password-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-password-title">
+      <div class="af-modal__header">
+        <h2 id="account-password-title" class="af-modal__title">Password</h2>
+        <button id="account-password-close" class="af-modal__close" type="button" aria-label="Close" data-af-tip="Close">×</button>
+      </div>
+      <div id="account-password-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
   <!-- Preferences (round 14, R14.2): the account's default workflow per app
        (GET/PUT /api/gateway/accounts/{id}/preferences). Applies on change; no Save.
        Round 16 (R16.1): + the account's time zone (the kit AfTimeZonePicker island). -->
@@ -3523,7 +3642,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <div id="entity-chat-transcript" class="entity-chat-transcript" aria-live="polite"></div>
             <div class="af-form__field entity-chat-composer">
               <label class="af-form__label" for="entity-chat-input">Message</label>
-              <div class="af-form__inline"><textarea id="entity-chat-input" rows="2" aria-describedby="entity-chat-input-help"></textarea><button id="entity-chat-send" class="secondary" type="button" disabled>Send</button></div>
+              <div id="entity-chat-composer-root"></div>
               <p id="entity-chat-input-help" class="af-form__help">Enter sends; Shift+Enter starts a new line. Open a visit first.</p>
             </div>
           </section>
@@ -3668,6 +3787,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
   </div>
+  <!--__RESOURCES_MODAL__-->
   <div id="confirm-backdrop" class="modal-backdrop hidden" role="presentation">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Confirm</h2>
@@ -3698,6 +3818,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             <option value="admin">Admin — manages this gateway</option>
           </select>
           <p id="new-roles-note" class="af-form__help hidden" role="status"></p>
+        </div>
+        <div class="af-form__field">
+          <label class="af-form__label" for="new-password">Password</label>
+          <input id="new-password" type="password" autocomplete="new-password" aria-describedby="new-password-help">
+          <p id="new-password-help" class="af-form__help">Optional. They sign in with their User ID and this password (at least 10 characters). Their token is still issued for apps and automation.</p>
         </div>
         <div class="af-form__field">
           <label class="af-form__label" for="new-email">Email address</label>
@@ -3825,7 +3950,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, me: null, users: [], defaults: [], providers: [], providerLabels: new Map(), defaultVoicePick: null, defaultVoiceIsland: null, providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -3847,10 +3972,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      openNew: svgIcon('<path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path>'),
 	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
 	      download: svgIcon('<path d="M12 4v11"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path>'),
+	      filter: svgIcon('<path d="M4 5h16l-6 7v6l-4 2v-8L4 5z"></path>'),
+	      star: svgIcon('<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z"></path>'),
+	      info: svgIcon('<circle cx="12" cy="12" r="9"></circle><path d="M12 11v6"></path><circle cx="12" cy="7" r=".6"></circle>'),
+	      check: svgIcon('<path d="m5 12 4 4L19 6"></path>'),
+	      close: svgIcon('<path d="m6 6 12 12M18 6 6 18"></path>'),
 	      archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
 	      unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 18v-6"></path><path d="m9.5 14.5 2.5-2.5 2.5 2.5"></path>'),
 	      pencil: svgIcon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
 	      eye: svgIcon('<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="3"></circle>'),
+	      text: svgIcon('<path d="M4 6V4h16v2M12 4v16M8 20h8"></path>'),
+	      brain: svgIcon('<path d="M12 4a3 3 0 0 0-5-1 4 4 0 0 0-3 6 4 4 0 0 0 0 7 4 4 0 0 0 5 5 3 3 0 0 0 3-3V4Zm0 0a3 3 0 0 1 5-1 4 4 0 0 1 3 6 4 4 0 0 1 0 7 4 4 0 0 1-5 5 3 3 0 0 1-3-3M7 8l2 2M5 15l3-1M17 8l-2 2M19 15l-3-1"></path>'),
+	      tool: svgIcon('<path d="m14 7 3 3 4-4a6 6 0 0 1-8 7l-7 7a2 2 0 0 1-3-3l7-7a6 6 0 0 1 7-8l-3 5Z"></path>'),
+	      waveform: svgIcon('<path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"></path>'),
+	      embedding: svgIcon('<circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="m7 5 10 0M6 7l5 10M18 7l-5 10"/>'),
+	      mic: svgIcon('<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>'),
+	      image: svgIcon('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 6-6 4 4 3-3 5 5"/>'),
+	      video: svgIcon('<rect x="2" y="5" width="14" height="14" rx="2"/><path d="m16 10 6-4v12l-6-4"/>'),
+	      // The Apps card's launcher badges: in the web browser / an app on the computer.
+	      globe: svgIcon('<circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"></path>'),
+	      monitor: svgIcon('<rect x="3" y="4" width="18" height="12" rx="2"></rect><path d="M8 20h8M12 16v4"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
@@ -5681,6 +5822,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // words to the WRONG entity under the right header.
 	      state.chatId = "";
 	      state.chatEntity = "";
+	      state.chatDraft = "";
+	      state.chatBusy = false;
 	      const t = $("entity-chat-transcript"); if (t) t.textContent = "";
 	      _entOut("entity-chat-status", "");
 	      chatUiState();
@@ -6717,6 +6860,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // session per home server-side; the console holds one chat_id at a time.
 	    state.chatId = "";
 	    state.chatEntity = "";
+	    state.chatDraft = "";
+	    state.chatBusy = false;
+	    let entityChatComposer = null;
+    function renderEntityChatComposer() {
+      const lib = islands.lib;
+      if (!lib) {
+        const root = $("entity-chat-composer-root");
+        if (root) root.textContent = "The message box is unavailable: the console's shared components did not load. Reload the page.";
+        return;
+      }
+      if (typeof lib.mountChatComposer !== "function") throw new Error("AbstractGateway console: the islands bundle has no mountChatComposer; refresh the shared composer bundle.");
+      const props = {
+        value: state.chatDraft,
+        onChange: (value) => { state.chatDraft = value; renderEntityChatComposer(); },
+        onSubmit: () => { void entityChatSend(); },
+        textareaId: "entity-chat-input",
+        ariaLabel: "Message",
+        ariaDescribedBy: "entity-chat-input-help",
+        placeholder: "Tell the entity…",
+        disabled: !state.chatId,
+        busy: !!state.chatBusy,
+      };
+      if (!entityChatComposer) entityChatComposer = lib.mountChatComposer($("entity-chat-composer-root"), props);
+      else entityChatComposer.update(props);
+    }
     function chatLine(who, text) {
       // The shared abstractuic dialogue look (pc-chat-item) — same classes
       // the sandbox speaks, so every conversation on the console matches.
@@ -6739,7 +6907,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const open = Boolean(state.chatId);
 	      $("entity-chat-open").classList.toggle("hidden", open);
 	      $("entity-chat-close").classList.toggle("hidden", !open);
-	      $("entity-chat-send").disabled = !open;
+	      renderEntityChatComposer();
 	    }
 	    async function entityChatOpen() {
 	      const name = state.manageName; if (!name) return;
@@ -6764,18 +6932,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function entityChatSend() {
-	      const text = ($("entity-chat-input").value || "").trim();
-	      if (!text || !state.chatId) return;
+	      const text = (state.chatDraft || "").trim();
+	      if (!text || !state.chatId || state.chatBusy) return;
 	      const name = state.chatEntity || state.manageName;
-	      $("entity-chat-send").disabled = true;
+	      const chatId = state.chatId;
+	      const manageToken = state.manageToken;
+	      const current = () => state.chatId === chatId && state.manageToken === manageToken;
+	      state.chatBusy = true;
+	      renderEntityChatComposer();
 	      chatLine("you", text);
-	      $("entity-chat-input").value = "";
 	      _entOut("entity-chat-status", "thinking…");
 	      try {
-	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(state.chatId)}/turn`, {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/chat/${encodeURIComponent(chatId)}/turn`, {
 	          slow: true,  // a real LLM round trip, not a discovery probe
 	          method: "POST", body: JSON.stringify({ text }),
 	        });
+	        if (!current()) return;
+	        if ((state.chatDraft || "").trim() === text) state.chatDraft = "";
 	        chatLine(name, String(r.reply || ""));
 	        const bits = [];
 	        if (Array.isArray(r.tools_ran) && r.tools_ran.length) bits.push(`tools: ${r.tools_ran.join(", ")}`);
@@ -6783,9 +6956,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (Array.isArray(r.diary_entries) && r.diary_entries.length) bits.push(`${r.diary_entries.length} diary entr${r.diary_entries.length === 1 ? "y" : "ies"}`);
 	        _entOut("entity-chat-status", bits.join(" · ") || "");
 	      } catch (e) {
-	        _entOut("entity-chat-status", String(e.message || e));
+	        if (current()) _entOut("entity-chat-status", String(e.message || e));
 	      } finally {
-	        $("entity-chat-send").disabled = !state.chatId;
+	        if (current()) { state.chatBusy = false; renderEntityChatComposer(); }
 	      }
 	    }
 	    async function entityChatClose() {
@@ -6798,6 +6971,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _entOut("entity-chat-status", "visit closed — reflection ran, the loop (if yielded) wakes.");
 	        state.chatId = "";
 	        state.chatEntity = "";
+	        state.chatBusy = false;  // a send still in flight belongs to the closed visit; its reply is dropped
 	      } catch (e) {
 	        // Clear only when the server says the session is already gone (a
 	        // 4xx not-open) — a FAILED close must keep the session marked open
@@ -6807,6 +6981,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (e.status && e.status >= 400 && e.status < 500) {
 	          state.chatId = "";
 	          state.chatEntity = "";
+	          state.chatBusy = false;
 	          _entOut("entity-chat-status", "session already closed server-side: " + String(e.message || e));
 	        } else {
 	          _entOut("entity-chat-status", "close FAILED — the visit is still open; retry: " + String(e.message || e));
@@ -9069,7 +9244,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("status-dot").className = `dot ${ok ? "ok" : ""}`;
 	      $("status-text").textContent = text;
 	      $("sign-out").classList.toggle("hidden", !ok);
-	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok, text);
+	      if (typeof islandsSetConnection === "function") islandsSetConnection(ok);
 	      // Signed out = the assistant has no session to run with; close the
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
@@ -9407,6 +9582,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           emptyModels: "No 3D scene discovery — type the model id",
         };
       }
+      // output.decision (AbstractCore 2.32.0): the discovery catalog filtered on the
+      // route, like the input routes — a decision model is a text-shaped model whose
+      // capability_routes.output is ["decision"] (kev, lev, laya), not a media engine.
+      if (key === "output.decision") {
+        return textCatalog("decision", { capability_route: "output.decision" });
+      }
       if (key === "output.music") {
         return {
           scope: "music generation",
@@ -9489,6 +9670,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!value) return "MTP execution not reported";
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
 	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
+	    }
+	    // DEVICE of a local embedding model (AbstractCore: route `options.device`, the person's
+	    // choice; operator ruling 2026-10-29) with what the loaded one takes now, in words.
+	    function isEmbeddingDefault(row) { return String(row?.key || "").startsWith("embedding."); }
+	    function embeddingDeviceStatus() {
+	      const models = Array.isArray(state.hostState?.models) ? state.hostState.models : [];
+	      const m = models.find((r) => r && r.task === "embedding" && r.resident === true);
+	      if (!m) return "Not loaded now.";
+	      const d = m.details || {};
+	      const where = String(d.device || "").toLowerCase().startsWith("cpu") ? "the CPU" : (d.device ? "the GPU" : "");
+	      const bytes = typeof d.device_bytes === "number" ? ` (${_fmtBytes(d.device_bytes)} of GPU memory, measured)` : "";
+	      return where ? `Now on ${where}${bytes}.${d.device_note ? " " + d.device_note + "." : ""}` : "Loaded.";
+	    }
+	    function loadDefaultDevice(row) {
+	      const on = isEmbeddingDefault(row);
+	      $("modal-default-device-label").classList.toggle("hidden", !on);
+	      if (!on) return;
+	      const dev = String(row?.options?.device || "").toLowerCase();
+	      $("modal-default-device").value = dev === "gpu" || dev === "cpu" ? dev : "";
+	      $("modal-default-device-status").textContent = embeddingDeviceStatus();
 	    }
 	    function loadDefaultSpeculation(row) {
 	      const label = $("modal-default-speculation-label");
@@ -9935,7 +10136,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       lmstudio: { family: "lmstudio" },
       vllm: { family: "openai-compatible", profileId: "vllm", name: "vLLM server", description: "vLLM OpenAI-compatible server." },
     };
-    const REMOTE_PROVIDER_FAMILIES = ["openai", "anthropic", "openrouter", "portkey", "openai-compatible"];
+    // The cloud providers are the kit's cards (mountCloudProviderCards); the preset grid keeps the
+    // one family that has no card: a custom OpenAI-compatible server.
+    const REMOTE_PROVIDER_FAMILIES = ["openai-compatible"];
     const LOCAL_CONNECTION_PROFILE_IDS = new Set(Object.values(LOCAL_PROVIDER_CONNECTIONS).map((c) => c.profileId).filter(Boolean));
     function localConnectionProfiles(engineId) {
       const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
@@ -9990,6 +10193,84 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (add) { openLocalProviderConnection(add.dataset.providerConnect); return; }
       const edit = t.closest("[data-provider-connection-edit]");
       if (edit) editEndpointProfileById(edit.dataset.providerConnectionEdit);
+    }
+    // ---- Cloud providers: the kit's CloudProviderCards (islands mountCloudProviderCards, ui-kit
+    // 0.9.9), ONE component in the setup guide's Cloud providers step and in the Providers tab.
+    // The kit reads AbstractCore's provider list (GET discovery/providers), checks a pasted key
+    // before anything is stored (discover-models: a draft, nothing written) and saves a NEW
+    // connection (fresh id, create_only: never an overwrite). The console refreshes its own tables
+    // after a save. A bundle without the cards is a vendoring defect, said where the cards go.
+    const cloudCards = { handles: new Map(), refresh: 0 };
+    function kitIslandsApi() {
+      try {
+        const w = typeof window !== "undefined" ? window : null;
+        return (w && w.AfConsoleIslands) || null;
+      } catch { return null; }
+    }
+    // The kit clients' request: the console's own api() (cookie session + CSRF), JSON body.
+    function kitRequest(path, init) {
+      const o = { method: (init && init.method) || "GET" };
+      if (init && init.body !== undefined) o.body = JSON.stringify(init.body);
+      return api(path, o);
+    }
+    function kitCloudProviders() {
+      const lib = kitIslandsApi();
+      const cp = lib && lib.cloudProviders;
+      if (!cp || typeof cp.client !== "function") {
+        throw new Error(lib ? "the abstractuic islands bundle has no cloudProviders (ui-kit 0.9.9+ required)" : "the abstractuic islands bundle did not load");
+      }
+      return cp;
+    }
+    function cloudCardsProps(opts) {
+      return {
+        request: kitRequest,
+        base: "/api/gateway",
+        scope: state.principal && state.principal.admin ? "gateway" : "user",
+        heading: opts.heading !== false,
+        refreshKey: cloudCards.refresh,
+        onConfigure: opts.configure ? (family) => openEndpointModalForFamily(family) : undefined,
+        onSaved: () => { void cloudCardsSaved(); },
+      };
+    }
+    function mountCloudProviderCards(viewKey, el, opts = {}) {
+      if (!el) return;
+      const lib = kitIslandsApi();
+      if (!lib || typeof lib.mountCloudProviderCards !== "function") {
+        const why = lib ? "the abstractuic islands bundle has no mountCloudProviderCards (ui-kit 0.9.9+ required)" : "the abstractuic islands bundle did not load";
+        console.error(`AbstractGateway console: ${why}; the cloud provider cards are unavailable.`);
+        el.innerHTML = `<div class="ui-alert tone-warn" role="alert"><strong>The cloud provider cards are unavailable.</strong><span>${esc(why)}.</span></div>`;
+        return;
+      }
+      const cur = cloudCards.handles.get(viewKey);
+      if (cur && cur.el === el) {
+        cur.opts = opts;
+        cur.handle.update(cloudCardsProps(opts));
+        return;
+      }
+      if (cur) unmountCloudProviderCards(viewKey);
+      cloudCards.handles.set(viewKey, { el, opts, handle: lib.mountCloudProviderCards(el, cloudCardsProps(opts)) });
+    }
+    function unmountCloudProviderCards(viewKey) {
+      const cur = cloudCards.handles.get(viewKey);
+      if (!cur) return;
+      cloudCards.handles.delete(viewKey);
+      try { cur.handle.unmount(); } catch (err) { console.error("cloud provider cards unmount", err); }
+    }
+    // The connections changed elsewhere (the connection editor, a delete): the cards re-read them.
+    function cloudCardsRefresh() {
+      cloudCards.refresh += 1;
+      for (const h of cloudCards.handles.values()) h.handle.update(cloudCardsProps(h.opts));
+    }
+    async function cloudCardsSaved() {
+      // A card saved a NEW connection: the Available Providers table, the provider lists and the
+      // capability defaults catch up (renderEndpointProfiles also refreshes the other cards).
+      try {
+        await loadEndpointProfiles();
+        state.providerModels.clear();
+        await loadProviders();
+      } catch (err) {
+        console.error("AbstractGateway console: reloading the provider connections after a save failed", err);
+      }
     }
     function renderProviderPresets() {
       const grid = $("provider-preset-grid");
@@ -10165,6 +10446,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tbody.append(tr);
 	        renderProviderPresets();
 	        engineRender();
+	        cloudCardsRefresh();
 	        return;
 	      }
       for (const p of state.endpointProfiles) {
@@ -10204,9 +10486,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.append(actions);
         tbody.append(tr);
       }
-      // The Remote presets and the Local provider cards show these connections.
+      // The Remote presets, the Local provider cards and the cloud cards show these connections.
       renderProviderPresets();
       engineRender();
+      cloudCardsRefresh();
     }
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
@@ -11235,6 +11518,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       const label = (e) => [e && e.provider, e && e.model].filter((v) => v !== undefined && v !== null && String(v) !== "").join("/") || "a model";
       const out = [];
+      // LOADS THE FIT CHECK REFUSED (AbstractCore ADR 0010): the sentence says
+      // what the model needs, what is free, what was kept and smaller choices.
+      const refusals = Array.isArray(diag.refusals) ? diag.refusals.filter((e) => e && typeof e === "object") : [];
+      for (const r of refusals.slice(-1)) {
+        if (r.message) out.push({ tone: "err", text: `Not loaded: ${String(r.message)}` });
+      }
       const pending = Array.isArray(diag.pending_ejects) ? diag.pending_ejects.filter((e) => e && typeof e === "object") : [];
       const pendingKeys = new Set(pending.map(label));
       for (const e of pending) out.push({ tone: "warn", text: `Will eject ${label(e)} when the in-flight call ends.` });
@@ -11605,6 +11894,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        await loadHostState({ quiet: true });
 	      }
 	    }
+	    function openModelContextEditor(row, cell) {
+	      cell.textContent = "";
+	      const input = document.createElement("input");
+	      input.type = "number"; input.min = "512"; input.step = "1024";
+	      input.placeholder = "fit to memory";
+	      input.value = row.context_source === "configured" ? String(row.context_length) : "";
+	      input.setAttribute("aria-label", `Context for ${row.model}`);
+	      const save = document.createElement("button");
+	      save.type = "button"; save.className = "secondary"; save.textContent = "Save";
+	      save.onclick = async () => {
+	        const msg = $("models-loaded-message");
+	        const raw = String(input.value || "").trim();
+	        try {
+	          const out = await api("/api/gateway/models/context", { method: "PUT", body: JSON.stringify({ provider: row.provider, model: row.model, context_length: raw ? Number(raw) : null }) });
+	          msg.textContent = String(out.message || "Saved."); msg.className = "message ok";
+	        } catch (e) {
+	          msg.textContent = String(e.message || e); msg.className = "message error";
+	        }
+	        await loadHostState({ quiet: true });
+	      };
+	      cell.append(input, document.createTextNode(" "), save);
+	    }
 	    async function toggleModelLock(row, btn) {
 	      const name = `${row.provider || "?"}/${row.model || "?"}`;
 	      const locking = row.locked !== true;
@@ -11613,7 +11924,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const path = locking ? "/api/gateway/models/lock" : "/api/gateway/models/unlock";
 	        _modelsMutationResult(await api(path, { method: "POST", body: JSON.stringify(modelUnloadTarget(row)) }));
-	        msg.textContent = `${locking ? "Locked" : "Unlocked"} ${name}.`;
+	        msg.textContent = locking ? `${name} is kept loaded: it will not be evicted for another model.` : `${name} is no longer kept loaded.`;
 	        msg.className = "message ok";
 	      } catch (e) {
 	        msg.textContent = String(e.message || e);
@@ -11701,6 +12012,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.append(modelTd);
 	        const resTd = document.createElement("td");
 	        resTd.append(residencyPill(row));
+	        // WHO keeps it in memory, in words (ADR 0043): "the runtime of
+	        // account default/bob (loaded)", or that no runtime uses it.
+	        if (row.resident === true && Array.isArray(row.held_by) && row.held_by.length) {
+	          const held = document.createElement("div");
+	          held.className = "muted";
+	          held.textContent = `held by ${row.held_by.join("; ")}`;
+	          resTd.append(held);
+	        }
 	        tr.append(resTd);
 	        // SIZE (operator: "an estimate of the current memory footprint used
 	        // for each model currently loaded"). The coalesced display size
@@ -11714,18 +12033,50 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const sizeView = modelDisplaySize(row);
 	        const cacheBytes = modelCacheBytes(row);
 	        const sizeMark = sizeView.source === "est_weights_bytes" ? "~" : "";
+	        // GGUF rows say what the cache IS: the KV cache llama.cpp allocated
+	        // for the loaded context (an estimate from the file geometry), then
+	        // the session prompt caches. "+ 8.3 GiB cache" with no context read as
+	        // a leak on a freshly restarted server.
+	        const kvBytes = (typeof row.kv_cache_bytes === "number" && isFinite(row.kv_cache_bytes) && row.kv_cache_bytes >= 0) ? row.kv_cache_bytes : null;
+	        const sessionBytes = (kvBytes !== null && cacheBytes !== null) ? Math.max(0, cacheBytes - kvBytes) : null;
+	        const cacheText = kvBytes !== null
+	          ? `~${_fmtBytes(kvBytes)} KV${sessionBytes ? ` + ${_fmtBytes(sessionBytes)} session caches` : ""}`
+	          : (cacheBytes === null ? null : `${_fmtBytes(cacheBytes)} cache`);
 	        sizeTd.textContent = sizeView.bytes === null
-	          ? (cacheBytes === null ? "" : `${_fmtBytes(cacheBytes)} cache`)
-	          : (cacheBytes === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${_fmtBytes(cacheBytes)} cache`);
+	          ? (cacheText || "")
+	          : (cacheText === null ? `${sizeMark}${_fmtBytes(sizeView.bytes)}` : `${sizeMark}${_fmtBytes(sizeView.bytes)} + ${cacheText}`);
 	        const sizeTitle = [sizeView.bytes === null
 	          ? "size unknown — this host reported no size for the model"
 	          : `${sizeView.label} (${sizeView.source})`];
 	        if (typeof row.size_vram_bytes === "number" && sizeView.source !== "size_vram_bytes") sizeTitle.push(`VRAM ${_fmtBytes(row.size_vram_bytes)}`);
-	        if (cacheBytes !== null) sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        if (kvBytes !== null) {
+	          const copies = Number(row.details && row.details.process_holders);
+	          sizeTitle.push(`KV cache ~${_fmtBytes(kvBytes)}: allocated when the model loaded, for ${typeof row.context_length === "number" ? `its ${_fmtCtx(row.context_length)}-token context` : "its context"}${Number.isFinite(copies) && copies > 1 ? `, summed over ${copies} copies` : ""} (estimated from the model file; it does not grow with use)`);
+	          if (sessionBytes) sizeTitle.push(`session prompt caches ${_fmtBytes(sessionBytes)}`);
+	        } else if (cacheBytes !== null) {
+	          sizeTitle.push(`prompt/KV cache ${_fmtBytes(cacheBytes)}`);
+	        }
 	        sizeTd.title = sizeTitle.join(" · ");
 	        tr.append(sizeTd);
 	        const ctxTd = document.createElement("td");
 	        ctxTd.textContent = _fmtCtx(row.context_length);
+	        // EXPLICIT CONTEXT (AbstractCore ADR 0010 point 8): what the model advertises and why
+	        // the loaded context differs, in words, with a per-model setting a person controls.
+	        if (typeof row.context_length === "number" && typeof row.advertised_context_length === "number" && row.advertised_context_length > row.context_length) {
+	          const buf = typeof row.memory_buffer === "number" ? `, ${Math.round(row.memory_buffer * 100)} % buffer` : "";
+	          ctxTd.textContent = `${row.context_length.toLocaleString()} of ${row.advertised_context_length.toLocaleString()}; limited by memory${buf}`;
+	        } else if (row.context_source === "configured" && typeof row.context_length === "number") {
+	          ctxTd.textContent = `${row.context_length.toLocaleString()} (set for this model)`;
+	        }
+	        if (row.resident === true && row.provider === "huggingface" && typeof row.context_length === "number" && state.principal && state.principal.admin) {
+	          const setBtn = document.createElement("button");
+	          setBtn.type = "button";
+	          setBtn.className = "secondary";
+	          setBtn.textContent = "Set context";
+	          setBtn.title = "Set how many tokens this model reserves when it loads. A larger one that does not fit is refused with the reason; it is never shrunk. Empty: fit to memory.";
+	          setBtn.onclick = () => openModelContextEditor(row, ctxTd);
+	          ctxTd.append(document.createTextNode(" "), setBtn);
+	        }
 	        if (row.context_calibrated === true) {
 	          const mark = document.createElement("span");
 	          mark.className = "state-pill ok";
@@ -11798,14 +12149,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            const lockBtn = document.createElement("button");
 	            lockBtn.className = "secondary";
 	            lockBtn.type = "button";
-	            lockBtn.textContent = row.locked === true ? "Unlock" : "Lock";
+	            // "Keep loaded" (AbstractCore ADR 0010): a kept model is never evicted
+	            // to make room for another load. Icon + words; the tooltip says why.
+	            lockBtn.textContent = row.locked === true ? "Kept loaded" : "Keep loaded";
+	            const lockIcon = document.createElement("span");
+	            lockIcon.className = "button-icon";
+	            lockIcon.innerHTML = ICONS.lock;  // the registry SVG, never an emoji
+	            lockBtn.prepend(lockIcon);
 	            lockBtn.title = row.locked === true
 	              ? (row.resident === true
-	                ? "Release the memory lock so this model can be unloaded or evicted"
+	                ? "Kept loaded: never evicted to make room for another model. Click to release it (it can then be unloaded or evicted when memory is needed)"
 	                : "Release a lock whose model is no longer in memory (the lock still blocks unloads)")
 	              : (row.source === "provider_server"
 	                ? "Lock this model in memory — this host loaded it outside the Gateway, so locking adopts it first"
-	                : "Lock this model in memory so nothing can evict it");
+	                : "Keep this model loaded: it is never evicted to make room for another model");
 	            lockBtn.onclick = () => toggleModelLock(row, lockBtn);
 	            act.append(lockBtn);
 	          }
@@ -12077,6 +12434,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Quiet (poll) repaints skip the datalist rebuild — replacing the
 	      // <option>s every 5s flicks an open suggestion popup shut.
 	      renderModelsLoadForm({ rebuildOptions: !quiet });
+          renderResourcesDashboard(data);
 	    }
 	    async function loadHostState({ quiet = false, widgetOnly = false } = {}) {
 	      if (!state.principal) return;
@@ -12122,6 +12480,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const breakdown = $("models-breakdown"); if (breakdown) { breakdown.textContent = ""; breakdown.classList.add("hidden"); }
 	        const facts = $("models-host-facts"); if (facts) facts.textContent = "";
 	        const deg = $("models-degraded"); if (deg) { deg.textContent = ""; deg.classList.add("hidden"); }
+            renderResourcesDashboard(null, String(e.message || e));
 	      } finally {
 	        state.hostStateInflight = Math.max(0, (state.hostStateInflight || 1) - 1);
 	      }
@@ -12440,8 +12799,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function renderAccount(me) {
 	      const p = me?.principal;
 	      state.principal = p || null;
+	      // The whole /me body, for the kit account widget (topBarIslandProps
+	      // connection.me); null when signed out, so no stale identity remains.
+	      state.me = p ? me : null;
 	      state.meAuth = (me && me.auth && typeof me.auth === "object") ? me.auth : null;  // the create-user modal reads user_auth_enabled
 		      if (!p) {
+              resetResourcesDashboard();
 		        document.body.classList.remove("signed-in");
 		        $("page-title").textContent = "AbstractGateway Console";
 		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";
@@ -12949,6 +13312,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (a.kind === "entity") {
             add("manage", "manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {
+            add("password", "key", `Password of ${a.id}`, () => openAccountPassword(a));
             add("rotate", "rotate", `Rotate the token of ${a.id}`, () => askRotateAccount(tr, a));
           }
           add("archive", "archive", `Archive ${a.id}`, () => askArchiveAccount(tr, a), true);
@@ -12982,6 +13346,109 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const first = backdrop.querySelector(".af-modal__body button, .af-modal__body input, .af-modal__body select, .af-modal__close");
       try { if (first && first.focus) first.focus(); } catch {}
       return () => { document.removeEventListener("keydown", onKey, true); backdrop.removeEventListener("click", onClick); };
+    }
+    // ---- Password modal (0.18.0). The row says whether the account has one (`password_set`).
+    function closeAccountPassword() {
+      const backdrop = $("account-password-backdrop");
+      if (backdrop.hidden) return;
+      $("account-password-body").textContent = "";
+      backdrop.hidden = true;
+      const release = accountsUi.passwordRelease;
+      accountsUi.passwordRelease = null;
+      if (release) release();
+    }
+    function openAccountPassword(a) {
+      closeAccountPassword();
+      if (typeof a.password_set !== "boolean") throw new Error(`GET /admin/accounts row ${a.id} has no boolean "password_set" (0.18.0 seam).`);
+      const own = Boolean(a.own);
+      const body = $("account-password-body");
+      body.textContent = "";
+      $("account-password-title").textContent = `Password — ${a.id}`;
+      const lead = document.createElement("p");
+      lead.className = "account-modal-lead";
+      lead.textContent = a.password_set
+        ? `${own ? "You sign" : `${a.id} signs`} in with the account id and a password. Setting a new one signs ${own ? "your other browsers" : "them"} out; the token keeps working for apps and automation.`
+        : `${own ? "You have" : `${a.id} has`} no password yet: sign-in takes the token. Set one to sign in with ${a.id} and a password; the token keeps working for apps and automation.`;
+      const form = document.createElement("form");
+      form.className = "af-form";
+      form.noValidate = true;
+      const field = (id, label, help) => {
+        const wrap = document.createElement("div");
+        wrap.className = "af-form__field";
+        const l = document.createElement("label");
+        l.className = "af-form__label";
+        l.setAttribute("for", id);
+        l.textContent = label;
+        const input = document.createElement("input");
+        input.id = id;
+        input.type = "password";
+        input.setAttribute("autocomplete", id.endsWith("current") ? "current-password" : "new-password");
+        wrap.append(l, input);
+        if (help) { const h = document.createElement("p"); h.className = "af-form__help"; h.textContent = help; wrap.append(h); }
+        form.append(wrap);
+        return input;
+      };
+      const current = own && a.password_set ? field("account-password-current", "Current password", "") : null;
+      const next = field("account-password-new", "New password", "At least 10 characters with at least 5 different ones; not the account name. A few words make a good one.");
+      const confirm = field("account-password-confirm", "Confirm the new password", "");
+      const note = document.createElement("p");
+      note.className = "inline-state";
+      note.setAttribute("role", "status");
+      note.setAttribute("aria-live", "polite");
+      const actions = document.createElement("div");
+      actions.className = "modal-actions";
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.textContent = a.password_set ? "Change password" : "Set password";
+      if (!own && a.password_set) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "secondary";
+        remove.textContent = "Remove password";
+        remove.onclick = async () => {
+          try {
+            await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/password?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "DELETE" });
+            a.password_set = false;
+            note.textContent = `Removed: ${a.id} signs in with the token only.`;
+            note.className = "inline-state ok";
+            refreshUsersOnly();
+          } catch (e) { note.textContent = `Not removed: ${emailErrorText(e)}`; note.className = "inline-state error"; }
+        };
+        actions.append(remove);
+      }
+      actions.append(save);
+      form.append(actions, note);
+      form.onsubmit = async (event) => {
+        if (event && event.preventDefault) event.preventDefault();
+        note.textContent = "";
+        note.className = "inline-state";
+        if (String(next.value || "").length < 10) { note.textContent = "Use at least 10 characters."; note.className = "inline-state error"; return; }
+        if (next.value !== confirm.value) { note.textContent = "The two passwords are different."; note.className = "inline-state error"; return; }
+        save.disabled = true;
+        try {
+          if (own) {
+            const payload = { new_password: next.value, new_password_confirm: confirm.value };
+            if (current) payload.current_password = current.value;
+            await api("/api/gateway/me/password", { method: "PUT", body: JSON.stringify(payload) });
+          } else {
+            await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/password?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ password: next.value }) });
+          }
+          a.password_set = true;
+          next.value = ""; confirm.value = ""; if (current) current.value = "";
+          note.textContent = own ? "Saved: sign in with your account and this password." : `Saved: ${a.id} signs in with ${a.id} and this password.`;
+          note.className = "inline-state ok";
+          refreshUsersOnly();
+        } catch (e) {
+          note.textContent = `Not saved: ${emailErrorText(e)}`;
+          note.className = "inline-state error";
+        } finally {
+          save.disabled = false;
+        }
+      };
+      body.append(lead, form);
+      const backdrop = $("account-password-backdrop");
+      backdrop.hidden = false;
+      accountsUi.passwordRelease = bindAccountModal(backdrop, closeAccountPassword);
     }
     // ---- OpenAI API modal (round 5): PUT /admin/accounts/{id}/openai-api {enabled} -> the row.
     function closeAccountOpenAI() {
@@ -13714,9 +14181,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             voice: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
             sound: '<path d="M4 9v6M8 5v14M12 2v20M16 5v14M20 9v6"/>',
             music: '<path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="2"/><ellipse cx="17" cy="16" rx="3" ry="2"/>',
-            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>'
+            scene3d: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5Zm0 10 9-5M12 12 3 7m9 5v10"/>',
+            decision: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0l-3-7M17 7l-3 7a3 3 0 0 0 6 0l-3-7"/>'
           };
-          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene"};
+          const names = {text:"Text",image:"Image",video:"Video",voice:"Voice",sound:"Sound",music:"Music",scene3d:"3D scene",decision:"Decision"};
           const tasks = {text_to_image:["Text → image","Generate an image from a text description."],image_to_image:["Image → image","Edit or transform an existing image."],image_upscale:["Upscale","Restore detail or increase image resolution."],text_to_video:["Text → video","Generate a video from a text description."],image_to_video:["Image → video","Animate an image into a video."]};
           const label = task ? (tasks[task]?.[0] || task.replaceAll("_"," ")) : (names[modality] || modality);
           const direction = defaultRowKindModality(row).kind;
@@ -14555,6 +15023,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      let shownOptions = storedOptions ? { ...storedOptions } : null;
 	      if (shownOptions && isVoiceOutputDefault(row)) { delete shownOptions.voice; delete shownOptions.profile; }
 	      if (shownOptions && isTextGenerationDefault(row)) delete shownOptions.speculation;
+      if (shownOptions && String(row?.key || "").startsWith("embedding.")) delete shownOptions.device;
 	      $("modal-default-options").value = shownOptions && Object.keys(shownOptions).length
 	        ? JSON.stringify(shownOptions, null, 2)
 	        : "";
@@ -14572,7 +15041,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        options: $("modal-default-options").value,
 	        voice: defaultVoiceValue(row),
 	        speculation: speculationChoice(row?.options?.speculation),
+	        device: String(row?.options?.device || ""),
 	      };
+	      if (typeof loadDefaultDevice === "function") loadDefaultDevice(row);
 	      $("test-default").classList.toggle("hidden", !defaultRowTestable(row));
 	      $("default-modal-backdrop").classList.remove("hidden");
 	      if (isVoiceOutputDefault(row)) {
@@ -14765,6 +15236,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // AbstractCore's table: one card per engine, one primary action per
         // state, plus the provider's connection (localProviderExtras).
         mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras, onClick: onLocalProviderClick });
+        // Cloud providers: the kit cards, the same as the setup guide's step; "More settings"
+        // opens this tab's connection editor (base URL, allowed models).
+        mountCloudProviderCards("providers", $("cloud-providers-root"), { heading: false, configure: true });
         return;
       }
       if (tab === "catalog") {
@@ -14939,28 +15413,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       backlogSettingsRefresh();
     }
     function unmountBacklogSettings() { backlogSetStore.el = null; }
-    const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
+    // Cloud providers is a step of its own (not a section of Local engines): the rail answers
+    // "where do I configure the cloud engines?" by name, the engines step stays about software on
+    // this computer, and a key saved here is offered by the next step (Default models).
+    const FIRST_RUN_STEPS = ["welcome", "engines", "cloud", "model", "apps", "done"];
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
       engines: "Local engines",
-      model: "Default model",
+      cloud: "Cloud providers",
+      model: "Default models",
       apps: "Apps",
       done: "Done",
     };
     const FIRST_RUN_STEP_COPY = {
       welcome: { title: "Welcome to your gateway", hint: "Check this computer", lede: "Your gateway is running on this computer and you are signed in as its admin. The next steps get you to a working model. Every step is optional." },
-      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
-      model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
+      engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; to use a cloud account instead, the next step takes its API key." },
+      cloud: { title: "Cloud providers", hint: "Cloud accounts and compatible endpoints", lede: "Connect a cloud account with its API key, or add an OpenAI-compatible endpoint. These connections are also available on the Providers page." },
+      model: { title: "Choose your default models", hint: "What your apps use", lede: "One model per capability, sized for this computer: use the recommended ones in one click, or pick your own." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
       done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
-    const FIRST_RUN_APPS = [
-      { pkg: "@abstractframework/flow", name: "Flow", mark: "Fl", what: "Design workflows visually and run them on this gateway." },
-      { pkg: "@abstractframework/code", name: "Code", mark: "Co", what: "A coding assistant in your browser, with sessions that survive restarts." },
-      { pkg: "@abstractframework/observer", name: "Observer", mark: "Ob", what: "Watch runs live, replay them, and send commands to running work." },
-      { pkg: "@abstractframework/continuum", name: "Continuum", mark: "Cn", what: "Your backlog, inbox and long-running processes, driven by this gateway." },
-      { pkg: "@abstractframework/entity", name: "Entity", mark: "En", what: "Create entities, see their memory grow, and talk with them." },
-    ];
     const firstRun = { open: false, step: "welcome", checked: false, autoOpened: false, host: null, engines: null, enginesMissing: false, enginesError: "" };
     function firstRunHash() {
       try { return String((typeof location !== "undefined" && location && location.hash) || ""); } catch { return ""; }
@@ -15055,6 +15527,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Models/Engines tabs keep theirs.
       unmountModelCatalog("first-run");
       unmountEngineCards("first-run");
+      unmountCloudProviderCards("first-run");
       unmountAppCards("first-run");
       unmountNetworkPanel("first-run");
       // Focus goes back to what opened the guide (keyboard users keep their
@@ -15100,6 +15573,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("first-run-kicker").textContent = `Step ${idx + 1} of ${FIRST_RUN_STEPS.length}`;
       $("first-run-step-title").textContent = copy.title || FIRST_RUN_STEP_TITLES[step];
       $("first-run-step-lede").textContent = copy.lede || "";
+      const headActions = $("first-run-head-actions");
+      if (headActions && step !== "model") { headActions.innerHTML = ""; headActions.onclick = null; }
       const scroller = $("first-run-scroll");
       if (scroller) scroller.scrollTop = 0;
       // Keyboard: each step starts at its title (Tab then walks the step's
@@ -15115,6 +15590,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       renderFirstRunSteps();
       if (step === "welcome") loadFirstRunWelcome();
       if (step === "engines") loadFirstRunEngines();
+      if (step === "cloud") loadFirstRunCloud();
       if (step === "model") loadFirstRunModel();
       if (step === "apps") renderFirstRunApps();
       if (step === "done") renderFirstRunDone();
@@ -15162,7 +15638,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : `Keeps the gateway running after a restart <span class="ui-advanced"><code>abstractgateway service install</code></span>`],
       ])
         + `<div class="ui-section-title"><h3>What this guide sets up</h3><span class="ui-sub">Each step takes a minute; skip any of them.</span></div>`
-        + `<div class="ui-card-grid is-fit">${["engines", "model", "apps"].map((step) => {
+        + `<div class="ui-card-grid is-fit">${["engines", "cloud", "model", "apps"].map((step) => {
           const copy = FIRST_RUN_STEP_COPY[step] || {};
           const n = FIRST_RUN_STEPS.indexOf(step) + 1;
           return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${n}</span>`
@@ -15181,14 +15657,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // "Show details". Nothing here depends on AbstractCore's table screen.
       mountEngineCards("first-run", $("first-run-engines-body"));
     }
+    function loadFirstRunCloud() {
+      mountCloudProviderCards("first-run", $("first-run-cloud-body"), { heading: false });
+    }
     async function loadFirstRunModel() {
       const box = $("first-run-model-recommended");
       box.innerHTML = `<p class="subtle">Checking the recommended starter models...</p>`;
+      // Simple mode paints first, as a skeleton, while the recommendations load.
+      dmUi.loading = true;
+      renderFirstRunDefaultModels();
       // The Models tab's catalog cards below the starter kit, with "Fits this
       // computer" preset, so the list opens on what can run here; "Open in the
       // Models tab" carries the same filters over (console_catalog.py).
       mountModelCatalog("first-run", $("first-run-model-catalog"), { guide: true, filters: { fits: true } });
-      await refreshAvailability({ rerender: false });
+      try {
+        await refreshAvailability({ rerender: false });
+      } finally {
+        dmUi.loading = false;
+      }
       renderFirstRunModel();
       uiRestoreDownloads();
     }
@@ -15245,9 +15731,584 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const pair = [row.route_unavailable.provider, row.route_unavailable.model].filter(Boolean).join(" / ");
       return `<div class="ui-alert tone-warn capability-route-unavailable" role="note"><span>Configured now${pair ? ` (${esc(pair)})` : ""} but cannot run on this computer: ${esc(reason)}</span></div>`;
     }
+    // ---- Default models (backlog 1069). Two modes in the guide's model step:
+    //   SIMPLE (default; operator: "think Apple's setup experience: one simple path to the first
+    //     good experience"): ONE "Use recommended" (keeps your own choices, downloads AbstractCore's
+    //     recommended set for this computer, progress per download), then the capabilities as
+    //     badges grouped Input / Output, each with its state in readable names (ADR 0043: never a
+    //     model id); a badge opens a guided choice: the recommendation first, other models that fit,
+    //     then an API key (text).
+    //   ADVANCED: one table row per capability (engine, model, Use recommended / Download / Choose…).
+    // AbstractCore owns the picks (GET /models/availability `recommended`); the gateway holds no list.
+    const DM_ICONS = {
+      text: '<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>',
+      image: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path>',
+      video: '<rect x="2" y="6" width="14" height="12" rx="2"></rect><path d="M16 10.5l5.2-3.1a.5.5 0 0 1 .8.4v8.4a.5.5 0 0 1-.8.4L16 13.5"></path>',
+      mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"></path><path d="M19 11a7 7 0 0 1-14 0"></path><path d="M12 18v4"></path><path d="M8 22h8"></path>',
+      speaker: '<path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7"></path><path d="M18 6a9 9 0 0 1 0 12"></path>',
+      music: '<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>',
+      decision: '<path d="M12 3v18"></path><path d="M5 7h14"></path><path d="M7 7l-3 7a3 3 0 0 0 6 0l-3-7"></path><path d="M17 7l-3 7a3 3 0 0 0 6 0l-3-7"></path>',
+      file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path>',
+      database: '<ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14a9 3 0 0 0 18 0V5"></path><path d="M3 12a9 3 0 0 0 18 0"></path>',
+      // Not in the kit's icon set (root backlog 1073: one icon set across apps): drawn on the kit's
+      // 24-grid with its stroke 2, so they read as the same family.
+      cube: '<path d="M12 2.5 21 7.5v9L12 21.5 3 16.5v-9z"></path><path d="M3 7.5 12 12.5l9-5"></path><path d="M12 12.5v9"></path>',
+      rank: '<path d="M4 6h16"></path><path d="M4 12h11"></path><path d="M4 18h6"></path><path d="M19 15v6"></path><path d="m16.5 18.5 2.5 2.5 2.5-2.5"></path>',
+    };
+    function dmIcon(name) {
+      return `<svg class="dm-badge__icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${DM_ICONS[name] || ""}</svg>`;
+    }
+    // The capabilities, in the framework's vocabulary. `route`: the capability default the badge
+    // shows; `catalog`: the catalog capability flag whose models "Other models" can set (engines
+    // whose route model is the artifact id, or LM Studio's served id); `key`: an API key can serve it.
+    const DM_INPUTS = [
+      { id: "in-text", label: "Text", icon: "text", hue: "#6366f1", route: "input.text", catalog: "text", key: true, what: "Questions, instructions, documents" },
+      { id: "in-image", label: "Image", icon: "image", hue: "#ec4899", route: "input.image", what: "Understands pictures" },
+      { id: "in-voice", label: "Voice", icon: "mic", hue: "#f59e0b", route: "input.voice", what: "Turns speech into text" },
+      { id: "in-video", label: "Video", icon: "video", hue: "#ef4444", route: "input.video", what: "Understands videos" },
+      { id: "in-files", label: "Files", icon: "file", hue: "#64748b", route: null, what: "PDFs, documents and data, read by the text model" },
+    ];
+    const DM_OUTPUTS = [
+      { id: "out-text", label: "Text", icon: "text", hue: "#6366f1", route: "input.text", catalog: "text", key: true, what: "Answers, agents and workflows" },
+      { id: "out-image", label: "Image", icon: "image", hue: "#ec4899", route: "output.image", catalog: "image_generation", what: "Pictures from a description" },
+      { id: "out-video", label: "Video", icon: "video", hue: "#ef4444", route: "output.video", catalog: "video_generation", what: "Clips from a description or a picture" },
+      { id: "out-voice", label: "Voice", icon: "speaker", hue: "#f59e0b", route: "output.voice", what: "Reads answers aloud" },
+      { id: "out-music", label: "Music", icon: "music", hue: "#8b5cf6", route: "output.music", what: "Songs and soundtracks" },
+      { id: "out-decision", label: "Decisions", icon: "decision", hue: "#0f766e", route: "output.decision", what: "Yes/no, choice and score answers with confidence" },
+      { id: "out-3d", label: "3D", icon: "cube", hue: "#14b8a6", route: "output.scene3d", what: "3D scenes" },
+      { id: "out-embeddings", label: "Embeddings", icon: "database", hue: "#0ea5e9", route: "embedding.text", catalog: "embedding", what: "Search and memory" },
+      { id: "out-rankers", label: "Rankers", icon: "rank", hue: "#22c55e", route: "rerank.text", what: "Orders results by relevance" },
+    ];
+    const dmUi = { mode: "simple", loading: false, busy: new Set(), catalog: null, catalogError: "", catalogLoading: false, choice: null, release: null };
+    function dmCatalogRows() { return (dmUi.catalog && Array.isArray(dmUi.catalog.rows)) ? dmUi.catalog.rows : []; }
+    async function dmLoadCatalog() {
+      if (dmUi.catalog || dmUi.catalogLoading) return;
+      dmUi.catalogLoading = true;
+      try { dmUi.catalog = await api("/api/gateway/models/catalog"); } catch (err) { dmUi.catalogError = String(err.message || err); }
+      dmUi.catalogLoading = false;
+      if (firstRun.open && firstRun.step === "model") renderFirstRunDefaultModels();
+      // Only a dialog that lists catalog models needs the re-render (review 1069: it wiped a
+      // half-typed API key and re-enabled a Use button mid-write).
+      if (dmUi.choice && dmUi.choice.cap.catalog) renderDmChoice();
+    }
+    function dmSameModel(provider, a, b) {
+      if (!a || !b) return false;
+      return a === b || servedModelId(provider, a) === servedModelId(provider, b);
+    }
+    // A readable name for (provider, model): the catalog's display name when an artifact matches,
+    // else the model id made readable (last path segment, quantization and packaging suffixes off).
+    function dmReadableName(provider, model) {
+      const m = String(model || "");
+      if (!m) return "";
+      for (const row of dmCatalogRows()) {
+        for (const a of (row.artifacts || [])) {
+          if (a && (dmSameModel(provider, a.artifact, m) || dmSameModel(a.provider, a.artifact, m))) return row.display_name || row.id;
+        }
+      }
+      // An Ollama tag IS the model (qwen3:8b vs qwen3:14b): it stays in the name.
+      let t = (String(provider || "") === "ollama" ? m.replace(/:/g, " ") : m.split(/[@:]/)[0]).split("/").pop();
+      for (let i = 0; i < 3; i++) t = t.replace(/[-_.](gguf|mlx|diffusers|\\d+bit|q\\d\\w*|fp16|bf16)$/i, "");
+      t = t.replace(/[-_]+/g, " ").trim();
+      if (/whisper/i.test(String(provider || "")) && !/whisper/i.test(t)) t = `Whisper ${t}`;
+      t = t.replace(/\\bgpt\\b/gi, "GPT");
+      return t ? t.charAt(0).toUpperCase() + t.slice(1) : m;
+    }
+    function dmRecommended(route, alt) {
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      return rows.find((r) => r && r.route === route) || (alt ? rows.find((r) => r && r.route === alt) : null) || null;
+    }
+    function dmRecFor(route) { return dmRecommended(route, route === "input.text" ? "output.text" : null); }
+    function dmRecRoute(rec) {
+      return { provider: typeof rec.route_provider === "string" ? rec.route_provider : rec.provider,
+               model: typeof rec.route_model === "string" ? rec.route_model : rec.artifact };
+    }
+    // {kind: none | recommended | custom | covered, name, recName, note}
+    function dmState(cap) {
+      const textRow = findDefaultRow(state.defaults, "input.text");
+      const textSet = textRow && rowHasProviderModel(textRow);
+      if (!cap.route) {
+        return textSet ? { kind: "covered", name: dmReadableName(textRow.provider, textRow.model), note: "read by the text model" }
+          : { kind: "none", name: "", note: "Needs a text model" };
+      }
+      const row = findDefaultRow(state.defaults, cap.route);
+      const rec = dmRecFor(cap.route);
+      const recRoute = rec ? dmRecRoute(rec) : null;
+      const recName = recRoute ? dmReadableName(recRoute.provider, recRoute.model) : "";
+      // A covered input (input.image/video read by the text model) carries the TEXT route's
+      // provider/model (renderDefaults copies them): it is Covered, never "Your choice".
+      if (row && row.covered_by === "input.text" && textSet) {
+        return { kind: "covered", name: dmReadableName(textRow.provider, textRow.model), note: "read by the text model", recName };
+      }
+      if (row && rowHasProviderModel(row)) {
+        const same = Boolean(recRoute && row.provider === recRoute.provider && dmSameModel(row.provider, row.model, recRoute.model));
+        return { kind: same ? "recommended" : "custom", name: dmReadableName(row.provider, row.model), recName };
+      }
+      return { kind: "none", name: "", recName };
+    }
+    const DM_STATE_WORD = { none: "Not set", recommended: "Recommended", custom: "Your choice", covered: "Covered" };
+    function dmBadgeSkeleton(cap) {
+      return `<div class="dm-badge dm-badge--loading" style="--dm-hue:${cap.hue}" aria-hidden="true">`
+        + `<span class="dm-badge__mark">${dmIcon(cap.icon)}</span>`
+        + `<span class="dm-badge__text"><span class="dm-badge__label">${esc(cap.label)}</span><span class="dm-badge__state">Checking…</span></span></div>`;
+    }
+    function dmBadgeMarkup(cap) {
+      const st = dmState(cap);
+      const word = DM_STATE_WORD[st.kind] || "";
+      const line = st.kind === "none"
+        ? (st.recName ? `Recommended here: ${esc(st.recName)}` : esc(st.note || "Choose a model"))
+        : `${esc(st.name)}${st.note ? ` <span class="dm-badge__note">· ${esc(st.note)}</span>` : ""}`;
+      return `<button type="button" class="dm-badge dm-badge--${st.kind}" style="--dm-hue:${cap.hue}" data-dm-badge="${esc(cap.id)}" aria-label="${esc(`${cap.label}: ${word}${st.name ? `, ${st.name}` : ""}. Choose the model`)}">`
+        + `<span class="dm-badge__mark">${dmIcon(cap.icon)}</span>`
+        + `<span class="dm-badge__text"><span class="dm-badge__label">${esc(cap.label)}</span><span class="dm-badge__state">${esc(word)}</span>`
+        + `<span class="dm-badge__model">${line}</span></span></button>`;
+    }
+    function dmSimpleMarkup() {
+      const plan = state.availabilityPlan || {};
+      const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
+      const absent = rows.filter((r) => r && r.status === "absent");
+      const bytes = absent.reduce((n, r) => n + (Number(r.download_bytes || 0) || 0), 0);
+      const busy = dmUi.busy.has("recommended");
+      const group = dlFeed.group;
+      const names = [];
+      for (const r of rows) { const n = dmReadableName(dmRecRoute(r).provider, dmRecRoute(r).model); if (n && !names.includes(n)) names.push(n); }
+      if (dmUi.loading && !rows.length) {
+        // The first paint of the step (operator 2026-10-29): Simple mode at once, a skeleton while
+        // this computer's recommendations load; never the older layout first.
+        return `<section class="dm-hero is-loading" aria-labelledby="dm-hero-title" aria-busy="true"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
+          + `<p>Reading what this computer can run…</p></div>`
+          + `<button type="button" class="ui-btn is-primary dm-hero__btn" data-dm-recommended="1" disabled>Use recommended</button></section>`
+          + `<div class="dm-groups">`
+          + `<section class="dm-group" aria-labelledby="dm-in-title"><h4 id="dm-in-title">Input <span>what it understands</span></h4><div class="dm-badges">${DM_INPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `<section class="dm-group" aria-labelledby="dm-out-title"><h4 id="dm-out-title">Output <span>what it makes</span></h4><div class="dm-badges">${DM_OUTPUTS.map(dmBadgeSkeleton).join("")}</div></section>`
+          + `</div>`;
+      }
+      return `<section class="dm-hero" aria-labelledby="dm-hero-title"><div class="dm-hero__text"><h3 id="dm-hero-title">Recommended for this computer</h3>`
+        + `<p>${names.length ? `${esc(names.slice(0, 5).join(", "))}${names.length > 5 ? "…" : ""}: chosen for this computer's memory and engines.` : "AbstractCore's picks for this computer."}`
+        + `${absent.length ? ` ${absent.length} to download${bytes ? `, about ${esc(uiBytes(bytes))}` : ""}.` : rows.length ? " Everything is downloaded." : ""} Your own choices are kept.</p></div>`
+        + `<button type="button" class="ui-btn is-primary dm-hero__btn" data-dm-recommended="1"${busy ? ' disabled aria-busy="true"' : ""}>${busy ? "Setting up…" : "Use recommended"}</button>`
+        + `</section>`
+        + (group ? `<div class="dm-progress">${dlGroupMarkup(group)}</div>` : "")
+        + dmSingleProgressMarkup()
+        + `<div class="dm-groups">`
+        + `<section class="dm-group" aria-labelledby="dm-in-title"><h4 id="dm-in-title">Input <span>what it understands</span></h4><div class="dm-badges">${DM_INPUTS.map(dmBadgeMarkup).join("")}</div></section>`
+        + `<section class="dm-group" aria-labelledby="dm-out-title"><h4 id="dm-out-title">Output <span>what it makes</span></h4><div class="dm-badges">${DM_OUTPUTS.map(dmBadgeMarkup).join("")}</div></section>`
+        + `</div>`;
+    }
+    // One model's download (a badge's "Use it", an "Other models" pick) shows its progress here too:
+    // Simple has no table to carry it (review 1069). Children of the parent job show in its card.
+    function dmSingleProgressMarkup() {
+      const rows = [];
+      for (const job of state.downloadJobs.values()) {
+        if (!job || job.parent_job || !dlActive(job)) continue;
+        rows.push(uiProgressMarkup(job, `Downloading ${dmReadableName(job.provider, job.artifact)}`));
+      }
+      return rows.length ? `<div class="dm-progress">${rows.join("")}</div>` : "";
+    }
+    // ---- Advanced: one table row per capability, engine and model ids shown.
+    const DEFAULT_MODEL_ROWS = [
+      { id: "text", label: "Text", route: "input.text", alt: "output.text", inputs: ["text", "image"], outputs: ["text"], what: "Chat, agents and workflows" },
+      { id: "image", label: "Image", route: "output.image", inputs: ["text", "image"], outputs: ["image"], what: "Pictures from a description, and edits" },
+      { id: "video", label: "Video", route: "output.video", inputs: ["text", "image"], outputs: ["video"], what: "Short clips from a description or a picture" },
+      { id: "voice_out", label: "Voice out", route: "output.voice", inputs: ["text"], outputs: ["speech"], what: "Reads answers aloud" },
+      { id: "voice_in", label: "Voice in", route: "input.voice", inputs: ["speech"], outputs: ["text"], what: "Turns speech into text" },
+      { id: "music", label: "Music", route: "output.music", inputs: ["text"], outputs: ["music"], what: "Songs and soundtracks" },
+      { id: "decision", label: "Decisions", route: "output.decision", inputs: ["text"], outputs: ["decisions"], what: "Yes/no, choice and score answers with confidence" },
+      { id: "3d", label: "3D", route: "output.scene3d", inputs: ["text", "image"], outputs: ["3D scene"], what: "3D scenes from a description or a picture" },
+      { id: "embeddings", label: "Embeddings", route: "embedding.text", inputs: ["text"], outputs: ["vectors"], what: "Search and memory" },
+      { id: "rankers", label: "Rankers", route: "rerank.text", inputs: ["query", "texts"], outputs: ["scores"], what: "Orders search results by relevance" },
+    ];
+    function dmCaps(list) { return list.map((c) => `<span class="chip">${esc(c)}</span>`).join(" "); }
+    function dmRowMarkup(m) {
+      const row = findDefaultRow(state.defaults, m.route) || (m.alt ? findDefaultRow(state.defaults, m.alt) : null);
+      const now = row && rowHasProviderModel(row)
+        ? `<b>${esc(state.providerLabels.get(row.provider) || row.provider)}</b> · <span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>`
+        : `<span class="muted">Not set</span>`;
+      const rec = dmRecommended(m.route, m.alt);
+      let recCell;
+      let inUse = false;
+      if (rec) {
+        const { provider: engine, model } = dmRecRoute(rec);
+        const pill = rec.status === "installed" ? uiPill("Downloaded", "ok") : rec.status === "absent" ? uiPill("Not downloaded", "muted") : uiPill(firstRunCap(rec.status || "unknown"), "muted");
+        inUse = Boolean(row && row.provider === engine && dmSameModel(engine, row.model, model));
+        recCell = `<b>${esc(state.providerLabels.get(engine) || engine)}</b> · <span class="ui-ellip" title="${esc(model)}">${esc(model)}</span> ${pill}`
+          + (rec.tier ? `<div class="muted">Chosen by memory: ${esc(rec.tier)}</div>` : "")
+          + (inUse ? `<div class="muted">In use.</div>` : "");
+      } else {
+        const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
+        recCell = `<span class="muted">${esc(why || "AbstractCore recommends no model for this on this computer; choose one.")}</span>`;
+      }
+      const busy = dmUi.busy.has(m.route);
+      const actions = [];
+      if (rec && !inUse) actions.push(`<button type="button" class="ui-btn is-primary" data-dm-use="${esc(m.route)}"${busy ? " disabled" : ""}>${busy ? "Setting…" : "Use recommended"}</button>`);
+      if (rec && rec.status === "absent") actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-download="1" data-provider="${esc(rec.provider)}" data-artifact="${esc(rec.artifact)}">Download</button>`);
+      if (row && !defaultRowReadOnly(row)) actions.push(`<button type="button" class="ui-btn is-ghost" data-dm-choose="${esc(defaultRowKey(row))}">Choose…</button>`);
+      return `<tr data-dm-row="${esc(m.id)}"><td><b>${esc(m.label)}</b><div class="muted">${esc(m.what)}</div></td>`
+        + `<td>${dmCaps(m.inputs)} → ${dmCaps(m.outputs)}</td><td>${now}</td><td>${recCell}</td>`
+        + `<td class="actions"><div class="dm-actions">${actions.join("")}</div></td></tr>`;
+    }
+    function dmAdvancedMarkup() {
+      return `<div class="ui-section-title"><h3>Default models</h3><span class="ui-sub">One model per capability. Recommendations follow this computer's GPU memory (or unified memory on a Mac) and the engines that run here.</span></div>`
+        + `<div class="table-wrap"><table class="first-run-default-models"><thead><tr><th>Capability</th><th>In → out</th><th>Now</th><th>Recommended here</th><th><span class="sr-only">Actions</span></th></tr></thead>`
+        + `<tbody>${DEFAULT_MODEL_ROWS.map(dmRowMarkup).join("")}</tbody></table></div>`
+        + `<div class="ui-toolbar"><button id="dm-apply-all" type="button" class="ui-btn is-primary">Use recommended for all</button>`
+        + `<span>Sets every recommended model this computer can run and keeps the choices you already made.</span></div>`;
+    }
+    function renderFirstRunDefaultModels() {
+      const box = $("first-run-default-models");
+      if (!box) return;
+      const simple = dmUi.mode === "simple";
+      const body = $("first-run-model-body");
+      if (body && body.classList) body.classList.toggle("dm-simple", simple);
+      // The Simple / Advanced switch is on the step's header line (operator 2026-10-29: the content
+      // starts higher); the step body holds the view only.
+      const head = $("first-run-head-actions");
+      if (head) {
+        head.innerHTML = `<div class="dm-mode" role="group" aria-label="How much detail"><button type="button" data-dm-mode="simple" aria-pressed="${simple}">Simple</button><button type="button" data-dm-mode="advanced" aria-pressed="${!simple}">Advanced</button></div>`;
+        head.onclick = (event) => {
+          const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-mode]") : null;
+          if (!b) return;
+          dmUi.mode = b.dataset.dmMode === "advanced" ? "advanced" : "simple";
+          renderFirstRunModel();
+        };
+      }
+      box.innerHTML = simple ? dmSimpleMarkup() : dmAdvancedMarkup();
+      if (!simple) $("dm-apply-all").onclick = async () => {
+        await applyRecommendedDefaults($("dm-apply-all"), false);
+        dmSay($("defaults-message").textContent, $("defaults-message").className.replace(/^message\\s*/, ""));
+        renderFirstRunModel();
+      };
+      box.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-dm-recommended], [data-dm-badge], [data-dm-use], [data-dm-download], [data-dm-choose], [data-dl-cancel]") : null;
+        if (!b || b.disabled) return;
+        const d = b.dataset || {};
+        if (d.dmRecommended) return dmUseAllRecommended();
+        if (d.dmBadge) return dmOpenChoice(d.dmBadge);
+        if (d.dmUse) return dmUseRecommendedFor(d.dmUse);
+        if (d.dmDownload) return dmDownload(d.provider, d.artifact);
+        if (d.dlCancel) return dlCancel(d.dlCancel, b, d.dlStep);
+        if (d.dmChoose) return dmChooseAny(d.dmChoose);
+      };
+      if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+    }
+    function dmChooseAny(route) {
+      const row = findDefaultRow(state.defaults, route);
+      if (!row) throw new Error(`GET /config/capability-defaults has no ${route} row (capability-defaults seam).`);
+      return openDefaultModal(row);
+    }
+    function dmSay(text, tone) { $("first-run-message").textContent = text; $("first-run-message").className = `message ${tone || ""}`.trim(); }
+    async function dmRefreshDefaults() {
+      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
+      await refreshAvailability({ rerender: false });
+    }
+    // Set one capability route to (provider, model). The route's own base URL and reasoning effort
+    // belonged to the previous model, so they are cleared (review 1069: a stale LM Studio URL or a
+    // `high` reasoning effort carried over to the new model). ONE write for text: output.text is
+    // derived from input.text.
+    // `options`: a catalog model's own options (an MTP build's speculation) are sent with it, and a
+    // model without any sends `{}` so the previous model's options go. Omitted (the recommendation:
+    // its plan row carries none), AbstractCore's update rule applies, the same as apply-recommended:
+    // the stored options stay, except the speculation request, dropped when the engine changes.
+    async function dmSetRoute(route, provider, model, options) {
+      const [kind, modality, task] = String(route).split(".");
+      const path = `/api/gateway/config/capability-defaults/${encodeURIComponent(kind)}/${encodeURIComponent(modality)}${task ? `/${encodeURIComponent(task)}` : ""}`;
+      const body = { provider, model, base_url: "", reasoning: "" };
+      if (options !== undefined) body.options = options && typeof options === "object" ? options : {};
+      await api(path, { slow: true, method: "PUT", body: JSON.stringify(body) });
+    }
+    async function dmUseRecommendedFor(route) {
+      const rec = dmRecFor(route);
+      if (!rec || dmUi.busy.has(route)) return;
+      dmUi.busy.add(route);
+      renderFirstRunModel();
+      try {
+        const { provider, model } = dmRecRoute(rec);
+        await dmSetRoute(route, provider, model);
+        if (rec.status === "absent") await dmDownload(rec.provider, rec.artifact, { quiet: true });
+        dmSay(`${dmReadableName(provider, model)} is set${rec.status === "absent" ? "; it is downloading" : ""}.`, "ok");
+        await dmRefreshDefaults();
+      } catch (err) {
+        dmSay(String(err.message || err), "error");
+      } finally {
+        dmUi.busy.delete(route);
+        renderFirstRunModel();
+      }
+    }
+    // Simple mode's one button: AbstractCore's recommended routes where you have not chosen your own
+    // (apply-recommended without force), then the recommended downloads as ONE parent job whose card
+    // shows a progress row per model.
+    async function dmUseAllRecommended() {
+      if (dmUi.busy.has("recommended")) return;
+      dmUi.busy.add("recommended");
+      renderFirstRunModel();
+      try {
+        const res = await api("/api/gateway/config/capability-defaults/apply-recommended", { slow: true, method: "POST", body: JSON.stringify({ force: false }) });
+        const report = res && res.applied_recommended;
+        if (!report || !Array.isArray(report.routes)) throw new Error("POST /config/capability-defaults/apply-recommended returned no applied_recommended.routes (AbstractCore apply report seam).");
+        // Download only the models of the routes that now USE the recommendation (applied, or
+        // already it): a route you configured differently is kept, and so is its model (review 1069).
+        const usesRec = new Set(report.routes.filter((r) => ["apply", "overwrite", "already"].includes(r.action)).map((r) => r.key));
+        const plan = state.availabilityPlan || {};
+        const recRows = Array.isArray(plan.recommended) ? plan.recommended : [];
+        const absent = recRows.filter((r) => r && r.status === "absent");
+        const wanted = absent.filter((r) => usesRec.has(r.route) || (r.route === "output.text" && usesRec.has("input.text")));
+        if (wanted.length && wanted.length === absent.length && !dlActive(dlFeed.group)) {
+          const dl = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ recommended: true }) });
+          if (!dl || !dl.group) throw new Error("The gateway started the downloads but returned no parent job (`group`); it needs the download-group contract (docs/model-downloads.md).");
+          for (const job of (Array.isArray(dl.jobs) ? dl.jobs : [])) trackDownloadJob(job);
+          trackDownloadJob(dl.group);
+        } else {
+          for (const r of wanted) await dmDownload(r.provider, r.artifact, { quiet: true });
+        }
+        const set = report.routes.filter((r) => r.action === "apply" || r.action === "overwrite").length;
+        const kept = report.routes.filter((r) => r.action === "kept").length;
+        const words = [set ? `${set} recommended ${set === 1 ? "model" : "models"} set` : "The recommended models were already set",
+          kept ? `your ${kept === 1 ? "choice is" : `${kept} choices are`} kept` : ""].filter(Boolean).join("; ");
+        dmSay(`${words}.${wanted.length ? " The downloads run in the background; you can go on." : ""}`, "ok");
+        await dmRefreshDefaults();
+      } catch (err) {
+        dmSay(String(err.message || err), "error");
+      } finally {
+        dmUi.busy.delete("recommended");
+        renderFirstRunModel();
+      }
+    }
+    async function dmDownload(provider, artifact, opts = {}) {
+      try {
+        const res = await api("/api/gateway/models/download", { slow: true, method: "POST", body: JSON.stringify({ provider, artifact }) });
+        trackDownloadJob(res.job);
+        if (!opts.quiet) dmSay("Download started: its progress shows here and on the Models page.", "ok");
+      } catch (err) {
+        if (opts.quiet) throw err;
+        dmSay(String(err.message || err), "error");
+      }
+      renderFirstRunModel();
+    }
+    // ---- Guided choice (a badge's dialog): recommended first, other models that fit, an API key.
+    function dmCapById(id) { return DM_INPUTS.concat(DM_OUTPUTS).find((c) => c.id === id) || null; }
+    const DM_OTHER_ENGINES = ["mlx-gen", "diffusers", "lmstudio", "ollama", "huggingface"];
+    // The engine that runs an artifact here, from this computer's engine inventory (GET /engines,
+    // `engineStore`): a GGUF on Hugging Face runs on llama.cpp, any other Hugging Face model on
+    // Transformers; LM Studio, Ollama, MLX and vLLM are their own engines. Null when no engine row
+    // names the provider (in-process engines AbstractCore judges itself: `supported_on_host`).
+    function dmEngineFor(provider, artifact) {
+      const rows = (engineStore.data && Array.isArray(engineStore.data.engines)) ? engineStore.data.engines : [];
+      const p = String(provider || "");
+      const id = p === "huggingface" ? (/gguf/i.test(String(artifact || "")) ? "llamacpp" : "huggingface") : p;
+      return rows.find((e) => e && e.id === id) || null;
+    }
+    // The readable engine name for a guided-choice row: the engine's own name ("llama.cpp",
+    // "Ollama"), else the provider's label without its id; never "HuggingFace (huggingface)".
+    function dmEngineName(provider, artifact) {
+      const e = dmEngineFor(provider, artifact);
+      if (e && e.name) return String(e.name);
+      const label = String(state.providerLabels.get(provider) || provider || "");
+      const suffix = ` (${provider})`;
+      return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+    }
+    // Models whose engine this computer has installed (the 0958 rule): a model on an engine that is
+    // not installed would set a route that cannot answer. Null while the inventory is unknown.
+    function dmOtherModels(cap) {
+      if (!cap.catalog) return [];
+      if (!engineStore.data) return null;
+      const out = [];
+      for (const row of dmCatalogRows()) {
+        const caps = row.capabilities || {};
+        if (!caps[cap.catalog]) continue;
+        // output.video is the text-to-video route: an image-to-video-only model cannot serve it.
+        if (cap.route === "output.video" && caps.text_to_video !== true) continue;
+        for (const a of (row.artifacts || [])) {
+          const fit = a && a.fit ? a.fit.verdict : "";
+          if (!a || a.supported_on_host === false || (fit && fit !== "fits" && fit !== "tight")) continue;
+          if (cap.catalog !== "text" && !DM_OTHER_ENGINES.includes(a.provider)) continue;
+          // GGUF files are llama.cpp's text format: no embeddings engine here loads them (review 1069).
+          if (cap.catalog === "embedding" && /gguf/i.test(String(a.artifact || ""))) continue;
+          const engine = dmEngineFor(a.provider, a.artifact);
+          if (engine && engine.installed !== true) continue;
+          out.push({ name: row.display_name || row.id, provider: a.provider, artifact: a.artifact, model: servedModelId(a.provider, a.artifact),
+                     bytes: a.download_bytes, quant: a.quant_class, installed: Boolean(a.presence && a.presence.status === "installed"),
+                     options: a.options && typeof a.options === "object" ? a.options : {} });
+        }
+      }
+      return out.slice(0, 24);
+    }
+    function dmOpenChoice(id) {
+      const cap = dmCapById(id);
+      if (!cap) return;
+      const reopen = Boolean(dmUi.choice);
+      dmUi.choice = { cap, key: dmUi.choice && dmUi.choice.cap === cap ? dmUi.choice.key : null };
+      renderDmChoice();
+      $("dm-choice-backdrop").classList.remove("hidden");
+      // The kit's modal discipline (bindModal): focus trap, Escape closes THIS layer only (the guide
+      // below keeps its own Escape), backdrop click, focus back to the badge (review 1069).
+      if (!reopen) dmUi.release = bindAccountModal($("dm-choice-backdrop"), closeDmChoice);
+      if (!dmUi.catalog && !dmUi.catalogError) dmLoadCatalog();
+      if (cap.catalog && !engineStore.data && !engineStore.loading) dmLoadEngines();
+    }
+    // "Other models that fit" needs this computer's engine inventory (the Local engines step loads it;
+    // a guide opened straight on this step loads it here).
+    async function dmLoadEngines() {
+      await engineRefresh();
+      if (dmUi.choice) renderDmChoice();
+    }
+    function closeDmChoice() {
+      if (!dmUi.choice) return;
+      dmUi.choice = null;
+      $("dm-choice-backdrop").classList.add("hidden");
+      $("dm-choice-body").innerHTML = "";
+      const release = dmUi.release;
+      dmUi.release = null;
+      if (release) release();
+    }
+    function renderDmChoice() {
+      const c = dmUi.choice;
+      if (!c) return;
+      const cap = c.cap;
+      $("dm-choice-title").textContent = `${cap.label}: ${cap.what}`;
+      const parts = [];
+      if (!cap.route) {
+        parts.push(`<section class="dm-choice__part"><p>Files (PDFs, documents, data) are read by your text model: choose the text model.</p>`
+          + `<div class="modal-actions"><button type="button" data-dmc="open-text">Choose the text model</button></div></section>`);
+      } else {
+        const rec = dmRecFor(cap.route);
+        const st = dmState(cap);
+        if (rec) {
+          const r = dmRecRoute(rec);
+          const busy = dmUi.busy.has(cap.route);
+          const size = rec.status === "installed" ? "Downloaded" : rec.status === "absent" ? `To download${rec.download_bytes ? `, ${uiBytes(rec.download_bytes)}` : ""}` : firstRunCap(rec.status || "");
+          parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><div class="dm-choice__pick"><b>${esc(dmReadableName(r.provider, r.model))}</b>`
+            + `<span class="muted">${esc(size)}${rec.tier ? ` · chosen by memory (${esc(rec.tier)})` : ""}</span></div>`
+            + `<div class="modal-actions">${st.kind === "recommended" ? `<span class="muted">In use</span>` : `<button type="button" data-dmc="use-rec"${busy ? " disabled" : ""}>${busy ? "Setting…" : rec.status === "absent" ? "Use it and download" : "Use it"}</button>`}</div></section>`);
+        } else {
+          const row = findDefaultRow(state.defaults, cap.route);
+          const why = row ? (defaultRowUnavailableReason(row) || defaultRowRouteUnavailableReason(row)) : "";
+          parts.push(`<section class="dm-choice__part"><h3>Recommended for this computer</h3><p class="muted">${esc(why || "AbstractCore has no recommendation for this on this computer yet.")}</p></section>`);
+        }
+        const othersOrNull = dmOtherModels(cap);
+        const others = othersOrNull || [];
+        const capRow = findDefaultRow(state.defaults, cap.route);
+        const rowReadOnly = Boolean(capRow && defaultRowReadOnly(capRow));
+        parts.push(`<section class="dm-choice__part"><h3>Other models that fit</h3>`
+          + (cap.catalog && !dmUi.catalog ? `<p class="muted">${esc(dmUi.catalogError || "Reading the catalog…")}</p>` : "")
+          + (cap.catalog && othersOrNull === null ? `<p class="muted">${esc(engineStore.error ? `Could not check the engines on this computer: ${engineStore.error}` : "Checking the engines on this computer…")}</p>` : "")
+          + (others.length ? `<ul class="dm-choice__list">${others.map((o, i) => `<li><span><b>${esc(o.name)}</b> <span class="muted">${esc([dmEngineName(o.provider, o.artifact), o.quant && o.quant !== "unknown" ? o.quant.replace("bit", "-bit") : "", o.bytes ? uiBytes(o.bytes) : "", o.installed ? "downloaded" : ""].filter(Boolean).join(" · "))}</span></span><button type="button" class="secondary" data-dmc="use-other" data-i="${i}"${dmUi.busy.has(cap.route) ? " disabled" : ""}>Use</button></li>`).join("")}</ul>` : "")
+          // A read-only row (input.image covered by the text model) has no editor to open (review 1069).
+          + (rowReadOnly ? "" : `<div class="modal-actions"><button type="button" class="secondary" data-dmc="any">All engines and models…</button></div>`) + `</section>`);
+        if (cap.key) parts.push(dmKeyMarkup());
+      }
+      const draft = $("dm-key-value") ? String($("dm-key-value").value || "") : "";
+      $("dm-choice-body").innerHTML = parts.join("");
+      if (draft && $("dm-key-value")) $("dm-key-value").value = draft;
+    }
+    // ---- An API key for text: the SAME logic as the cloud provider cards (the kit's cloudProviders,
+    // ui-kit 0.9.9): the providers are AbstractCore's cloud providers (GET discovery/providers), the
+    // key is checked FIRST (discover-models on a draft, nothing stored), and only then kept as a NEW
+    // gateway-wide provider connection (a fresh id with create_only: an existing connection is never
+    // overwritten, review 1069); the chosen model becomes the text model.
+    function dmKeyClient() { return kitCloudProviders().client(kitRequest, "/api/gateway"); }
+    async function dmLoadKeyProviders() {
+      if (dmUi.keyProviders || dmUi.keyProvidersLoading) return;
+      dmUi.keyProvidersLoading = true;
+      try {
+        dmUi.keyProviders = await dmKeyClient().listProviders();
+        dmUi.keyProvidersError = "";
+      } catch (err) {
+        dmUi.keyProviders = [];
+        dmUi.keyProvidersError = String((err && err.message) || err);
+      } finally {
+        dmUi.keyProvidersLoading = false;
+      }
+      if (dmUi.choice) renderDmChoice();
+    }
+    function dmKeyMarkup() {
+      const k = (dmUi.choice && dmUi.choice.key) || {};
+      if (!dmUi.keyProviders) void dmLoadKeyProviders();
+      const providers = dmUi.keyProviders || [];
+      const head = `<section class="dm-choice__part"><h3>Or use an API key</h3><p class="muted">Billed by the provider per use. The gateway keeps the key as a provider connection (Providers page) and never shows it again.</p>`;
+      if (!providers.length) {
+        const note = dmUi.keyProvidersError ? `The cloud providers could not be loaded: ${dmUi.keyProvidersError}` : (dmUi.keyProviders ? "This gateway's AbstractCore lists no cloud provider." : "Loading the cloud providers…");
+        return head + `<p class="inline-state ${dmUi.keyProvidersError ? "error" : ""}" role="status">${esc(note)}</p></section>`;
+      }
+      return head
+        + `<div class="af-form"><div class="af-form__field"><label class="af-form__label" for="dm-key-family">Provider</label><select id="dm-key-family">${providers.map((f) => `<option value="${esc(f.id)}"${k.family === f.id ? " selected" : ""}>${esc(f.name)}</option>`).join("")}</select></div>`
+        + (k.models && k.models.length
+          ? `<div class="af-form__field"><label class="af-form__label" for="dm-key-model">Text model</label><select id="dm-key-model">${k.models.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("")}</select></div><div class="modal-actions"><button type="button" data-dmc="key-use">Use for text</button></div>`
+          : `<div class="af-form__field"><label class="af-form__label" for="dm-key-value">API key</label><input id="dm-key-value" type="password" autocomplete="off" spellcheck="false"></div><div class="modal-actions"><button type="button" class="secondary" data-dmc="key-check">Check the key</button></div>`)
+        + `<p id="dm-key-message" class="inline-state ${esc(k.tone || "")}" role="status" aria-live="polite">${esc(k.message || "")}</p></div></section>`;
+    }
+    function dmKeySay(message, tone) {
+      if (dmUi.choice) dmUi.choice.key = Object.assign({}, dmUi.choice.key || {}, { message, tone });
+      const el = $("dm-key-message");
+      if (el) { el.textContent = message; el.className = `inline-state ${tone || ""}`; }
+    }
+    async function dmKeyCheck() {
+      const family = $("dm-key-family").value;
+      const provider = (dmUi.keyProviders || []).find((p) => p.id === family);
+      const apiKey = String($("dm-key-value").value || "").trim();
+      if (!provider) return dmKeySay("Choose a provider first.", "error");
+      if (!apiKey) return dmKeySay("Paste the API key first.", "error");
+      dmKeySay("Checking the key…");
+      let checked;
+      try {
+        checked = await dmKeyClient().checkKey(provider, apiKey);
+      } catch (err) {
+        return dmKeySay(`The key could not be checked: ${String((err && err.message) || err)}`, "error");
+      }
+      if (!checked.result.ok) return dmKeySay(checked.result.sentence, "error");
+      dmUi.choice.key = { family, provider, checked, models: checked.result.models, message: `${checked.result.sentence}. Choose the text model.`, tone: "ok" };
+      renderDmChoice();
+    }
+    async function dmKeyUse() {
+      const k = dmUi.choice && dmUi.choice.key;
+      if (!k || !k.checked) return;
+      const model = $("dm-key-model").value;
+      dmKeySay("Saving…");
+      try {
+        const saved = await dmKeyClient().saveCheckedKey(k.provider, k.checked, state.principal && state.principal.admin === false ? "user" : "gateway");
+        await dmSetRoute("input.text", saved.virtualProvider, model);
+        dmUi.choice.key = { message: `Text now uses ${model} with your ${k.provider.name} key.`, tone: "ok" };
+        await dmRefreshDefaults();
+        renderFirstRunModel();
+        renderDmChoice();
+      } catch (err) {
+        dmKeySay(`Not saved: ${String((err && err.message) || err)}`, "error");
+      }
+    }
+    async function dmChoiceClick(event) {
+      const b = event && event.target && event.target.closest ? event.target.closest("[data-dmc]") : null;
+      if (!b || b.disabled || !dmUi.choice) return;
+      const cap = dmUi.choice.cap;
+      const act = b.dataset.dmc;
+      if (act === "open-text") return dmOpenChoice("in-text");
+      if (act === "any") { const route = cap.route; closeDmChoice(); return dmChooseAny(route); }
+      if (act === "use-rec") { await dmUseRecommendedFor(cap.route); return renderDmChoice(); }
+      if (act === "use-other") {
+        const o = (dmOtherModels(cap) || [])[Number(b.dataset.i)];
+        if (!o || dmUi.busy.has(cap.route)) return;
+        dmUi.busy.add(cap.route);
+        b.disabled = true;
+        try {
+          await dmSetRoute(cap.route, o.provider, o.model, o.options);
+          if (!o.installed) await dmDownload(o.provider, o.artifact, { quiet: true });
+          dmSay(`${o.name} is set${o.installed ? "" : "; it is downloading"}.`, "ok");
+          await dmRefreshDefaults();
+          renderFirstRunModel();
+          closeDmChoice();
+        } catch (err) {
+          dmSay(String(err.message || err), "error");
+          b.disabled = false;
+        } finally {
+          dmUi.busy.delete(cap.route);
+        }
+        return;
+      }
+      if (act === "key-check") return dmKeyCheck();
+      if (act === "key-use") return dmKeyUse();
+    }
     function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
+      renderFirstRunDefaultModels();
       const box = $("first-run-model-recommended");
       const plan = state.availabilityPlan || {};
       const rows = Array.isArray(plan.recommended) ? plan.recommended : [];
@@ -15314,6 +16375,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // (the recommendation itself never switches model on its own).
           + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          // 0958: the gateway replaced AbstractCore's pick because its engine is missing here.
+          + (r.chosen_because ? `<p class="ui-card__note first-run-installed-engine">${esc(firstRunCap(r.chosen_because))}${r.alternative && (r.alternative.route_provider || r.alternative.provider) ? ` (instead of ${esc(state.providerLabels.get(r.alternative.route_provider || r.alternative.provider) || r.alternative.route_provider || r.alternative.provider)}, which is not installed here).` : "."}</p>` : "")
           + engineMissingMarkup(r, "ui-alert tone-warn")
           + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
@@ -15393,11 +16456,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function gatewayBaseUrl() {
       return String(location.origin);
     }
-    function renderFirstRunApps() {
+    async function renderFirstRunApps() {
       // Install / Open / Start / Stop through the gateway's apps service
       // (routes/apps.py): cards with one primary action each, Node.js
       // installed for the user, the npx line only behind "Technical details".
-      mountAppCards("first-run", $("first-run-apps-body"));
+      // Operator QA (0.18.0): apps are proposed only once a default text model exists (an app
+      // with no model answers nothing); until then the step points back to the Model step.
+      const box = $("first-run-apps-body");
+      let routes = [];
+      try {
+        const payload = await api("/api/gateway/config/capability-defaults");
+        routes = Array.isArray(payload && payload.routes) ? payload.routes : [];
+      } catch { routes = null; }
+      const hasText = routes === null || routes.some((r) => r && (defaultRowKey(r) === "output.text" || defaultRowKey(r) === "input.text") && rowHasProviderModel(r));
+      if (!hasText) {
+        unmountAppCards("first-run");
+        box.innerHTML = `<div class="first-run-panel" data-apps-gate="no-text-model"><p><strong>Choose a default text model first.</strong></p>
+          <p class="muted">The apps talk to your models through this gateway; without a default text model they have nothing to answer with.</p>
+          <div class="modal-actions"><button type="button" id="first-run-apps-to-model">Back to the model step</button></div></div>`;
+        const back = $("first-run-apps-to-model");
+        if (back) back.onclick = () => firstRunGoto("model");
+        return;
+      }
+      mountAppCards("first-run", box);
     }
     function renderFirstRunDone() {
       const box = $("first-run-done-body");
@@ -15435,6 +16516,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       } catch (err) {
         renderAccount(null);
         $("login-section").classList.remove("hidden");
+        await loadOnboarding();
         return;
       }
       renderAccount(me);
@@ -15494,33 +16576,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // for them, and the runtimes branch above already covers it.
       }
     }
+    // ---- Sign-in method (0.18.0): Password first, Token behind one quiet link (the token stays
+    // for automation and the apps). POST /session/login takes {user_id, password} or {user_id, token}.
+    const signinMode = { method: "password" };
+    function setSigninMethod(method) {
+      signinMode.method = method === "token" ? "token" : "password";
+      const token = signinMode.method === "token";
+      $("login-password-field").hidden = token;
+      $("login-token-field").hidden = !token;
+      $("login-method-switch").textContent = token ? "Sign in with a password instead" : "Sign in with a token instead";
+      $("login-lede").textContent = token ? "Use the token your gateway admin gave you." : "Sign in with your account and password.";
+      signinFieldError("login-password", "login-password-error", "");
+      signinFieldError("login-token", "login-token-error", "");
+      signinShow("login-message", "");
+      try { $(token ? "login-token" : "login-password").focus(); } catch {}
+    }
     async function login() {
       signinShow("login-message", "");
       signinFieldError("login-user", "login-user-error", "");
       signinFieldError("login-token", "login-token-error", "");
+      signinFieldError("login-password", "login-password-error", "");
+      const byToken = signinMode.method === "token";
       const user = $("login-user").value.trim();
-      const token = $("login-token").value.trim();
-      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your gateway user."); return; }
-      if (!token) { signinFieldError("login-token", "login-token-error", "Paste the token your gateway admin gave you."); return; }
+      const secret = byToken ? $("login-token").value.trim() : String($("login-password").value || "");
+      const field = byToken ? ["login-token", "login-token-error"] : ["login-password", "login-password-error"];
+      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your account."); return; }
+      if (!secret) { signinFieldError(field[0], field[1], byToken ? "Paste the token your gateway admin gave you." : "Enter your password."); return; }
       const btn = $("login-button");
       btn.disabled = true;
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Signing in…";
       try {
-        await api("/api/gateway/session/login", {
-          method: "POST",
-          body: JSON.stringify({ user_id: user, token, remember: $("login-remember").checked })
-        });
+        const body = byToken
+          ? { user_id: user, token: secret, remember: $("login-remember").checked }
+          : { user_id: user, password: secret, remember: $("login-remember").checked };
+        const res = await api("/api/gateway/session/login", { method: "POST", body: JSON.stringify(body) });
         // The OpenAI API page shows this person's key from what this browser keeps here (never a
         // server reveal): this tab only, or this browser when "Remember this browser" is on.
-        oaiKeepToken(user, token, $("login-remember").checked);
+        if (byToken) oaiKeepToken(user, secret, $("login-remember").checked);
         $("login-token").value = "";
-        setLoginStatus(`Signed in as ${user}`, "ok");
+        $("login-password").value = "";
+        const who = (res && res.principal && res.principal.user_id) || user;
+        setLoginStatus(`Signed in as ${who}`, "ok");
         await refresh();
       } catch (err) {
-        if (err && (err.status === 401 || err.status === 403) && !/origin/i.test(String(err.message || ""))) {
-          signinFieldError("login-token", "login-token-error", "This token was refused.");
-          setLoginStatus("Token refused", "warn");
+        const code = err && err.detail && err.detail.reason_code;
+        if (err && err.status === 429) {
+          signinFieldError(field[0], field[1], String(err.message || "Too many attempts. Try again later."));
+          setLoginStatus("Try again later", "warn");
+        } else if (err && (err.status === 401 || err.status === 403) && !/origin/i.test(String(err.message || ""))) {
+          if (byToken) signinFieldError(field[0], field[1], "This token was refused.");
+          else signinFieldError(field[0], field[1], code === "password_refused" ? "That account and password don't match." : String(err.message || err));
+          setLoginStatus(byToken ? "Token refused" : "Password refused", "warn");
         } else if (err && !err.status) {
           signinShow("login-message", signinUnreachableText());
           setLoginStatus("Not signed in", "neutral");
@@ -15532,6 +16639,101 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         btn.disabled = false;
         btn.removeAttribute("aria-busy");
         btn.textContent = "Sign in";
+      }
+    }
+    // ---- First-run onboarding (0.18.0). GET /session/onboarding (public) says whether this
+    // gateway is UNCLAIMED (fresh data dir, the admin has no password, no admin ever signed in).
+    // Then the card shows "Set up your gateway" instead of the sign-in form: the admin's name,
+    // a password (twice) and, when the gateway asks for it (`setup_code_required`: this browser
+    // is not on the gateway's own machine), the six-word setup code. Submitting sets the password,
+    // signs this browser in and opens the setup guide (the first-run wizard). Once claimed the
+    // same address shows the sign-in form.
+    const onboarding = { state: null, busy: false };
+    function showOnboarding(st) {
+      const unclaimed = Boolean(st && st.unclaimed);
+      onboarding.state = unclaimed ? st : null;
+      $("onboarding-form").hidden = !unclaimed;
+      $("login-form").hidden = unclaimed;
+      if (unclaimed) {
+        $("recovery-section").hidden = true;
+        $("login-title").textContent = "Set up your gateway";
+        $("login-lede").textContent = "This gateway is new. Choose the admin password: it signs you in and opens the setup guide.";
+        $("onboard-account").textContent = String(st.account || "admin");
+        if (!$("onboard-name").value) $("onboard-name").value = String(st.account || "admin");
+        if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
+        $("onboard-code-field").hidden = !st.setup_code_required;
+        if (st.setup_code_required && st.setup_code_reason) {
+          $("onboard-code-help").textContent = `${st.setup_code_reason} Six words: the installer printed them, or run abstractgateway claim --code on the gateway's machine.`;
+        }
+        setLoginStatus("Not set up yet", "neutral");
+      } else {
+        $("login-title").textContent = "Sign in";
+        $("login-lede").textContent = signinMode.method === "token" ? "Use the token your gateway admin gave you." : "Sign in with your account and password.";
+        if (state.recoveryAvailable && $("recovery-code-step").hidden) $("recovery-section").hidden = false;
+      }
+      return unclaimed;
+    }
+    async function loadOnboarding() {
+      let st = null;
+      try { st = await api("/api/gateway/session/onboarding"); } catch { st = null; }
+      return showOnboarding(st);
+    }
+    function onboardingErrors() {
+      for (const [input, err] of [["onboard-name", "onboard-name-error"], ["onboard-password", "onboard-password-error"],
+                                  ["onboard-password-confirm", "onboard-password-confirm-error"], ["onboard-code", "onboard-code-error"]]) {
+        signinFieldError(input, err, "");
+      }
+      signinShow("login-message", "");
+    }
+    const ONBOARD_FIELDS = { password: ["onboard-password", "onboard-password-error"], password_confirm: ["onboard-password-confirm", "onboard-password-confirm-error"],
+                             setup_code: ["onboard-code", "onboard-code-error"], display_name: ["onboard-name", "onboard-name-error"] };
+    async function submitOnboarding() {
+      if (onboarding.busy) return;
+      onboardingErrors();
+      const st = onboarding.state || {};
+      const password = String($("onboard-password").value || "");
+      const confirm = String($("onboard-password-confirm").value || "");
+      const min = Number(st.password_min_length) || 10;
+      if (password.length < min) { signinFieldError("onboard-password", "onboard-password-error", `Use at least ${min} characters.`); return; }
+      if (confirm !== password) { signinFieldError("onboard-password-confirm", "onboard-password-confirm-error", "The two passwords are different."); return; }
+      const code = String($("onboard-code").value || "").trim();
+      if (st.setup_code_required && !code) { signinFieldError("onboard-code", "onboard-code-error", "Enter the six-word setup code."); return; }
+      const btn = $("onboard-button");
+      onboarding.busy = true;
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Setting up…";
+      try {
+        const body = { display_name: $("onboard-name").value.trim() || null, password, password_confirm: confirm, remember: $("onboard-remember").checked };
+        if (code) body.setup_code = code;
+        const res = await api("/api/gateway/session/onboarding", { method: "POST", body: JSON.stringify(body) });
+        $("onboard-password").value = "";
+        $("onboard-password-confirm").value = "";
+        $("onboard-code").value = "";
+        firstRun.claimed = true;
+        showOnboarding(null);
+        $("login-user").value = (res && res.principal && res.principal.user_id) || "admin";
+        setLoginStatus("Signed in", "ok");
+        await refresh();
+      } catch (err) {
+        const d = (err && err.detail) || {};
+        const target = ONBOARD_FIELDS[d.field];
+        if (d.reason_code === "already_claimed") {
+          await loadOnboarding();
+          signinShow("login-message", String(err.message || err));
+        } else if (target) {
+          signinFieldError(target[0], target[1], String(err.message || err));
+          if (d.field === "setup_code") $("onboard-code-field").hidden = false;
+        } else if (err && !err.status) {
+          signinShow("login-message", signinUnreachableText());
+        } else {
+          signinShow("login-message", String((err && err.message) || err));
+        }
+      } finally {
+        onboarding.busy = false;
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Set up and sign in";
       }
     }
     // Sign-in by email (DESIGN §4): ONE quiet link requests a `sign_in` code;
@@ -15547,7 +16749,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const out = await api("/api/gateway/session/recovery");
         available = Boolean(out && out.available);
       } catch { available = false; }
-      $("recovery-section").hidden = !available || !$("recovery-code-step").hidden;
+      $("recovery-section").hidden = !available || !$("recovery-code-step").hidden || Boolean(onboarding.state);
       state.recoveryAvailable = available;
     }
     function recoveryCooldownTick() {
@@ -15587,8 +16789,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const link = $("recovery-link");
       link.disabled = false;
       link.removeAttribute("aria-busy");
-      link.textContent = "Forgot your token? Email me a sign-in code";
-      try { $("login-token").focus(); } catch {}
+      link.textContent = "Forgot your password? Email me a sign-in code";
+      try { $(signinMode.method === "token" ? "login-token" : "login-password").focus(); } catch {}
     }
     async function requestRecoveryCode(fromResend = false) {
       if (recoveryState.busy) return;
@@ -15614,7 +16816,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         control.removeAttribute("aria-busy");
       }
       if (out && out.sent) {
-        if (!fromResend) { control.disabled = false; control.textContent = "Forgot your token? Email me a sign-in code"; }
+        if (!fromResend) { control.disabled = false; control.textContent = "Forgot your password? Email me a sign-in code"; }
         recoveryShowCodeStep(String(out.message || `A sign-in code is on its way to ${out.to || "your email address"}.`));
         return;
       }
@@ -15626,7 +16828,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         recoveryStartCooldown(retry);
       } else {
         control.disabled = false;
-        control.textContent = "Forgot your token? Email me a sign-in code";
+        control.textContent = "Forgot your password? Email me a sign-in code";
         signinShow("recovery-request-message", text);
       }
     }
@@ -15683,6 +16885,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         runtime_id: $("new-runtime").value.trim() || null,
         roles: [$("new-roles").value || "user"],
       };
+      const newPassword = String($("new-password").value || "");
+      if (newPassword) payload.password = newPassword;
       if (!payload.user_id) {
         $("user-create-message").textContent = "Enter a User ID.";
         $("user-create-message").className = "message error";
@@ -15693,9 +16897,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         renderIssuedToken($("user-create-token"), res.user.tenant_id && res.user.tenant_id !== "default" ? `${res.user.tenant_id}/${res.user.user_id}` : res.user.user_id, res.token);
         $("user-create-form").classList.add("hidden");
         $("user-create-done").classList.remove("hidden");
+        if (res.user && res.user.password_set) {
+          const note = document.createElement("p");
+          note.className = "muted";
+          note.textContent = `${res.user.user_id} can also sign in with their User ID and the password you set.`;
+          $("user-create-token").append(note);
+        }
         $("new-user").value = "";
         $("new-email").value = "";
         $("new-runtime").value = "";
+        $("new-password").value = "";
         await refresh();
       } catch (err) {
         $("user-create-message").textContent = String(err.message || err);
@@ -15948,6 +17159,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        button.disabled = false;
 	      }
 	    }
+	    function offerDefaultModelDownload(missing) {
+	      const box = $("default-modal-message");
+	      const size = missing.size_mb ? ` (${missing.size_mb} MB)` : "";
+	      box.className = "message error";
+	      box.innerHTML = `${esc(missing.message || "This model is not downloaded yet.")} `
+	        + `<button type="button" class="btn btn-secondary" data-default-download="1">Download${esc(size)}</button>`;
+	      const btn = typeof box.querySelector === "function" ? box.querySelector("[data-default-download]") : null;
+	      if (!btn) return;
+	      btn.onclick = async () => {
+	        btn.disabled = true;
+	        try {
+	          const dl = missing.download || {};
+	          const res = await api(dl.path || "/api/gateway/models/download", { slow: true, method: dl.method || "POST", body: JSON.stringify(dl.body || {}) });
+	          trackDownloadJob(res.job);
+	          box.className = "message";
+	          box.textContent = "Downloading the voice model. Its progress is on the Models page; save this voice again when it is done.";
+	        } catch (e) {
+	          box.textContent = `The download did not start: ${String((e && e.message) || e)}`;
+	        }
+	      };
+	    }
 	    async function saveDefault() {
 	      $("default-modal-message").textContent = "";
 	      try {
@@ -16019,6 +17251,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          if (value !== undefined && value !== null) options.speculation = value;
 	          if (changed) optionsEdited = true;
 	        }
+	        if (String(row?.key || "").startsWith("embedding.")) {
+	          if (Object.prototype.hasOwnProperty.call(options, "device")) throw new Error("Use the Device selector; the options box edits the remaining provider settings.");
+	          const dev = $("modal-default-device").value;
+	          if (dev) options.device = dev; else delete options.device;
+	          if (dev !== String(prefill.device || "")) optionsEdited = true;
+	        }
 	        if (optionsEdited) body.options = options;
 	        // Slow lane: see apply-recommended. A 60s abort on a PUT is
 	        // write-ambiguity — the save may already have landed in the Core store.
@@ -16032,6 +17270,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        closeDefaultModal();
 	        await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	      } catch (err) {
+	        // A voice is selectable only once its model is downloaded (operator ruling 2026-10-29): the
+	        // gateway refuses the save with the sentence and the download, offered here as a button.
+	        const typed = err && err.data && typeof err.data.error === "object" ? err.data.error : null;
+	        if (typed && typed.reason_code === "model_not_downloaded" && typed.download) {
+	          offerDefaultModelDownload(typed);
+	          return;
+	        }
 	        $("default-modal-message").textContent = String(err.message || err);
 	        $("default-modal-message").className = "message error";
 	      }
@@ -16047,6 +17292,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }
     $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
+    $("onboarding-form").onsubmit = (event) => { event.preventDefault(); submitOnboarding(); };
+    $("login-method-switch").onclick = () => setSigninMethod(signinMode.method === "token" ? "password" : "token");
     $("recovery-link").onclick = () => requestRecoveryCode(false);
     $("recovery-resend").onclick = () => requestRecoveryCode(true);
     $("recovery-back").onclick = recoveryBackToToken;
@@ -16054,6 +17301,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     $("recovery-code-input").oninput = recoveryCodeInput;
     $("recovery-code-input").onkeydown = (event) => { if (event && event.key === "Enter" && !$("recovery-use").disabled) useRecoveryCode(); };
     loadRecoveryOptions();
+	    const bindRevealToggle = (buttonId, inputId, noun) => {
+	      $(buttonId).onclick = () => {
+	        const input = $(inputId);
+	        const visible = input.type === "text";
+	        input.type = visible ? "password" : "text";
+	        $(buttonId).textContent = visible ? "Show" : "Hide";
+	        $(buttonId).setAttribute("aria-label", visible ? `Show ${noun}` : `Hide ${noun}`);
+	        $(buttonId).setAttribute("aria-pressed", visible ? "false" : "true");
+	      };
+	    };
+	    bindRevealToggle("toggle-password", "login-password", "password");
+	    bindRevealToggle("toggle-onboard-password", "onboard-password", "password");
 	    $("toggle-token").onclick = () => {
 	      const input = $("login-token");
 	      const visible = input.type === "text";
@@ -16181,11 +17440,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      };
 	    }
 	    $("entity-chat-open").onclick = entityChatOpen;
-	    $("entity-chat-send").onclick = entityChatSend;
 	    $("entity-chat-close").onclick = entityChatClose;
-	    $("entity-chat-input").onkeydown = (ev) => {
-	      if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); entityChatSend(); }
-	    };
 	    $("create-user").onclick = createUser;
 	    $("open-create-user").onclick = openUserCreate;
 	    $("create-user-cancel").onclick = closeUserCreate;
@@ -16195,6 +17450,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("accounts-create-entity").onclick = openEntityCreate;
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-openai-close").onclick = closeAccountOpenAI;
+	    $("account-password-close").onclick = closeAccountPassword;
+	    $("dm-choice-close").onclick = closeDmChoice;
+	    $("dm-choice-body").onclick = dmChoiceClick;
 	    $("account-preferences-close").onclick = closeAccountPreferences;
 	    $("account-workspace-close").onclick = closeAccountWorkspace;
 	    $("gateway-workspace-close").onclick = closeGatewayWorkspace;
@@ -16351,7 +17609,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // next load); Skip/Finish record the outcome.
 	    if (typeof document.addEventListener === "function") {
 	      document.addEventListener("keydown", (event) => {
-	        if (event.key === "Escape" && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
+	        // A dialog above the guide (the model choice) takes its Escape first (bindModal, capture
+        // phase, preventDefault): one Escape closes one layer.
+        if (event.key === "Escape" && !event.defaultPrevented && !dmUi.choice && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
 	      });
 	    }
 	    // NAV DRAWER (below 1024 px the sidebar is an overlay drawer, DESIGN

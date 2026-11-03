@@ -35,21 +35,120 @@ The admin token is printed just above the link, and kept in
 `<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
 `abstractgateway serve --no-print-token` to keep it out of the output.
 
+## 1b. Set up your gateway: the admin password
+
+A fresh gateway (a new data folder) has an admin account but nobody holding a
+password for it. Open the console at the gateway's address, from this machine
+or any address the gateway accepts (a LAN address, Tailscale, a reverse
+proxy, Tailscale Funnel): instead of the sign-in form it shows **Set up your
+gateway**:
+
+| Field | What it is |
+|---|---|
+| Your name | The admin's display name in the console (default `admin`). You can sign in with it or with the account id `admin` |
+| Admin password, Confirm | At least 10 characters with at least 5 different ones, not the account name and not a well-known password. A few words make a good one |
+| Setup code | The six words printed when the gateway was installed (see below) |
+| Remember this browser | Keeps the session for 30 days instead of until the browser closes |
+
+**Set up and sign in** sets the password, signs this browser in as the admin
+and opens the first-run guide (section 2). From then on the same address shows
+the sign-in form, and the onboarding never comes back for this data folder.
+
+**The setup code.** Until the admin password is set, whoever reaches the
+console first could set it, so the form always asks for the six-word setup
+code, from any browser. (The gateway cannot tell a browser on its own machine
+from a proxy that relays strangers without saying so, such as a minimal nginx
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
+skip the form with the one-time link of section 3, which needs no code. Print
+the code on the gateway's machine:
+
+```bash
+abstractgateway claim --code
+moose bicycle honey camel ankle agent
+```
+
+`abstractgateway service install` and `abstractgateway service enable` print it
+too, and so does the AbstractFramework installer's summary. Case and
+separators do not matter (`Moose-Bicycle-...` works). The code stops working
+once the password is set; `abstractgateway claim --code` then says the gateway
+is already set up.
+
+**What closes the onboarding.** Setting the admin password here, or ANY admin
+sign-in (a one-time link from section 3, the admin token, a code sent by
+email), an admin setting the admin's password from the Accounts page, or an
+admin creating another account. When
+it closes, unused one-time links are deleted. A data folder that already had
+accounts when the gateway was upgraded to 0.19.0 is never "fresh": it keeps
+the sign-in form.
+
+**Limits.** 5 wrong setup codes from one address, or 20 from all addresses
+together, lock the form for 15 minutes (the second lock never applies to a
+browser on the gateway's own machine). Every claim is logged with the
+client address (a warning log line, the audit log, and
+`<data dir>/auth/onboarding.json`, mode `0600`).
+
+## Signing in
+
+The sign-in form asks for **Account** and **Password**. **Sign in with a
+token instead** switches to the token (the admin token from section 1, or a
+token an admin gave you); tokens stay for apps and automation. A password is
+set:
+
+- for the admin, by the onboarding above;
+- for anyone, by an admin: **Accounts** > **Create user** (optional
+  **Password** field), or the key button on an account's row (set, change or
+  remove);
+- by each person for themselves: the key button on their own row (it asks the
+  current password once one is set).
+
+Setting, changing or removing a password signs that account's other browsers
+out. Ten wrong passwords from one address lock that address for 15 minutes;
+five wrong passwords in a row for one account from one address lock that
+address out of that account for 30 seconds, doubling up to 15 minutes; every
+20 for one account from all addresses lock it for 15 minutes, doubling up to
+24 hours, except for addresses that signed it in before. Every lock ends, and
+the account's token keeps working. See
+[security.md](./security.md#sign-in-passwords-tokens-and-the-first-run-window).
+
 ## 2. The first-run guide
 
-The guide has five steps. Every step is optional:
+The guide has six steps. Every step is optional:
 
 | Step | What it shows |
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, transcription (speech input), images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
-| Apps | "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
+| Cloud providers | One card per cloud provider AbstractCore supports (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: `GET /api/gateway/discovery/providers`, `local_provider: false`), each with the provider's mark, its connection state (key fingerprint only), an **API key** field and **Check the key**: "Key works · 48 models", or one sentence saying why not (the key was refused, the provider is limiting requests, it could not be reached). The key is checked first (`POST …/provider-endpoint-profiles/discover-models`, which stores nothing); only a key that works can be saved, and **Save the key** creates a NEW provider connection (`openai-key`, `openai-key-2`, … with `create_only`), never replacing one you have. The key is never shown again. The same cards are the Providers tab's **Cloud providers** section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step |
+| Default models | Two views, **Simple** first. **Simple**: one **Use recommended** button (AbstractCore's recommended models for this computer, where you have not chosen your own; the missing ones download in the background with a progress row per model), then the capabilities as coloured badges in two groups, **Input** (what it understands: Text, Image, Voice, Video, Files) and **Output** (what it makes: Text, Image, Video, Voice, Music, 3D, Embeddings, Rankers). Each badge says its state in readable names, never a model id: *Not set* (with the recommended model's name when there is one), *Recommended* (the pick is in use), *Your choice*, or *Covered* (read by the text model). A badge opens a guided choice: the model recommended for this computer first (**Use it**, **Use it and download**), then **Other models that fit** (the catalog filtered to that capability, fits-this-computer on) and **All engines and models…** (the Multimodal route editor), and for text **Or use an API key** (any cloud provider of the Cloud providers step, with the same check: the key is checked first, then kept as a NEW provider connection, never replacing one you have). **Advanced**: one table row per capability with the engine and model ids, **Use recommended**, **Download** and **Choose…** per row, and **Use recommended for all**; below it the recommended downloads (**Download all**), a card per capability this computer cannot run, and the catalog cards. Setting a model clears the route's previous server address and reasoning effort (they belonged to the previous model). Admins only, like the whole guide |
+| Apps | Shown once a default text model exists (until then the step says **Choose a default text model first** with a button back to the model step). "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](./console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
 **What "recommended" means on this computer.** AbstractCore picks the
-recommended text model; the gateway shows that pick and holds no list of its
-own. On a Mac with Apple silicon the pick is an MLX build chosen by the
+recommended model for each capability (`recommended_models(host)`, see
+AbstractCore's `docs/recommended-models.md`); the gateway shows those picks and
+holds no list of its own.
+
+The rule per memory band. "Memory" is the GPU's memory on an NVIDIA computer
+and the unified memory on a Mac. The **Today** column is what AbstractCore
+answers now; the **Target** column is the operator's table (2026-10-28), which
+AbstractCore adopts once each pick is measured on real hardware (root backlog
+1072); until then the guide shows the **Today** pick.
+
+| Capability | Band | Today (AbstractCore) | Target |
+|---|---|---|---|
+| Text | Mac, below 24 GB | Qwen3.5 9B, MLX 4-bit | the 8–14B class, or a lower quant of Qwen3.8 27B that fits whole |
+| Text | Mac, 24 to 128 GB | Qwen3.8 27B, MLX 4-bit (128 GB and up: Qwen3.8 Flash-Next) | Qwen3.8 27B 4-bit on MLX (24–64 GB) |
+| Text | NVIDIA, 24 to 64 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B 4-bit: `unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M` (16.5 GB) on llama.cpp |
+| Text | NVIDIA, 16 GB | LM Studio `qwen/qwen3.5-9b@q4_k_m` | Qwen3.8 27B `UD-Q3_K_XL` (13.1 GB, fits whole), or the 8–14B class |
+| Image (text to image, image to image) | 12 GB and up | FLUX.2 klein 4B (MLX-Gen 8-bit on a Mac, Diffusers on NVIDIA) | FLUX.2 klein 4B |
+| Voice out | every computer | Supertonic 3 | Supertonic 3; Qwen3-TTS when 8 GB are free and voice cloning is wanted |
+| Voice in | every computer | Whisper large-v3 (faster-whisper; an Apple silicon Mac with MLX: MLX Whisper) | Whisper large-v3-turbo from 6 GB, else Whisper small |
+| Video | Mac, where it fits (not on small-memory Macs) | Wan2.2 TI2V 5B, MLX-Gen 8-bit | Wan 2.2 TI2V 5B from 16 GB, 14B from 32 GB, MiniMax H3 from 64 GB |
+| Video | NVIDIA | none | as above, on Diffusers (`Wan-AI/Wan2.2-TI2V-5B-Diffusers`, `Wan-AI/Wan2.2-T2V-A14B-Diffusers`) |
+| Music | every computer | none in the guide: AbstractCore's music recommendation is opt-in (ACE-Step 1.5 XL turbo, set it with Choose…) | (no target given) |
+| 3D, Embeddings, Rankers | every computer | none: Choose… | (no target given) |
+
+The Apple text tiers in detail: on a Mac with Apple silicon the pick is an MLX build chosen by the
 computer's memory:
 
 | Memory | Recommended text model |
@@ -156,6 +255,12 @@ abstractgateway service disable      # stop starting it at login (the running ga
 abstractgateway service uninstall    # stop and remove (your data is kept)
 ```
 
+`service uninstall` returns only once the gateway and every process it started have exited: the entity
+loops, model downloads, managed processes, apps and the tray. Some of these run in their own session, so the
+service manager would not stop them. The command waits up to 20 s for them, then stops what is left
+(SIGTERM, then SIGKILL), and lists what it stopped. If a process survives, the command fails and names it.
+On Linux without a systemd user manager (XDG autostart), it stops the gateway itself.
+
 The desktop tray's **Start AbstractGateway at login** item is the same switch
 (`enable`/`disable`, shared module `abstractgateway.autostart`). `status`
 reports `broken` when a registration exists that would not start — the
@@ -196,8 +301,13 @@ Details:
   (`--no-claim` to skip).
 - `--dry-run` prints the files and commands without changing anything.
   `--no-start` registers the service without starting it now.
-- On Linux, a user unit runs while you are logged in. To keep it running after
-  logout or start it at boot, run `loginctl enable-linger "$USER"` once.
+- On Linux, a user unit runs while you are logged in. When lingering is off
+  (`loginctl show-user "$USER" -p Linger` answers `Linger=no`, the default),
+  `service install`, `service enable` and `service status` say so in one line:
+  "On a server, this service stops when you log out and does not start at boot
+  until you run once: sudo loginctl enable-linger <user>". The consoles' Start at
+  login switch shows the same sentence. The gateway never runs it for you (it
+  needs an administrator); `install.sh --server` does.
 
 ## Where the data lives
 
@@ -213,6 +323,32 @@ When `ABSTRACTGATEWAY_DATA_DIR` is not set, the gateway uses, in order:
 `abstractgateway-config status` prints the folder and the reason it was
 chosen. `serve --data-dir <dir>` or `ABSTRACTGATEWAY_DATA_DIR` choose it
 explicitly.
+
+## Several gateways on one machine (instances)
+
+A second gateway for the same user on the same machine is a named INSTANCE. One name drives
+everything, and nothing is picked by hand:
+
+```bash
+abstractgateway --instance fresh service install --port 8443   # or: install.sh --server --instance fresh --port 8443
+abstractgateway --instance fresh claim --code                  # its setup code
+abstractgateway --instance fresh service status
+```
+
+| | Default instance | Instance `fresh` |
+|---|---|---|
+| Data folder | `~/.local/share/abstractgateway` (macOS: `~/Library/Application Support/AbstractGateway`) | the same with `-fresh` |
+| AbstractCore config (model routes, provider connections) | AbstractCore's default | `<data folder>/core-config` |
+| Gateway port (unless `--port` or the Network setting) | 8080 | 8090 + its slot |
+| App ports (Code, Observer, ...) | 3001-3006, then 3100-3199 | 3001+200×slot..., then 3100+200×slot..3199+200×slot |
+| Login service | `abstractgateway.service`, `ai.abstractframework.gateway` | `abstractgateway-fresh.service`, `ai.abstractframework.gateway.fresh` |
+| Console | "AbstractGateway Console" | "AbstractGateway Console · fresh", and the name in the sidebar |
+
+The SLOT is assigned once per instance (the smallest free one, never two instances on one slot) and
+recorded in `~/.config/abstractgateway/instances.json`, so the app port blocks of two instances never
+collide. `ABSTRACTGATEWAY_INSTANCE=fresh` is the same as `--instance fresh` (the login service runs
+`abstractgateway --instance fresh serve`). A gateway lists and opens only its own apps: a running app
+another instance serves is never shown as this one's. `GET /api/gateway/about` carries `instance`.
 
 ## Exposing the gateway beyond this machine
 

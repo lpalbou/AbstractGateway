@@ -1,10 +1,10 @@
-"""The tray's Apps submenu: which of the six AbstractFramework apps are on this
+"""The tray's Apps submenu: which AbstractFramework apps are on this
 machine, and how to open them.
 
 Detection is by PRESENCE only — no app is ever imported (the gateway must not
 depend on its apps; an import would also run their code in the tray):
 
-- the six browser apps (Observer, Flow, Code, Continuum, Entity, Note): the
+- the browser apps (Observer, Flow, Code, Continuum, Entity, Note, Assistant web): the
   gateway-managed install first (`GET /api/gateway/apps`: install,
   launch, one-time signed-in handover), else a GLOBAL install the gateway
   does not manage — the app's own command on PATH (`abstractobserver`,
@@ -56,6 +56,7 @@ WEB_APPS: Tuple[Tuple[str, str, str, str, int, str], ...] = (
     ("entity", "Entity", "@abstractframework/entity", "abstractentity", STACK_PORT["entity"], "ABSTRACTENTITY_GATEWAY_URL"),
     ("flow", "Flow", "@abstractframework/flow", "abstractflow-editor", STACK_PORT["flow"], "ABSTRACTFLOW_GATEWAY_URL"),
     ("note", "Note", "@abstractframework/note", "abstractnote-web", STACK_PORT["note"], "ABSTRACTNOTE_GATEWAY_URL"),
+    ("assistant-web", "Assistant (web)", "@abstractframework/assistant", "abstractassistant-web", STACK_PORT["assistant-web"], "ABSTRACTASSISTANT_GATEWAY_URL"),
 )
 ASSISTANT_ID = "assistant"
 ASSISTANT_NAME = "Assistant"

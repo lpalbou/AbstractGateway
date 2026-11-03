@@ -76,6 +76,8 @@ def test_radius_scale_normalized(html: str) -> None:
     # is about the console's sheet.
     kit_start = html.index('<style id="af-kit-css">')
     html = html[:kit_start] + html[html.index("</style>", kit_start):]
+    # The kit's af-filterbar block now ships inside the vendored kit stylesheet (removed above;
+    # test_gateway_console_filter_bar.py pins it is served once and that the console keeps no copy).
     for m in re.finditer(r"border-radius:\s*([^;]+);", html):
         value = m.group(1).strip()
         if value.startswith("var(--radius-"):

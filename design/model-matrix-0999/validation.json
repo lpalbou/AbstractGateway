@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-30",
+  "commits": [
+    "cde6956e",
+    "4a69ff88"
+  ],
+  "pytest": {
+    "primary_gate": 70,
+    "widget_gate": 7,
+    "disclosure_followup_gate": 35,
+    "final_responsive_gate": 15,
+    "note": "Gates overlap; counts are not additive. Final responsive gate precedes only the small desktop search flex-weight calibration, measured live below."
+  },
+  "browser": {
+    "checks": 222,
+    "failures": []
+  },
+  "redeploy": {
+    "health": "healthy",
+    "model_inflight": 0,
+    "runner_inflight_ticks": 0,
+    "restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Deploy Models toolbar, machine resource label and fixed capability matrix (0999)"
+    },
+    "responsive_restart": {
+      "ok": true,
+      "restart": true,
+      "requested_by": "default/admin",
+      "reason": "Activate final readable phone widget and filter action grouping (0999)"
+    }
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "checks": {
+          "machineInWidget": true,
+          "noHostRow": true,
+          "refreshAfterFilters": true,
+          "shorterSearch": true,
+          "conciseToggle": true,
+          "browseMatrix": true,
+          "blankSlotsInert": true,
+          "toggleKeyboard": true,
+          "mixedDisclosureMatrix": true,
+          "refreshWorks": true,
+          "widgetOpensResources": true,
+          "matrix390": true,
+          "viewport390": true,
+          "machineReadable390": true,
+          "actionsTogether390": true,
+          "widget390": true,
+          "matrix320": true,
+          "viewport320": true,
+          "machineReadable320": true,
+          "actionsTogether320": true,
+          "widget320": true,
+          "healthy": true
+        },
+        "search": {
+          "width": 495.578125,
+          "unrestricted": 550.78125,
+          "ratio": 0.8997730496453901
+        },
+        "browse": {
+          "cards": 88,
+          "ok": true
+        },
+        "downloaded": {
+          "cards": 29,
+          "ok": true
+        }
+      },
+      {
+        "theme": "light",
+        "checks": {
+          "machineInWidget": true,
+          "noHostRow": true,
+          "refreshAfterFilters": true,
+          "shorterSearch": true,
+          "conciseToggle": true,
+          "browseMatrix": true,
+          "blankSlotsInert": true,
+          "toggleKeyboard": true,
+          "mixedDisclosureMatrix": true,
+          "refreshWorks": true,
+          "widgetOpensResources": true,
+          "matrix390": true,
+          "viewport390": true,
+          "machineReadable390": true,
+          "actionsTogether390": true,
+          "widget390": true,
+          "matrix320": true,
+          "viewport320": true,
+          "machineReadable320": true,
+          "actionsTogether320": true,
+          "widget320": true,
+          "healthy": true
+        },
+        "search": {
+          "width": 495.578125,
+          "unrestricted": 550.78125,
+          "ratio": 0.8997730496453901
+        },
+        "browse": {
+          "cards": 88,
+          "ok": true
+        },
+        "downloaded": {
+          "cards": 29,
+          "ok": true
+        }
+      }
+    ],
+    "pageErrors": [],
+    "managementWrites": [],
+    "touch": {
+      "matrix": {
+        "cards": 88,
+        "ok": true
+      },
+      "viewport": true,
+      "root": true,
+      "machineReadable": true
+    }
+  }
+}

@@ -354,6 +354,11 @@ pub fn pending_label(action: &str) -> &'static str {
     }
 }
 
+/// Who installs engines, said to an account that cannot (the web's Engines tab says the same).
+pub fn install_note(admin: bool) -> Option<&'static str> {
+    (!admin).then_some("An administrator installs engines for this computer.")
+}
+
 /// Read the engines (and, once, the job list) — the web's `engineRefresh`.
 pub fn refresh(ctx: &Ctx) {
     let store = ctx.store;
@@ -1636,14 +1641,10 @@ pub fn section(cx: Scope, ctx: &Ctx, ui: EnginesUi, t: &TokenSet, width: i32) ->
             .child(check_btn)
             .build(),
     );
-    if data.get("install_allowed").and_then(Value::as_bool) == Some(false) {
-        col = col.child(sentence(
-            &t,
-            "Installing engines is turned off on this gateway.",
-            width,
-            t.info,
-        ));
-        col = col.child(sentence(&t, "An admin can allow it in the gateway settings (allow engine install). You can still install an engine yourself and check again.", width, t.text_muted));
+    // Operator ruling 2026-10-29: engines are installed once per computer by the gateway's
+    // administrator and shared by every user; nobody else installs them (no switch here).
+    if let Some(note) = install_note(admin) {
+        col = col.child(sentence(&t, note, width, t.text_muted));
     }
     if engines.is_empty() {
         return anchor(
@@ -1968,5 +1969,14 @@ mod tests {
             l.last().unwrap(),
             "y Install · u Install for all users (administrator) · n Not now"
         );
+    }
+
+    #[test]
+    fn a_non_admin_reads_who_installs_engines() {
+        assert_eq!(
+            install_note(false),
+            Some("An administrator installs engines for this computer.")
+        );
+        assert_eq!(install_note(true), None);
     }
 }

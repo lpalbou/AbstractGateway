@@ -46,6 +46,10 @@ a dark theme (`--theme gateway-light` / `gateway-dark`).
 The screen-by-screen guide — every table, button, dialog and confirmation —
 is in [docs/console.md](https://github.com/lpalbou/abstractgateway/blob/main/docs/console.md#terminal-console-abstractgateway-console).
 
+The Docs drawer uses AbstractTUI's shared `ChatTranscript` for measured message
+bubbles, Markdown and scrolling. The console owns its grounded QA requests,
+conversation history, composer and Stop action.
+
 ## Install
 
 ```sh
@@ -73,6 +77,18 @@ cargo run -- --help
 cargo run -- --gateway-url http://127.0.0.1:8090 --token <token>
 cargo run < /dev/null   # headless: prints a skip line, exits 0
 ```
+
+With unreleased sibling engine and Core console checkouts, apply both sources
+explicitly so the console and embedded screens share one engine runtime:
+
+```sh
+cargo build \
+  --config 'patch.crates-io.abstracttui.path="../../abstracttui"' \
+  --config 'patch.crates-io.abstractcore-console.path="../../abstractcore/console-tui"'
+```
+
+The paths above assume you run from `abstractgateway/console-tui`. Registry-only
+builds require the declared dependency versions to have been published.
 
 Run `abstractgateway-console --help` for the full list of flags, screens and
 keys; inside the console, `?` lists the keys of the current screen.

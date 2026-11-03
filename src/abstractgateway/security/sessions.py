@@ -591,6 +591,21 @@ class GatewaySessionStore:
             return False
         return hmac.compare_digest(rec.csrf_hash, csrf_token_hash(token))
 
+    def delete_sessions_for(self, *, user_id: str, tenant_id: str = "default", keep_session_id: str = "") -> int:
+        """End every browser session of one account (a credential changed), except `keep_session_id`.
+        Eager on purpose: a session bound to an OLD credential fingerprint could otherwise come back
+        to life when the credential returns to an earlier value (a password set, then removed)."""
+        keep = gateway_session_id_from_value(keep_session_id) or str(keep_session_id or "")
+        with self._lock:
+            records = self._load_unlocked(fresh=True)
+            gone = [sid for sid, rec in records.items()
+                    if rec.user_id == user_id and (rec.tenant_id or "default") == (tenant_id or "default") and sid != keep]
+            for sid in gone:
+                records.pop(sid, None)
+            if gone:
+                self._save_unlocked(records)
+            return len(gone)
+
     def delete_session(self, session_id: str) -> bool:
         sid = gateway_session_id_from_value(session_id)
         if not sid:

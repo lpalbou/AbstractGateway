@@ -81,6 +81,10 @@ function overviewNow() {
   return o;
 }
 
+// The gateway's cards (apps_manager.app_cards): one per row for apps of no family.
+const withCards = (o) => Object.assign(o, { cards: o.apps.map((r) => ({ id: r.id, family: null, name: r.name, description: r.description, mark: r.id.slice(0, 2),
+  illustration_url: null, members: [r.id], launchers: [{ app: r.id, kind: r.kind === "desktop" ? "desktop" : "browser" }] })) });
+
 const posted = [];
 
 async function open(browser, { width = 1440, height = 900, theme = "dark" } = {}) {
@@ -89,7 +93,7 @@ async function open(browser, { width = 1440, height = 900, theme = "dark" } = {}
   const page = await ctx.newPage();
   page.on("pageerror", (e) => failures.push(`pageerror@${width}/${theme}: ${e.message}`));
   if (!LIVE) {
-    await page.route(/\/api\/gateway\/apps(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(overviewNow()) }));
+    await page.route(/\/api\/gateway\/apps(\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(withCards(overviewNow())) }));
     await page.route("**/api/gateway/apps/*/update", async (route) => {
       posted.push({ url: route.request().url(), method: route.request().method() });
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, created: true, job: { id: "j1", kind: "app_update", app_id: "assistant", title: "Update Assistant", state: "running", percent: 5, message: "Downloading and installing Assistant 0.14.0…", steps: [], parts: [] } }) });

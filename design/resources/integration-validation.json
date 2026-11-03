@@ -1,0 +1,69 @@
+{
+  "implementation_commit": "ee918dc9",
+  "validation_date": "2026-10-30",
+  "python_tests": {
+    "passed": 124,
+    "deselected_baseline_failures": 2
+  },
+  "browser_checks": {
+    "checks": 96,
+    "failures": []
+  },
+  "browser_scope": "Whole served console and shared AbstractUIC islands; all API calls route-controlled; no real host/model mutations.",
+  "baseline_commit": "0bfe34d5",
+  "baseline_failure_reason": "Installed AbstractRuntime metadata is 0.15.2; existing Gateway gate requires >=0.15.3. Both failures reproduced against untouched baseline in an isolated archive.",
+  "baseline_failures": [
+    "tests/test_gateway_model_residency_endpoints.py::test_gateway_model_residency_capability_contract_comes_from_runtime_host_facade",
+    "tests/test_gateway_host_control_pause.py::test_pause_resume_routes_and_health_flag"
+  ],
+  "deployed": true,
+  "topology_hardening_commit": "dfc72e6f",
+  "post_hardening_validation": {
+    "passed": 37,
+    "browser_checks": 96,
+    "cases": [
+      "Apple Silicon MPS",
+      "Intel MPS unknown",
+      "remote-host hardware mismatch",
+      "integrated CUDA override"
+    ]
+  },
+  "deployment": {
+    "at": "2026-10-30T03:18:44+00:00",
+    "source_commit": "37ccd5f8",
+    "method": "Authenticated graceful POST /api/gateway/host/restart; existing local stack retained",
+    "url": "http://127.0.0.1:8080/console#models",
+    "health": "healthy",
+    "model_host": "up",
+    "runner_degraded": false,
+    "deployment_runtime_metadata": "0.15.3",
+    "browser_verified": {
+      "url": "http://127.0.0.1:8080/console#models",
+      "topology": "Unified memory",
+      "fresh": "Received 4:15:58 AM \u00b7 refreshes every 5s",
+      "widgets": {
+        "Docs assistant": true,
+        "About AbstractGateway": true,
+        "Appearance": true
+      },
+      "inspector": true,
+      "themeChooser": true,
+      "accountMenu": true,
+      "errors": [],
+      "badResponses": []
+    },
+    "live_system_sections": [
+      "cpu",
+      "disk_io",
+      "hardware",
+      "network",
+      "storage",
+      "swap",
+      "ts"
+    ],
+    "live_cpu_supported": true,
+    "live_storage_supported": true,
+    "topology": "Unified memory",
+    "new_services_or_dependencies_installed": false
+  }
+}

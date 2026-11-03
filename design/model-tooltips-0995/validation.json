@@ -1,0 +1,102 @@
+{
+  "date": "2026-10-30",
+  "gateway_commit": "15a26edc",
+  "uic_commit": "3833355",
+  "catalog_browser": {
+    "checks": 182,
+    "failures": []
+  },
+  "resources_browser": {
+    "checks": 122,
+    "failures": []
+  },
+  "shared_guards": {
+    "tooltip": 55,
+    "filter_bar": 41,
+    "top_bar": 32,
+    "brand_icons": 492,
+    "theme_token_blocks": 21,
+    "strict_contrast_named_themes": 20,
+    "build": "passed",
+    "islands_build": "passed",
+    "css_balance": "passed"
+  },
+  "pytest": {
+    "initial_focused_run": "53 passed, 1 failed: first-run fixture omitted tooltipAttributes from selective kit exports",
+    "followup_after_fixture_fix": "34 passed: filter bar, first run, Resources browser and dashboard"
+  },
+  "live": {
+    "themes": [
+      {
+        "theme": "dark",
+        "checks": {
+          "quickInSearchbar": true,
+          "defaults": true,
+          "structuredFit": true,
+          "concise": true,
+          "noRawDiagnosticDump": true,
+          "noStaleDownloadWarning": true,
+          "themed": true,
+          "keyboardDescription": true,
+          "rawNotesReachable": true,
+          "quickSync": true,
+          "onlyLocalRows": true,
+          "quickReload": true,
+          "quickKeyboard": true,
+          "browseRestored": true,
+          "narrowToolbar": true,
+          "narrowTooltip": true,
+          "healthy": true
+        },
+        "fit": {
+          "text": "Tight memory fit\n\nFree more memory before loading.\n\nMemory needed\n112 GB\nModel budget\n113 GB\nAvailable now\n93.7 GB\nMax. context\n67,834 tokens",
+          "facts": [
+            "Memory needed",
+            "Model budget",
+            "Available now",
+            "Max. context"
+          ],
+          "installed": true,
+          "width": 320,
+          "height": 165.828125
+        }
+      },
+      {
+        "theme": "light",
+        "checks": {
+          "quickInSearchbar": true,
+          "defaults": true,
+          "structuredFit": true,
+          "concise": true,
+          "noRawDiagnosticDump": true,
+          "noStaleDownloadWarning": true,
+          "themed": true,
+          "keyboardDescription": true,
+          "rawNotesReachable": true,
+          "quickSync": true,
+          "onlyLocalRows": true,
+          "quickReload": true,
+          "quickKeyboard": true,
+          "browseRestored": true,
+          "narrowToolbar": true,
+          "narrowTooltip": true,
+          "healthy": true
+        },
+        "fit": {
+          "text": "Tight memory fit\n\nFree more memory before loading.\n\nMemory needed\n112 GB\nModel budget\n113 GB\nAvailable now\n93.2 GB\nMax. context\n67,834 tokens",
+          "facts": [
+            "Memory needed",
+            "Model budget",
+            "Available now",
+            "Max. context"
+          ],
+          "installed": true,
+          "width": 320,
+          "height": 165.828125
+        }
+      }
+    ],
+    "pageErrors": [],
+    "managementWrites": []
+  }
+}

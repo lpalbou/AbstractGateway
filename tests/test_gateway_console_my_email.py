@@ -87,7 +87,7 @@ def test_console_calls_only_the_callers_own_routes() -> None:
 def test_sign_in_page_offers_recovery_only_when_available() -> None:
     html = _html()
     assert 'id="recovery-section" class="af-gateway-signin__recovery" hidden' in html
-    assert "Forgot your token? Email me a sign-in code" in html
+    assert "Forgot your password? Email me a sign-in code" in html
     assert "/api/gateway/session/recovery/request" in html and "/api/gateway/session/recovery/redeem" in html
     assert '$("recovery-section").hidden = !available' in html
 

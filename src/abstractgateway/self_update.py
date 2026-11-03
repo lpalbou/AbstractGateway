@@ -53,7 +53,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -694,6 +694,9 @@ def check_for_update(
                         "name": FRAMEWORK_NAME,
                         "version": rel["version"],
                         "gateway_version": rel["gateway_version"],
+                        # The browser apps the newest release pins: an app installed
+                        # older than this is named in the console (apps_manager).
+                        "npm_apps": dict(rel.get("npm_apps") or {}),
                         "installed": installed,
                         "commit": rel["commit"],
                         "manifest_url": rel["manifest_url"],
@@ -1318,3 +1321,15 @@ def _reset_for_tests() -> None:
         _job = _Job()
     _job_thread = None
     _restart_pending = False
+
+
+def newest_release_app_pins() -> Tuple[Optional[str], Dict[str, str]]:
+    """(release version, {app id: pinned version}) of the newest AbstractFramework release
+    from the last update check (no request; empty until a check has run)."""
+    with _check_lock:
+        rel = (_last_check or {}).get("release") if isinstance(_last_check, dict) else None
+    if not isinstance(rel, dict):
+        return None, {}
+    pins = rel.get("npm_apps") if isinstance(rel.get("npm_apps"), dict) else {}
+    return (str(rel.get("version") or "") or None), {str(k): str(v) for k, v in pins.items()}
+

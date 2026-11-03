@@ -1,0 +1,69 @@
+{
+  "themes": [
+    {
+      "theme": "dark",
+      "checks": {
+        "modelsOnly": true,
+        "modelSummary": true,
+        "defaults": true,
+        "advancedInitiallyHidden": true,
+        "downloadedModelsOnly": true,
+        "scopedModelTotal": true,
+        "adaptersExplicit": true,
+        "noFalseFitOrDefault": true,
+        "adapterURL": true,
+        "irrelevantFiltersCleared": true,
+        "declaredCompatibility": true,
+        "roleSurvivesReload": true,
+        "componentsExplicit": true,
+        "unclassifiedExplicit": true,
+        "allAssetsAvailable": true,
+        "modelsRestored": true,
+        "viewport390": true,
+        "adapterFit390": true,
+        "viewport320": true,
+        "adapterFit320": true,
+        "healthy": true
+      },
+      "models": 142,
+      "adapters": 44,
+      "inventory": 162
+    },
+    {
+      "theme": "light",
+      "checks": {
+        "modelsOnly": true,
+        "modelSummary": true,
+        "defaults": true,
+        "advancedInitiallyHidden": true,
+        "downloadedModelsOnly": true,
+        "scopedModelTotal": true,
+        "adaptersExplicit": true,
+        "noFalseFitOrDefault": true,
+        "adapterURL": true,
+        "irrelevantFiltersCleared": true,
+        "declaredCompatibility": true,
+        "roleSurvivesReload": true,
+        "componentsExplicit": true,
+        "unclassifiedExplicit": true,
+        "allAssetsAvailable": true,
+        "modelsRestored": true,
+        "viewport390": true,
+        "adapterFit390": true,
+        "viewport320": true,
+        "adapterFit320": true,
+        "healthy": true
+      },
+      "models": 142,
+      "adapters": 44,
+      "inventory": 162
+    }
+  ],
+  "pageErrors": [],
+  "managementWrites": [],
+  "touch": {
+    "adapterOnly": true,
+    "viewport": true,
+    "cards": true
+  }
+}

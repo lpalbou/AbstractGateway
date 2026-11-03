@@ -3,9 +3,10 @@
 AbstractAssistant is the framework's desktop companion: a Python/Qt menu-bar
 app (PyPI `abstractassistant`), not a browser app. The root `abstractframework`
 package pins it, so a full install already has it in the same Python
-environment as the gateway; a gateway-only install may not. The console lists
-it as the sixth app card (`kind: "desktop"`, after the five browser apps) and
-the tray's Apps submenu offers "Launch Assistant"; BOTH read the presence
+environment as the gateway; a gateway-only install may not. The console shows
+it on the Assistant card (`kind: "desktop"`, family "assistant": the second
+launcher, beside the web Assistant's) and the tray's Apps submenu offers
+"Launch Assistant"; BOTH read the presence
 detection in this module (`detect_assistant`), so they always agree.
 
 Presence (read-only, nothing is imported or launched to find it):
@@ -85,17 +86,25 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 @dataclass(frozen=True)
 class DesktopAppSpec:
+    """A desktop app next to the browser apps. The card fields (`mark`,
+    `description`, `illustration`, `family`) mean what they mean on
+    apps_manager.AppSpec (docs/apps.md, "Registering an app")."""
+
     id: str
     name: str
     package: str  # PyPI distribution (and import name)
     script: str  # console script
     bundle: str  # macOS app bundle name
     description: str
+    mark: str = ""
+    illustration: Optional[str] = None
+    family: Optional[str] = None
 
 
 # One line, from abstractassistant/README.md ("a gateway-native desktop
 # assistant ... a macOS menu-bar app with a compact palette, a hands-free voice
-# conversation mode").
+# conversation mode"). One family with the browser Assistant (`assistant-web`):
+# one "Assistant" card, two launchers.
 ASSISTANT = DesktopAppSpec(
     id="assistant",
     name="Assistant",
@@ -103,6 +112,9 @@ ASSISTANT = DesktopAppSpec(
     script="abstractassistant",
     bundle="AbstractAssistant.app",
     description="A menu-bar assistant: chat or talk hands-free.",
+    mark="As",
+    illustration="assistant.webp",
+    family="assistant",
 )
 DESKTOP_APPS: Tuple[DesktopAppSpec, ...] = (ASSISTANT,)
 DESKTOP_BY_ID: Dict[str, DesktopAppSpec] = {a.id: a for a in DESKTOP_APPS}

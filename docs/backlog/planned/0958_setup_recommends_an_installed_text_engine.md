@@ -2,7 +2,7 @@
 
 > Package: abstractgateway (console setup guide, recommended defaults); abstractcore (`RECOMMENDED_MODELS`, seam)
 > Type: bug
-> Status: planned (not implemented)
+> Status: implemented (gateway half; the engine-aware pick in AbstractCore stays its own item). Verified read-only on the OVH server 2026-10-29: Core's pick lmstudio/qwen3.5-9b (status unknown, `lms` not installed) -> huggingface `unsloth/Qwen3-8B-GGUF:Q4_K_M` (Qwen3 8B, 5.1 GB) through llama.cpp
 > Created: 2026-10-28
 > Priority: P1
 > Labels: first-run, setup-guide, recommendations, linux, headless

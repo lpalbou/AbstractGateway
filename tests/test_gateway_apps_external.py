@@ -27,6 +27,7 @@ _TOKEN = "apps-external-test-token-0123456789"
 # The real `<title>`s the five app servers send for `/` (read from the live
 # dev apps on 127.0.0.1:3001-3005 on 2026-09-24, untracked/missionHH/body_*.html).
 PAGES: Dict[str, str] = {
+    "assistant-web": "<!doctype html><title>AbstractAssistant</title>",
     "observer": "<!DOCTYPE html><html><head><title>AbstractObserver</title>"
     '<script>window.__ABSTRACT_UI_CONFIG__=Object.assign(window.__ABSTRACT_UI_CONFIG__||{}, {"gateway_url":"http://127.0.0.1:8080","entity_app_url":"http://127.0.0.1:3004"});</script></head></html>',
     "continuum": "<html><head><title>AbstractContinuum — continuous development console</title></head></html>",
@@ -49,10 +50,10 @@ def test_each_app_page_is_recognised_by_its_title_and_nothing_else_is() -> None:
 
 
 def test_one_port_table_is_the_stack_map_for_launch_probe_and_tray() -> None:
-    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005, "note": 3006}
+    expected = {"observer": 3001, "continuum": 3002, "code": 3003, "entity": 3004, "flow": 3005, "note": 3006, "assistant-web": 3008}
     assert dict(am.STACK_PORTS) == expected
     assert {a.id: a.default_port for a in am.APPS} == expected
-    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow", "note"]  # stack order
+    assert [a.id for a in am.APPS] == ["observer", "continuum", "code", "entity", "flow", "note", "assistant-web"]  # stack order
     from abstractgateway.tray import apps as tray_apps
 
     assert {w[0]: w[4] for w in tray_apps.WEB_APPS} == expected
@@ -66,7 +67,7 @@ def test_the_port_table_matches_the_start_local_header_when_the_framework_checko
     import re
 
     header = script.read_text(encoding="utf-8").split("set -euo pipefail", 1)[0]
-    found = {m.group(1): int(m.group(2)) for m in re.finditer(r"^#\s+(observer|continuum|code/web|entity|flow)\s+(\d+)", header, re.M)}
+    found = {m.group(1): int(m.group(2)) for m in re.finditer(r"^#\s+(observer|continuum|code/web|entity|flow|note|assistant-web)\s+(\d+)", header, re.M)}
     found["code"] = found.pop("code/web")
     assert found == dict(am.STACK_PORTS)
 
@@ -408,7 +409,7 @@ def test_console_card_says_started_outside_only_under_technical_details() -> Non
     by untracked/missionHH/capture_apps.mjs (Playwright, dark 1440)."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
-    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(app) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
+    card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appMemberParts(app, techOn, lead, shared) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
     plain, tech = card.split("if (techOn) {", 1)
     line = 'data-app-external="${esc(app.id)}">${esc(ext.detail'
     assert line in tech and line not in plain
@@ -432,3 +433,48 @@ def test_cli_list_says_an_app_was_started_outside(monkeypatch, capsys) -> None:
     assert code == 0, out
     assert "observer   0.1.12" in out and "http://127.0.0.1:3001/" in out
     assert "Started outside the gateway on port 3001 (open only: stop it where it was started)" in out
+
+
+
+# ---------------------------------------------------------------------------
+# P0 2026-10-29: a second gateway on the same machine (OVH, port 8443) listed the 8080 gateway's
+# apps as "started outside the gateway" and opened them pointing at 8080.
+# ---------------------------------------------------------------------------
+
+
+def _other_gateways_code(argv=None, gateway_url="http://127.0.0.1:8080") -> am.ExternalApp:
+    return am.ExternalApp("code", 3003, "http://127.0.0.1:3003/", version="0.13.3", pid=18343, gateway_url=gateway_url,
+                          argv=tuple(argv or ("/home/u/.local/share/abstractgateway/runtime/node/24.19.0/bin/node", "-r",
+                                              "/home/u/.local/share/abstractgateway/apps/_support/parent_watch.cjs",
+                                              "/home/u/.local/share/abstractgateway/apps/code/0.13.3/node_modules/.bin/abstractcode-web")))
+
+
+def test_another_gateways_app_is_not_listed_and_this_gateway_starts_its_own(tmp_path: Path) -> None:
+    m = _manager(tmp_path, {"code": _other_gateways_code()})
+    m.gateway_url = "http://127.0.0.1:8443"
+    assert m.external_apps(refresh=True) == {}
+    row = m.app_row(am.APP_BY_ID["code"])
+    assert row["source"] is None and row["installed"] is False and row["running"] is False
+    assert m.serving_port(am.APP_BY_ID["code"]) is None  # nothing is served at /apps/code/ for it
+
+
+@pytest.mark.parametrize("gateway_url, argv, listed", [
+    ("http://127.0.0.1:8080", ("node", "/opt/stack/code/cli.js"), False),          # its page names another gateway
+    (None, None, False),                                                           # another data dir's app support
+    ("http://localhost:8443/", ("node", "/opt/stack/code/cli.js"), True),          # serves THIS gateway (dev stack)
+    (None, ("node", "/opt/stack/code/cli.js"), True),                              # can't tell: started outside, as before
+])
+def test_which_running_apps_count_for_this_gateway(tmp_path: Path, gateway_url, argv, listed) -> None:
+    m = _manager(tmp_path, {"code": _other_gateways_code(argv=argv, gateway_url=gateway_url)})
+    m.gateway_url = "http://127.0.0.1:8443"
+    assert ("code" in m.external_apps(refresh=True)) is listed
+
+
+def test_this_data_dirs_leftover_still_counts(tmp_path: Path) -> None:
+    m = _manager(tmp_path, {})
+    m.gateway_url = "http://127.0.0.1:8443"
+    root = str(m.apps_root)
+    m.external_probe = lambda **kw: {"code": am.ExternalApp("code", 3003, "http://127.0.0.1:3003/", pid=9, gateway_url="http://127.0.0.1:8080",
+                                                               argv=("node", "-r", f"{root}/_support/parent_watch.cjs", f"{root}/code/0.13.3/x.js"))}
+    found = m.external_apps(refresh=True)
+    assert "code" in found and m.external_kind(found["code"]) == "leftover"
