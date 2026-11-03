@@ -17,4 +17,4 @@
     and an incident; its sentence names the incident file only when one was written for that exit (it used to
     point at `<data dir>/incidents` even when nothing had been recorded).
 
-  Needs the AbstractRuntime release that adds `EffectInterrupted`.
+  AbstractRuntime floor 0.17.0 (`EffectInterrupted`).

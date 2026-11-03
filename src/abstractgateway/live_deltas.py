@@ -114,7 +114,9 @@ _role_lock = threading.Lock()
 #         pass reloaded every finished run; 0.15.2 is below the floor although its API is the same.
 # 0.16.0: `run_facade.decide` (the `decision` output modality: POST /runs/{run_id}/decisions) and the
 #         `decide` flow node.
-ABSTRACTRUNTIME_FLOOR = "0.16.0"
+# 0.17.0: `EffectInterrupted` (a gateway stop interrupts a run: runner.py, model_host.py), and the
+#         discovery facade's `ModelNotDownloadedError` (memory_store.py).
+ABSTRACTRUNTIME_FLOOR = "0.17.0"
 
 
 def _installed_runtime_version() -> str:
