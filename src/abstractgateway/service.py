@@ -1867,10 +1867,16 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         t0 = _time.monotonic()
         _say(f"shutdown: {name} ...")
         try:
-            fn()
+            left = fn()
         except Exception:
             log.warning("shutdown: %s FAILED (continuing)", name, exc_info=True)
             _say(f"shutdown: {name} FAILED (continuing; see log)")
+            return
+        if isinstance(left, int) and not isinstance(left, bool) and left > 0:
+            # The runner drain timed out: those runs are interrupted by the stop (never failed)
+            # and continue from their last durable step at the next start.
+            _say(f"shutdown: {name} TIMED OUT ({_time.monotonic() - t0:.1f}s): {left} run(s) interrupted; "
+                 "they continue at the next start")
             return
         _say(f"shutdown: {name} done ({_time.monotonic() - t0:.1f}s)")
 

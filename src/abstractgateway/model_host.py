@@ -56,6 +56,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
+from abstractruntime import EffectInterrupted
+
 logger = logging.getLogger("abstractgateway.model_host")
 
 MODE_PROCESS = "process"
@@ -221,8 +223,10 @@ class ModelHostUnavailable(RuntimeError):
 
 
 class ModelHostCrashed(RuntimeError):
-    """The model host died while it served this request. Not retried automatically: the request may
-    be what crashed it (424: a dependency of the request failed)."""
+    """The model host died ON ITS OWN while it served this request (a crash, the memory ceiling,
+    unresponsive). Not retried automatically: the request may be what crashed it (424: a dependency
+    of the request failed). A stop the gateway or the operator REQUESTED is not this: a request in
+    flight then gets the runtime's `EffectInterrupted` (ADR 0002 §7)."""
 
     status_code = 424
 
@@ -766,6 +770,7 @@ class ModelHostClient:
             return
         host = self._mh_host
         with self._mh_lock:
+            host.await_requested_restart()  # build in the new child, not the one being replaced
             if self._mh_built():
                 return
             generation = host.generation
@@ -1006,6 +1011,10 @@ class ModelHostSupervisor:
         self._restarts: Deque[float] = deque()
         self._stopping = False
         self._kill_reason: Optional[str] = None
+        # The generation a REQUESTED kill ended (`kill(..., requested=True)`, a llama.cpp update): its
+        # in-flight requests are interrupted, no incident is written, and it restarts at once.
+        self._requested_exit_generation = -1
+        self._requested_restart_pending = False  # until the restarted child is ready (or did not start)
         self._recorded_generation = 0
         self._idle: List[_Connection] = []
         self._inflight: Dict[int, Dict[str, Any]] = {}
@@ -1121,6 +1130,7 @@ class ModelHostSupervisor:
         with self._lock:
             if generation != self.generation or self._stopping:
                 return
+            self._requested_restart_pending = False
             if ready.get("ready"):
                 self.state = "up"
                 self._alive_generation = generation
@@ -1178,6 +1188,9 @@ class ModelHostSupervisor:
             stopping = self._stopping
             kind = reason_kind or self._kill_reason or "exit"
             self._kill_reason = None
+            requested = self._requested_exit_generation == generation
+            if not requested:
+                self._requested_restart_pending = False
             inflight = [dict(v) for v in self._inflight.values()]
             started = self.started_at
             self.last_exit = {"pid": pid, "code": code, "signal": _signal_name(code), "at": now,
@@ -1185,10 +1198,16 @@ class ModelHostSupervisor:
             self._cond.notify_all()
         for conn in idle:
             conn.close()
-        if stopping:
+        if stopping or requested:
+            # Asked for, not a crash: no incident, no restart counted against the crash-loop guard.
             with self._lock:
                 self._recorded_generation = generation
+                if requested and not stopping:
+                    self.state = "restarting"
                 self._cond.notify_all()
+            if requested and not stopping:
+                logger.info("model host: pid %s stopped on request (%s); restarting", pid, kind)
+                threading.Thread(target=self._spawn, name="model-host-restart", daemon=True).start()
             return
         while self._restarts and now - self._restarts[0] > self.restart_window_s:
             self._restarts.popleft()
@@ -1243,19 +1262,33 @@ class ModelHostSupervisor:
             time.sleep(min(0.05, max(0.0, end - time.monotonic())))
         return self._stopping
 
-    def kill(self, reason: str) -> None:
-        """Kill the child now (memory ceiling, unresponsive, an operator restart); the monitor
-        records the incident under `reason` and restarts it."""
+    def kill(self, reason: str, *, requested: bool = False) -> None:
+        """Kill the child now and restart it. `requested=False` (memory ceiling, unresponsive): the
+        monitor records an incident under `reason`, and a request in flight fails (424).
+        `requested=True` (the gateway restarts it on purpose, e.g. a llama.cpp update): no incident,
+        an immediate restart, and a request in flight is interrupted (`EffectInterrupted`), not failed."""
         with self._lock:
             proc = self._proc
             if proc is None or proc.poll() is not None:
                 return
             self._kill_reason = reason
+            if requested:
+                self._requested_exit_generation = self.generation
+                self._requested_restart_pending = True
         with contextlib.suppress(Exception):
             proc.kill()
 
     def generation_alive(self) -> bool:
-        return self._alive_generation == self.generation
+        # A generation the gateway killed on request is not alive, even before its exit is seen.
+        return self._alive_generation == self.generation and self._requested_exit_generation != self.generation
+
+    def await_requested_restart(self) -> None:
+        """During a restart the gateway asked for (`kill(..., requested=True)`), wait for the new
+        child (at most the readiness timeout) rather than failing, or spinning, a request."""
+        with self._lock:
+            if self._requested_restart_pending:
+                self._cond.wait_for(lambda: self.generation_alive() or self.state == "failed" or self._stopping,
+                                    timeout=self.ready_timeout_s)
 
     @property
     def pid(self) -> Optional[int]:
@@ -1343,7 +1376,7 @@ class ModelHostSupervisor:
     def _acquire(self, *, connect_timeout_s: Optional[float] = None) -> _Connection:
         with self._lock:
             if self._stopping:
-                raise ModelHostUnavailable("The model host is stopped (the gateway is shutting down).")
+                raise EffectInterrupted("the gateway is stopping; the request is sent again when it is back")
             if self.state == "failed":
                 raise ModelHostUnavailable(
                     "The model host (the process that runs the models) stopped restarting after "
@@ -1352,6 +1385,10 @@ class ModelHostSupervisor:
             if self.state == "starting" and self.generation == 1:
                 # First boot: wait for the child rather than failing the gateway's first requests.
                 self._cond.wait_for(lambda: self.state != "starting" or self._stopping, timeout=self.ready_timeout_s)
+            else:
+                self.await_requested_restart()
+            if self._stopping:
+                raise EffectInterrupted("the gateway is stopping; the request is sent again when it is back")
             if not self.generation_alive():
                 raise ModelHostUnavailable(
                     "The model host (the process that runs the models) is restarting; send it again in a few seconds.")
@@ -1412,7 +1449,13 @@ class ModelHostSupervisor:
         with self._lock:
             self._inflight.pop(token, None)
 
-    def _crashed_error(self, generation: int, *, during: str) -> RuntimeError:
+    def _crashed_error(self, generation: int, *, during: str) -> BaseException:
+        if self._stopping or self._requested_exit_generation == generation:
+            # The gateway stopped the model host on purpose (its own stop, an operator Restart, a
+            # llama.cpp update): this request is interrupted, not failed. The runtime records no
+            # terminal step and sends it again when the model host is back (ADR 0002 §7). Decided by
+            # the supervisor's own flags, never by the exit's wording.
+            return EffectInterrupted(f"the gateway stopped the model host while {during}; the request is sent again")
         proc = self._proc
         if proc is not None and generation == self.generation:
             try:

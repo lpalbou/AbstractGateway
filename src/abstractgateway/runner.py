@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol
 
-from abstractruntime import Runtime, StaleResumeError
+from abstractruntime import EffectInterrupted, Runtime, StaleResumeError
 from abstractruntime.core.event_keys import build_event_wait_key
 from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord, WaitReason
 from abstractruntime.core.vars import is_paused_vars
@@ -957,7 +957,13 @@ class GatewayRunner:
                 base = remaining
         return max(0.005, base)
 
-    def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> None:
+    def _step_gate(self) -> bool:
+        """Open unless the host is paused or stopping, or this runner is stopping."""
+        return host_control.step_gate() and not self._stop.is_set()
+
+    def stop(self, timeout_s: float = 5.0, *, drain_timeout_s: float = 30.0) -> int:
+        """Stop ticking and drain. Returns how many ticks were still running when the drain ended
+        (0: drained); their runs are interrupted by the stop and continue at the next start."""
         with self._state_lock:
             # Deliberate stop: runner_status must report "inactive", never
             # "dead_worker" (health honesty distinguishes operator intent
@@ -988,6 +994,8 @@ class GatewayRunner:
         # _stop is set, so ignore it here (an unbounded stop-blocked drain
         # would defeat itself).
         drained = self._drain_inflight(timeout_s=max(0.0, float(drain_timeout_s)), ignore_stop=True)
+        with self._inflight_lock:
+            still_running = 0 if drained else len(self._inflight)
         if drained:
             self._release_singleton_lock()
         else:
@@ -1006,6 +1014,7 @@ class GatewayRunner:
         with self._state_lock:
             self._loop_running = False
             self._lock_refused_flag = False
+        return still_running
 
     def emit_event(
         self,
@@ -3009,8 +3018,15 @@ class GatewayRunner:
                 # pause stops after the current step instead of after up to
                 # tick_max_steps of them. Older runtimes pause at tick
                 # boundaries only (introspected once per Runtime class).
-                tick_kwargs["step_gate"] = host_control.step_gate
+                # A stop (this runner's own, or the process's) closes it too: no new step starts.
+                tick_kwargs["step_gate"] = self._step_gate
             state = runtime.tick(**tick_kwargs)
+        except EffectInterrupted:
+            # The gateway stopped on purpose (its own stop, a Restart, a model-host restart for an
+            # update) while this run's effect was in flight: not a failure. The runtime recorded no
+            # terminal step; the run stays RUNNING and continues from its last durable step.
+            logger.warning("GatewayRunner: run %s interrupted by the gateway stop; it continues at the next start", run_id)
+            return
         except Exception as e:
             # Never leave runs stuck in RUNNING due to an unhandled exception.
             #

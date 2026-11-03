@@ -143,8 +143,10 @@ conversation continues.
 
 On Linux, macOS and Windows, models run in a child process by default (`--model-host process`, see
 [configuration.md](./configuration.md#model-host-the-models-run-in-a-supervised-child-process)). That
-child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
-kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. The gateway kept running
+child died on its own during the request: a native crash in an engine (llama.cpp, transformers), an
+out-of-memory kill, the memory ceiling (`--model-host-memory-gb`) or three unanswered pings. (Stopping or
+restarting the gateway never causes this sentence: a run in flight is interrupted and continues when the
+gateway is back.) The gateway kept running
 and restarted it. Inspect the failed run before resubmitting any request with side effects;
 an in-flight request is not automatically replayed. The cause is in the incident file the sentence names
 (`<data dir>/incidents/model-host-*.json`: `kind`, `signal`, `rss_bytes_last`, `inflight`, `log_tail`)
