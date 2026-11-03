@@ -9,7 +9,8 @@
 # (default 5; 10 on CI runners). Without --enforce they are REPORTED: the numbers and any limit that was
 # exceeded are printed (and written to the GitHub job summary when $GITHUB_STEP_SUMMARY is set) and the
 # script exits 0. With --enforce an exceeded limit FAILS the run (exit 1). A probe that answered anything
-# else than 200, a gateway that did not boot, or a missing result FAILS in both modes. Pull requests run
+# else than 200, a missing p99 or CPU measurement, a gateway that did not boot, or a missing result FAILS in
+# both modes. The verdict reads the result's numbers (scripts/perf/ci_verdict.py), never printed text. Pull requests run
 # it without --enforce; the nightly and manual runs pass --enforce (ADR 0050 rule 5: a wall-clock bound
 # is a gate only where it is asked for explicitly, never on the default path).
 #
@@ -88,42 +89,10 @@ RC=0
   --driver-arg --fail-p99 --driver-arg runs_limit20=0.2 \
   --driver-arg --fail-p99 --driver-arg automations=0.5 \
   --driver-arg --fail-idle-cpu --driver-arg "$CPU_MAX" ${SERVE_PASS[@]+"${SERVE_PASS[@]}"} || RC=$?
-# The result of THIS run (bench_gateway.sh --json writes <work>/bench-<timestamp>.json), then the verdict:
-# exceeded limits fail only with --enforce; non-200 answers, a missing result or a boot failure always fail.
-VERDICT="$("$PY" -I - "$WORK" "$T0" "$RC" "$ENFORCE" <<'PY'
-import glob, json, os, sys
-work, t0, rc, enforce = sys.argv[1], float(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "1"
-runs = [p for p in glob.glob(os.path.join(work, "bench-*.json")) if os.path.getmtime(p) >= t0]
-doc = json.load(open(max(runs, key=os.path.getmtime))) if runs else None
-gates = (doc or {}).get("gates") or {}
-failures = list(gates.get("failures") or [])
-correctness = [f for f in failures if "were not 200" in f]
-limits = [f for f in failures if f not in correctness]
-if doc is None or (rc != 0 and not failures):
-    verdict, code = "FAIL: no result (the gateway did not boot or the driver failed; see the log above)", 1
-elif correctness:
-    verdict, code = "FAIL: " + "; ".join(correctness), 1
-elif limits and enforce:
-    verdict, code = "FAIL (limits enforced): " + "; ".join(limits), 1
-elif limits:
-    verdict, code = "PASS (limits reported, not enforced): over " + "; ".join(limits), 0
-else:
-    verdict, code = "PASS", 0
-summary = os.environ.get("GITHUB_STEP_SUMMARY")
-if summary and doc is not None:
-    bounds = gates.get("p99_s") or {}
-    ms = lambda v: "-" if v is None else f"{v * 1000:.1f} ms"
-    lines = ["## Gateway load test", "", f"Mode: {'limits enforced (--enforce)' if enforce else 'limits reported (pull request)'}. {verdict}", "",
-             "| Probe | p50 | p99 | p99 limit | max | 200s |", "|---|---|---|---|---|---|"]
-    for name, r in (doc.get("probes") or {}).items():
-        lines.append(f"| {name} | {ms(r.get('p50_s'))} | {ms(r.get('p99_s'))} | {ms(bounds.get(name))} | {ms(r.get('max_s'))} | {r.get('ok')}/{r.get('n')} |")
-    idle = doc.get("idle") or {}
-    lines += ["", f"CPU at rest: {idle.get('cpu_pct')}% of a core over {idle.get('seconds')} s (limit {gates.get('idle_cpu_pct')}%).", ""]
-    with open(summary, "a", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
-print(f"{code} {verdict}")
-PY
-)" || VERDICT="1 FAIL: the verdict could not be computed"
+# The verdict from THIS run's result document (bench_gateway.sh --json writes <work>/bench-<timestamp>.json),
+# read by numbers (scripts/perf/ci_verdict.py): exceeded limits fail only with --enforce; a non-200 answer,
+# a missing p99 or CPU measurement, a missing result or a boot failure always fail.
+VERDICT="$("$PY" -I "$HERE/ci_verdict.py" "$WORK" "$T0" "$RC" "$ENFORCE")" || VERDICT="1 FAIL: the verdict could not be computed"
 CODE="${VERDICT%% *}"
 echo "load test: ${VERDICT#* } in $(( $(date +%s) - T0 )) s; results under $WORK"
 exit "$CODE"
