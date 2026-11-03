@@ -28,6 +28,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 TOKEN = "split-smoke-token-0123456789abcdef"
 ENDPOINT_TOKEN = "split-smoke-endpoint-0123456789"
@@ -143,7 +144,7 @@ def _bundle(bundles_dir: Path) -> tuple[str, str]:
 
 
 def _wait(predicate, *, timeout_s: float, what: str, procs=()) -> None:
-    end = time.monotonic() + timeout_s
+    end = time.monotonic() + patient(timeout_s)
     while time.monotonic() < end:
         for name, proc, log_path in procs:
             if proc.poll() is not None:

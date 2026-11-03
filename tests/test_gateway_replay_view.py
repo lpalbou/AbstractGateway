@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from abstractruntime.core.models import RunState, RunStatus, StepRecord, StepStatus, WaitReason, WaitState
 from abstractruntime.replay import apply_delta
+from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 TOKEN = "v" * 32
 H = {"Authorization": f"Bearer {TOKEN}"}
@@ -217,7 +218,7 @@ def test_two_clients_converge_live_and_share_one_fold(client: TestClient) -> Non
     tb.join(30)
     # The appends themselves woke the streams (the entry's append subscription), well before
     # the 5 s safety check could have.
-    assert time.monotonic() - t0 < 3.0
+    timing_budget(time.monotonic() - t0, 3.0, "streams ended by the appends (the safety check runs at 5 s)")
     assert not ta.is_alive() and not tb.is_alive(), "streams did not end with done"
     assert a[0]["event"] == "view" and b[0]["event"] == "view"
     assert a[0]["data"]["interaction"]["kind"] == "tool_approval"

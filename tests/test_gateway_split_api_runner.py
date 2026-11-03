@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 def _write_bundle(*, bundles_dir: Path, bundle_id: str, flows: dict[str, dict], entrypoint: str) -> tuple[str, str]:
@@ -37,7 +38,7 @@ def _write_bundle(*, bundles_dir: Path, bundle_id: str, flows: dict[str, dict], 
 
 
 def _wait_until(predicate, *, timeout_s: float = 10.0, poll_s: float = 0.05) -> None:
-    end = time.time() + timeout_s
+    end = time.time() + patient(timeout_s)
     while time.time() < end:
         if predicate():
             return

@@ -22,7 +22,7 @@ from typing import List
 
 import pytest
 
-from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 from push_fakes import REG, TOKEN_A, WATCH_TOPIC, FakeRelay, raise_approval
 from test_gateway_principal_isolation_matrix import _client, _create_user
@@ -44,7 +44,7 @@ def _relay_flag():
 
 def _wait(pred, timeout: float = 15.0) -> float:
     t0 = time.monotonic()
-    while time.monotonic() - t0 < timeout:
+    while time.monotonic() - t0 < patient(timeout):
         if pred():
             return time.monotonic() - t0
         time.sleep(0.02)

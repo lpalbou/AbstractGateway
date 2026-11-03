@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 _PNG_BYTES = (
@@ -59,7 +60,7 @@ def _write_image_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> N
 
 
 def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
-    deadline = time.monotonic() + timeout_s
+    deadline = time.monotonic() + patient(timeout_s)
     while time.monotonic() < deadline:
         if fn():
             return

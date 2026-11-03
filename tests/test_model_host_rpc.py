@@ -17,6 +17,7 @@ import pytest
 
 from abstractgateway import model_host as mh
 from model_host_fakes import FakeOpenAIServer
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="kill -9 / SIGSTOP semantics")
 
@@ -93,11 +94,14 @@ def test_a_stop_reaches_the_generation_in_the_child(tmp_path, fake):
         stop = threading.Event()
         threading.Timer(0.5, stop.set).start()
         t0 = time.monotonic()
+        content = ""
         try:
-            client.generate(prompt="stop me", params={"stream": True, "cancel_event": stop})
+            content = str(client.generate(prompt="stop me", params={"stream": True, "cancel_event": stop}).get("content") or "")
         except Exception:  # noqa: BLE001 - Core may end a cancelled stream either way
             pass
-        assert time.monotonic() - t0 < 1.3, "the Stop did not reach the child's generation"
+        # The fake streams "reply:<prompt>" in 4 chunks 0.4 s apart; the Stop (0.5 s) ends it after the first.
+        assert not content.rstrip().endswith("stop me"), f"the Stop did not reach the child's generation: {content!r}"
+        timing_budget(time.monotonic() - t0, 1.3, "a Stop reaching the child's generation")
     finally:
         sup.stop()
 
@@ -116,7 +120,7 @@ def test_kill_dash_nine_fails_the_request_records_an_incident_and_restarts(tmp_p
             client.generate(prompt="victim", params={"_provider": "openai-compatible", "_model": "routed-model", "trace_metadata": {
                 "run_id": "run-victim", "step_id": "step-victim", "request_id": "request-victim",
                 "effect_idempotency_key": "effect-victim", "attempt": 2, "workflow_id": "workflow-victim"}})
-        assert time.monotonic() - t0 < 5.0
+        timing_budget(time.monotonic() - t0, 5.0, "a request failing after kill -9 of the model host")
         assert "signal 9" in str(info.value) and info.value.status_code == 424
         incidents = mh.read_incidents(tmp_path / "data")
         assert incidents and incidents[0]["schema"] == mh.INCIDENT_SCHEMA
@@ -265,13 +269,27 @@ def test_configuration_reads_and_fresh_setters_never_wait_for_the_child(tmp_path
         client.generate(prompt="warm")
         os.kill(sup.pid, signal.SIGSTOP)  # a frozen child
         try:
+            # On a thread: a read that waited for the frozen child would never return, so the
+            # check is that it RETURNS (an event), not how fast.
+            done, errors = threading.Event(), []
+
+            def _reads() -> None:
+                try:
+                    assert client._llm_kwargs["base_url"] == fake.base_url
+                    assert client._default_provider == "openai-compatible"
+                    assert callable(client.voice_library) and callable(client.list_model_residency)
+                    fresh = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
+                    fresh.set_provider_endpoint_profile_resolver(lambda name: None)
+                except BaseException as exc:  # noqa: BLE001 - reported below
+                    errors.append(exc)
+                finally:
+                    done.set()
+
             t0 = time.monotonic()
-            assert client._llm_kwargs["base_url"] == fake.base_url
-            assert client._default_provider == "openai-compatible"
-            assert callable(client.voice_library) and callable(client.list_model_residency)
-            fresh = mh.ModelHostClient(sup, kind="local", ctor=_ctor(fake))
-            fresh.set_provider_endpoint_profile_resolver(lambda name: None)
-            assert time.monotonic() - t0 < 0.5
+            threading.Thread(target=_reads, daemon=True).start()
+            assert done.wait(patient(5.0)), "a configuration read or a fresh setter waited for the frozen child"
+            assert not errors, errors
+            timing_budget(time.monotonic() - t0, 0.5, "configuration reads beside a frozen child")
         finally:
             os.kill(sup.pid, signal.SIGCONT)
     finally:

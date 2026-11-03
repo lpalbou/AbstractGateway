@@ -9,10 +9,11 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 
 def _wait_until(predicate, *, timeout_s: float = 20.0, poll_s: float = 0.05):
-    end = time.time() + timeout_s
+    end = time.time() + patient(timeout_s)
     while time.time() < end:
         if predicate():
             return

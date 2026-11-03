@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 
 pytestmark = pytest.mark.basic
 
@@ -254,6 +255,8 @@ def test_a_real_serve_audits_the_flag_at_boot(tmp_path: Path, flag: bool) -> Non
                 assert proc.poll() is None, log_path.read_text()[-3000:]
             assert entry is not None, log_path.read_text()[-3000:]
             assert entry["unsandboxed_commands_allowed"] is flag and entry["source"] == "serve"
+            # The audit line is written during boot, BEFORE the port is bound: wait for an answer.
+            wait_until_answers(f"http://127.0.0.1:{port}", proc=proc, log_path=log_path)
             token = (data / "auth" / "bootstrap-admin-token").read_text().strip()
             req = urllib.request.Request(f"http://127.0.0.1:{port}/api/gateway/workspace/policy", headers={"Authorization": f"Bearer {token}"})
             cs = json.loads(urllib.request.urlopen(req, timeout=20).read())["command_sandbox"]

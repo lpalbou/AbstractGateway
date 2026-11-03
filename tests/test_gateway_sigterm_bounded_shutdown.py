@@ -18,6 +18,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from timing import patient, timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from serve_ready import wait_until_answers  # noqa: E402 - tests/serve_ready.py (the server answers HTTP)
 
 TOKEN = "sigterm-bounded-token-0123456789abcdef"
 BUDGET_S = 5.0
@@ -50,17 +52,7 @@ def test_sigterm_with_a_live_stream_exits_zero_within_the_budget(tmp_path: Path)
                           env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     base = f"http://127.0.0.1:{port}"
     try:
-        end = time.monotonic() + 120
-        while time.monotonic() < end:
-            assert gw.poll() is None, log.read_text()[-3000:]
-            try:
-                if httpx.get(f"{base}/api/health", timeout=2, trust_env=False).json().get("status") == "healthy":
-                    break
-            except Exception:  # noqa: BLE001 - not up yet
-                pass
-            time.sleep(0.2)
-        else:
-            raise AssertionError("the gateway did not come up\n" + log.read_text()[-3000:])
+        wait_until_answers(base, proc=gw, log_path=log, ready=lambda body: body.get("status") == "healthy")
 
         got: list = []
         ended = threading.Event()
@@ -85,12 +77,12 @@ def test_sigterm_with_a_live_stream_exits_zero_within_the_budget(tmp_path: Path)
 
         t0 = time.monotonic()
         gw.send_signal(signal.SIGTERM)
-        code = gw.wait(timeout=60)
+        code = gw.wait(timeout=patient(60))  # a hang fails here (TimeoutExpired)
         took = time.monotonic() - t0
         print(f"\nSIGTERM with a live stream: exit {code} after {took:.2f} s")
-        assert took < BUDGET_S, f"stopped after {took:.1f} s"
+        timing_budget(took, BUDGET_S, "SIGTERM with a live stream")
         assert code == 0, log.read_text()[-3000:]
-        assert ended.wait(5), "the stream was not ended by the stop"
+        assert ended.wait(patient(5)), "the stream was not ended by the stop"
         assert "survived" not in log.read_text(), log.read_text()[-3000:]
     finally:
         if gw.poll() is None:

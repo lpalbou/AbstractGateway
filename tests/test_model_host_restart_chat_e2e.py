@@ -26,6 +26,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 from model_host_fakes import FakeOpenAIServer
 
@@ -114,7 +115,7 @@ def _bundle(bundles_dir: Path) -> tuple[str, str]:
 
 
 def _wait(predicate, *, timeout_s: float, what: str, proc=None, log: Path | None = None):
-    end = time.monotonic() + timeout_s
+    end = time.monotonic() + patient(timeout_s)
     while time.monotonic() < end:
         if proc is not None and proc.poll() is not None:
             raise AssertionError(f"the gateway exited early ({proc.returncode}):\n{log.read_text()[-4000:] if log else ''}")

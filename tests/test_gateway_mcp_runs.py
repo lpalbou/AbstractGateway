@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from mcp_run_fakes import FakeHttpEcho, stdio_calls, write_stdio_server
 from email_fixtures import memory_keyring  # noqa: F401 - autouse: the OS keychain stays untouched
+from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -24,7 +25,7 @@ LLM_PAYLOADS: List[Dict[str, Any]] = []
 
 
 def _wait_until(predicate, *, timeout_s: float = 15.0, poll_s: float = 0.1):
-    end = time.time() + timeout_s
+    end = time.time() + patient(timeout_s)
     while time.time() < end:
         out = predicate()
         if out:
