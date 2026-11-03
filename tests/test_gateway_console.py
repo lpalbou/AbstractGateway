@@ -1254,6 +1254,8 @@ def test_models_meter_and_residency_primitives_offline() -> None:
     harness = f"""
 {_slice_function(source, "meterRow")}
 {_slice_function(source, "residencyPill")}
+{_slice_function(source, "idleUnloadMinutes")}
+{_slice_function(source, "idleUnloadLine")}
 {_slice_function(source, "_fmtCtx")}
 class Element {{
   constructor() {{ this.children = []; this.className = ""; this.textContent = ""; this.style = {{}}; this.title = ""; }}
@@ -1319,6 +1321,8 @@ def test_models_table_defaults_to_resident_rows_with_configured_cached_toggle() 
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}
+{_slice_function(source, "idleUnloadMinutes")}
+{_slice_function(source, "idleUnloadLine")}
 {_slice_function(source, "modelsEmptyRow")}
 {_slice_function(source, "modelRowKey")}
 {_slice_function(source, "modelDisplaySize")}
@@ -1442,6 +1446,8 @@ def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory()
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}
+{_slice_function(source, "idleUnloadMinutes")}
+{_slice_function(source, "idleUnloadLine")}
 {_slice_function(source, "modelsEmptyRow")}
 {_slice_function(source, "modelRowKey")}
 {_slice_function(source, "modelDisplaySize")}
@@ -2332,6 +2338,8 @@ def test_models_every_resident_row_offers_a_lock_including_swept_ones() -> None:
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}
+{_slice_function(source, "idleUnloadMinutes")}
+{_slice_function(source, "idleUnloadLine")}
 {_slice_function(source, "modelsEmptyRow")}
 {_slice_function(source, "modelRowKey")}
 {_slice_function(source, "modelDisplaySize")}

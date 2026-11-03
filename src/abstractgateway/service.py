@@ -1678,6 +1678,7 @@ def start_gateway_runner() -> None:
                 daemon=True,
             )
             _rehydrate_thread.start()
+        _restore_kept_models_after_boot()
         return
     _boot_checkpoint()
     svc = get_gateway_service()
@@ -1697,6 +1698,18 @@ def start_gateway_runner() -> None:
     _boot_checkpoint()
     if agora_bridge is not None:
         agora_bridge.start()
+    _restore_kept_models_after_boot()
+
+
+def _restore_kept_models_after_boot() -> None:
+    """The model policy (root backlog 1115: idle unload, kept-loaded locks) goes to the runtime after
+    a gateway start, on a daemon thread (never a boot blocker)."""
+    try:
+        from .kept_models import apply_in_background
+
+        apply_in_background("the gateway started")
+    except Exception:  # noqa: BLE001 - a restore failure is logged, never a boot failure
+        logging.getLogger("abstractgateway.service").warning("kept loaded: the model policy could not be applied", exc_info=True)
 
 
 def _start_email_worker(svc: GatewayService) -> None:
