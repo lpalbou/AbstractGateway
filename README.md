@@ -228,7 +228,7 @@ Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
 
 | Tag | Image | Platforms |
 |---|---|---|
-| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>` (for example `0.20.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
 | `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
