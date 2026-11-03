@@ -369,7 +369,8 @@ from abstractcore.utils import structured_logging
 
 structured_logging.configure_logging()
 assert logging.getLogger().level >= logging.WARNING, logging.getLogger().level  # the takeover this guards against
-process_residency._idle_log.info("unloaded mlx-community/m after 3 min idle; freed 0.2 GB")
+# AbstractCore's idle-unload logger, by its name (`process_residency._idle_log` in Core 2.34).
+logging.getLogger("abstractcore.residency").info("unloaded mlx-community/m after 3 min idle; freed 0.2 GB")
 logging.getLogger("abstractcore.other").info("an INFO line of another AbstractCore logger")
 """
 
