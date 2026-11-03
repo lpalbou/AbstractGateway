@@ -149,14 +149,19 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     assert [s["automation_id"] for s in _listing(live)["items"]] == [a, c, b]
 
     # C is paused: it leaves the active rows and closes the list, in the paused section,
-    # even though its change is now the newest of all.
+    # even though its change is newer than an active row's. Compared with B (created, never run:
+    # its activity is fixed), not A: A's controller records its finished occurrence after the
+    # listing already shows it completed, so A's activity can still move past the pause
+    # (CI run 41634801108, 3.12 shard 2: A 37.031 s vs the pause at 36.932 s).
+    before_pause = {s["automation_id"]: s["last_activity_at"] for s in _listing(live)["items"]}
     _command(live, c, "automation.pause", "pause-c")
     wait_until(lambda: _status(live, c) == "paused" or None)
     body = _listing(live)
     assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(a, "active"), (b, "active"), (c, "paused")]
     assert body["paused_automations_count"] == 1
     paused_row = body["items"][-1]
-    assert paused_row["status"] == "paused" and paused_row["last_activity_at"] >= body["items"][0]["last_activity_at"]
+    assert paused_row["status"] == "paused" and paused_row["last_activity_at"] > before_pause[c]
+    assert paused_row["last_activity_at"] > body["items"][1]["last_activity_at"] == before_pause[b]
 
     # Every page of a paged walk follows the same order, each row exactly once.
     for limit in (1, 2):
