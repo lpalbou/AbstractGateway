@@ -474,7 +474,7 @@ def _age(created_at: str, now: Optional[datetime] = None) -> Dict[str, Any]:
     return {"born": text, "days": max(0, int(math.floor(seconds / 86400.0)))}
 
 
-def _record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+def record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
     avatar = record.avatar.to_dict()
     row = catalog.get(record.avatar.style) or {}
     avatar["watch_code"] = str(row.get("watch_code") or "") or None
@@ -535,7 +535,7 @@ def identity_view(registry: Any, manifest: Any, *, rev: Optional[int] = None) ->
             raise IdentityRefused(404, str(e)) from e
     home = registry.get_home(manifest.slug)
     fingerprint = identity_fingerprint(manifest.to_dict(), book_head=home.diary.head())
-    payload = _record_payload(record, catalog)
+    payload = record_payload(record, catalog)
     # The real reason of this revision (the Entity app shows it instead of inferring one).
     payload["change"] = identity_change(home_dir, record.rev)
     return {
@@ -556,7 +556,7 @@ def list_row_identity(registry: Any, manifest: Any) -> Optional[Dict[str, Any]]:
         record = read_identity(registry.entities_dir / manifest.slug)
         if record is None:
             return None
-        return _record_payload(record, avatar_catalog())
+        return record_payload(record, avatar_catalog())
     except (IdentityUnreadable, IdentityRefused) as e:
         logger.warning("identity: %s: not on the list row: %s", manifest.slug, e)
         return None

@@ -132,6 +132,30 @@ def test_a_client_sent_identity_or_ref_is_dropped(gw) -> None:
     assert "identity_ref" not in rt and "identity" not in rt
 
 
+def test_get_session_identity_resolves_a_session_reference_to_a_look(gw) -> None:
+    _start(gw, identity=IDENTITY)
+    body = gw.get("/api/gateway/sessions/s-1/identity", headers=HEADERS).json()
+    assert body["identity_ref"] == {"of": "session:s-1", "rev": 1}
+    assert body["identity"]["rev"] == 1 and body["identity"]["avatar"]["watch_code"] and body["identity"]["voice"]["voice"] == "am_adam"
+    _start(gw, identity={**IDENTITY, "avatar": {"style": "watch-halo", "color": "#112233"}})
+    assert gw.get("/api/gateway/sessions/s-1/identity", headers=HEADERS).json()["identity_ref"]["rev"] == 2
+    first = gw.get("/api/gateway/sessions/s-1/identity?rev=1", headers=HEADERS).json()
+    assert first["identity"]["avatar"]["style"] == "watch-lotus" and first["identity_ref"] == {"of": "session:s-1", "rev": 1}
+    assert gw.get("/api/gateway/sessions/s-1/identity?rev=9", headers=HEADERS).status_code == 404
+    _start(gw, session_id="s-none")
+    assert gw.get("/api/gateway/sessions/s-none/identity", headers=HEADERS).json() == {"session_id": "s-none", "identity": None, "identity_ref": None}
+    r = gw.get("/api/gateway/sessions/s-nobody/identity", headers=HEADERS)
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "session_not_found"
+
+
+def test_run_rows_read_the_identity_ref_through(gw) -> None:
+    with_ref = _start(gw, identity=IDENTITY).json()["run_id"]
+    row = gw.get(f"/api/gateway/runs/{with_ref}", headers=HEADERS).json()
+    assert row["identity_ref"] == {"of": "session:s-1", "rev": 1}
+    without = _start(gw, session_id="s-plain").json()["run_id"]
+    assert "identity_ref" not in gw.get(f"/api/gateway/runs/{without}", headers=HEADERS).json()
+
+
 # --------------------------------------------------------------------------- the run TTS lanes
 
 

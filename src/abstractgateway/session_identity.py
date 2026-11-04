@@ -8,7 +8,8 @@ It is stored with the session's other choices in the owner's plane, never in an 
 
     <plane data dir>/session_identities.json
     {"schema": "gateway_session_identities_v1",
-     "sessions": {session_id: {"rev", "identity": <identity schema 1 record> | null, "set_at", "set_by"}}}
+     "sessions": {session_id: {"rev", "identity": <identity schema 1 record> | null, "set_at", "set_by",
+                               "revisions": [<earlier records, oldest first>]}}}
 
 Every run of the session carries it inline, `vars._runtime.identity` (the record) beside
 `vars._runtime.identity_ref` (`session:<sid>#<rev>`): a later turn without `identity` inherits it, a
@@ -129,7 +130,11 @@ def resolve_session_identity(
         record = DigitalIdentity.from_dict(
             DigitalIdentity(rev=rev, avatar=avatar, voice=voice, set_at=_now(), set_by=actor).to_dict()
         )
-        data["sessions"][sid] = {"rev": rev, "identity": record.to_dict(), "set_at": record.set_at, "set_by": actor}
+        earlier = list(entry.get("revisions") or []) if isinstance(entry, dict) else []
+        if isinstance(entry, dict) and isinstance(entry.get("identity"), dict):
+            earlier.append(entry["identity"])  # the revisions a `session:<sid>#<rev>` may still name
+        data["sessions"][sid] = {"rev": rev, "identity": record.to_dict(), "set_at": record.set_at, "set_by": actor,
+                                 "revisions": earlier}
         _save(plane_dir, data)
         return record
 
@@ -158,3 +163,26 @@ def run_identity(run_vars: Any) -> Optional[DigitalIdentity]:
     runtime_ns = run_vars.get("_runtime") if isinstance(run_vars, dict) else None
     raw = runtime_ns.get(RUN_IDENTITY_KEY) if isinstance(runtime_ns, dict) else None
     return None if raw is None else DigitalIdentity.from_dict(raw)
+
+
+def session_identity_view(plane_dir: Any, session_id: str, *, rev: Optional[int] = None) -> Dict[str, Any]:
+    """`GET /sessions/{sid}/identity[?rev=N]`: `{session_id, identity, identity_ref}` in the entity
+    shape (`identity.avatar.watch_code`); `identity: null` and no ref when the session has none.
+    Raises LookupError for a rev the session never had."""
+    from .entity_identity import avatar_catalog, record_payload
+
+    entry = session_identity(plane_dir, session_id) or {}
+    current = _record_of(entry) if entry.get("identity") is not None else None
+    record = current
+    if rev is not None:
+        candidates = ([current] if current is not None else []) + [DigitalIdentity.from_dict(r) for r in entry.get("revisions") or []]
+        record = next((r for r in candidates if r.rev == rev), None)
+        if record is None:
+            raise LookupError(f"session {session_id} has no identity rev {rev}")
+    if record is None:
+        return {"session_id": session_id, "identity": None, "identity_ref": None}
+    return {
+        "session_id": session_id,
+        "identity": record_payload(record, avatar_catalog()),
+        "identity_ref": identity_ref(f"session:{session_id}", record.rev).to_dict(),
+    }

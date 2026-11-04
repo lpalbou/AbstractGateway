@@ -5723,6 +5723,12 @@ carries it: the record at `input_data._runtime.identity` and its reference at
 `identity` inherits it; a turn with another one changes it (`rev + 1`). A session that names none
 records none (no Assistant identity exists on the gateway): its runs carry no reference and speak
 as before. `_runtime.identity` and `_runtime.identity_ref` sent by a client are dropped.
+`GET /api/gateway/sessions/{session_id}/identity[?rev=N]` (the session's owner or an admin) resolves a
+session reference to its look: `{session_id, identity: {rev, avatar: {style, color, source, watch_code},
+voice, set_at, set_by}, identity_ref}` (the entity shape), `identity: null` when the session has none,
+404 `session_not_found` / `identity_rev_not_found`. `GET /runs/{run_id}` carries the run's
+`identity_ref` when it has one (read from its inputs, never stored apart); the index-backed `GET /runs`
+listing does not (its rows load no inputs).
 
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 

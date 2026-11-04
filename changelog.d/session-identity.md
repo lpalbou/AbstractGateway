@@ -16,6 +16,10 @@
 - **A visit's state (`GET /entities/{name}/visit/{run_id}/state`) carries the visit's `identity_ref`**, so an app
   rejoining a visit draws the right look before the first public update.
 
+- **`GET /sessions/{session_id}/identity[?rev=N]`** resolves a conversation's reference to its look (the entity
+  shape; `identity: null` when the session has none), and **`GET /runs/{run_id}` carries the run's `identity_ref`**
+  when it has one (an entity visit's or a conversation's).
+
 ### Changed
 
 - **The identity's voice refusals read for the identity page**: "Castor can't speak with zz: it isn't a kokoro voice

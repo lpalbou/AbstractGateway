@@ -11,6 +11,7 @@ owns is absent from the caller's run store and answers 404 `session_not_found`.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -76,3 +77,34 @@ async def get_session_acquaintances(request: Request, session_id: str) -> Dict[s
 
     svc, sid = _context(request, session_id)
     return await off_loop("heavy", session_acquaintances_answer, svc, sid)
+
+
+@router.get(
+    "/sessions/{session_id}/identity",
+    summary="A conversation's temporary identity (owner or admin)",
+    description=(
+        "The session's identity (framework ADR 0052 §9) in the entity shape: `{session_id, identity: {rev, avatar: "
+        "{style, color, source, watch_code}, voice, set_at, set_by}, identity_ref}` (`session:<sid>#<rev>`); "
+        "`identity: null` when the session has none. `?rev=N` serves an earlier revision. 404 `session_not_found` "
+        "when the caller's plane has no run of that session."
+    ),
+)
+async def get_session_identity(request: Request, session_id: str, rev: Optional[int] = None) -> Dict[str, Any]:
+    from ..session_identity import SessionIdentityUnreadable, session_identity_view
+    from .session_archive import session_exists
+
+    svc, sid = _context(request, session_id)
+
+    def read() -> Dict[str, Any]:
+        if not session_exists(svc.host.run_store, sid):
+            raise HTTPException(status_code=404, detail={"reason_code": "session_not_found", "message": f"Session {sid} does not exist."})
+        try:
+            return session_identity_view(svc.config.data_dir, sid, rev=rev)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail={"reason_code": "identity_rev_not_found", "message": str(e)}) from None
+        except SessionIdentityUnreadable as e:
+            logging.getLogger("abstractgateway.session_identity").error("session %s: %s", sid, e)
+            raise HTTPException(status_code=500, detail={"reason_code": "record_unreadable",
+                                                         "message": "This conversation's identity record (session_identities.json) can't be read."}) from None
+
+    return await off_loop("light", read)
