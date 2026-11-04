@@ -5535,6 +5535,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](docs/maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
+| `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
 | `/api/gateway/runs/{run_id}/view`, `/view/stream` | the replay view of a run tree: status, the interaction to answer, messages, activities, artifacts, usage (one reconstruction, every client) | [below](#replay-view-runsrun_idview) |
@@ -7394,6 +7395,62 @@ runtime lacks it; an older gateway has no key at all.
 To offer "approve all" on an approval a client is showing: write the policy first, then answer
 that wait (`resume` with `{approved: true}`) as a one-off; the policy does not answer waits that
 already exist.
+
+## Track record, reputation and acquaintances
+
+What an entity has done, how far it can be trusted for each kind of task, and whom it met
+(the framework's ADR 0052, sections 5, 6 and 11). AbstractRuntime computes all three from
+records that already exist (runs, their ledgers, the home's task inbox and work orders);
+nothing new is stored. The gateway passes the runtime's answer through unchanged.
+
+| Route | Answer |
+|---|---|
+| `GET /api/gateway/entities/{name}/track-record[?since=<ISO-8601>]` | `TrackRecord` from the entity's home |
+| `GET /api/gateway/entities/{name}/reputation` | `Reputation` from the same record |
+| `GET /api/gateway/entities/{name}/acquaintances` | `Acquaintances`: the entities and humans it met |
+| `GET /api/gateway/sessions/{session_id}/track-record[?since=<ISO-8601>]` | `TrackRecord` of a regular agent's session |
+| `GET /api/gateway/sessions/{session_id}/reputation` | `Reputation` of that session |
+| `GET /api/gateway/sessions/{session_id}/acquaintances` | `Acquaintances` of that session |
+
+**`TrackRecord`**: `{subject, identity_ref, fingerprint, computed_at, as_of, since, sessions,
+runs, successes, failures, cancelled, in_progress, assessed, tokens: {input, output, total},
+by_task_kind: {<kind>: {runs, successes, failures, cancelled, tokens_total, first_at, last_at,
+last_outcome_at}}, recent_outcomes: [...], basis}`. `subject` is `entity:<slug>` or
+`session:<session_id>`. A run counts when a person or a trigger started it (or it is an
+automation occurrence); sub-runs and runs another run started are never counted, their tokens
+count with the run above them. A task kind is `<phase or role>/<workflow_id>`, for example
+`visit/visit-flow`. `basis` is `"completion-rate only"`: a success is a run that completed
+(or a task done, a work order done) until outside feedback exists, and `assessed` stays 0.
+The entity's `fingerprint` carries `book_head`, the head of its diary chain; a session has none.
+`since` keeps what started at or after that time (`2026-11-04`, `2026-11-04T10:00:00Z`; any
+other value is a 400 `invalid_since`).
+
+**`Reputation`**: `{subject, identity_ref, computed_at, overall, by_task_kind: {<kind>: cell},
+evidence: [...], basis}`; a cell is `{trust, support, successes, failures, last_outcome_at,
+text}`, with `trust = (successes + 1) / (successes + failures + 2)` and `support = successes +
+failures`. A kind with no outcome reads `trust 0.5, support 0`. `evidence` is the last 20
+outcomes, oldest first: `{run_id, task_kind, outcome, at, signal, by}`.
+
+**`Acquaintances`**: `{subject, identity_ref, computed_at, as_of, entities: [...], humans:
+[...], not_counted}`; each row is `{id, first_seen, last_seen, interactions, kinds}`.
+`not_counted` gives, per reason, the interactions that name no entity or human (an agent in a
+shared room, a participant without a namespace).
+
+An empty record is an answer like any other (`runs: 0`, `support: 0`, empty lists): the app
+words it ("No experience yet").
+
+**Who.** The entity routes answer whoever may see the entity: its creator or an admin (on a
+gateway without accounts, everyone); a hidden entity answers 404 like a missing one. The
+session routes answer the session's owner or an admin: each account works in its own runtime
+plane, so another account's session answers `404 {"detail": {"reason_code":
+"session_not_found"}}`. An entity under a maintenance hold answers 409. A record the runtime
+cannot read (for example an unreadable `identity.json`) answers `500 {"detail":
+{"reason_code": "record_unreadable", "message": ...}}`, never an empty record.
+
+**Cost.** One listing of the subject's runs and one read per turn root; nothing is cached.
+Measured on a home with 3000 runs: about 50 ms for a track record or a reputation, 35 ms for
+acquaintances (about 170 ms with 50 KB of variables in every run). Apps load these when the
+view opens, not on a poll.
 
 ## Beyond the core
 
@@ -10417,6 +10474,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/chat` | Is a visit open on this home right now? (one life, one summon) |
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
+| GET | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances` | What it has done (runs, successes, failures, tokens, per kind of task), how far it can be trusted per kind of task (with how many outcomes that rests on), and the entities and humans it met. Derived from its home's records; nothing is stored. See [API: track record, reputation and acquaintances](docs/api.md#track-record-reputation-and-acquaintances). |
 
 ### The entity's mind and voice
 
