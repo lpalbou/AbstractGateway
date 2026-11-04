@@ -2066,10 +2066,23 @@ class EntityRegistry:
                     "book": (child / BOOK_FILENAME).exists(),
                 },
             }
-            # How clients draw it (colour + shape of its orb); absent when unset.
-            appearance = read_entity_appearance(child)
-            if appearance:
-                entry["appearance"] = appearance
+            # How clients draw it (colour + shape of its orb); absent when unset. A home with an
+            # identity record (framework ADR 0052 §9) serves the record's colour and the shape its
+            # design draws, so clients that read `appearance` keep drawing the entity's look.
+            try:
+                from abstractruntime.identity.digital_identity import read_identity
+
+                from .entity_identity import derived_shape
+
+                record = read_identity(child)
+            except Exception:  # noqa: BLE001 - IdentityUnreadable: the row's `identity` says null
+                record = None
+            if record is not None:
+                entry["appearance"] = {"color": record.avatar.color, "shape": derived_shape(record.avatar.style)}
+            else:
+                appearance = read_entity_appearance(child)
+                if appearance:
+                    entry["appearance"] = appearance
             try:
                 from abstractruntime.identity.life import read_entity_state
 

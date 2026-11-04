@@ -118,6 +118,11 @@ dependencies = [
   # Entity homes store the attested spark as YAML (spark.yaml). Previously
   # only transitive via uvicorn[standard]; declared because it is load-bearing.
   "pyyaml>=5.1",
+  # The avatar design catalog (framework ADR 0052): an entity's identity names an abstractavatar
+  # design; the door refuses a design the loaded catalog does not have or cannot draw on the Watch,
+  # and the recorded default is written only with a verifiable design. 0.1.1: the frozen catalog
+  # (44 designs, `watch_code`), wheels for macOS, Linux (manylinux 2.28) and Windows.
+  "abstractavatar>=0.1.1",
 ]
 
 [project.optional-dependencies]

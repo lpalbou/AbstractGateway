@@ -163,9 +163,8 @@ class CreateEntityRequest(BaseModel):
 
 def _birth_identity(name: str, chosen: Optional[Tuple[Any, Any]], appearance: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
     """The identity a new home is born with: the chosen one; else the recorded default, with a legacy
-    birth `appearance` folded into its look (one record, `rev 1`, look `chosen`, the default voice
-    kept) — the default alone when the gateway has no default voice (a chosen look needs a voice: the
-    caller gets the warning)."""
+    birth `appearance` folded into its look (one record, `rev 1`, look `chosen`, the gateway default
+    voice kept: a chosen look needs a voice, checked before the home was created)."""
     from abstractruntime.identity.digital_identity import AvatarChoice, default_identity
 
     from ..entity_identity import (
@@ -181,17 +180,12 @@ def _birth_identity(name: str, chosen: Optional[Tuple[Any, Any]], appearance: Op
     manifest = registry.manifest_for(name)
     if chosen is None and appearance:
         avatar, voice = default_identity(manifest.entity_id, gateway_default_voice(registry.data_dir))
-        if voice is not None:
-            style = style_for_shape(appearance["shape"], avatar.style, manifest.entity_id) if "shape" in appearance else avatar.style
-            chosen = (AvatarChoice(style=style, color=appearance.get("color", avatar.color), source="chosen"), voice)
-        else:
+        if voice is None:  # the default voice went away since the check before creation
             from ..entity_identity import no_voice_sentence
 
-            materialize_default_identity(
-                registry.entities_dir, manifest.slug, entity_id=manifest.entity_id, data_dir=registry.data_dir,
-                held=False, provenance=PROVENANCE_BIRTH,
-            )
             raise IdentityRefused(409, f"appearance not recorded: {no_voice_sentence(manifest.name)}")
+        style = style_for_shape(appearance["shape"], avatar.style, manifest.entity_id) if "shape" in appearance else avatar.style
+        chosen = (AvatarChoice(style=style, color=appearance.get("color", avatar.color), source="chosen"), voice)
     if chosen is not None:
         record = set_identity(
             registry, manifest, avatar=chosen[0], voice=chosen[1], actor=_task_actor(),
@@ -247,6 +241,17 @@ def create_entity(req: CreateEntityRequest) -> Any:
             birth_appearance = normalize_appearance(req.appearance.get("color"), req.appearance.get("shape"))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"appearance invalid: {e}")
+    if birth_appearance and req.identity is None:
+        # The birth look becomes the identity's (ADR 0052 §9), and a chosen look needs a voice: with
+        # no Gateway default voice to keep, the birth is refused before anything is created.
+        from ..entity_identity import gateway_default_voice
+
+        if gateway_default_voice(_registry().data_dir) is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{req.name}'s look can be chosen with a voice: set the Gateway default voice, or give "
+                "identity with a voice instead of appearance.",
+            )
     skills_request = req.skills if req.skills is not None else [{"name": DEFAULT_ENTITY_SKILL}]
     try:
         birth_skills = validate_skills_selection(skills_request)
