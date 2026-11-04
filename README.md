@@ -33,7 +33,9 @@ it cannot draw or a voice it cannot speak (not offered here, or not downloaded) 
 another one, and every entity gets a default look and voice from the day it is born. Each entity
 also has a track record (sessions, runs, successes, failures, tokens), a reputation per kind of task
 (a completion rate only for now: how good the work was is not assessed yet) and the list of the
-entities and people it met. Models nobody uses are unloaded after 60 minutes (change it on the Models
+entities and people it met. A regular agent's conversation can carry a temporary look and voice
+too, kept with the conversation. From the terminal, `abstractgateway entity identity get|set` and
+`abstractgateway entity record` show and change the same things. Models nobody uses are unloaded after 60 minutes (change it on the Models
 page or with `serve --model-idle-unload MINUTES`; 0 never unloads), and a model you keep loaded stays
 loaded, even after a restart; each loaded model says when it unloads. Stopping or restarting the gateway never fails a run any more:
 the run waits and carries on at the next start. One card per cloud provider (Anthropic no longer
