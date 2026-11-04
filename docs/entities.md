@@ -89,6 +89,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/chat` | Is a visit open on this home right now? (one life, one summon) |
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
+| GET | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances` | What it has done (runs, successes, failures, tokens, per kind of task), how far it can be trusted per kind of task (with how many outcomes that rests on), and the entities and humans it met. Derived from its home's records; nothing is stored. See [API: track record, reputation and acquaintances](./api.md#track-record-reputation-and-acquaintances). |
 
 ### The entity's mind and voice
 
