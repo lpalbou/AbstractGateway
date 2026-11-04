@@ -45,6 +45,10 @@ Default dependency floors (see `pyproject.toml`):
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.4.0` (the memory graph, `abstractmemory.graph`)
 - `abstractskill>=0.3.4` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`)
+- `abstractavatar>=0.1.1` (the avatar design catalog: an entity's identity names a design this catalog has and the
+  Watch can draw; without it no identity is set or recorded. At each start the gateway writes the recorded default
+  identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
+  skipped. See [entities.md](./entities.md))
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
