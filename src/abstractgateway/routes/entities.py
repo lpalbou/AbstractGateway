@@ -5343,22 +5343,10 @@ def _clear_entity_substrate_locked(name: str, *, registry, manifest, prior: Dict
 # routes below read and write THROUGH it; a home without one keeps their old behaviour.
 
 
-class IdentityAvatarBody(BaseModel):
-    style: str = Field(..., description="An abstractavatar design id this gateway's catalog draws on the Watch")
-    color: str = Field(..., description="#rrggbb")
+from ..entity_identity import IdentityAvatarBody, IdentityBody, IdentityVoiceBody  # noqa: E402 - the shared identity body
 
 
-class IdentityVoiceBody(BaseModel):
-    provider: str
-    model: str
-    voice: str
-    speed: Optional[float] = Field(default=None, gt=0, le=4)
-    quality_preset: Optional[str] = Field(default=None, max_length=32)
-
-
-class PutIdentityRequest(BaseModel):
-    avatar: IdentityAvatarBody
-    voice: Optional[IdentityVoiceBody] = Field(default=None, description="Required: an identity someone chooses always names its voice")
+class PutIdentityRequest(IdentityBody):
     clear: bool = Field(default=False, description="Refused: an identity is changed, never cleared")
 
 
@@ -5369,40 +5357,16 @@ def _identity_response(e: Any) -> Any:
     """The HTTP answer of an identity refusal or invalid value."""
     from fastapi.responses import JSONResponse
 
-    from abstractruntime.identity.digital_identity import IdentityInvalid, IdentityUnreadable
+    from ..entity_identity import identity_refusal_body
 
-    from ..entity_identity import IdentityRefused
-
-    if isinstance(e, IdentityRefused):
-        content: Dict[str, Any] = {"detail": e.detail}
-        if e.error:
-            content["error"] = e.error
-        return JSONResponse(status_code=e.status, content=content)
-    if isinstance(e, IdentityInvalid):
-        return JSONResponse(status_code=400, content={"detail": str(e), "field": e.field})
-    if isinstance(e, IdentityUnreadable):
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"The identity record can't be read, so it is not changed or served: {e}"},
-        )
-    raise e
+    status, content = identity_refusal_body(e)
+    return JSONResponse(status_code=status, content=content)
 
 
 def _identity_from_body(avatar: Any, voice: Any) -> Tuple[Any, Any]:
-    from abstractruntime.identity.digital_identity import AvatarChoice, VoiceChoice
+    from ..entity_identity import choice_from_body
 
-    chosen_avatar = AvatarChoice(style=str(avatar.style).strip(), color=str(avatar.color).strip().lower(), source="chosen")
-    chosen_voice = None
-    if voice is not None:
-        chosen_voice = VoiceChoice(
-            provider=str(voice.provider).strip(),
-            model=str(voice.model).strip(),
-            voice=str(voice.voice).strip(),
-            source="chosen",
-            speed=float(voice.speed) if voice.speed is not None else None,
-            quality_preset=(str(voice.quality_preset).strip() or None) if voice.quality_preset is not None else None,
-        )
-    return chosen_avatar, chosen_voice
+    return choice_from_body(avatar, voice)
 
 
 def _read_home_identity(home_dir: Any) -> Any:

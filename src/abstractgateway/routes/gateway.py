@@ -38,6 +38,8 @@ from typing import Any, Dict, List, Literal, NamedTuple, NoReturn, Optional, Tup
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from ..entity_identity import IdentityBody  # noqa: E402 - the identity body of POST /runs/start
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from abstractruntime.utils.workspace_paths import (
@@ -2724,6 +2726,14 @@ class StartRunRequest(_SpeculationControlRequest):
         description=(
             "What the session is for: `conversation` (default) or `docs` (a Docs assistant chat; needs session_id). "
             "Turn listings (GET /runs?root_only=true) show conversations unless asked for `kind=docs`."
+        ),
+    )
+    identity: Optional[IdentityBody] = Field(
+        default=None,
+        description=(
+            "The conversation's temporary identity (framework ADR 0052 §9): {avatar: {style, color}, voice: "
+            "{provider, model, voice, speed?, quality_preset?}}, checked like an entity's PUT /identity and kept on "
+            "the session (needs session_id). Later turns inherit it; a turn naming another one changes it (rev + 1)."
         ),
     )
 
@@ -9331,6 +9341,39 @@ def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, An
         pass
 
 
+def _apply_session_identity(
+    req: "StartRunRequest", input_data: Dict[str, Any], *, principal: Optional[GatewayPrincipal], session_id: Optional[str]
+) -> Optional[JSONResponse]:
+    """The conversation's identity on this run (ADR 0052 §9; session_identity.py): a client-sent
+    `_runtime.identity`/`identity_ref` is dropped; `req.identity` goes through the identity ladder
+    and becomes the session's next rev; without it the run inherits the session's (or the recorded
+    default). Returns the refusal answer, else None."""
+    from abstractruntime.identity.digital_identity import IdentityInvalid, IdentityUnreadable
+
+    from ..entity_identity import IdentityRefused, check_choice, choice_from_body, identity_refusal_body
+    from ..session_identity import resolve_session_identity, stamp_session_identity, strip_client_identity
+
+    strip_client_identity(input_data)
+    if not session_id:
+        if req.identity is not None:
+            raise HTTPException(status_code=400, detail="identity needs a session_id: a conversation's identity is kept on its session")
+        return None
+    avatar = voice = None
+    try:
+        if req.identity is not None:
+            avatar, voice = choice_from_body(req.identity.avatar, req.identity.voice)
+            check_choice("This conversation", avatar, voice)
+        user = str(getattr(principal, "user_id", "") or "").strip() or "operator"
+        record = resolve_session_identity(
+            Path(get_gateway_service().config.data_dir), session_id, avatar=avatar, voice=voice, actor=f"person:{user}"
+        )
+    except (IdentityRefused, IdentityInvalid, IdentityUnreadable) as e:
+        status, content = identity_refusal_body(e)
+        return JSONResponse(status_code=status, content=content)
+    stamp_session_identity(input_data, session_id, record)
+    return None
+
+
 def _stamp_run_origin(input_data: Dict[str, Any], *, kind: str, principal: GatewayPrincipal, client: Optional[str]) -> None:
     """Record who started this run, once, in the one shape of backlog 1038:
     `_meta.origin = {kind, actor, client, ref}` (AbstractRuntime's `origin_for`, the shape the
@@ -9421,6 +9464,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data["workspace"] = dict(req.workspace)
         _apply_run_stream_switch(input_data, interactive=True)
         _strip_client_automation_attribution(input_data)
+        identity_refused = _apply_session_identity(req, input_data, principal=principal, session_id=session_id)
+        if identity_refused is not None:
+            return identity_refused
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
         _save_one_off_on_new_session(principal, session_id, input_data)
         read_only_mounts: List[str] = []
@@ -12654,6 +12700,30 @@ class VoiceTTSResponse(BaseModel):
     request_id: str
     child_run_id: Optional[str] = None
     audio_artifact: Dict[str, Any]
+    # The identity whose voice spoke (a conversation's, ADR 0052 §9); absent when none applied.
+    identity_ref: Optional[Dict[str, Any]] = None
+
+
+def _run_identity_voice(run: Any, req: "VoiceTTSRequest") -> Tuple["VoiceTTSRequest", Optional[Any]]:
+    """A run carrying its conversation's identity (`_runtime.identity`, ADR 0052 §9) speaks with that
+    identity's voice when the request names no voice field (the anti-mixing rule), with its ref; the
+    request passes untouched otherwise. Never another voice in its place."""
+    from abstractruntime.identity.digital_identity import read_run_identity_ref
+
+    from ..session_identity import run_identity
+
+    names_voice = any(str(getattr(req, k, None) or "").strip() for k in ("provider", "model", "voice", "profile"))
+    vars_obj = getattr(run, "vars", None) or {}
+    record = run_identity(vars_obj)
+    if record is None or record.voice is None or names_voice:
+        return req, None
+    v = record.voice
+    update: Dict[str, Any] = {"provider": v.provider, "model": v.model, "voice": v.voice}
+    if v.speed is not None and getattr(req, "speed", None) is None:
+        update["speed"] = v.speed
+    if v.quality_preset is not None and not getattr(req, "quality_preset", None):
+        update["quality_preset"] = v.quality_preset
+    return req.model_copy(update=update), read_run_identity_ref(vars_obj)
 
 
 def _voice_stream_jsonl(event: Dict[str, Any]) -> bytes:
@@ -12861,8 +12931,9 @@ def _voice_tts_timeout_fail_loud(*, svc: Any, parent_run_id: str, request_id: st
 
 
 @router.post("/runs/{run_id}/voice/tts", response_model=VoiceTTSResponse)
-async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
-    """Delegate TTS to Runtime-owned durable child execution."""
+async def voice_tts(run_id: str, req: VoiceTTSRequest, response: Response = None) -> VoiceTTSResponse:  # type: ignore[assignment]
+    """Delegate TTS to Runtime-owned durable child execution. A run carrying its conversation's
+    identity speaks with that identity's voice (`identity_ref`, `X-Identity-Ref`)."""
     svc = get_gateway_service()
     rs = svc.host.run_store
     rid = str(run_id or "").strip()
@@ -12877,6 +12948,7 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
         run = _load_or_create_session_memory_owner_run(run_store=rs, run_id=rid)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+    req, spoken_ref = _run_identity_voice(run, req)
 
     store = getattr(getattr(svc, "stores", None), "artifact_store", None)
     if store is None:
@@ -13048,12 +13120,15 @@ async def voice_tts(run_id: str, req: VoiceTTSRequest) -> VoiceTTSResponse:
     if not isinstance(audio_ref, dict):
         raise HTTPException(status_code=500, detail="TTS completed without a stored audio artifact")
 
+    if spoken_ref is not None and response is not None:
+        response.headers["X-Identity-Ref"] = str(spoken_ref)
     return VoiceTTSResponse(
         ok=True,
         run_id=str(getattr(run, "run_id", rid)),
         request_id=request_id,
         child_run_id=str(child.run_id),
         audio_artifact=audio_ref,
+        identity_ref=spoken_ref.to_dict() if spoken_ref is not None else None,
     )
 
 
@@ -13088,6 +13163,7 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) 
         run = await off_loop("light", _load_or_create_session_memory_owner_run, run_store=rs, run_id=rid)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+    req, spoken_ref = _run_identity_voice(run, req)
 
     request_id = str(getattr(req, "request_id", "") or "").strip() or str(uuid.uuid4())
     # The text goes to the engine exactly as sent: the stream's segment offsets
@@ -13190,7 +13266,7 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) 
     )
     request.state.audit_detail = {"voice_stream": stream_stats}
 
-    return await open_voice_stream(
+    streamed = await open_voice_stream(
         setup=lambda: stream_voice(parent_run_id, text=text, output=output_spec, params=params),
         request_id=request_id,
         timeout_s=timeout_s,
@@ -13210,6 +13286,9 @@ async def voice_tts_stream(run_id: str, req: VoiceTTSRequest, request: Request) 
         encode=_voice_stream_jsonl,
         stats=stream_stats,
     )
+    if spoken_ref is not None:
+        streamed.headers["X-Identity-Ref"] = str(spoken_ref)
+    return streamed
 
 
 class AudioTranscribeRequest(BaseModel):

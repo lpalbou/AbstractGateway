@@ -30,6 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from pydantic import BaseModel, Field
+
 from abstractruntime.identity.digital_identity import (
     AvatarChoice,
     DigitalIdentity,
@@ -78,6 +80,57 @@ _PLANET = "planet"
 
 _LOCKS: Dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+
+
+class IdentityAvatarBody(BaseModel):
+    style: str = Field(..., description="An abstractavatar design id this gateway's catalog draws on the Watch")
+    color: str = Field(..., description="#rrggbb")
+
+
+class IdentityVoiceBody(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    speed: Optional[float] = Field(default=None, gt=0, le=4)
+    quality_preset: Optional[str] = Field(default=None, max_length=32)
+
+
+class IdentityBody(BaseModel):
+    """The body that names an identity: `PUT /entities/{name}/identity`, `identity` on
+    `POST /entities` and on `POST /runs/start`."""
+
+    avatar: IdentityAvatarBody
+    voice: Optional[IdentityVoiceBody] = Field(default=None, description="Required: an identity someone chooses always names its voice")
+
+
+def choice_from_body(avatar: Any, voice: Any) -> Tuple[AvatarChoice, Optional[VoiceChoice]]:
+    """The chosen avatar and voice a body names (`source: chosen`); bounds are the runtime's."""
+    chosen_avatar = AvatarChoice(style=str(avatar.style).strip(), color=str(avatar.color).strip().lower(), source="chosen")
+    chosen_voice = None
+    if voice is not None:
+        chosen_voice = VoiceChoice(
+            provider=str(voice.provider).strip(),
+            model=str(voice.model).strip(),
+            voice=str(voice.voice).strip(),
+            source="chosen",
+            speed=float(voice.speed) if voice.speed is not None else None,
+            quality_preset=(str(voice.quality_preset).strip() or None) if voice.quality_preset is not None else None,
+        )
+    return chosen_avatar, chosen_voice
+
+
+def identity_refusal_body(e: Exception) -> Tuple[int, Dict[str, Any]]:
+    """(status, JSON body) of a refused or invalid identity, one shape for every door."""
+    if isinstance(e, IdentityRefused):
+        content: Dict[str, Any] = {"detail": e.detail}
+        if e.error:
+            content["error"] = e.error
+        return e.status, content
+    if isinstance(e, IdentityInvalid):
+        return 400, {"detail": str(e), "field": e.field}
+    if isinstance(e, IdentityUnreadable):
+        return 409, {"detail": f"The identity record can't be read, so it is not changed or served: {e}"}
+    raise e
 
 
 class IdentityRefused(Exception):
