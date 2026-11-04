@@ -2651,6 +2651,43 @@ def get_entity_life_state(name: str) -> Dict[str, Any]:
     return out
 
 
+
+# Track record, reputation, acquaintances (ADR 0052 sections 5, 6 and 11; framework backlog 1119):
+# derived by the runtime from the home's own records, passed through unchanged
+# (entity_record.py). Reads: anyone who may see the entity (the router's visibility guard).
+
+
+@router.get("/{name}/track-record")
+async def get_entity_track_record(name: str, since: Optional[str] = None) -> Dict[str, Any]:
+    """The entity's track record (`TrackRecord`): sessions, runs, successes, failures, cancelled,
+    in progress, tokens, per task kind, the last outcomes, `basis`. `since` (ISO-8601) keeps what
+    started at or after it."""
+    from ..entity_record import entity_track_record_answer, parse_since
+
+    after = parse_since(since)
+    registry = _registry()
+    return await off_loop("heavy", entity_track_record_answer, registry, name, since=after)
+
+
+@router.get("/{name}/reputation")
+async def get_entity_reputation(name: str) -> Dict[str, Any]:
+    """The entity's reputation (`Reputation`): trust per task kind with its support, the overall
+    cell, the evidence (last outcomes), `basis`."""
+    from ..entity_record import entity_reputation_answer
+
+    registry = _registry()
+    return await off_loop("heavy", entity_reputation_answer, registry, name)
+
+
+@router.get("/{name}/acquaintances")
+async def get_entity_acquaintances(name: str) -> Dict[str, Any]:
+    """The entities and humans the entity interacted with (`Acquaintances`), with `not_counted`."""
+    from ..entity_record import entity_acquaintances_answer
+
+    registry = _registry()
+    return await off_loop("heavy", entity_acquaintances_answer, registry, name)
+
+
 def _chat_host():
     from ..entity_chat import EntityChatHost
 

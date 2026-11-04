@@ -240,6 +240,11 @@ app.include_router(session_archive_router, prefix="/api")
 from .routes.session_tool_policy import router as session_tool_policy_router  # noqa: E402
 
 app.include_router(session_tool_policy_router, prefix="/api")
+# A regular agent's track record, reputation and acquaintances (ADR 0052): routes/session_record.py,
+# /gateway/sessions/{id}/track-record|reputation|acquaintances. The entity twins are in routes/entities.py.
+from .routes.session_record import router as session_record_router  # noqa: E402
+
+app.include_router(session_record_router, prefix="/api")
 # Per-account client preferences (round 14: default workflow per app, admin default +
 # account override): routes/account_preferences.py, /gateway/accounts/{account}/preferences.
 from .routes.account_preferences import router as account_preferences_router  # noqa: E402
