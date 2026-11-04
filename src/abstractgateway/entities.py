@@ -2066,10 +2066,23 @@ class EntityRegistry:
                     "book": (child / BOOK_FILENAME).exists(),
                 },
             }
-            # How clients draw it (colour + shape of its orb); absent when unset.
-            appearance = read_entity_appearance(child)
-            if appearance:
-                entry["appearance"] = appearance
+            # How clients draw it (colour + shape of its orb); absent when unset. A home with an
+            # identity record (framework ADR 0052 §9) serves the record's colour and the shape its
+            # design draws, so clients that read `appearance` keep drawing the entity's look.
+            try:
+                from abstractruntime.identity.digital_identity import read_identity
+
+                from .entity_identity import derived_shape
+
+                record = read_identity(child)
+            except Exception:  # noqa: BLE001 - IdentityUnreadable: the row's `identity` says null
+                record = None
+            if record is not None:
+                entry["appearance"] = {"color": record.avatar.color, "shape": derived_shape(record.avatar.style)}
+            else:
+                appearance = read_entity_appearance(child)
+                if appearance:
+                    entry["appearance"] = appearance
             try:
                 from abstractruntime.identity.life import read_entity_state
 
@@ -2469,18 +2482,21 @@ class EntityRegistry:
 
         moments: List[Dict[str, Any]] = []
         marker_state_times: List[tuple] = []
+        host_identity_revs: set = set()
         for m in read_host_markers(self.entities_dir, slug, until_seq=marker_window_end(int(as_of)) if as_of is not None else None):
             p = m.get("payload") or {}
             kind = p.get("kind")
             at = str(m.get("observed_at") or "")
             if kind in ("sleep", "wake", "pause"):
                 marker_state_times.append((str(kind), str(p.get("reason") or ""), at))
+            if kind == "identity_changed":
+                host_identity_revs.add(p.get("rev"))
             moments.append(
                 {
                     "kind": kind,
                     "at": at,
                     "seq": m.get("seq"),
-                    "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state")},
+                    "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state", "rev", "by")},
                 }
             )
 
@@ -2494,6 +2510,20 @@ class EntityRegistry:
                 try:
                     entry = json.loads(line)
                 except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("marker"):
+                    # A marker row of the home's biography (`phase_changed`, `identity_changed`,
+                    # framework ADR 0052 §7): its own kind and time, never a blank "state" moment.
+                    # An identity change the door made is already its host marker (same rev).
+                    marker = str(entry.get("marker"))
+                    if marker == "identity_changed" and entry.get("rev") in host_identity_revs:
+                        continue
+                    details = {k: entry.get(k) for k in ("cause", "written_by", "rev") if entry.get(k) is not None}
+                    if marker == "phase_changed":
+                        details.update({k: entry.get(k) for k in ("from", "to") if entry.get(k) is not None})
+                    moments.append({"kind": marker, "at": str(entry.get("at") or ""), "seq": None, "details": details})
                     continue
                 kind = verb_of.get(str(entry.get("state") or ""), str(entry.get("state") or "state"))
                 at = str(entry.get("changed_at") or "")

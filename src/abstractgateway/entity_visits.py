@@ -441,6 +441,33 @@ def _entity_tool_definitions(granted: Any, tool_definition_cls: Any) -> List[Any
     return out
 
 
+def person_origin(*, actor: str, client: str) -> Dict[str, Any]:
+    """`_meta.origin` of a run a person opens at the entity door (a visit, a meet leg, a summon):
+    kind `person`, the door as the client, and as the actor THE SAME `person:<user>` the door stamps
+    on the run's participants, speakers and task authors (`person:operator` when the door has no
+    principal), so one person is one acquaintance of the entity, never two spellings of it."""
+    from abstractruntime.core.run_origin import origin_for
+
+    return origin_for("person", actor=str(actor), client=str(client or "").strip() or None)
+
+
+def person_participant(participants: List[str]) -> str:
+    """The person among a visit's door-verified participants (`person:<user>`), `person:operator`
+    when none is (a door call with no principal)."""
+    return next((str(p) for p in participants if str(p).startswith("person:")), "person:operator")
+
+
+def previous_summon_at(entities_dir: Any, slug: str) -> Optional[str]:
+    """When the entity was last summoned (the newest `summon` host marker's time), or None."""
+    from .entity_replay import read_host_markers
+
+    newest = None
+    for marker in read_host_markers(entities_dir, slug):
+        if (marker.get("payload") or {}).get("kind") == "summon" and marker.get("observed_at"):
+            newest = str(marker["observed_at"])
+    return newest
+
+
 def _seed_run_vars(er: Any) -> Dict[str, Any]:
     """Initial vars for a visit run: full runtime-default `_limits` plus the
     operator ITERATIONS CEILING (laurent c786; seam (b) c805/c809 — the
@@ -699,6 +726,8 @@ class EntityVisitHost:
             "yielded_loop": pre["yielded"],
             "prelude_warnings": leg["prelude_warnings"],
         }
+        if "identity_ref" in leg:
+            out["identity_ref"] = leg["identity_ref"]
         # allowlist_pruned (entity c72 wire shape; skill's pin: a narrowed
         # grant is STATED at the door, never discovered by refusal): the
         # grant names the door cannot OFFER this session. Declarations
@@ -1028,6 +1057,11 @@ class EntityVisitHost:
                 conversation=conversation is True,
             )
             initial_vars = _seed_run_vars(er)
+            # Who started it (backlog 1038), so the visit counts in the entity's track record
+            # (framework ADR 0052 §5: counted runs are person- or trigger-started).
+            from abstractruntime.core.run_origin import stamp_origin
+
+            stamp_origin(initial_vars, person_origin(actor=person_participant(stamp_participants), client=channel_label))
             if conversation is not None:
                 if not isinstance(conversation, bool):
                     raise ValueError("conversation must be a boolean")
@@ -1049,6 +1083,15 @@ class EntityVisitHost:
                 rt_ns = {}
                 run.vars["_runtime"] = rt_ns
             rt_ns["entity"] = final
+            # The identity this visit speaks with (ADR 0052 §3), beside the signed stamp, never
+            # inside it; none when the home has no record yet (a ref is never fabricated).
+            from abstractruntime.identity.digital_identity import stamp_run_identity_ref
+
+            from .entity_identity import entity_identity_ref
+
+            identity_ref = entity_identity_ref(manifest.entity_id, home_dir)
+            if identity_ref is not None:
+                stamp_run_identity_ref(run.vars, identity_ref)
             rt_ns["prompt_cache_binding"] = f"{manifest.entity_id}|{session}"
             if pre.get("thinking"):
                 # Reasoning effort for every model call in this visit: the
@@ -1060,6 +1103,11 @@ class EntityVisitHost:
                 visit_ns = {}
                 run.vars["_visit"] = visit_ns
             visit_ns["idle_seconds"] = float(self._idle_timeout_s)
+            # The previous summon's time, for the identity cue (ADR 0052 §7): the prelude tells a
+            # look or voice change made since then. None known: the runtime tells the latest change.
+            since = previous_summon_at(registry.entities_dir, slug)
+            if since is not None:
+                visit_ns["identity_since"] = since
             # PROVENANCE, not selection: which arm the run was born under.
             # Every rebuild serves the react graph (A1-with-companion).
             visit_ns["workflow_arm"] = ARM_REACT
@@ -1099,6 +1147,7 @@ class EntityVisitHost:
             "session_id": session,
             "participants": stamp_participants,
             "prelude_warnings": list(visit_vars.get("prelude_warnings") or []),
+            **({"identity_ref": identity_ref.to_dict()} if identity_ref is not None else {}),
         }
 
     # ------------------------------------------------------------------ turn

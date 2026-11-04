@@ -35,6 +35,13 @@ def _spark(name: str) -> dict:
     return spark
 
 
+def _as_home_born_before_the_identity(home_dir: Path) -> None:
+    """Set the identity record aside, as on a home born before ADR 0052 (the legacy files apply)."""
+    import os
+
+    os.replace(home_dir / "identity.json", home_dir / "identity.json.born-before")
+
+
 OFFERED_MODELS = {"lmstudio": ["qwen3-4b", "qwen3-30b"], "openai": ["gpt-5-mini"]}
 OFFERED_VOICES = {"kokoro": (["af_heart", "am_adam"], ["kokoro-82m"])}
 
@@ -95,6 +102,10 @@ def world(gateway, monkeypatch):
     _rec, admin_token = users.create_user(user_id="root", roles=["admin", "user"], runtime_id="default")
     r = c.post("/api/gateway/entities", headers=gateway["alice"], json={"name": "Aster", "spark": _spark("Aster"), "skills": []})
     assert r.status_code == 201, r.text
+    # This file pins the settings of a home born BEFORE the digital identity (framework ADR 0052):
+    # its legacy voice.yaml / appearance.json contract. A home born now has an identity record
+    # (test_entity_digital_identity.py pins that one, side by side).
+    _as_home_born_before_the_identity(Path(gateway["data_dir"]) / "entities" / "aster")
     # The entity's own principal (its door credential is discarded in production; minted here so
     # the test can knock as the entity itself).
     entity_token = _knock_as_entity(users, "aster")
@@ -330,10 +341,13 @@ def test_appearance_defaults_merges_validates_clears_and_reaches_the_list(world)
 
 
 def test_appearance_can_be_chosen_at_birth_and_a_bad_one_creates_nothing(world) -> None:
+    """A birth look is the new home's identity look (ADR 0052 §9; test_entity_digital_identity.py
+    pins it with a Gateway default voice). Here the gateway has none: a chosen look needs a voice,
+    so the birth is refused before anything is created."""
     c, alice = world["c"], world["alice"]
     r = c.post("/api/gateway/entities", headers=alice, json={"name": "Vega", "spark": _spark("Vega"), "skills": [], "appearance": {"color": "#f59e0b", "shape": "face"}})
-    assert r.status_code == 201, r.text
-    assert c.get("/api/gateway/entities/vega/appearance", headers=alice).json()["shape"] == "face"
+    assert r.status_code == 409 and "set the Gateway default voice" in r.json()["detail"], r.text
+    assert c.get("/api/gateway/entities/vega/appearance", headers=alice).status_code == 404
     r = c.post("/api/gateway/entities", headers=alice, json={"name": "Lyra", "spark": _spark("Lyra"), "skills": [], "appearance": {"shape": "dragon"}})
     assert r.status_code == 400 and "appearance invalid" in r.text
     assert c.get("/api/gateway/entities/lyra/appearance", headers=alice).status_code == 404

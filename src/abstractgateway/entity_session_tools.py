@@ -243,6 +243,13 @@ def public_conversation(host: Any, name: str, run_id: str) -> dict:
                        "allow_free_text": owned.waiting.allow_free_text, "until": owned.waiting.until,
                        "details": {"question": copy.deepcopy(question)}}
     rows = sorted(updates.values(), key=lambda row: row["order"])
+    # Who wrote the updates (framework ADR 0052 §3): the identity the visit opened with, stamped at
+    # serve time; no field when the visit carries none (a ref is never fabricated).
+    from abstractruntime.identity.digital_identity import read_run_identity_ref
+
+    visit_ref = read_run_identity_ref(run.vars or {})
+    if visit_ref is not None:
+        rows = [{**row, "identity_ref": visit_ref.to_dict()} for row in rows]
     human = sorted(guidance.values(), key=lambda row: row["order"])
     questions, questions_omitted = _public_question_history(records_by_run, runs[:32], run_id)
     return {"public_updates": rows[-64:], "public_updates_omitted": max(0, len(rows) - 64),

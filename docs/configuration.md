@@ -39,12 +39,16 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.17.0` (a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.18.0` (the digital identity record of each entity; a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.4.0` (the memory graph, `abstractmemory.graph`)
 - `abstractskill>=0.3.4` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`)
+- `abstractavatar>=0.1.1` (the avatar design catalog: an entity's identity names a design this catalog has and the
+  Watch can draw; without it no identity is set or recorded. At each start the gateway writes the recorded default
+  identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
+  skipped. See [entities.md](./entities.md))
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
@@ -1578,6 +1582,19 @@ abstractgateway serve --model-host in-process # everything in one process (devel
 - **Limits**: `--model-host-memory-gb GB` kills and restarts the child when its resident memory passes
   GB (default 80 % of this machine's memory; `0` turns it off); `--model-host-nice N` (default 5) lets
   the gateway answer first when inference uses every CPU. No environment variable.
+- **Idle unload**: a loaded model that no request has used for 60 minutes is unloaded from memory;
+  the next request loads it again (and re-reads its context, so that first answer is slower). Change
+  the time with `serve --model-idle-unload MINUTES` (for this run) or the saved setting
+  `models.idle_unload_minutes` (Models page, **Unload unused models after (minutes)**, or
+  `abstractgateway config set models.idle_unload_minutes MINUTES`); `0` never unloads. The flag wins
+  over the saved setting, which wins over 60. A model kept loaded (**Keep loaded**) never unloads this
+  way, and the gateway records the lock (`models.kept_loaded`): it is set again after a gateway or
+  model-host restart. A model unloaded with **Force unload** is no longer kept. The Models page and
+  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min", "Kept loaded:
+  never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
+  loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
+  LM Studio, llama.cpp server) keeps its own rule. Needs AbstractRuntime 0.18 or later; an older runtime
+  is reported in the log.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -1678,7 +1695,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -1690,6 +1707,8 @@ Most-used:
   - `--model-host process|in-process`: where the models run (default `process` on every OS,
     `in-process` with `--reload`); `--model-host-memory-gb GB`, `--model-host-nice N`: the
     child's limits ([model host](#model-host-the-models-run-in-a-supervised-child-process)).
+  - `--model-idle-unload MINUTES`: unload a model no request has used for MINUTES (default: the saved
+    `models.idle_unload_minutes`, else 60; `0` never unloads; a model kept loaded never unloads).
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
     `--print-token` is treated as a test gateway and shows no icon either.
