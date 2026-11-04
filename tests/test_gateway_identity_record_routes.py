@@ -246,6 +246,8 @@ def test_a_hidden_entity_reads_like_a_missing_one_and_an_admin_sees_all(world, r
     assert hidden.json()["detail"] == missing.json()["detail"].replace("nobody-here", "aster")
     assert c.get(f"/api/gateway/entities/aster/{route}", headers=ADMIN).status_code == 200
     assert c.get(f"/api/gateway/entities/aster/{route}").status_code == 401
+    bad = c.get(f"/api/gateway/entities/Not!A-Name/{route}", headers=world["alice"])
+    assert bad.status_code == 400 and "valid slug" in bad.json()["detail"], bad.text
 
 
 def test_a_held_home_answers_the_maintenance_409(world) -> None:

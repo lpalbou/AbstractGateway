@@ -68,9 +68,15 @@ def _read(compute: Callable[[], Any]) -> Dict[str, Any]:
 
 
 def _entity_sources(registry: Any, name: str):
-    """(home_dir, entity runtime) for `name`; 404 when there is no such home."""
+    """(home_dir, entity runtime) for `name`; 404 when there is no such home, 400 for a name that
+    is not an entity name."""
     try:
         manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\"")) from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    try:
         er = registry.get_entity_runtime(manifest.slug)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\"")) from None
