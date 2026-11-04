@@ -1346,6 +1346,9 @@ you can click.
   - **▦ Memory & GPU** shows the meters and the itemization; `m` pages it on a short terminal.
   - **▣ Models** has the **Show configured / cached** switch (`a`; resident models only by default) and **Load model** (`w`, a dialog with Provider, Model, the **lock in memory** switch and **[Cancel] [Load model]**). Its table has the columns **Modality**, **Provider**, **Model**, **Resident**, **Size**, **Context**, **Flags** and **Actions**. Row buttons: **Estimate** (`e`), **Lock** / **Unlock** (`k`) and **Unload** (`u`).
     - Unload asks **[Unload] [Cancel]**; a locked model then asks **[Force unload] [Cancel]**.
+    - The selected model's facts line ends with the idle-unload line the web Models page shows:
+      "Unused for 12 min, unloads in 48 min", "Kept loaded: never unloads", "In use now" or
+      "Stays loaded: unloading unused models is off" (nothing when the runtime reports nothing).
     - Unlock asks **[Unlock] [Cancel]**.
   - **⌸ Session caches** has the columns **Session**, **Model**, **Size**, **Tokens**, **Created** and **Actions**, with **Clear** (`c`; **[Clear] [Cancel]**).
   Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.

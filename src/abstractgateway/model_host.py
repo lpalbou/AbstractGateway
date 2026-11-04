@@ -690,6 +690,22 @@ def _class_callables(kind: str) -> frozenset:
     return frozenset(names)
 
 
+def _log_replayed_refusal(name: str, answer: Any) -> None:
+    """A replayed `set_*` answers its caller nobody: a refusal in its answer is logged here. The
+    runtime's setters refuse in the answer, not by raising (`ok: false`; `set_model_residency_locks`
+    gives one `results` row per model, a kept model that cannot load is `load_failed`), so at every
+    child (re)build each failed row is one ERROR naming the model (root backlog 1115)."""
+    if not isinstance(answer, dict) or answer.get("ok") is not False:
+        return
+    rows = [r for r in (answer.get("results") or []) if isinstance(r, dict) and r.get("ok") is False]
+    if not rows:
+        logger.error("model host: %s refused by the child at its (re)build: %s", name, answer.get("error") or answer)
+        return
+    for row in rows:
+        logger.error("model host: %s at the child's (re)build: %s/%s %s: %s", name, row.get("provider"),
+                     row.get("model"), row.get("action") or "failed", row.get("error"))
+
+
 class ModelHostClient:
     """An AbstractRuntime LLM client that lives in the model host (ADR 0002).
 
@@ -786,9 +802,10 @@ class ModelHostClient:
                     break
                 for name, (args, kwargs) in items:
                     try:
-                        _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
-                                  persistent=self._mh_persistent, persistent_callbacks=True,
-                                  what=_describe_target(self, name, kwargs)).run()
+                        answer = _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
+                                           persistent=self._mh_persistent, persistent_callbacks=True,
+                                           what=_describe_target(self, name, kwargs)).run()
+                        _log_replayed_refusal(name, answer)
                     except (ModelHostUnavailable, ModelHostCrashed):
                         raise
                     except Exception as exc:  # noqa: BLE001 - a refused configuration is dropped, loudly
