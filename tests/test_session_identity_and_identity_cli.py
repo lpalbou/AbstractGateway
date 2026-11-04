@@ -100,7 +100,7 @@ def test_the_ladder_refuses_and_nothing_is_kept(gw) -> None:
     r = _start(gw, identity=bad_style)
     assert r.status_code == 400 and "can't be drawn on the Watch" in r.json()["detail"], r.text
     r = _start(gw, identity={**IDENTITY, "voice": {"provider": "kokoro", "model": "kokoro-82m", "voice": "zz"}})
-    assert r.status_code == 400 and r.json()["detail"].startswith("zz isn't a kokoro voice"), r.text
+    assert r.status_code == 400 and r.json()["detail"].startswith("This conversation can't speak with zz: it isn't a kokoro voice"), r.text
     r = _start(gw, identity={**IDENTITY, "voice": {"provider": "kokoro", "model": "kokoro-big", "voice": "am_adam"}})
     assert r.status_code == 409 and r.json()["error"]["download"]["model"] == "kokoro-big", r.text
     r = _start(gw, identity={"avatar": IDENTITY["avatar"]})

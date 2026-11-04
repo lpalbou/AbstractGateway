@@ -44,7 +44,10 @@ def _spark(name: str) -> dict:
 
 def _missing(provider: str, model: str):
     if model in NOT_DOWNLOADED:
-        return {"message": f"{model} is not downloaded yet.", "download": {"provider": provider, "model": model}}
+        # The typed answer of core_config.model_not_downloaded (its fields, never its sentence).
+        return {"reason_code": "model_not_downloaded", "message": "(the default-voice sentence)", "provider": provider, "model": model,
+                "artifact": model, "size_mb": 330, "command": f"abstractgateway models download {provider} {model}",
+                "download": {"provider": provider, "model": model}}
     return None
 
 
@@ -220,10 +223,14 @@ def test_the_refusal_ladder_in_order_for_every_role(world, role) -> None:
     _unchanged(world, 1)
     # 3. the voice offered (before its download), for an admin too.
     r = c.put(url, headers=h, json=not_offered)
-    assert r.status_code == 400 and r.json()["detail"] == "zz_nobody isn't a kokoro voice this gateway offers. Offered: af_heart, am_adam."
+    assert r.status_code == 400 and r.json()["detail"] == "Aster can't speak with zz_nobody: it isn't a kokoro voice this gateway offers. Choose one of: af_heart, am_adam."
     # 4. the model downloaded.
     r = c.put(url, headers=h, json=not_downloaded)
     assert r.status_code == 409 and r.json()["error"]["download"] == {"provider": "kokoro", "model": "kokoro-big"}, r.text
+    assert r.json()["detail"] == (
+        "Aster's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. "
+        "Download it (the Models page, or: abstractgateway models download kokoro kokoro-big), then save the identity again."
+    )
     _unchanged(world, 1)
     # A valid one lands, set by the caller.
     assert c.put(url, headers=h, json=CHOSEN).status_code == 200
@@ -548,3 +555,39 @@ def test_an_unreadable_record_is_named_without_its_absolute_path(door) -> None:
         assert r.status_code == 409, r.text
         detail = r.json()["detail"]
         assert "castor/identity.json" in detail and str(entities) not in detail, detail
+
+
+def test_the_sentences_say_what_is_missing_and_what_to_do_never_the_default_voice(door, monkeypatch) -> None:
+    import abstractgateway.entity_settings_access as esa
+
+    c = door["c"]
+    _born(c, "Castor")
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m: ([], [], "the engine is not installed"))
+    r = c.put("/api/gateway/entities/castor/identity", json=CHOSEN)
+    assert r.json()["detail"] == "Castor can't speak with am_adam: this gateway offers no kokoro voice right now (the engine is not installed). Choose a voice it offers."
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m: (["am_adam"], ["kokoro-82m"], None))
+    r = c.put("/api/gateway/entities/castor/identity", json={**CHOSEN, "voice": {**CHOSEN["voice"], "model": "kokoro-x"}})
+    assert r.json()["detail"] == "Castor can't speak with kokoro-x: it isn't a kokoro speech model this gateway offers. Choose one of: kokoro-82m."
+    for refused in (r,):
+        assert "default voice" not in refused.json()["detail"]
+
+
+def test_a_revision_serves_the_real_reason_it_was_written(door) -> None:
+    c = door["c"]
+    _born(c, "Castor")
+    assert c.put("/api/gateway/entities/castor/identity", json=CHOSEN).status_code == 200
+    first = c.get("/api/gateway/entities/castor/identity?rev=1").json()["identity"]["change"]
+    assert first["cause"] == "recorded_default" and first["written_by"] == "default" and first["at"]
+    now = c.get("/api/gateway/entities/castor/identity").json()["identity"]["change"]
+    assert now["cause"] == "chosen" and now["written_by"] == "person:admin" and now["at"]
+
+
+def test_the_visit_state_carries_the_identity_ref_before_any_update(door, monkeypatch) -> None:
+    _llm(monkeypatch)
+    c = door["c"]
+    _born(c, "Castor")
+    opened = c.post("/api/gateway/entities/Castor/visit/open", json={"conversation": True}).json()
+    state = c.get(f"/api/gateway/entities/Castor/visit/{opened['run_id']}/state")
+    assert state.status_code == 200, state.text
+    assert state.json()["identity_ref"] == {"of": "entity:castor", "rev": 1}
+    c.post(f"/api/gateway/entities/Castor/visit/{opened['run_id']}/close", json={"closed_by": "operator", "reason": "t"})

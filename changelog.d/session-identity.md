@@ -11,7 +11,16 @@
   [--track-record|--reputation|--acquaintances]`**, through the running gateway's routes, in plain words ("No
   experience yet"; the completion-rate basis said in a sentence); `--json` prints the payload.
 
+- **`GET /entities/{name}/identity[?rev=N]` says why the revision was written**: `identity.change` =
+  `{cause, written_by, at}` from its biography row.
+- **A visit's state (`GET /entities/{name}/visit/{run_id}/state`) carries the visit's `identity_ref`**, so an app
+  rejoining a visit draws the right look before the first public update.
+
 ### Changed
+
+- **The identity's voice refusals read for the identity page**: "Castor can't speak with zz: it isn't a kokoro voice
+  this gateway offers. Choose one of: …" and "Castor's voice needs the kokoro model … which is not downloaded on this
+  computer yet. Download it (…), then save the identity again." (they used to speak of the default voice).
 
 - **An identity record or a track record that cannot be read names its file, not its absolute path**
   (`castor/identity.json: …`): `GET /entities/{name}/identity`, the voice and appearance routes, the entity TTS
