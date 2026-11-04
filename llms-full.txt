@@ -8349,8 +8349,10 @@ model despite the lock. Every other unload outcome stays in-band at 200.
   `force`, removes the record.
 - Idle unload: rows also carry `idle_unload_s` (the time in effect in seconds, `0`
   when it is off, null when the runtime reports nothing, as for an external engine),
-  `idle_unload_at` and `last_used_at` (ISO times; the runtime's epoch seconds are
-  converted), `in_use` and `locked_by`, as the runtime reports them
+  `idle_unload_at` and `last_used_at` (ISO 8601 times in UTC with their offset,
+  `2026-11-03T20:09:51+00:00`: the runtime sends epoch seconds, which the gateway
+  converts; an ISO string the runtime sends is passed through as is), `in_use` and
+  `locked_by`, as the runtime reports them
   (`idle_unload_at` is null when the model is locked, in use, or idle unload is
   off). The time is the setting
   `models.idle_unload_minutes` (`GET/POST /api/gateway/admin/runtime-config`,
