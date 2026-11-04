@@ -183,7 +183,7 @@ def _birth_identity(name: str, chosen: Optional[Tuple[Any, Any]], appearance: Op
         if voice is None:  # the default voice went away since the check before creation
             from ..entity_identity import no_voice_sentence
 
-            raise IdentityRefused(409, f"appearance not recorded: {no_voice_sentence(manifest.name)}")
+            raise IdentityRefused(400, f"appearance not recorded: {no_voice_sentence(manifest.name)}")
         style = style_for_shape(appearance["shape"], avatar.style, manifest.entity_id) if "shape" in appearance else avatar.style
         chosen = (AvatarChoice(style=style, color=appearance.get("color", avatar.color), source="chosen"), voice)
     if chosen is not None:
@@ -248,7 +248,7 @@ def create_entity(req: CreateEntityRequest) -> Any:
 
         if gateway_default_voice(_registry().data_dir) is None:
             raise HTTPException(
-                status_code=409,
+                status_code=400,
                 detail=f"{req.name}'s look can be chosen with a voice: set the Gateway default voice, or give "
                 "identity with a voice instead of appearance.",
             )
@@ -5380,22 +5380,10 @@ def _clear_entity_substrate_locked(name: str, *, registry, manifest, prior: Dict
 # routes below read and write THROUGH it; a home without one keeps their old behaviour.
 
 
-class IdentityAvatarBody(BaseModel):
-    style: str = Field(..., description="An abstractavatar design id this gateway's catalog draws on the Watch")
-    color: str = Field(..., description="#rrggbb")
+from ..entity_identity import IdentityAvatarBody, IdentityBody, IdentityVoiceBody  # noqa: E402 - the shared identity body
 
 
-class IdentityVoiceBody(BaseModel):
-    provider: str
-    model: str
-    voice: str
-    speed: Optional[float] = Field(default=None, gt=0, le=4)
-    quality_preset: Optional[str] = Field(default=None, max_length=32)
-
-
-class PutIdentityRequest(BaseModel):
-    avatar: IdentityAvatarBody
-    voice: Optional[IdentityVoiceBody] = Field(default=None, description="Required: an identity someone chooses always names its voice")
+class PutIdentityRequest(IdentityBody):
     clear: bool = Field(default=False, description="Refused: an identity is changed, never cleared")
 
 
@@ -5406,40 +5394,18 @@ def _identity_response(e: Any) -> Any:
     """The HTTP answer of an identity refusal or invalid value."""
     from fastapi.responses import JSONResponse
 
-    from abstractruntime.identity.digital_identity import IdentityInvalid, IdentityUnreadable
+    from ..entity_identity import identity_refusal_body
 
-    from ..entity_identity import IdentityRefused
-
-    if isinstance(e, IdentityRefused):
-        content: Dict[str, Any] = {"detail": e.detail}
-        if e.error:
-            content["error"] = e.error
-        return JSONResponse(status_code=e.status, content=content)
-    if isinstance(e, IdentityInvalid):
-        return JSONResponse(status_code=400, content={"detail": str(e), "field": e.field})
-    if isinstance(e, IdentityUnreadable):
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"The identity record can't be read, so it is not changed or served: {e}"},
-        )
-    raise e
+    # Every caller is an entity route of this plane: an unreadable record is named from its entities
+    # folder (`castor/identity.json`), never by its absolute path.
+    status, content = identity_refusal_body(e, root=_registry().entities_dir)
+    return JSONResponse(status_code=status, content=content)
 
 
 def _identity_from_body(avatar: Any, voice: Any) -> Tuple[Any, Any]:
-    from abstractruntime.identity.digital_identity import AvatarChoice, VoiceChoice
+    from ..entity_identity import choice_from_body
 
-    chosen_avatar = AvatarChoice(style=str(avatar.style).strip(), color=str(avatar.color).strip().lower(), source="chosen")
-    chosen_voice = None
-    if voice is not None:
-        chosen_voice = VoiceChoice(
-            provider=str(voice.provider).strip(),
-            model=str(voice.model).strip(),
-            voice=str(voice.voice).strip(),
-            source="chosen",
-            speed=float(voice.speed) if voice.speed is not None else None,
-            quality_preset=(str(voice.quality_preset).strip() or None) if voice.quality_preset is not None else None,
-        )
-    return chosen_avatar, chosen_voice
+    return choice_from_body(avatar, voice)
 
 
 def _read_home_identity(home_dir: Any) -> Any:
@@ -5608,7 +5574,7 @@ def _put_appearance_through_identity(registry: Any, manifest: Any, record: Any, 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if record.voice is None:
-        raise HTTPException(status_code=409, detail=no_voice_sentence(manifest.name) + ", then change its look.")
+        raise HTTPException(status_code=400, detail=no_voice_sentence(manifest.name) + ", then change its look.")
     style = record.avatar.style
     if "shape" in given:
         style = style_for_shape(given["shape"], style, manifest.entity_id)
@@ -5841,7 +5807,13 @@ def _entity_tts_request(name: str, req: "GatewayVoiceTTSRequest") -> Tuple[Any, 
     try:
         record = _read_home_identity(home_dir)
     except Exception as e:  # noqa: BLE001 - IdentityUnreadable: an unreadable record never speaks another voice
-        raise HTTPException(status_code=409, detail=f"{manifest.name}'s identity record can't be read, so it does not speak: {e}")
+        from ..entity_identity import without_paths
+
+        logger.error("identity: %s: unreadable record, the TTS lane refuses: %s", manifest.slug, e)
+        raise HTTPException(
+            status_code=409,
+            detail=f"{manifest.name}'s identity record can't be read, so it does not speak: {without_paths(str(e), registry.entities_dir)}",
+        )
     ref = None
     if record is not None and not names_voice:
         if record.voice is None:

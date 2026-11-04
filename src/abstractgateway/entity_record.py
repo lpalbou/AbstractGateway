@@ -28,9 +28,12 @@ never an empty record in its place.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import HTTPException
+
+logger = logging.getLogger("abstractgateway.entity_record")
 
 from abstractruntime.identity import (
     IdentityUnreadable,
@@ -57,11 +60,17 @@ def parse_since(value: Optional[str]) -> Optional[str]:
         ) from None
 
 
-def _read(compute: Callable[[], Any]) -> Dict[str, Any]:
+def _read(compute: Callable[[], Any], *, root: Any) -> Dict[str, Any]:
+    """The runtime's answer as a dict. A record it cannot read answers 500 `record_unreadable` with
+    the runtime's sentence, the files named from `root` (the entities folder, or the plane) and
+    never by their absolute path; the full sentence goes to the gateway log."""
     try:
         return compute().to_dict()
     except (TrackRecordError, IdentityUnreadable) as exc:
-        raise HTTPException(status_code=500, detail={"reason_code": "record_unreadable", "message": str(exc)}) from None
+        from .entity_identity import without_paths
+
+        logger.error("record unreadable: %s", exc)
+        raise HTTPException(status_code=500, detail={"reason_code": "record_unreadable", "message": without_paths(str(exc), root)}) from None
 
 
 # --- entities ------------------------------------------------------------------------------------
@@ -89,11 +98,11 @@ def _entity_record(registry: Any, name: str, since: Optional[str]):
 
 
 def entity_track_record_answer(registry: Any, name: str, *, since: Optional[str]) -> Dict[str, Any]:
-    return _read(lambda: _entity_record(registry, name, since))
+    return _read(lambda: _entity_record(registry, name, since), root=registry.entities_dir)
 
 
 def entity_reputation_answer(registry: Any, name: str) -> Dict[str, Any]:
-    return _read(lambda: compute_reputation(_entity_record(registry, name, None)))
+    return _read(lambda: compute_reputation(_entity_record(registry, name, None)), root=registry.entities_dir)
 
 
 def entity_acquaintances_answer(registry: Any, name: str) -> Dict[str, Any]:
@@ -101,7 +110,7 @@ def entity_acquaintances_answer(registry: Any, name: str) -> Dict[str, Any]:
         home_dir, er = _entity_sources(registry, name)
         return entity_acquaintances(home_dir, er.run_store)
 
-    return _read(compute)
+    return _read(compute, root=registry.entities_dir)
 
 
 # --- a regular agent's session -------------------------------------------------------------------
@@ -123,7 +132,7 @@ def session_track_record_answer(svc: Any, session_id: str, *, since: Optional[st
         run_store, ledger_store = _session_stores(svc, session_id)
         return session_track_record(session_id, run_store, ledger_store, since=since)
 
-    return _read(compute)
+    return _read(compute, root=svc.config.data_dir)
 
 
 def session_reputation_answer(svc: Any, session_id: str) -> Dict[str, Any]:
@@ -131,7 +140,7 @@ def session_reputation_answer(svc: Any, session_id: str) -> Dict[str, Any]:
         run_store, ledger_store = _session_stores(svc, session_id)
         return compute_reputation(session_track_record(session_id, run_store, ledger_store))
 
-    return _read(compute)
+    return _read(compute, root=svc.config.data_dir)
 
 
 def session_acquaintances_answer(svc: Any, session_id: str) -> Dict[str, Any]:
@@ -139,4 +148,4 @@ def session_acquaintances_answer(svc: Any, session_id: str) -> Dict[str, Any]:
         run_store, _ledger = _session_stores(svc, session_id)
         return session_acquaintances(session_id, run_store)
 
-    return _read(compute)
+    return _read(compute, root=svc.config.data_dir)

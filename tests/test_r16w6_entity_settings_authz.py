@@ -346,7 +346,7 @@ def test_appearance_can_be_chosen_at_birth_and_a_bad_one_creates_nothing(world) 
     so the birth is refused before anything is created."""
     c, alice = world["c"], world["alice"]
     r = c.post("/api/gateway/entities", headers=alice, json={"name": "Vega", "spark": _spark("Vega"), "skills": [], "appearance": {"color": "#f59e0b", "shape": "face"}})
-    assert r.status_code == 409 and "set the Gateway default voice" in r.json()["detail"], r.text
+    assert r.status_code == 400 and "set the Gateway default voice" in r.json()["detail"], r.text
     assert c.get("/api/gateway/entities/vega/appearance", headers=alice).status_code == 404
     r = c.post("/api/gateway/entities", headers=alice, json={"name": "Lyra", "spark": _spark("Lyra"), "skills": [], "appearance": {"shape": "dragon"}})
     assert r.status_code == 400 and "appearance invalid" in r.text
