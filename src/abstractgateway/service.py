@@ -2118,6 +2118,18 @@ def run_summary(run: Any) -> Dict[str, Any]:
     _meta_for_origin = _vars_for_origin.get("_meta") if isinstance(_vars_for_origin, dict) else None
     _origin = _meta_for_origin.get("origin") if isinstance(_meta_for_origin, dict) else None
     out["origin"] = dict(_origin) if isinstance(_origin, dict) else None
+    # The identity the run speaks with (framework ADR 0052 §3: an entity visit's or a conversation's),
+    # read through from `_runtime.identity_ref`, never copied; absent when the run carries none.
+    if isinstance(_vars_for_origin, dict):
+        from abstractruntime.identity.digital_identity import read_run_identity_ref
+
+        try:
+            _ref = read_run_identity_ref(_vars_for_origin)
+        except ValueError as e:
+            logging.getLogger("abstractgateway.service").warning("run %s: malformed identity_ref: %s", getattr(run, "run_id", ""), e)
+            _ref = None
+        if _ref is not None:
+            out["identity_ref"] = _ref.to_dict()
     # Automation attribution (automations contract C11): the same four fields
     # the run index stores, derived by the runtime from the run's inline _meta.
     from abstractruntime.core.run_attribution import automation_index_fields

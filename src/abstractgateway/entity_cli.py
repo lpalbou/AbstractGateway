@@ -99,6 +99,11 @@ def add_entity_subparser(sub: Any) -> None:
     )
     reembed.add_argument("--reason", default="", help="Why — journaled with the act")
 
+    # The digital identity and the record, through the gateway's routes (entity_identity_cli.py).
+    from .entity_identity_cli import add_identity_verbs
+
+    add_identity_verbs(entity_sub)
+
     chat = entity_sub.add_parser(
         "chat",
         parents=[common],
@@ -145,6 +150,13 @@ def _emit(payload: Dict[str, Any], *, as_json: bool, human_lines: List[str]) -> 
 
 def run_entity_command(args: Any) -> None:
     cmd = str(getattr(args, "entity_cmd", "") or "")
+    if cmd in ("identity", "record"):
+        from .entity_identity_cli import run_identity_verbs
+
+        code = run_identity_verbs(args)
+        if code:
+            raise SystemExit(code)
+        return
     registry = _registry(args)
 
     if cmd == "create":

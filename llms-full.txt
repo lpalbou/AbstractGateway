@@ -5712,6 +5712,24 @@ writes it; an origin sent by the client is replaced. Runs started before this
 field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
 (it marks the runs this gateway's runner ticks); the person is `origin.actor`.
 
+A conversation can carry a temporary identity (framework ADR 0052 §9, a regular agent's look and
+voice): `identity: {avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`
+on `POST /runs/start`, with a `session_id` (400 without one). It is checked like an entity's
+`PUT /entities/{name}/identity` (the design in this gateway's avatar catalog and drawable on the
+Watch, the voice offered, its model downloaded; 400 / 409 with the same sentences) and kept on the
+session (`<data dir>/session_identities.json`, never in an entity home). Every run of the session
+carries it: the record at `input_data._runtime.identity` and its reference at
+`input_data._runtime.identity_ref` (`{"of": "session:<sid>", "rev": n}`). A later turn without
+`identity` inherits it; a turn with another one changes it (`rev + 1`). A session that names none
+records none (no Assistant identity exists on the gateway): its runs carry no reference and speak
+as before. `_runtime.identity` and `_runtime.identity_ref` sent by a client are dropped.
+`GET /api/gateway/sessions/{session_id}/identity[?rev=N]` (the session's owner or an admin) resolves a
+session reference to its look: `{session_id, identity: {rev, avatar: {style, color, source, watch_code},
+voice, set_at, set_by}, identity_ref}` (the entity shape), `identity: null` when the session has none,
+404 `session_not_found` / `identity_rev_not_found`. `GET /runs/{run_id}` carries the run's
+`identity_ref` when it has one (read from its inputs, never stored apart); the index-backed `GET /runs`
+listing does not (its rows load no inputs).
+
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
 #### The gateway default agent workflow (`flow_id: "@default"`)
@@ -7783,6 +7801,11 @@ Speech options on `/voice/tts`: `speed` (a multiplier; engines without a native 
 time-stretch the audio, see `/voice/compatibility`) and `one_shot: true` (the whole text as one
 take with one voice, never segmented; refused beyond the engine's limit, e.g. 1000 characters on
 Qwen3-TTS). `/voice/tts/stream` refuses `one_shot` (422): a stream delivers the take in pieces.
+
+A run carrying its conversation's identity (`_runtime.identity`, above) speaks with that identity's
+voice when the request names none of `provider`, `model`, `voice`, `profile`: `/voice/tts` then
+answers `identity_ref` and both routes send the `X-Identity-Ref` header (`session:<sid>#<rev>`). A
+request naming a voice field passes untouched, without a reference.
 
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises
@@ -10458,6 +10481,21 @@ abstractgateway entity card Castor         # the identity card: a page to know y
 abstractgateway entity verify Castor       # both attestation chains + the spark hash
 ```
 
+Through the running gateway's routes (`--url`, else the gateway running for this data dir;
+`--token`, else `$ABSTRACTGATEWAY_AUTH_TOKEN`, else this data dir's bootstrap admin token for a
+loopback URL; `--json` prints the route's payload; a refusal prints the gateway's sentence and
+exits 2):
+
+```bash
+abstractgateway entity identity get Castor [--rev N]     # its look, voice, reference, fingerprint, age
+abstractgateway entity identity set Castor --style watch-lotus --color "#3366cc" \
+    --provider kokoro --model kokoro-82m --voice am_adam [--speed 1.1] [--quality-preset P]
+abstractgateway entity record Castor [--track-record | --reputation | --acquaintances] [--since ISO]
+```
+
+`entity record` prints "No experience yet" where nothing was counted, and says what the numbers
+mean: success is the work finishing (completion rate only); how good it was is not assessed yet.
+
 HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 
 | Method | Path | What it does |
@@ -10483,8 +10521,8 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
 | GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
 | PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
-| GET | `/api/gateway/entities/{name}/identity[?rev=N]` | Its digital identity (framework ADR 0052): `{entity_id, identity: {rev, avatar: {style, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}`. `?rev=N` serves an earlier revision from the home's biography. A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409). |
-| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one this gateway offers (400, the offered voices); its model is not downloaded (409, `error.download`). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
+| GET | `/api/gateway/entities/{name}/identity[?rev=N]` | Its digital identity (framework ADR 0052): `{entity_id, identity: {rev, avatar: {style, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}`. `?rev=N` serves an earlier revision from the home's biography. `identity.change` is why that revision was written: `{cause, written_by, at}` from its biography row (`cause`: `recorded_default`, `chosen`; null when the home has no row for it). A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409). |
+| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one this gateway offers (400: "Castor can't speak with zz: it isn't a kokoro voice this gateway offers. Choose one of: …"); its model is not downloaded (409, `error.download`: "Castor's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
 | GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). On a home with an identity record: served from the record (`source: identity`, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and `clear` is refused (409). |
 | GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list. On a home with an identity record: the record's colour and the shape its design draws (`watch-shape-<shape>`, else `planet`; `source: identity`); a PUT changes the record's look (what is not given keeps its value; the voice is kept), `clear` is refused (409), and a record with no voice yet refuses a look change with its sentence. |
 
@@ -10504,7 +10542,7 @@ speaks with the record's voice only: its TTS lanes answer `voice_source: identit
 no voice refuses with "Castor has no voice yet: choose one in its Identity settings
 or set the Gateway default voice". The reference also rides each visit
 (`_runtime.identity_ref`, beside the signed stamp, and on the open response), each
-meet leg, relay row and status row, and each public update row of a visit; a home
+meet leg, relay row and status row, each public update row of a visit, and the visit's state (`GET /visit/{run_id}/state`, top-level `identity_ref`); a home
 without a record carries none. The list rows carry `identity` (the record with its
 `watch_code`, or null). Visits, meet legs and summons record who started them
 (`_meta.origin`: kind `person`, actor the same `person:<user>` as the participants).

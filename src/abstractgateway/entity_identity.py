@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+from pydantic import BaseModel, Field
 
 from abstractruntime.identity.digital_identity import (
     AvatarChoice,
@@ -78,6 +81,70 @@ _PLANET = "planet"
 
 _LOCKS: Dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
+
+
+class IdentityAvatarBody(BaseModel):
+    style: str = Field(..., description="An abstractavatar design id this gateway's catalog draws on the Watch")
+    color: str = Field(..., description="#rrggbb")
+
+
+class IdentityVoiceBody(BaseModel):
+    provider: str
+    model: str
+    voice: str
+    speed: Optional[float] = Field(default=None, gt=0, le=4)
+    quality_preset: Optional[str] = Field(default=None, max_length=32)
+
+
+class IdentityBody(BaseModel):
+    """The body that names an identity: `PUT /entities/{name}/identity`, `identity` on
+    `POST /entities` and on `POST /runs/start`."""
+
+    avatar: IdentityAvatarBody
+    voice: Optional[IdentityVoiceBody] = Field(default=None, description="Required: an identity someone chooses always names its voice")
+
+
+def choice_from_body(avatar: Any, voice: Any) -> Tuple[AvatarChoice, Optional[VoiceChoice]]:
+    """The chosen avatar and voice a body names (`source: chosen`); bounds are the runtime's."""
+    chosen_avatar = AvatarChoice(style=str(avatar.style).strip(), color=str(avatar.color).strip().lower(), source="chosen")
+    chosen_voice = None
+    if voice is not None:
+        chosen_voice = VoiceChoice(
+            provider=str(voice.provider).strip(),
+            model=str(voice.model).strip(),
+            voice=str(voice.voice).strip(),
+            source="chosen",
+            speed=float(voice.speed) if voice.speed is not None else None,
+            quality_preset=(str(voice.quality_preset).strip() or None) if voice.quality_preset is not None else None,
+        )
+    return chosen_avatar, chosen_voice
+
+
+def without_paths(message: str, *roots: Any) -> str:
+    """`message` with the given directories removed from the front of the paths it names
+    (`/data/entities/castor/identity.json` -> `castor/identity.json`): an answer names the file, the
+    gateway log keeps the full path. Exact prefixes the caller knows, never a guess."""
+    out = str(message)
+    for root in roots:
+        if root:
+            out = out.replace(str(Path(root)) + os.sep, "")
+    return out
+
+
+def identity_refusal_body(e: Exception, *, root: Any = None) -> Tuple[int, Dict[str, Any]]:
+    """(status, JSON body) of a refused or invalid identity, one shape for every door. An unreadable
+    record names its file relative to `root` (the entities folder); the full path goes to the log."""
+    if isinstance(e, IdentityRefused):
+        content: Dict[str, Any] = {"detail": e.detail}
+        if e.error:
+            content["error"] = e.error
+        return e.status, content
+    if isinstance(e, IdentityInvalid):
+        return 400, {"detail": str(e), "field": e.field}
+    if isinstance(e, IdentityUnreadable):
+        logger.error("identity: unreadable record: %s", e)
+        return 409, {"detail": f"The identity record can't be read, so it is not changed or served: {without_paths(str(e), root)}"}
+    raise e
 
 
 class IdentityRefused(Exception):
@@ -183,20 +250,43 @@ def _check_style(style: str, catalog: Mapping[str, Mapping[str, Any]]) -> None:
         )
 
 
-def _check_voice_offered(voice: VoiceChoice) -> None:
-    from .entity_settings_access import voice_bound_problem
+def _check_voice_offered(voice: VoiceChoice, name: str) -> None:
+    """The voice is one this gateway offers (`GET /voice/voices`, what the voice picker lists).
+    The sentence is the identity page's: what is missing, and what to do."""
+    from .entity_settings_access import _listed, offered_voices
 
-    problem = voice_bound_problem(voice.provider, voice.model, voice.voice)
-    if problem:
-        raise IdentityRefused(400, problem)
+    voices, models, err = offered_voices(voice.provider, voice.model)
+    if not voices:
+        why = f" ({err})" if err else ""
+        raise IdentityRefused(
+            400, f"{name} can't speak with {voice.voice}: this gateway offers no {voice.provider} voice right now{why}. Choose a voice it offers."
+        )
+    if not any(v.lower() == voice.voice.lower() for v in voices):
+        raise IdentityRefused(
+            400, f"{name} can't speak with {voice.voice}: it isn't a {voice.provider} voice this gateway offers. Choose one of: {_listed(voices)}."
+        )
+    if models and not any(m.lower() == voice.model.lower() for m in models):
+        raise IdentityRefused(
+            400, f"{name} can't speak with {voice.model}: it isn't a {voice.provider} speech model this gateway offers. Choose one of: {_listed(models)}."
+        )
 
 
-def _check_voice_downloaded(voice: VoiceChoice) -> None:
+def _check_voice_downloaded(voice: VoiceChoice, name: str) -> None:
+    """The voice's model is on this computer (the typed answer of `core_config.model_not_downloaded`,
+    never its sentence): refused with what is missing and how to get it."""
     from .core_config import model_not_downloaded
 
     missing = model_not_downloaded(voice.provider, voice.model)
     if missing:
-        raise IdentityRefused(409, str(missing.get("message") or ""), error=missing)
+        artifact = missing.get("artifact") or voice.model
+        size = f" ({missing['size_mb']} MB)" if missing.get("size_mb") else ""
+        how = f"the Models page, or: {missing['command']}" if missing.get("command") else "the Models page"
+        raise IdentityRefused(
+            409,
+            f"{name}'s voice needs the {voice.provider} model {artifact}{size}, which is not downloaded on this computer yet. "
+            f"Download it ({how}), then save the identity again.",
+            error=missing,
+        )
 
 
 def check_choice(name: str, avatar: AvatarChoice, voice: Optional[VoiceChoice]) -> None:
@@ -205,8 +295,8 @@ def check_choice(name: str, avatar: AvatarChoice, voice: Optional[VoiceChoice]) 
     _check_style(avatar.style, avatar_catalog())
     if voice is None:
         raise IdentityRefused(400, f"{name}'s identity needs a voice: an identity someone chooses always names one.")
-    _check_voice_offered(voice)
-    _check_voice_downloaded(voice)
+    _check_voice_offered(voice, name)
+    _check_voice_downloaded(voice, name)
 
 
 def _ladder(registry: Any, manifest: Any, avatar: AvatarChoice, voice: Optional[VoiceChoice]) -> None:
@@ -384,7 +474,7 @@ def _age(created_at: str, now: Optional[datetime] = None) -> Dict[str, Any]:
     return {"born": text, "days": max(0, int(math.floor(seconds / 86400.0)))}
 
 
-def _record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+def record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
     avatar = record.avatar.to_dict()
     row = catalog.get(record.avatar.style) or {}
     avatar["watch_code"] = str(row.get("watch_code") or "") or None
@@ -395,6 +485,28 @@ def _record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, 
         "set_at": record.set_at,
         "set_by": record.set_by,
     }
+
+
+def identity_change(home_dir: Path, rev: int) -> Optional[Dict[str, Any]]:
+    """Why and by whom revision `rev` was written: its `identity_changed` row in the home's biography
+    (`state_history.jsonl`, the ADR 0052 §7 fields), as `{cause, written_by, at}`; None when the home
+    has no row for it. One unreadable line never hides the others."""
+    import json
+
+    path = Path(home_dir) / "state_history.jsonl"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    found: Optional[Dict[str, Any]] = None
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("marker") == "identity_changed" and row.get("rev") == rev:
+            found = {"cause": row.get("cause"), "written_by": row.get("written_by"), "at": row.get("at")}
+    return found
 
 
 def identity_view(registry: Any, manifest: Any, *, rev: Optional[int] = None) -> Dict[str, Any]:
@@ -423,9 +535,12 @@ def identity_view(registry: Any, manifest: Any, *, rev: Optional[int] = None) ->
             raise IdentityRefused(404, str(e)) from e
     home = registry.get_home(manifest.slug)
     fingerprint = identity_fingerprint(manifest.to_dict(), book_head=home.diary.head())
+    payload = record_payload(record, catalog)
+    # The real reason of this revision (the Entity app shows it instead of inferring one).
+    payload["change"] = identity_change(home_dir, record.rev)
     return {
         "entity_id": manifest.entity_id,
-        "identity": _record_payload(record, catalog),
+        "identity": payload,
         "identity_ref": identity_ref(manifest.entity_id, record.rev).to_dict(),
         "fingerprint": fingerprint.to_dict(),
         "age": _age(manifest.created_at),
@@ -441,7 +556,7 @@ def list_row_identity(registry: Any, manifest: Any) -> Optional[Dict[str, Any]]:
         record = read_identity(registry.entities_dir / manifest.slug)
         if record is None:
             return None
-        return _record_payload(record, avatar_catalog())
+        return record_payload(record, avatar_catalog())
     except (IdentityUnreadable, IdentityRefused) as e:
         logger.warning("identity: %s: not on the list row: %s", manifest.slug, e)
         return None

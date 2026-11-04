@@ -449,6 +449,13 @@ def session_state(host: Any, name: str, run_id: str) -> dict:
             "reply": reply, "turn_complete": idle and turn_n > 0, "ready_for_input": idle,
             "pending_wait": pending, "tool_policy": {"modes": dict(policy.get("modes") or {})},
             "error": str(getattr(run, "error", "") or "") if status == "failed" else None}
+    # The identity the visit speaks with (framework ADR 0052 §3), so a rejoined visit draws the right
+    # look before any public update; absent when the visit carries none (a ref is never fabricated).
+    from abstractruntime.identity.digital_identity import read_run_identity_ref
+
+    visit_ref = read_run_identity_ref(run.vars or {})
+    if visit_ref is not None:
+        out["identity_ref"] = visit_ref.to_dict()
     conversation = ((run.vars or {}).get("_runtime") or {}).get("conversation") or {}
     if conversation.get("enabled") is True:
         out.update(public_conversation(host, name, run_id))

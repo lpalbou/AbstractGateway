@@ -326,7 +326,7 @@ def test_session_acquaintances_are_the_runtime_answer(two_users) -> None:
     assert body["not_counted"] == {"participant of another kind (not an entity or a human)": 1}
 
 
-@pytest.mark.parametrize("route", ["track-record", "reputation", "acquaintances"])
+@pytest.mark.parametrize("route", ["track-record", "reputation", "acquaintances", "identity"])
 def test_another_accounts_session_is_not_found(two_users, route) -> None:
     c = two_users["c"]
     for headers, sid in ((two_users["bob"], "sa-2"), (two_users["alice"], "no-such-session")):
