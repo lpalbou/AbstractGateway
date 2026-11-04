@@ -103,7 +103,9 @@ class _Launchd:
 
 def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os_service, "STOP_TREE_WAIT_S", 1.0)
-    monkeypatch.setattr(process_tree, "TERM_WAIT_S", 1.0)
+    # The SIGTERM wait stays the product's (5 s): it ends as soon as the processes are gone, and with
+    # 1 s a serve process that took longer to exit on a loaded machine was SIGKILLed and the
+    # "terminated" assertion failed (local gate aa8a06d8, 3.13 shard 3, beside another gate run).
     monkeypatch.setattr(process_tree, "KILL_WAIT_S", 3.0)
 
 
