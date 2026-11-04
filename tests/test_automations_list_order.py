@@ -155,7 +155,15 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     # (CI run 41634801108, 3.12 shard 2: A 37.031 s vs the pause at 36.932 s).
     before_pause = {s["automation_id"]: s["last_activity_at"] for s in _listing(live)["items"]}
     _command(live, c, "automation.pause", "pause-c")
-    wait_until(lambda: _status(live, c) == "paused" or None)
+
+    def c_paused_and_recorded():
+        # The listing can show `paused` from a controller save whose activity time has not moved
+        # yet (release gate 16f2a1aa, 3.10 shard 2: equal to the microsecond); wait for both, so
+        # the order is checked against the recorded pause, never against the moment it flips.
+        row = next(s for s in _listing(live)["items"] if s["automation_id"] == c)
+        return row["status"] == "paused" and row["last_activity_at"] > before_pause[c] or None
+
+    wait_until(c_paused_and_recorded)
     body = _listing(live)
     assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(a, "active"), (b, "active"), (c, "paused")]
     assert body["paused_automations_count"] == 1
