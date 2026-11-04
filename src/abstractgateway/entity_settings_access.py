@@ -21,7 +21,7 @@ The settings routes are ONE row of the route table (`security/authorization.py`,
 forgotten. Every decision through the guard is recorded on the request's audit line
 (`entity_settings: {entity, setting, actor, as: admin|creator|null, outcome}`).
 
-Settings (creator-editable): mind (`substrate`), voice, appearance (colour and shape in apps),
+Settings (creator-editable): mind (`substrate`), identity (its look and voice, ADR 0052), voice, appearance (colour and shape in apps),
 tools per phase (`tool-policy`),
 instructions (`prompt`), skills, workspaces (`/workspace/policy/{account}`), preferences
 (`/accounts/{account}/preferences`), archive / unarchive and the Active switch
@@ -50,6 +50,7 @@ SETTING_VERBS: dict[str, str] = {
     "substrate": "change its mind",
     "voice": "change its voice",
     "appearance": "change its appearance",
+    "identity": "change its identity",
     "tool-policy": "change its tools",
     "prompt": "change its instructions",
     "skills": "change its skills",
