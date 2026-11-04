@@ -29,6 +29,18 @@ def _spark(name: str) -> dict:
     return spark
 
 
+def _as_home_born_before_the_identity() -> None:
+    """This file pins the voice of a home born BEFORE the digital identity (framework ADR 0052):
+    voice.yaml and its degrade chain. A home born now has an identity record (its voice is pinned in
+    test_entity_digital_identity.py, side by side); its record is set aside here."""
+    import os
+
+    from abstractgateway.service import get_gateway_service
+
+    home = Path(get_gateway_service().config.data_dir) / "entities" / "castor"
+    os.replace(home / "identity.json", home / "identity.json.born-before")
+
+
 def test_voice_file_round_trip_full_triple_required(tmp_path: Path) -> None:
     from abstractgateway.entity_voice import clear_entity_voice, read_entity_voice, write_entity_voice
 
@@ -94,6 +106,7 @@ def test_voice_put_is_marker_first_and_admin_gated(monkeypatch: pytest.MonkeyPat
 
     with TestClient(app, headers={"Authorization": "Bearer voice-marker-secret"}) as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
+        _as_home_born_before_the_identity()
 
         # Unset reads honestly.
         r0 = client.get("/api/gateway/entities/Castor/voice")
@@ -167,6 +180,7 @@ def test_unset_entity_serves_the_resolved_effective_default(monkeypatch) -> None
 
     with TestClient(app, headers={"Authorization": "Bearer voice-eff-secret"}) as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
+        _as_home_born_before_the_identity()
 
         import abstractgateway.core_config as capdef
 

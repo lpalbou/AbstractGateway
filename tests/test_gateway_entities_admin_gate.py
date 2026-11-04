@@ -228,6 +228,8 @@ _CREATOR_SETTINGS_ROUTES = {
     ("PUT", "/api/gateway/entities/{name}/substrate"),
     ("PUT", "/api/gateway/entities/{name}/voice"),
     ("PUT", "/api/gateway/entities/{name}/appearance"),
+    # The digital identity (framework ADR 0052 §8): its look and voice, admin or its creator.
+    ("PUT", "/api/gateway/entities/{name}/identity"),
     ("PUT", "/api/gateway/entities/{name}/tool-policy"),
     ("PUT", "/api/gateway/entities/{name}/prompt"),
     ("PUT", "/api/gateway/entities/{name}/skills"),

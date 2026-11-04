@@ -39,12 +39,16 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.17.0` (a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime>=0.18.0` (the digital identity record of each entity; a gateway stop interrupts a run instead of failing it, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore>=2.32.0` (the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.18.2` (the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.5.0` (ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]>=0.4.0` (the memory graph, `abstractmemory.graph`)
 - `abstractskill>=0.3.4` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`)
+- `abstractavatar>=0.1.1` (the avatar design catalog: an entity's identity names a design this catalog has and the
+  Watch can draw; without it no identity is set or recorded. At each start the gateway writes the recorded default
+  identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
+  skipped. See [entities.md](./entities.md))
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.
