@@ -1384,9 +1384,19 @@ def list_entities() -> Dict[str, Any]:
     created (`created_by`; homes without one are admin-only)."""
     from ..security.principal import current_gateway_principal
 
+    from ..entity_identity import list_row_identity
+
     caller = current_gateway_principal()
-    rows = _registry().list_entities()
-    return {"entities": [r for r in rows if entity_visible_to(caller, str(r.get("slug") or ""), r.get("created_by"))]}
+    registry = _registry()
+    rows = [r for r in registry.list_entities() if entity_visible_to(caller, str(r.get("slug") or ""), r.get("created_by"))]
+    for row in rows:
+        # The identity (ADR 0052 §11): the record with its design's watch_code, or null (a home not
+        # recorded yet, held, or unreadable). Read only; never written from a listing.
+        try:
+            row["identity"] = list_row_identity(registry, registry.manifest_for(str(row.get("slug") or "")))
+        except KeyError:
+            row["identity"] = None
+    return {"entities": rows}
 
 
 @router.get("/{name}/access")
@@ -3383,6 +3393,17 @@ def _summon_core(
         input_data, principal=current_gateway_principal(), session_id=getattr(req, "session_id", None)
     )
     input_data["prompt"] = req.prompt
+    # Who started it (backlog 1038): the summon counts in the entity's track record (framework ADR
+    # 0052 §5). Host-written; a client-sent `_meta.origin` is replaced, never trusted.
+    from abstractruntime.core.run_origin import ORIGIN_KEY
+
+    from ..entity_visits import person_origin
+
+    meta_in = input_data.get("_meta")
+    input_data["_meta"] = {
+        **(meta_in if isinstance(meta_in, dict) else {}),
+        ORIGIN_KEY: person_origin(actor=f"person:{caller_id}", client="summon"),
+    }
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")
 

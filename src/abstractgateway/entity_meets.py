@@ -70,6 +70,13 @@ _HOST_STREAM_DIRNAME = ".host_stream"
 _DEFAULT_CONVENER = "person:operator"
 
 
+def _ref_of(leg: Dict[str, Any]) -> Dict[str, Any]:
+    """`{"identity_ref": {of, rev}}` of a leg that opened with one (framework ADR 0052 §3: who speaks
+    each line of a meet), else nothing (a leg of a home with no record, or a meet opened before)."""
+    ref = leg.get("identity_ref")
+    return {"identity_ref": dict(ref)} if isinstance(ref, dict) else {}
+
+
 class EntityMeetHost:
     """Open/relay/close a two-entity meet as two correlated visit legs,
     with a durable index so meets survive a gateway restart."""
@@ -138,8 +145,10 @@ class EntityMeetHost:
             "meet_id": meet_id,
             "visit_id": visit_id,
             "convener": conv,
-            "a": {"name": name_a, "slug": man_a.slug, "run_id": leg_a["run_id"], "entity_id": man_a.entity_id},
-            "b": {"name": name_b, "slug": man_b.slug, "run_id": leg_b["run_id"], "entity_id": man_b.entity_id},
+            "a": {"name": name_a, "slug": man_a.slug, "run_id": leg_a["run_id"], "entity_id": man_a.entity_id,
+                  **_ref_of(leg_a)},
+            "b": {"name": name_b, "slug": man_b.slug, "run_id": leg_b["run_id"], "entity_id": man_b.entity_id,
+                  **_ref_of(leg_b)},
             "pending": None,  # A7: a half-delivered exchange waiting to reach the listener
         }
         with self._lock:
@@ -149,8 +158,8 @@ class EntityMeetHost:
             "meet_id": meet_id,
             "visit_id": visit_id,
             "convener": conv,
-            "a": {"entity_id": man_a.entity_id, "run_id": leg_a["run_id"]},
-            "b": {"entity_id": man_b.entity_id, "run_id": leg_b["run_id"]},
+            "a": {"entity_id": man_a.entity_id, "run_id": leg_a["run_id"], **_ref_of(leg_a)},
+            "b": {"entity_id": man_b.entity_id, "run_id": leg_b["run_id"], **_ref_of(leg_b)},
         }
 
     # ----------------------------------------------------------------- relay
@@ -187,7 +196,7 @@ class EntityMeetHost:
         )
         speaker_reply = str(spoken.get("reply") or "")
         spoke_view = {"entity_id": speaker_leg["entity_id"], "reply": speaker_reply,
-                      "status": spoken.get("status"), "turn_n": spoken.get("turn_n")}
+                      "status": spoken.get("status"), "turn_n": spoken.get("turn_n"), **_ref_of(speaker_leg)}
 
         # Persist the pending delivery BEFORE the listener leg ticks (A7).
         with self._lock:
@@ -216,7 +225,7 @@ class EntityMeetHost:
             text=str(pending.get("text") or ""), speaker=str(pending.get("speaker") or ""),
         )
         return {"entity_id": listener_leg["entity_id"], "reply": str(heard.get("reply") or ""),
-                "status": heard.get("status"), "turn_n": heard.get("turn_n")}
+                "status": heard.get("status"), "turn_n": heard.get("turn_n"), **_ref_of(listener_leg)}
 
     def _clear_pending(self, meet: Dict[str, Any]) -> None:
         with self._lock:
@@ -261,8 +270,8 @@ class EntityMeetHost:
             "visit_id": meet["visit_id"],
             "convener": meet.get("convener"),
             "pending": bool(meet.get("pending")),
-            "a": {"entity_id": meet["a"]["entity_id"], **self._leg_status(meet["a"])},
-            "b": {"entity_id": meet["b"]["entity_id"], **self._leg_status(meet["b"])},
+            "a": {"entity_id": meet["a"]["entity_id"], **self._leg_status(meet["a"]), **_ref_of(meet["a"])},
+            "b": {"entity_id": meet["b"]["entity_id"], **self._leg_status(meet["b"]), **_ref_of(meet["b"])},
         }
 
     def _leg_status(self, leg: Dict[str, Any]) -> Dict[str, Any]:
