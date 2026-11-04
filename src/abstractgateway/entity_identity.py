@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,8 +120,20 @@ def choice_from_body(avatar: Any, voice: Any) -> Tuple[AvatarChoice, Optional[Vo
     return chosen_avatar, chosen_voice
 
 
-def identity_refusal_body(e: Exception) -> Tuple[int, Dict[str, Any]]:
-    """(status, JSON body) of a refused or invalid identity, one shape for every door."""
+def without_paths(message: str, *roots: Any) -> str:
+    """`message` with the given directories removed from the front of the paths it names
+    (`/data/entities/castor/identity.json` -> `castor/identity.json`): an answer names the file, the
+    gateway log keeps the full path. Exact prefixes the caller knows, never a guess."""
+    out = str(message)
+    for root in roots:
+        if root:
+            out = out.replace(str(Path(root)) + os.sep, "")
+    return out
+
+
+def identity_refusal_body(e: Exception, *, root: Any = None) -> Tuple[int, Dict[str, Any]]:
+    """(status, JSON body) of a refused or invalid identity, one shape for every door. An unreadable
+    record names its file relative to `root` (the entities folder); the full path goes to the log."""
     if isinstance(e, IdentityRefused):
         content: Dict[str, Any] = {"detail": e.detail}
         if e.error:
@@ -129,7 +142,8 @@ def identity_refusal_body(e: Exception) -> Tuple[int, Dict[str, Any]]:
     if isinstance(e, IdentityInvalid):
         return 400, {"detail": str(e), "field": e.field}
     if isinstance(e, IdentityUnreadable):
-        return 409, {"detail": f"The identity record can't be read, so it is not changed or served: {e}"}
+        logger.error("identity: unreadable record: %s", e)
+        return 409, {"detail": f"The identity record can't be read, so it is not changed or served: {without_paths(str(e), root)}"}
     raise e
 
 

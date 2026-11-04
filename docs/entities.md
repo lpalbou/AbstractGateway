@@ -73,6 +73,21 @@ abstractgateway entity card Castor         # the identity card: a page to know y
 abstractgateway entity verify Castor       # both attestation chains + the spark hash
 ```
 
+Through the running gateway's routes (`--url`, else the gateway running for this data dir;
+`--token`, else `$ABSTRACTGATEWAY_AUTH_TOKEN`, else this data dir's bootstrap admin token for a
+loopback URL; `--json` prints the route's payload; a refusal prints the gateway's sentence and
+exits 2):
+
+```bash
+abstractgateway entity identity get Castor [--rev N]     # its look, voice, reference, fingerprint, age
+abstractgateway entity identity set Castor --style watch-lotus --color "#3366cc" \
+    --provider kokoro --model kokoro-82m --voice am_adam [--speed 1.1] [--quality-preset P]
+abstractgateway entity record Castor [--track-record | --reputation | --acquaintances] [--since ISO]
+```
+
+`entity record` prints "No experience yet" where nothing was counted, and says what the numbers
+mean: success is the work finishing (completion rate only); how good it was is not assessed yet.
+
 HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 
 | Method | Path | What it does |

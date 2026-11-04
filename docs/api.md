@@ -214,6 +214,18 @@ writes it; an origin sent by the client is replaced. Runs started before this
 field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
 (it marks the runs this gateway's runner ticks); the person is `origin.actor`.
 
+A conversation can carry a temporary identity (framework ADR 0052 §9, a regular agent's look and
+voice): `identity: {avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`
+on `POST /runs/start`, with a `session_id` (400 without one). It is checked like an entity's
+`PUT /entities/{name}/identity` (the design in this gateway's avatar catalog and drawable on the
+Watch, the voice offered, its model downloaded; 400 / 409 with the same sentences) and kept on the
+session (`<data dir>/session_identities.json`, never in an entity home). Every run of the session
+carries it: the record at `input_data._runtime.identity` and its reference at
+`input_data._runtime.identity_ref` (`{"of": "session:<sid>", "rev": n}`). A later turn without
+`identity` inherits it; a turn with another one changes it (`rev + 1`). A session that names none
+records none (no Assistant identity exists on the gateway): its runs carry no reference and speak
+as before. `_runtime.identity` and `_runtime.identity_ref` sent by a client are dropped.
+
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
 
 #### The gateway default agent workflow (`flow_id: "@default"`)
@@ -2285,6 +2297,11 @@ Speech options on `/voice/tts`: `speed` (a multiplier; engines without a native 
 time-stretch the audio, see `/voice/compatibility`) and `one_shot: true` (the whole text as one
 take with one voice, never segmented; refused beyond the engine's limit, e.g. 1000 characters on
 Qwen3-TTS). `/voice/tts/stream` refuses `one_shot` (422): a stream delivers the take in pieces.
+
+A run carrying its conversation's identity (`_runtime.identity`, above) speaks with that identity's
+voice when the request names none of `provider`, `model`, `voice`, `profile`: `/voice/tts` then
+answers `identity_ref` and both routes send the `X-Identity-Ref` header (`session:<sid>#<rev>`). A
+request naming a voice field passes untouched, without a reference.
 
 `/voice/tts` returns a durable audio artifact after synthesis. `/voice/tts/stream`
 returns JSON Lines stream events for progressive playback when discovery advertises

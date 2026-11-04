@@ -183,7 +183,7 @@ def _birth_identity(name: str, chosen: Optional[Tuple[Any, Any]], appearance: Op
         if voice is None:  # the default voice went away since the check before creation
             from ..entity_identity import no_voice_sentence
 
-            raise IdentityRefused(409, f"appearance not recorded: {no_voice_sentence(manifest.name)}")
+            raise IdentityRefused(400, f"appearance not recorded: {no_voice_sentence(manifest.name)}")
         style = style_for_shape(appearance["shape"], avatar.style, manifest.entity_id) if "shape" in appearance else avatar.style
         chosen = (AvatarChoice(style=style, color=appearance.get("color", avatar.color), source="chosen"), voice)
     if chosen is not None:
@@ -248,7 +248,7 @@ def create_entity(req: CreateEntityRequest) -> Any:
 
         if gateway_default_voice(_registry().data_dir) is None:
             raise HTTPException(
-                status_code=409,
+                status_code=400,
                 detail=f"{req.name}'s look can be chosen with a voice: set the Gateway default voice, or give "
                 "identity with a voice instead of appearance.",
             )
@@ -5396,7 +5396,9 @@ def _identity_response(e: Any) -> Any:
 
     from ..entity_identity import identity_refusal_body
 
-    status, content = identity_refusal_body(e)
+    # Every caller is an entity route of this plane: an unreadable record is named from its entities
+    # folder (`castor/identity.json`), never by its absolute path.
+    status, content = identity_refusal_body(e, root=_registry().entities_dir)
     return JSONResponse(status_code=status, content=content)
 
 
@@ -5572,7 +5574,7 @@ def _put_appearance_through_identity(registry: Any, manifest: Any, record: Any, 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if record.voice is None:
-        raise HTTPException(status_code=409, detail=no_voice_sentence(manifest.name) + ", then change its look.")
+        raise HTTPException(status_code=400, detail=no_voice_sentence(manifest.name) + ", then change its look.")
     style = record.avatar.style
     if "shape" in given:
         style = style_for_shape(given["shape"], style, manifest.entity_id)
@@ -5805,7 +5807,13 @@ def _entity_tts_request(name: str, req: "GatewayVoiceTTSRequest") -> Tuple[Any, 
     try:
         record = _read_home_identity(home_dir)
     except Exception as e:  # noqa: BLE001 - IdentityUnreadable: an unreadable record never speaks another voice
-        raise HTTPException(status_code=409, detail=f"{manifest.name}'s identity record can't be read, so it does not speak: {e}")
+        from ..entity_identity import without_paths
+
+        logger.error("identity: %s: unreadable record, the TTS lane refuses: %s", manifest.slug, e)
+        raise HTTPException(
+            status_code=409,
+            detail=f"{manifest.name}'s identity record can't be read, so it does not speak: {without_paths(str(e), registry.entities_dir)}",
+        )
     ref = None
     if record is not None and not names_voice:
         if record.voice is None:

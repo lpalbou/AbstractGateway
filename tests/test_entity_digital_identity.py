@@ -358,7 +358,7 @@ def test_a_voiceless_default_refuses_a_legacy_look_change_and_the_tts_lane(door,
     assert _identity_file(entities, "castor")["voice"] is None
     sentence = "Castor has no voice yet: choose one in its Identity settings or set the Gateway default voice"
     r = c.put("/api/gateway/entities/castor/appearance", json={"color": "#112233"})
-    assert r.status_code == 409 and r.json()["detail"].startswith(sentence), r.text
+    assert r.status_code == 400 and r.json()["detail"].startswith(sentence), r.text  # the ladder's voice rung
     assert c.get("/api/gateway/entities/castor/voice").json()["note"] == sentence
     r = c.post("/api/gateway/entities/castor/voice/tts", json={"text": "hello"})
     assert r.status_code == 409 and r.json()["detail"] == sentence
@@ -535,3 +535,16 @@ def test_the_identity_card_shows_biography_marker_rows_with_their_time(door) -> 
     identity = [m for m in moments if m["kind"] == "identity_changed"]
     # rev 1 (the birth default: biography row only) and rev 2 (the door's host marker wins its row).
     assert sorted(m["details"].get("rev") for m in identity) == [1, 2] and all(m["at"] for m in identity)
+
+
+def test_an_unreadable_record_is_named_without_its_absolute_path(door) -> None:
+    """The answer names the entity's file (`castor/identity.json`) and the reason; the gateway log
+    keeps the absolute path."""
+    c, entities = door["c"], door["entities"]
+    _born(c, "Castor")
+    (entities / "castor" / "identity.json").write_text("{not json", encoding="utf-8")
+    for r in (c.get("/api/gateway/entities/castor/identity"), c.get("/api/gateway/entities/castor/voice"),
+              c.post("/api/gateway/entities/castor/voice/tts", json={"text": "hi"})):
+        assert r.status_code == 409, r.text
+        detail = r.json()["detail"]
+        assert "castor/identity.json" in detail and str(entities) not in detail, detail

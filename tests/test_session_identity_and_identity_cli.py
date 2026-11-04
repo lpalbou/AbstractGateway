@@ -272,6 +272,27 @@ def test_cli_identity_get_and_set_go_through_the_routes(entity_gw, capsys) -> No
     assert code == 2 and "can't be drawn on the Watch" in capsys.readouterr().err
 
 
+def test_cli_record_reads_the_record_routes(entity_gw, capsys) -> None:
+    assert _cli(["entity", "record", "castor"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Track record of entity:castor") and "No experience yet." in out and "completion rate only" in out
+    assert entity_gw.transport.calls[-1][:2] == ("GET", "/entities/castor/track-record")
+    assert _cli(["entity", "record", "castor", "--reputation"]) == 0
+    assert "Reputation of entity:castor: No experience yet" in capsys.readouterr().out
+    assert _cli(["entity", "record", "castor", "--acquaintances"]) == 0
+    assert "Entities: none yet" in capsys.readouterr().out
+    assert _cli(["entity", "record", "castor", "--reputation", "--since", "2026-11-01"]) == 2
+
+
+def test_the_record_routes_name_an_unreadable_file_without_its_absolute_path(entity_gw) -> None:
+    home = Path(entity_gw.data_dir) / "entities" / "castor"  # type: ignore[attr-defined]
+    (home / "identity.json").write_text("{not json", encoding="utf-8")
+    r = entity_gw.get("/api/gateway/entities/castor/track-record", headers=HEADERS)
+    assert r.status_code == 500 and r.json()["detail"]["reason_code"] == "record_unreadable", r.text
+    message = r.json()["detail"]["message"]
+    assert "castor/identity.json" in message and str(home.parent) not in message, message
+
+
 def test_cli_record_prints_plain_words(monkeypatch, capsys) -> None:
     """`entity record` renders the routes' payloads (the runtime's to_dict shapes, built here from
     the runtime's own types): "No experience yet" at support 0, the completion-rate basis spelled out."""
