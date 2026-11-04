@@ -2809,6 +2809,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <tbody id="models-table"></tbody>
 	                </table>
 	              </div>
+	              <div id="models-idle-unload"></div>
 	            </section>
 	            <section id="models-caches-section" class="session-only">
 	              <div class="section-head">
@@ -11628,6 +11629,87 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function modelRowKey(row) {
 	      return row.runtime_id || `${row.provider || ""}/${row.model || ""}`;
 	    }
+	    // Idle unload (root backlog 1115): one plain line per loaded model, from what the runtime
+	    // reports for the models in its process (`idle_unload_s`: 0 = off, null = not reported;
+	    // `idle_unload_at`: null while locked or in use; `in_use`, `locked_by`, `last_used_at`).
+	    // Nothing is computed from the gateway's own setting or guessed from a missing field, so the
+	    // line never promises what the runtime does not do; nothing reported, no line.
+	    function idleUnloadMinutes(ms) {
+	      const m = Math.max(0, Math.round(ms / 60000));
+	      return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+	    }
+	    function idleUnloadLine(row, nowMs) {
+	      if (!row || row.resident !== true) return "";
+	      if (row.locked === true || (Array.isArray(row.locked_by) && row.locked_by.length)) return "Kept loaded: never unloads";
+	      if (row.in_use === true) return "In use now";
+	      const now = typeof nowMs === "number" ? nowMs : Date.now();
+	      const at = row.idle_unload_at ? Date.parse(row.idle_unload_at) : NaN;
+	      const used = row.last_used_at ? Date.parse(row.last_used_at) : NaN;
+	      if (isFinite(at)) {
+	        const left = at - now;
+	        const when = left > 0 ? `unloads in ${idleUnloadMinutes(left)}` : "unloads now";
+	        return isFinite(used) ? `Unused for ${idleUnloadMinutes(now - used)}, ${when}` : when.charAt(0).toUpperCase() + when.slice(1);
+	      }
+	      if (row.idle_unload_s === 0) return "Stays loaded: unloading unused models is off";
+	      return "";
+	    }
+	    // The setting (GET/POST /admin/runtime-config `models.idle_unload_minutes`): one number field,
+	    // its source, and the launch flag when it wins.
+	    function idleUnloadSettingMarkup(entry, writable, note) {
+	      if (!entry || typeof entry !== "object") return "";
+	      const value = Number.isInteger(entry.value) ? entry.value : "";
+	      const flag = entry.source === "flag";
+	      const dis = writable && !flag ? "" : " disabled";
+	      const why = flag ? `Set for this run by the launch flag ${entry.flag || "--model-idle-unload"}` : (!writable ? "Only an admin can change this" : "");
+	      const source = flag ? "launch flag" : entry.source === "stored" ? "saved" : "default";
+	      let out = `<div class="ui-apps-setting" data-idle-unload-setting><div class="ui-apps-setting__head">`
+	        + `<label for="models-idle-unload-input">${esc(entry.label || "Unload unused models after (minutes)")}</label>`
+	        + (note ? `<span class="ui-row-saved tone-${esc(note.tone)}" role="status">${esc(note.text)}</span>` : "") + `</div>`
+	        + `<input type="number" min="0" step="1" inputmode="numeric" id="models-idle-unload-input" data-idle-unload-input style="width: 7rem" value="${esc(String(value))}" title="${esc(why || entry.help || "")}"${dis}>`
+	        + ` <span class="muted" data-idle-unload-source>${esc(source)}</span>`
+	        + `<p class="ui-net-proxy__text">${esc(entry.help || "")}</p>`;
+	      if (why) out += `<p class="ui-net-proxy__text">${esc(why)}.</p>`;
+	      return out + `</div>`;
+	    }
+	    const idleUnloadStore = { data: null, writable: false, note: null, busy: false, wired: false };
+	    function idleUnloadRender() {
+	      const el = $("models-idle-unload");
+	      if (!el) return;
+	      el.innerHTML = idleUnloadSettingMarkup(idleUnloadStore.data, idleUnloadStore.writable && !idleUnloadStore.busy, idleUnloadStore.note);
+	      if (!idleUnloadStore.wired) {
+	        idleUnloadStore.wired = true;
+	        el.addEventListener("change", (event) => {
+	          const t = event && event.target;
+	          if (t && t.matches && t.matches("[data-idle-unload-input]")) idleUnloadSave(String(t.value || "").trim());
+	        });
+	      }
+	    }
+	    async function idleUnloadRefresh() {
+	      try {
+	        const cfg = await api("/api/gateway/admin/runtime-config");
+	        idleUnloadStore.data = cfg ? cfg["models.idle_unload_minutes"] : null;
+	        idleUnloadStore.writable = !!(cfg && cfg.writable);
+	      } catch (err) {
+	        idleUnloadStore.data = null;
+	      }
+	      idleUnloadRender();
+	    }
+	    async function idleUnloadSave(raw) {
+	      if (idleUnloadStore.busy) return;
+	      idleUnloadStore.busy = true;
+	      idleUnloadStore.note = null;
+	      idleUnloadRender();
+	      try {
+	        const cfg = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ "models.idle_unload_minutes": raw === "" ? null : raw }) });
+	        idleUnloadStore.data = cfg ? cfg["models.idle_unload_minutes"] : idleUnloadStore.data;
+	        idleUnloadStore.note = { tone: "ok", text: "Saved" };
+	      } catch (err) {
+	        const data = (err && err.data) || {};
+	        idleUnloadStore.note = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
+	      }
+	      idleUnloadStore.busy = false;
+	      idleUnloadRender();
+	    }
 	    function residencyPill(row) {
 	      // TRI-STATE, three visually distinct renderings: true (ok green),
 	      // false = a configured/cached row NOT in memory (plain muted, said in
@@ -12018,6 +12100,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          held.className = "muted";
 	          held.textContent = `held by ${row.held_by.join("; ")}`;
 	          resTd.append(held);
+	        }
+	        const idleLine = idleUnloadLine(row);
+	        if (idleLine) {
+	          const idle = document.createElement("div");
+	          idle.className = "muted idle-unload-line";
+	          idle.textContent = idleLine;
+	          resTd.append(idle);
 	        }
 	        // The slot pool (core ADR 0011): how many requests run and wait on this one copy, and
 	        // why another slot is not built ("needs 8.3 GiB ..., 1.0 GiB free").
@@ -12454,6 +12543,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // <option>s every 5s flicks an open suggestion popup shut.
 	      renderModelsLoadForm({ rebuildOptions: !quiet });
           renderResourcesDashboard(data);
+	      // The idle-unload setting under the Models table (root backlog 1115): read once.
+	      if (!idleUnloadStore.data && !idleUnloadStore.busy) idleUnloadRefresh();
 	    }
 	    async function loadHostState({ quiet = false, widgetOnly = false } = {}) {
 	      if (!state.principal) return;

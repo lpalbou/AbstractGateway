@@ -1495,6 +1495,14 @@ fn models_section(
         if let Some(lu) = &r.last_used_at {
             bits.push(format!("last used {lu}"));
         }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let idle = r.idle_unload_line(now);
+        if !idle.is_empty() {
+            bits.push(idle);
+        }
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
             .child(badge(&t, label, tone))
