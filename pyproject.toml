@@ -49,9 +49,11 @@ dependencies = [
   # 0.16.0: `run_facade.decide` and the `decide` flow node.
   # 0.17.0: `EffectInterrupted` (a gateway stop interrupts a run, never fails it), `update_kind` in
   # replay, the slot-pool listing fields, and the discovery facade's `ModelNotDownloadedError`.
-  # 0.18.0: `set_model_idle_unload` and `set_model_residency_locks` on the host facade (the idle
-  # unload setting and Keep loaded across restarts, root backlog 1115).
-  "AbstractRuntime>=0.18.0",
+  # 0.18.0: `abstractruntime.identity.digital_identity` (the entity's identity record: framework ADR 0052,
+  # entity_identity.py), `set_model_idle_unload` and `set_model_residency_locks` on the host facade
+  # (the idle unload and Keep loaded across restarts, root backlog 1115).
+  # 0.18.1: replay `public_update` messages carry the run's `identity_ref`.
+  "AbstractRuntime>=0.18.1",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -127,6 +129,11 @@ dependencies = [
   # Entity homes store the attested spark as YAML (spark.yaml). Previously
   # only transitive via uvicorn[standard]; declared because it is load-bearing.
   "pyyaml>=5.1",
+  # The avatar design catalog (framework ADR 0052): an entity's identity names an abstractavatar
+  # design; the door refuses a design the loaded catalog does not have or cannot draw on the Watch,
+  # and the recorded default is written only with a verifiable design. 0.1.1: the frozen catalog
+  # (44 designs, `watch_code`), wheels for macOS, Linux (manylinux 2.28) and Windows.
+  "abstractavatar>=0.1.1",
 ]
 
 [project.optional-dependencies]
@@ -167,7 +174,7 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.18.0",
+  "AbstractRuntime[apple]>=0.18.1",
   "abstractagent[apple]>=0.6.0",
   "AbstractMemory[all-apple]>=0.4.0",
 ]
@@ -175,7 +182,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.18.0",
+  "AbstractRuntime[gpu]>=0.18.1",
   "abstractagent[gpu]>=0.6.0",
   "AbstractMemory[all-gpu]>=0.4.0",
 ]

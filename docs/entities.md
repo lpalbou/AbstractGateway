@@ -89,6 +89,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/chat` | Is a visit open on this home right now? (one life, one summon) |
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
+| GET | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances` | What it has done (runs, successes, failures, tokens, per kind of task), how far it can be trusted per kind of task (with how many outcomes that rests on), and the entities and humans it met. Derived from its home's records; nothing is stored. See [API: track record, reputation and acquaintances](./api.md#track-record-reputation-and-acquaintances). |
 
 ### The entity's mind and voice
 
@@ -97,8 +98,31 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
 | GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
 | PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
-| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). |
-| GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list |
+| GET | `/api/gateway/entities/{name}/identity[?rev=N]` | Its digital identity (framework ADR 0052): `{entity_id, identity: {rev, avatar: {style, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}`. `?rev=N` serves an earlier revision from the home's biography. A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409). |
+| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one this gateway offers (400, the offered voices); its model is not downloaded (409, `error.download`). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). On a home with an identity record: served from the record (`source: identity`, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and `clear` is refused (409). |
+| GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list. On a home with an identity record: the record's colour and the shape its design draws (`watch-shape-<shape>`, else `planet`; `source: identity`); a PUT changes the record's look (what is not given keeps its value; the voice is kept), `clear` is refused (409), and a record with no voice yet refuses a look change with its sentence. |
+
+**The digital identity.** Every entity has one record in its home, `identity.json`
+(AbstractRuntime's format): an avatar design from the abstractavatar catalog, its
+colour, and its voice. An entity born now gets its identity at birth: the one
+`POST /entities` names in `identity` (checked before anything is created), else the
+recorded default (a design and colour computed from its id, the gateway's default
+voice as a value, or no voice when the gateway has none); a birth `appearance` becomes
+the default's look (a chosen look needs a voice: refused before creation when the
+gateway has no default voice). Each existing home without a record gets the recorded
+default once when the gateway starts (a home closed for maintenance is skipped and
+logged, a record is never overwritten), else at its first `GET /identity`. A later
+change of the gateway's default voice never changes a recorded identity. The entity
+speaks with the record's voice only: its TTS lanes answer `voice_source: identity`,
+`identity_ref` and the `X-Identity-Ref` header (`entity:castor#3`), and a record with
+no voice refuses with "Castor has no voice yet: choose one in its Identity settings
+or set the Gateway default voice". The reference also rides each visit
+(`_runtime.identity_ref`, beside the signed stamp, and on the open response), each
+meet leg, relay row and status row, and each public update row of a visit; a home
+without a record carries none. The list rows carry `identity` (the record with its
+`watch_code`, or null). Visits, meet legs and summons record who started them
+(`_meta.origin`: kind `person`, actor the same `person:<user>` as the participants).
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still

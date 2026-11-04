@@ -1444,6 +1444,22 @@ def begin_gateway_boot() -> None:
                     print(f"[INFO] accounts: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker; the next boot retries
                 logging.getLogger("abstractgateway.service").warning("entity account migration failed", exc_info=True)
+            # Digital identity (framework ADR 0052 §2b): every existing entity home without an
+            # identity record gets its recorded default, once; a held home is skipped, a record is
+            # never overwritten; one log line per home (entity_identity.boot_pass).
+            try:
+                from .entity_access import entities_dirs
+                from .entity_identity import boot_pass
+
+                counts = boot_pass(entities_dirs())
+                if counts.get("written"):
+                    print(
+                        f"[INFO] identity: {counts['written']} entity home(s) got their recorded default identity",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            except Exception:  # noqa: BLE001 - never a boot blocker; the next boot or GET /identity records it
+                logging.getLogger("abstractgateway.service").warning("identity boot pass failed", exc_info=True)
             _boot_checkpoint()
             start_gateway_runner()
             _boot_checkpoint()

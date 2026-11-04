@@ -144,6 +144,12 @@ HOST_MARKER_KINDS = (
     # voice defaults (per-principal capability plane) get NO biography
     # marker — an entity's story records changes to ITS voice.
     "voice_changed",
+    # Digital identity change (framework ADR 0052, backlog 1119): the entity's look and voice,
+    # one record in its home. Recorded inside the runtime writer's check, so a marker that cannot be
+    # written refuses the change before the home's own `identity_changed` biography row and the file.
+    # Details: rev, from/to (whole records), by, as, door. A home with a record writes this kind for a
+    # voice change too (the legacy PUT /voice writes through the record).
+    "identity_changed",
     # Skills-selection change (laurent c2857; the c2838 committed shape):
     # WHAT an entity is taught changing is the capability-map class —
     # marker-first, old/new selection (names + phases — operator vocabulary,
