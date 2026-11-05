@@ -113,16 +113,19 @@ def _project_version(text: str) -> str:
 
 
 def release_assembly(base: str) -> List[str]:
-    """The version a release pull request assembles (else []): it deletes fragments, leaves none in
+    """The version a release pull request assembles (else []): it folds every fragment, leaves none in
     changelog.d/, and adds `## [<pyproject [project].version>] - <date>` to CHANGELOG.md, a section the
-    base did not have. A feature PR that deletes a fragment or adds some other heading is not one."""
+    base did not have. A feature PR that deletes a fragment or adds some other heading is not one.
+
+    A patch release from a base with no fragment left (everything was folded by the previous release:
+    the 0.20.1 re-cut of a tag that never published) has none to delete: it is a release by the same
+    rule (no fragment left, the dated section of the pyproject version added, not released before)."""
     def _git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
     mb = _git("merge-base", base, "HEAD").split()[0]
-    deleted = [p for p in _git("diff", "--name-only", "--diff-filter=D", mb, "HEAD").splitlines()
-               if p.startswith("changelog.d/") and p.endswith(".md") and not p.lower().endswith("readme.md")]
-    if not deleted or fragment_files(ROOT / "changelog.d"):
+    # No fragment may be left (a fragment the base had and the PR did not fold is still there).
+    if fragment_files(ROOT / "changelog.d"):
         return []
     version = _project_version((ROOT / "pyproject.toml").read_text(encoding="utf-8")) if (ROOT / "pyproject.toml").exists() else ""
     if not version:
