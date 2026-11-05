@@ -131,60 +131,89 @@ def _all_pages(c: TestClient, limit: int) -> list:
             return seen
 
 
+_SECTION_RANK = {"active": 0, "paused": 1, "archived": 2}
+
+
+def _by_the_rule(items: list) -> list:
+    """The ids in the order ADR 0048 gives the rows' OWN recorded stamps: active first, then paused,
+    each by last activity newest first, ties by id descending. Applied to the very response the test
+    reads, so an activity stamp moving between two reads (a controller tick) can never race it."""
+    rows = sorted(items, key=lambda s: s["automation_id"], reverse=True)
+    rows = sorted(rows, key=lambda s: s["last_activity_at"], reverse=True)
+    rows = sorted(rows, key=lambda s: _SECTION_RANK[s["section"]])
+    return [s["automation_id"] for s in rows]
+
+
+def _row(body: dict, aid: str) -> dict:
+    return next(s for s in body["items"] if s["automation_id"] == aid)
+
+
 def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_row(live: TestClient) -> None:
+    """The listing order is checked against the stamps each response carries, never against the
+    order of the test's own actions. CI main 8a12518: A, B and C were created within one stamp, so
+    the tie rule (id descending) ordered them, not their creation order; and a controller tick can
+    move an automation's activity at any time."""
     a, b, c = (_create(live, rid) for rid in ("A", "B", "C"))
-    # Created A, B, C: the newest change first.
     body = _listing(live)
-    assert [s["automation_id"] for s in body["items"]] == [c, b, a]
+    assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"]) and len(body["items"]) == 3
     assert all(s["section"] == "active" and s["last_activity_at"] for s in body["items"])
     assert body["paused_automations_count"] == 0 and body["archived_automations_count"] == body["archived_automations"] == 0
+    created = {s["automation_id"]: s["last_activity_at"] for s in body["items"]}
 
-    # A runs: its last activity is now the newest, it leads the list.
+    # A runs: its activity moves; the list follows the rule over the new stamps.
     _command(live, a, "automation.run_now", "run-a")
+
     def a_ran():
-        first = _listing(live)["items"][0]
-        return first["automation_id"] == a and (first.get("last_occurrence") or {}).get("status") == "completed"
+        row = _row(_listing(live), a)
+        return (row.get("last_occurrence") or {}).get("status") == "completed" and row["last_activity_at"] > created[a] or None
 
     wait_until(a_ran, timeout_s=20)
-    assert [s["automation_id"] for s in _listing(live)["items"]] == [a, c, b]
+    body = _listing(live)
+    assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"])
 
-    # C is paused: it leaves the active rows and closes the list, in the paused section,
-    # even though its change is newer than an active row's. Compared with B (created, never run:
-    # its activity is fixed), not A: A's controller records its finished occurrence after the
-    # listing already shows it completed, so A's activity can still move past the pause
-    # (CI run 41634801108, 3.12 shard 2: A 37.031 s vs the pause at 36.932 s).
-    before_pause = {s["automation_id"]: s["last_activity_at"] for s in _listing(live)["items"]}
+    # C is paused: it moves to the paused section and closes the list, whatever its stamp.
+    before_pause = _row(_listing(live), c)["last_activity_at"]
     _command(live, c, "automation.pause", "pause-c")
 
     def c_paused_and_recorded():
-        # The listing can show `paused` from a controller save whose activity time has not moved
-        # yet (release gate 16f2a1aa, 3.10 shard 2: equal to the microsecond); wait for both, so
-        # the order is checked against the recorded pause, never against the moment it flips.
-        row = next(s for s in _listing(live)["items"] if s["automation_id"] == c)
-        return row["status"] == "paused" and row["last_activity_at"] > before_pause[c] or None
+        # The pause is recorded when C is paused AND its activity moved (a save can flip the status
+        # before the one that stamps the time: release gate 16f2a1aa).
+        row = _row(_listing(live), c)
+        return row["status"] == "paused" and row["last_activity_at"] > before_pause or None
 
     wait_until(c_paused_and_recorded)
     body = _listing(live)
-    assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(a, "active"), (b, "active"), (c, "paused")]
-    assert body["paused_automations_count"] == 1
-    paused_row = body["items"][-1]
-    assert paused_row["status"] == "paused" and paused_row["last_activity_at"] > before_pause[c]
-    assert paused_row["last_activity_at"] > body["items"][1]["last_activity_at"] == before_pause[b]
+    order = [s["automation_id"] for s in body["items"]]
+    assert order == _by_the_rule(body["items"]) and order[-1] == c and set(order[:2]) == {a, b}
+    assert [s["section"] for s in body["items"]] == ["active", "active", "paused"]
+    assert body["paused_automations_count"] == 1 and body["items"][-1]["status"] == "paused"
 
-    # Every page of a paged walk follows the same order, each row exactly once.
+    # Every page of a paged walk follows the same order, each row exactly once. A walk spans several
+    # requests: it is compared with a listing taken right after it (a client refreshes from the
+    # first page when a stamp moved under it, the listing's contract).
     for limit in (1, 2):
-        assert [s["automation_id"] for s in _all_pages(live, limit)] == [a, b, c]
+        def walk_matches():
+            walked = [s["automation_id"] for s in _all_pages(live, limit)]
+            return walked == [s["automation_id"] for s in _listing(live)["items"]] and len(set(walked)) == 3 or None
+
+        wait_until(walk_matches)
 
     # `status=paused` is the paused section alone, same order and count.
     only_paused = _listing(live, "?status=paused")
     assert [s["automation_id"] for s in only_paused["items"]] == [c] and only_paused["paused_automations_count"] == 1
 
-    # Resumed, C is active again and its resume is the newest activity.
+    # Resumed, C is active again, its resume is recorded activity, and the order is the rule's.
+    paused_at = _row(_listing(live), c)["last_activity_at"]
     _command(live, c, "automation.resume", "resume-c")
-    wait_until(lambda: _status(live, c) == "active" or None)
+
+    def c_resumed_and_recorded():
+        row = _row(_listing(live), c)
+        return row["status"] == "active" and row["last_activity_at"] > paused_at or None
+
+    wait_until(c_resumed_and_recorded)
     body = _listing(live)
-    assert [(s["automation_id"], s["section"]) for s in body["items"]] == [(c, "active"), (a, "active"), (b, "active")]
-    assert body["paused_automations_count"] == 0
+    assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"])
+    assert all(s["section"] == "active" for s in body["items"]) and body["paused_automations_count"] == 0
 
 
 def test_archived_rows_carry_their_section_and_a_foreign_cursor_is_refused(live: TestClient) -> None:
