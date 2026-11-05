@@ -101,9 +101,9 @@ def test_benchmark_11500_quiet_runs_probe_under_1ms_and_reads_no_file(tmp_path: 
 
     busy = threading.Thread(target=neighbour, daemon=True)
     busy.start()
-    assert stated.wait(5), "the neighbour thread never ran"
     passes = 200
     try:
+        assert stated.wait(5), "the neighbour thread never ran"
         t = time.perf_counter()
         due = [_probe(r) for _ in range(passes)]
         per_pass = (time.perf_counter() - t) / passes
