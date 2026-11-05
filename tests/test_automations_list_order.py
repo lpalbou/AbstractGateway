@@ -170,6 +170,9 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     wait_until(a_ran, timeout_s=20)
     body = _listing(live)
     assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"])
+    # A fixed order from the recorded events (a server with lying stamps fails here): A's run is the
+    # newest activity, recorded after B's and C's creation, so A leads.
+    assert body["items"][0]["automation_id"] == a
 
     # C is paused: it moves to the paused section and closes the list, whatever its stamp.
     before_pause = _row(_listing(live), c)["last_activity_at"]
@@ -213,6 +216,9 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     wait_until(c_resumed_and_recorded)
     body = _listing(live)
     assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"])
+    # C's resume is recorded after B's creation (B never acted since): C lists before B.
+    order = [s["automation_id"] for s in body["items"]]
+    assert order.index(c) < order.index(b)
     assert all(s["section"] == "active" for s in body["items"]) and body["paused_automations_count"] == 0
 
 
