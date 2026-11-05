@@ -2392,8 +2392,10 @@ conversation continues.</p>
 <h3 id="a-reply-failed-with-the-model-host-stopped-while-answering">A reply failed with "The model host ... stopped while answering"<a class="headerlink" href="#a-reply-failed-with-the-model-host-stopped-while-answering" title="Permanent link">&para;</a></h3>
 <p>On Linux, macOS and Windows, models run in a child process by default (<code>--model-host process</code>, see
 <a href="../configuration/#model-host-the-models-run-in-a-supervised-child-process">configuration.md</a>). That
-child died during the request: a native crash in an engine (llama.cpp, transformers), an out-of-memory
-kill, the memory ceiling (<code>--model-host-memory-gb</code>) or three unanswered pings. The gateway kept running
+child died on its own during the request: a native crash in an engine (llama.cpp, transformers), an
+out-of-memory kill, the memory ceiling (<code>--model-host-memory-gb</code>) or three unanswered pings. (Stopping or
+restarting the gateway never causes this sentence: a run in flight is interrupted and continues when the
+gateway is back.) The gateway kept running
 and restarted it. Inspect the failed run before resubmitting any request with side effects;
 an in-flight request is not automatically replayed. The cause is in the incident file the sentence names
 (<code>&lt;data dir&gt;/incidents/model-host-*.json</code>: <code>kind</code>, <code>signal</code>, <code>rss_bytes_last</code>, <code>inflight</code>, <code>log_tail</code>)
@@ -2717,8 +2719,9 @@ the build's error: the next request answers that error once, then the build is t
    (<a href="#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">the watchdog entry</a>).</li>
 <li><code>run_index</code> shows how run listings are answered (<code>serve --run-index verify|trusted</code>) and
    <code>gc_tuning</code> whether the garbage-collector tuning is on (<code>serve --gc-tuning on</code>, the default).</li>
-<li>From a checkout, <code>scripts/perf/ci.sh</code> runs the same load test as CI against a synthetic data
-   folder and fails with the probe that went over its bound.</li>
+<li>From a checkout, <code>scripts/perf/ci.sh --enforce</code> runs the same load test as the nightly CI against a
+   synthetic data folder and fails with the probe that went over its limit (without <code>--enforce</code> it
+   reports the limits and exits 0, as on a pull request).</li>
 </ol>
 <p>See <a href="../configuration/#cli-flags">configuration.md</a>.</p>
 <h3 id="v1-answers-503-with-runner_unavailable"><code>/v1</code> answers <code>503</code> with <code>runner_unavailable</code><a class="headerlink" href="#v1-answers-503-with-runner_unavailable" title="Permanent link">&para;</a></h3>

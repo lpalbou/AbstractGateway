@@ -802,6 +802,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="List and read">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listing-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing order
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1328,6 +1345,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="List and read">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listing-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing order
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2054,7 +2088,7 @@ for a trigger with no clock time (manual, email).</p>
 <tbody>
 <tr>
 <td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;cursor=&amp;limit=</code></td>
-<td><code>{items: [AutomationSummary], next_cursor, archived_automations}</code>, newest first</td>
+<td><code>{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}</code>, in the <a href="#listing-order">listing order</a></td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}</code></td>
@@ -2067,13 +2101,40 @@ for a trigger with no clock time (manual, email).</p>
   <code>failed</code>, <code>archived</code>. <code>limit</code> is 1 to 200 (default 50).</li>
 <li>Archived automations are left out of the list unless you ask for them:
   <code>archived_only=true</code> lists only archived ones (it cannot be combined with
-  <code>status</code>), or name <code>archived</code> in <code>status</code>. <code>archived_automations</code> is how
-  many of yours are archived, on every page.</li>
-<li>Read every page, following <code>next_cursor</code> until it is <code>null</code>: older
-  scheduled runs (<a href="#older-scheduled-runs-legacy">Legacy</a>) come on the last
-  page. <code>changed_since</code> is refused (422 <code>unsupported_feature</code>); poll complete
+  <code>status</code>), or name <code>archived</code> in <code>status</code>. <code>paused_automations_count</code> and
+  <code>archived_automations_count</code> are how many of yours are paused and archived,
+  on every page, whatever the filter (<code>archived_automations</code> is the same
+  count as <code>archived_automations_count</code>).</li>
+<li>Read every page, following <code>next_cursor</code> until it is <code>null</code>.
+  <code>changed_since</code> is refused (422 <code>unsupported_feature</code>); poll complete
   pages instead.</li>
 </ul>
+<h3 id="listing-order">Listing order<a class="headerlink" href="#listing-order" title="Permanent link">&para;</a></h3>
+<p>The gateway serves the list in the order every app draws it, so no app sorts
+it again:</p>
+<ol>
+<li><strong>Active first.</strong> Every automation that is neither paused nor archived
+   (status <code>active</code>, <code>completed</code> or <code>failed</code>), most recent activity first.</li>
+<li><strong>Then paused</strong>, most recent activity first.</li>
+<li>Archived automations are their own listing (<code>archived_only=true</code>), most
+   recent activity first.</li>
+</ol>
+<p>Each row says where it belongs: <code>section</code> is <code>"active"</code>, <code>"paused"</code> or
+<code>"archived"</code>, and <code>last_activity_at</code> is the instant the order uses: the
+automation's last change. It moves whenever the automation itself changes (an
+occurrence started, retried or finished, a pause, resume, cancel or revision,
+an archive), never when someone reads it or marks its runs seen. Rows with the same instant are ordered by
+<code>automation_id</code>, descending. Older scheduled runs
+(<a href="#older-scheduled-runs-legacy">Legacy</a>) are placed by the same rule.</p>
+<p>Apps show the active rows, then a <strong>Paused</strong> section folded by default and
+labelled like Archived (an icon, "Paused" and <code>paused_automations_count</code>); see the
+framework's ADR 0048.</p>
+<p><code>next_cursor</code> continues this order where the page stopped. The order follows
+activity, so an automation that changes between two page reads may be served
+twice or not at all in that walk; the next refresh shows it. Refresh from the
+first page; never resume an old walk. A cursor from an
+earlier gateway (created-order <code>auto1:</code> cursors) is refused with 422
+<code>invalid_request</code> (<code>field: "cursor"</code>); start again from the first page.</p>
 <p><code>AutomationSummary</code>:</p>
 <div class="highlight"><pre><span></span><code>{"automation_id": "…", "title": "…",
  "status": "active",                  // active | paused | completed | failed | archived
@@ -2092,6 +2153,8 @@ for a trigger with no clock time (manual, email).</p>
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
+ "section": "active",                 // active | paused | archived (Listing order)
+ "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
 </code></pre></div>
@@ -2455,7 +2518,7 @@ independent automation's occurrences have <code>session_kind: "occurrence"</code
 <h2 id="older-scheduled-runs-legacy">Older scheduled runs (legacy)<a class="headerlink" href="#older-scheduled-runs-legacy" title="Permanent link">&para;</a></h2>
 <p>Schedules created with <code>POST /api/gateway/runs/schedule</code>
 (<a href="../api/#2b-schedule-a-run-bundle-mode">api.md</a>) are not converted. They
-appear on the last page of <code>GET /api/gateway/automations</code> with <code>legacy: true</code>,
+appear in <code>GET /api/gateway/automations</code>, placed by the <a href="#listing-order">listing order</a>, with <code>legacy: true</code>,
 <code>revision: null</code> and <code>capabilities: ["legacy"]</code>, and keep their own controls
 (<code>pause</code>, <code>resume</code>, <code>cancel</code> through <code>POST /api/gateway/commands</code>).</p>
 <ul>

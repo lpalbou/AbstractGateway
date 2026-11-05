@@ -1147,14 +1147,36 @@ container path is the recommended baseline for a single self-contained Gateway
 deployment because it packages the HTTP API, durable runner, AbstractRuntime,
 and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
-<p>Release images are published to GHCR. The default image is the light,
-portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.1
+<p>Release images are published to GHCR as <code>ghcr.io/lpalbou/abstractgateway</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Image</th>
+<th>Platforms</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;version&gt;</code> (for example <code>0.20.1</code>), <code>latest</code></td>
+<td>the light, portable server image</td>
+<td>linux/amd64, linux/arm64</td>
+</tr>
+<tr>
+<td><code>&lt;version&gt;-gpu</code>, <code>gpu-latest</code></td>
+<td>the experimental full GPU image (NVIDIA)</td>
+<td>linux/amd64</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:latest
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
-vLLM/HuggingFace/Diffusers engines are wanted. This image is published
-best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.13.1-gpu
+vLLM/HuggingFace/Diffusers engines are wanted. It is built best-effort at each
+release (a release whose GPU build fails still ships the light image) until it
+has a real CUDA build and smoke gate, so check that the <code>-gpu</code> tag of your
+version exists before you pin it:</p>
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:gpu-latest
 </code></pre></div>
 <p>The image names <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are published as aliases for

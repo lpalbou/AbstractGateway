@@ -1405,6 +1405,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#track-record-reputation-and-acquaintances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Track record, reputation and acquaintances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#beyond-the-core" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1513,6 +1524,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Voice library">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resuming-a-broken-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming a broken stream
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2725,6 +2753,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#track-record-reputation-and-acquaintances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Track record, reputation and acquaintances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#beyond-the-core" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2833,6 +2872,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Voice library">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resuming-a-broken-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resuming a broken stream
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -3180,6 +3236,11 @@ serve:</p>
 <td><a href="../entities/">entities.md</a></td>
 </tr>
 <tr>
+<td><code>/api/gateway/entities/{name}/track-record</code>, <code>/reputation</code>, <code>/acquaintances</code>; <code>/api/gateway/sessions/{session_id}/track-record</code>, <code>/reputation</code>, <code>/acquaintances</code></td>
+<td>what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records</td>
+<td><a href="#track-record-reputation-and-acquaintances">below</a></td>
+</tr>
+<tr>
 <td><code>/api/gateway/automations*</code>, <code>/api/gateway/trigger-sources</code></td>
 <td>automations: recurring workflows, their occurrences and attention</td>
 <td><a href="../automations/">automations.md</a></td>
@@ -3262,7 +3323,13 @@ console presents them as provider connections.</p>
   update or delete a profile.</li>
 </ul>
 <p>Enabled profiles appear in <code>GET /api/gateway/discovery/providers</code> as virtual
-providers such as <code>endpoint:office-vllm</code>. Model discovery through
+providers such as <code>endpoint:office-vllm</code>. Each such row carries
+<code>provider_endpoint_profile</code> (the profile, key as a fingerprint only) and its
+<code>provider_family</code>, also when AbstractCore lists the same profile (profiles live in
+Core's <code>provider_profiles</code>); a registry provider row (<code>anthropic</code>, <code>openai</code>, ...)
+never carries it. That marker is how a client tells a saved connection from a
+provider: the console's cloud provider cards show one card per provider, never a
+second card for its connection. Model discovery through
 <code>GET /api/gateway/discovery/providers/{provider_name}/models</code> returns either the
 fixed profile allowlist or the live endpoint model catalog.</p>
 <h2 id="core-workflow-lifecycle">Core workflow lifecycle<a class="headerlink" href="#core-workflow-lifecycle" title="Permanent link">&para;</a></h2>
@@ -3344,6 +3411,23 @@ the request's <code>interface</code> (null when it names none); the wrapper run 
 writes it; an origin sent by the client is replaced. Runs started before this
 field existed answer <code>origin: null</code>. The run's <code>actor_id</code> stays <code>"gateway"</code>
 (it marks the runs this gateway's runner ticks); the person is <code>origin.actor</code>.</p>
+<p>A conversation can carry a temporary identity (framework ADR 0052 §9, a regular agent's look and
+voice): <code>identity: {avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}</code>
+on <code>POST /runs/start</code>, with a <code>session_id</code> (400 without one). It is checked like an entity's
+<code>PUT /entities/{name}/identity</code> (the design in this gateway's avatar catalog and drawable on the
+Watch, the voice offered, its model downloaded; 400 / 409 with the same sentences) and kept on the
+session (<code>&lt;data dir&gt;/session_identities.json</code>, never in an entity home). Every run of the session
+carries it: the record at <code>input_data._runtime.identity</code> and its reference at
+<code>input_data._runtime.identity_ref</code> (<code>{"of": "session:&lt;sid&gt;", "rev": n}</code>). A later turn without
+<code>identity</code> inherits it; a turn with another one changes it (<code>rev + 1</code>). A session that names none
+records none (no Assistant identity exists on the gateway): its runs carry no reference and speak
+as before. <code>_runtime.identity</code> and <code>_runtime.identity_ref</code> sent by a client are dropped.
+<code>GET /api/gateway/sessions/{session_id}/identity[?rev=N]</code> (the session's owner or an admin) resolves a
+session reference to its look: <code>{session_id, identity: {rev, avatar: {style, color, source, watch_code},
+voice, set_at, set_by}, identity_ref}</code> (the entity shape), <code>identity: null</code> when the session has none,
+404 <code>session_not_found</code> / <code>identity_rev_not_found</code>. <code>GET /runs/{run_id}</code> carries the run's
+<code>identity_ref</code> when it has one (read from its inputs, never stored apart); the index-backed <code>GET /runs</code>
+listing does not (its rows load no inputs).</p>
 <p>Evidence: request/response models live in <code>src/abstractgateway/routes/gateway.py</code> (<code>StartRunRequest</code>, <code>start_run</code>).</p>
 <h4 id="the-gateway-default-agent-workflow-flow_id-default">The gateway default agent workflow (<code>flow_id: "@default"</code>)<a class="headerlink" href="#the-gateway-default-agent-workflow-flow_id-default" title="Permanent link">&para;</a></h4>
 <p>An agent client (AbstractCode, the Assistant, the Telegram bridge) can let
@@ -4145,8 +4229,9 @@ agent/subworkflow composition. The equivalent input-data config must contain exa
 <code>enabled</code> with a boolean value. <code>POST /entities/{name}/summon</code> accepts the same option for
 the ordinary Flow work-session lane.</p>
 <p>Render <code>/runs/{root}/view</code> messages with <code>kind: "public_update"</code> as actor-authored updates.
-They retain <code>id</code>, <code>text</code>, <code>run_id</code>, optional <code>session_id</code>, <code>iteration</code>, <code>source_call_ids</code>
-and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
+They retain <code>id</code>, <code>text</code>, <code>run_id</code>, optional <code>session_id</code>, <code>iteration</code>, <code>source_call_ids</code>,
+<code>update_kind</code> (<code>"finding"</code> for a fact or piece of evidence the actor established, otherwise
+<code>"progress"</code>, as typed by the actor) and ledger provenance. Raw reasoning, tool output and diary/thinking fences are excluded.
 An actor's wording remains its statement, not independently verified evidence of completion.</p>
 <p>Conversational questions retain <code>waiting.prompt</code> and expose
 <code>waiting.details.question: {id, purpose: "conversation", importance, published_at, deadline, fallback}</code>.
@@ -4247,7 +4332,7 @@ typed waits, attention and operations, is in <a href="../automations/">automatio
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;cursor=&amp;limit=</code></td>
-<td><code>{items: [AutomationSummary], next_cursor, archived_automations}</code> (older scheduled runs on the last page, <code>legacy: true</code>). A summary carries <code>target</code> <code>{workflow_id, bundle_ref, flow_id}</code> and <code>flow_name</code> (the entrypoint's name), see <a href="../automations/">automations.md</a>; <code>status</code> takes a comma-separated list (<code>active,paused</code>). Archived automations are left out unless <code>archived_only=true</code> (only them) or <code>status</code> names <code>archived</code>; <code>archived_automations</code> counts yours. Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor)</td>
+<td><code>{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}</code>, active automations first, then paused ones, each by <code>last_activity_at</code> (newest first); every row carries <code>section</code> (<code>active</code>/<code>paused</code>/<code>archived</code>) and <code>last_activity_at</code>, and older scheduled runs (<code>legacy: true</code>) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see <a href="../automations/#listing-order">Listing order</a>). A summary carries <code>target</code> <code>{workflow_id, bundle_ref, flow_id}</code> and <code>flow_name</code> (the entrypoint's name), see <a href="../automations/">automations.md</a>; <code>status</code> takes a comma-separated list (<code>active,paused</code>). Archived automations are left out unless <code>archived_only=true</code> (only them) or <code>status</code> names <code>archived</code>; <code>paused_automations_count</code> and <code>archived_automations_count</code> count yours (<code>archived_automations</code> is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor)</td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/automations/{automation_id}</code></td>
@@ -4333,6 +4418,11 @@ nothing: the session's runs, ledgers and artifacts stay, and
 </tr>
 </tbody>
 </table>
+<p><strong>Order.</strong> Turn listings come most recently updated first, so an app that folds the rows by
+<code>session_id</code> lists the session with the latest activity first, and a new turn in an older
+session moves it to the top. Apps show that order as served, with archived sessions in their
+own Archived section (the framework's ADR 0048; automations follow the same rule, see
+<a href="../automations/#listing-order">Listing order</a>).</p>
 <p><strong>Session purpose (<code>kind</code>).</strong> A session is a <code>conversation</code> (the default) or a
 <code>docs</code> chat (a Docs assistant conversation). <code>POST /api/gateway/runs/start</code>
 takes <code>kind: "docs"</code> with a <code>session_id</code> (the kit's Docs assistant sends it);
@@ -4981,6 +5071,79 @@ runtime lacks it; an older gateway has no key at all.
 To offer "approve all" on an approval a client is showing: write the policy first, then answer
 that wait (<code>resume</code> with <code>{approved: true}</code>) as a one-off; the policy does not answer waits that
 already exist.</p>
+<h2 id="track-record-reputation-and-acquaintances">Track record, reputation and acquaintances<a class="headerlink" href="#track-record-reputation-and-acquaintances" title="Permanent link">&para;</a></h2>
+<p>What an entity has done, how far it can be trusted for each kind of task, and whom it met
+(the framework's ADR 0052, sections 5, 6 and 11). AbstractRuntime computes all three from
+records that already exist (runs, their ledgers, the home's task inbox and work orders);
+nothing new is stored. The gateway passes the runtime's answer through unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/entities/{name}/track-record[?since=&lt;ISO-8601&gt;]</code></td>
+<td><code>TrackRecord</code> from the entity's home</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/entities/{name}/reputation</code></td>
+<td><code>Reputation</code> from the same record</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/entities/{name}/acquaintances</code></td>
+<td><code>Acquaintances</code>: the entities and humans it met</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/sessions/{session_id}/track-record[?since=&lt;ISO-8601&gt;]</code></td>
+<td><code>TrackRecord</code> of a regular agent's session</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/sessions/{session_id}/reputation</code></td>
+<td><code>Reputation</code> of that session</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/sessions/{session_id}/acquaintances</code></td>
+<td><code>Acquaintances</code> of that session</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>TrackRecord</code></strong>: <code>{subject, identity_ref, fingerprint, computed_at, as_of, since, sessions,
+runs, successes, failures, cancelled, in_progress, assessed, tokens: {input, output, total},
+by_task_kind: {&lt;kind&gt;: {runs, successes, failures, cancelled, tokens_total, first_at, last_at,
+last_outcome_at}}, recent_outcomes: [...], basis}</code>. <code>subject</code> is <code>entity:&lt;slug&gt;</code> or
+<code>session:&lt;session_id&gt;</code>. A run counts when a person or a trigger started it (or it is an
+automation occurrence); sub-runs and runs another run started are never counted, their tokens
+count with the run above them. A task kind is <code>&lt;phase or role&gt;/&lt;workflow_id&gt;</code>, for example
+<code>visit/visit-flow</code>. <code>basis</code> is <code>"completion-rate only"</code>: a success is a run that completed
+(or a task done, a work order done) until outside feedback exists, and <code>assessed</code> stays 0.
+The entity's <code>fingerprint</code> carries <code>book_head</code>, the head of its diary chain; a session has none.
+<code>since</code> keeps what started at or after that time (<code>2026-11-04</code>, <code>2026-11-04T10:00:00Z</code>; any
+other value is a 400 <code>invalid_since</code>).</p>
+<p><strong><code>Reputation</code></strong>: <code>{subject, identity_ref, computed_at, overall, by_task_kind: {&lt;kind&gt;: cell},
+evidence: [...], basis}</code>; a cell is <code>{trust, support, successes, failures, last_outcome_at,
+text}</code>, with <code>trust = (successes + 1) / (successes + failures + 2)</code> and <code>support = successes +
+failures</code>. A kind with no outcome reads <code>trust 0.5, support 0</code>. <code>evidence</code> is the last 20
+outcomes, oldest first: <code>{run_id, task_kind, outcome, at, signal, by}</code>.</p>
+<p><strong><code>Acquaintances</code></strong>: <code>{subject, identity_ref, computed_at, as_of, entities: [...], humans:
+[...], not_counted}</code>; each row is <code>{id, first_seen, last_seen, interactions, kinds}</code>.
+<code>not_counted</code> gives, per reason, the interactions that name no entity or human (an agent in a
+shared room, a participant without a namespace).</p>
+<p>An empty record is an answer like any other (<code>runs: 0</code>, <code>support: 0</code>, empty lists): the app
+words it ("No experience yet").</p>
+<p><strong>Who.</strong> The entity routes answer whoever may see the entity: its creator or an admin (on a
+gateway without accounts, everyone); a hidden entity answers 404 like a missing one. The
+session routes answer the session's owner or an admin: each account works in its own runtime
+plane, so another account's session answers <code>404 {"detail": {"reason_code":
+"session_not_found"}}</code>. An entity under a maintenance hold answers 409. A record the runtime
+cannot read (for example an unreadable <code>identity.json</code>) answers <code>500 {"detail":
+{"reason_code": "record_unreadable", "message": ...}}</code>, never an empty record.</p>
+<p><strong>Cost.</strong> One listing of the subject's runs and one read per turn root; nothing is cached.
+Measured on a home with 3000 runs: about 50 ms for a track record or a reputation, 35 ms for
+acquaintances (about 170 ms with 50 KB of variables in every run). Apps load these when the
+view opens, not on a poll.</p>
 <h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
 <p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
 See: <a href="../maintenance/">maintenance.md</a>.</p>
@@ -5406,11 +5569,51 @@ filters the voice catalog the same way.</p>
 time-stretch the audio, see <code>/voice/compatibility</code>) and <code>one_shot: true</code> (the whole text as one
 take with one voice, never segmented; refused beyond the engine's limit, e.g. 1000 characters on
 Qwen3-TTS). <code>/voice/tts/stream</code> refuses <code>one_shot</code> (422): a stream delivers the take in pieces.</p>
+<p>A run carrying its conversation's identity (<code>_runtime.identity</code>, above) speaks with that identity's
+voice when the request names none of <code>provider</code>, <code>model</code>, <code>voice</code>, <code>profile</code>: <code>/voice/tts</code> then
+answers <code>identity_ref</code> and both routes send the <code>X-Identity-Ref</code> header (<code>session:&lt;sid&gt;#&lt;rev&gt;</code>). A
+request naming a voice field passes untouched, without a reference.</p>
 <p><code>/voice/tts</code> returns a durable audio artifact after synthesis. <code>/voice/tts/stream</code>
 returns JSON Lines stream events for progressive playback when discovery advertises
 <code>capabilities.contracts.assistant.voice.tts.streaming=true</code>; successful streams still
 finish with a Runtime-owned child-run audio artifact. The stream is real streaming: the engine splits the text at sentence boundaries (first segment one short clause), each segment is sent as soon as it is synthesised while the next one is synthesised, and the setup runs off the event loop. The terminal <code>done</code> event's <code>metrics</code> carry <code>ttfb_s</code>, <code>rtf</code>, <code>device</code> and, on the CPU, <code>device_reason</code>.</p>
-<p>Stream lines (JSON Lines): <code>runtime_start</code> (<code>run_id</code> = the run named in the path, <code>child_run_id</code> = the id the outcome will be recorded under, <code>schema: abstractruntime.tts_stream.start.v2</code>), engine events (<code>start</code>, <code>audio</code> with <code>sequence</code> and <code>audio_b64</code>), then one terminal line: <code>done</code> (with <code>audio_artifact</code> and <code>child_run_status</code>), <code>cancelled</code> or <code>error</code> (<code>error</code> = the sentence; <code>watchdog_timeout: true</code> when the engine went silent past <code>ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S</code>). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is <code>{"type": "queued", "message": "Waiting for the voice engine: …"}</code>; speech follows when the engine is free. After 10 seconds without any other line, the stream writes <code>{"type": "keepalive", "ok": true, "request_id": …}</code>, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose <code>type</code> you do not know. The request's audit log line (<code>&lt;data dir&gt;/audit_log.jsonl</code>) carries <code>voice_stream</code>: <code>provider</code>, <code>model</code>, <code>voice</code>, <code>profile</code>, <code>text_chars</code>, <code>lines</code>, <code>audio_lines</code>, <code>audio_bytes</code>, <code>keepalives</code> and <code>ended</code> (<code>done</code>, <code>error</code>, <code>cancelled</code>, <code>watchdog</code> or <code>disconnected</code>). The entity route <code>POST /api/gateway/entities/{name}/voice/tts/stream</code> streams the same lines. A request past the voice synthesis bound (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) waits one second, then gets <code>503</code> "Read aloud is busy: N voice syntheses are already running on this gateway …".</p>
+<p>Stream lines (JSON Lines): <code>runtime_start</code> (<code>run_id</code> = the run named in the path, <code>child_run_id</code> = the id the outcome will be recorded under, <code>schema: abstractruntime.tts_stream.start.v2</code>), engine events (<code>start</code>, <code>audio</code> with <code>sequence</code> and <code>audio_b64</code>, <code>segment_end</code>; see <a href="#resuming-a-broken-stream">Resuming a broken stream</a>), then one terminal line: <code>done</code> (with <code>audio_artifact</code> and <code>child_run_status</code>), <code>cancelled</code> or <code>error</code> (<code>error</code> = the sentence; <code>watchdog_timeout: true</code> when the engine went silent past <code>ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S</code>). When the engine is busy (another stream, or the model using the machine) and its setup takes more than a second, the first line is <code>{"type": "queued", "message": "Waiting for the voice engine: …"}</code>; speech follows when the engine is free. After 10 seconds without any other line, the stream writes <code>{"type": "keepalive", "ok": true, "request_id": …}</code>, so a client's idle timer measures the connection rather than the synthesis; keep-alives never reset the watchdog, which still counts engine silence only. Skip any line whose <code>type</code> you do not know. The request's audit log line (<code>&lt;data dir&gt;/audit_log.jsonl</code>) carries <code>voice_stream</code>: <code>provider</code>, <code>model</code>, <code>voice</code>, <code>profile</code>, <code>text_chars</code>, <code>lines</code>, <code>audio_lines</code>, <code>audio_bytes</code>, <code>segments</code> (<code>segment_end</code> lines sent), <code>keepalives</code> and <code>ended</code> (<code>done</code>, <code>error</code>, <code>cancelled</code>, <code>watchdog</code> or <code>disconnected</code>). The entity route <code>POST /api/gateway/entities/{name}/voice/tts/stream</code> streams the same lines. A request past the voice synthesis bound (<code>ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY</code>) waits one second, then gets <code>503</code> "Read aloud is busy: N voice syntheses are already running on this gateway …".</p>
+<h4 id="resuming-a-broken-stream">Resuming a broken stream<a class="headerlink" href="#resuming-a-broken-stream" title="Permanent link">&para;</a></h4>
+<p>The engine speaks the text as a sequence of text segments, each one independent synthesis of exactly its
+slice of the text (AbstractVoice ADR 0009). With AbstractVoice as the voice engine:</p>
+<ul>
+<li>every <code>audio</code> line carries <code>segment</code> (from 0) and that segment's <code>text_start</code> / <code>text_end</code>: offsets
+  <code>[start, end)</code> into the request <code>text</code> exactly as you sent it, counted in Unicode code points (Swift
+  <code>text.unicodeScalars</code>, JavaScript <code>Array.from(text)</code>, Python <code>str</code> indexes). All the lines of one segment
+  (audio is sent in slices of at most 2 s) share them;</li>
+<li>after a segment's last audio comes <code>{"type": "segment_end", "schema": "abstractvoice.tts_stream.segment_end.v1", "segment": k, "text_start": s, "text_end": e}</code>;</li>
+<li><code>done</code> carries <code>segments</code>, the number of segments ended.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"audio"</span><span class="p">,</span><span class="nt">"sequence"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"segment"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_start"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_end"</span><span class="p">:</span><span class="mi">61</span><span class="p">,</span><span class="nt">"audio_b64"</span><span class="p">:</span><span class="s2">"UklGR…"</span><span class="p">,</span><span class="nt">"sample_rate"</span><span class="p">:</span><span class="mi">24000</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"audio"</span><span class="p">,</span><span class="nt">"sequence"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"segment"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_start"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_end"</span><span class="p">:</span><span class="mi">61</span><span class="p">,</span><span class="nt">"audio_b64"</span><span class="p">:</span><span class="s2">"UklGR…"</span><span class="p">,</span><span class="nt">"sample_rate"</span><span class="p">:</span><span class="mi">24000</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"segment_end"</span><span class="p">,</span><span class="nt">"segment"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_start"</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span><span class="nt">"text_end"</span><span class="p">:</span><span class="mi">61</span><span class="p">}</span>
+<span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="s2">"audio"</span><span class="p">,</span><span class="nt">"sequence"</span><span class="p">:</span><span class="mi">2</span><span class="p">,</span><span class="nt">"segment"</span><span class="p">:</span><span class="mi">1</span><span class="p">,</span><span class="nt">"text_start"</span><span class="p">:</span><span class="mi">62</span><span class="p">,</span><span class="nt">"text_end"</span><span class="p">:</span><span class="mi">140</span><span class="p">,</span><span class="nt">"audio_b64"</span><span class="p">:</span><span class="s2">"UklGR…"</span><span class="p">,</span><span class="nt">"sample_rate"</span><span class="p">:</span><span class="mi">24000</span><span class="p">}</span>
+</code></pre></div>
+<p>When a stream breaks (the connection drops, or an <code>error</code> line ends it):</p>
+<ol>
+<li>Play audio as it arrives (never hold it until its <code>segment_end</code>) and keep all you received.</li>
+<li>Request the text again from <code>text_end</code> of the last <code>segment_end</code> you received (from the start when you
+   received none). Offsets in the new stream index the new request's text: add the resume offset to map
+   them back to yours.</li>
+<li>When the break fell inside a segment (audio arrived after the last <code>segment_end</code>), skip the first seconds
+   of the new stream's audio, as many as you already received of that unfinished segment.</li>
+</ol>
+<p>At a segment boundary the seam is exact: each segment is a whole synthesis of exactly its text, so no word
+is repeated or missed, whatever the engine samples on the second try. Inside a segment the seam is
+approximate: a sampling engine (Qwen3-TTS, cloned voices above all) speaks the same text with different
+timing, so the seam can land a few words early or late. Nothing is ever replayed whole. The seconds skip
+matters because a segment can be long: a segment is a base engine's sentence group, or one Qwen3-TTS clone
+generation, and on Apple silicon a clone reply of up to 800 characters is one generation (one voice per
+reply), so a 600-character piece is often a single segment. Send plain text: the voice engine removes <code>#</code> to
+<code>#####</code> headers at the start of a line and <code>**bold**</code> / <code>*italic*</code> markers, and such a marker spanning two
+segments would leave its closing marker in the remaining text. Lines without <code>segment</code> (an engine that does
+not report segments) mean the whole request is one segment: retry it from the start and skip the seconds
+received.</p>
 <p>Reading aloud never changes the run's state: no wait is created while audio streams, and the child run is recorded already completed (<code>done</code>, or with <code>errors[0].code</code> <code>cancelled</code>/<code>stream_error</code>) when the stream ends. A stream cut by a gateway restart leaves no run behind; a wait left by a gateway up to 0.13.0 is closed at startup with <code>errors[0] = {"code": "interrupted", "message": "Read aloud was interrupted because the gateway restarted; …"}</code>.</p>
 <p>The catalog endpoints proxy AbstractCore Server routes when
 <code>ABSTRACTCORE_SERVER_BASE_URL</code>
@@ -6137,7 +6340,20 @@ model despite the lock. Every other unload outcome stays in-band at 200.</p>
   <code>error: "model_not_resident"</code> payload (load it with <code>lock: true</code> instead);
   unlock always works, even for a since-evicted model, so locks are never
   stranded. Rows report <code>lockable</code> so clients know whether
-  a lock can work, and <code>locked</code> so they can render the current state.</li>
+  a lock can work, and <code>locked</code> so they can render the current state.
+  A confirmed lock is recorded in the gateway's settings (<code>models.kept_loaded</code>) and
+  set again after a gateway or model-host restart; an unlock, or an unload with
+  <code>force</code>, removes the record.</li>
+<li>Idle unload: rows also carry <code>idle_unload_s</code> (the time in effect in seconds, <code>0</code>
+  when it is off, null when the runtime reports nothing, as for an external engine),
+  <code>idle_unload_at</code> and <code>last_used_at</code> (ISO 8601 times in UTC with their offset,
+  <code>2026-11-03T20:09:51+00:00</code>: the runtime sends epoch seconds, which the gateway
+  converts; an ISO string the runtime sends is passed through as is), <code>in_use</code> and
+  <code>locked_by</code>, as the runtime reports them
+  (<code>idle_unload_at</code> is null when the model is locked, in use, or idle unload is
+  off). The time is the setting
+  <code>models.idle_unload_minutes</code> (<code>GET/POST /api/gateway/admin/runtime-config</code>,
+  default 60, <code>0</code> never; <code>serve --model-idle-unload MINUTES</code> wins for one run).</li>
 <li><code>GET /models/context_estimate?provider=&amp;model=&amp;context_length=</code> (any
   authenticated principal) relays the Runtime host facade's context/KV memory
   estimate for a provider+model. <code>provider</code> and <code>model</code> are required;
@@ -6229,9 +6445,12 @@ any authenticated principal; writes require an admin principal.</p>
 <li><code>GET /api/gateway/host/runs?limit=25&amp;window_hours=24</code> — the runs on this
   host across every data plane (admin; <code>/runs</code> answers only for the calling
   principal's plane). <code>{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, created_at, updated_at, ledger_len, plane, started_epoch,
-  updated_epoch, observer_path}], count, active_count, has_more, planes,
-  skipped_entity_planes?, warnings?}</code>. Items are TURN ROOTS (the runtime's
+  activity, role, session_kind, automation_id, created_at, updated_at,
+  ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
+  active_count, has_more, planes, skipped_entity_planes?, warnings?}</code>.
+  <code>session_kind</code> is the runtime's attribution (<code>automation</code> / <code>occurrence</code> = an
+  automation's run, <code>chat</code> / <code>discussion</code> = a conversation); the tray lists
+  the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
   <code>is_turn_root</code>: parent-less runs that are not automation controllers, plus
   automation occurrences), in this order: every active root first —
   <code>activity: "running"</code> (the root or any run below it is running), then

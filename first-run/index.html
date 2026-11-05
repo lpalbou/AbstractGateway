@@ -1281,7 +1281,9 @@ the code on the gateway's machine:</p>
 moose<span class="w"> </span>bicycle<span class="w"> </span>honey<span class="w"> </span>camel<span class="w"> </span>ankle<span class="w"> </span>agent
 </code></pre></div>
 <p><code>abstractgateway service install</code> and <code>abstractgateway service enable</code> print it
-too, and so does the AbstractFramework installer's summary. Case and
+too. The AbstractFramework installer's summary shows it when the installer did not
+open the console in a browser for you, and under <strong>This server</strong> with <code>--server</code>;
+<code>abstractgateway serve</code> never prints it (its output often lands in a service log). Case and
 separators do not matter (<code>Moose-Bicycle-...</code> works). The code stops working
 once the password is set; <code>abstractgateway claim --code</code> then says the gateway
 is already set up.</p>
@@ -1338,7 +1340,7 @@ the account's token keeps working. See
 </tr>
 <tr>
 <td>Cloud providers</td>
-<td>One card per cloud provider AbstractCore supports (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: <code>GET /api/gateway/discovery/providers</code>, <code>local_provider: false</code>), each with the provider's mark, its connection state (key fingerprint only), an <strong>API key</strong> field and <strong>Check the key</strong>: "Key works · 48 models", or one sentence saying why not (the key was refused, the provider is limiting requests, it could not be reached). The key is checked first (<code>POST …/provider-endpoint-profiles/discover-models</code>, which stores nothing); only a key that works can be saved, and <strong>Save the key</strong> creates a NEW provider connection (<code>openai-key</code>, <code>openai-key-2</code>, … with <code>create_only</code>), never replacing one you have. The key is never shown again. The same cards are the Providers tab's <strong>Cloud providers</strong> section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step</td>
+<td>"Paste a provider's API key to use its models; the key stays on this gateway." One card per cloud provider AbstractCore supports natively (today OpenAI, Anthropic, OpenRouter and Portkey, read from AbstractCore's registry: <code>GET /api/gateway/discovery/providers</code>, <code>local_provider: false</code>), then <strong>OVH AI Endpoints</strong> (an OpenAI-compatible service with its base URL preset) and <strong>OpenAI-compatible endpoint</strong> (Name, Base URL, API key: Mistral, Groq, Together, Fireworks, DeepSeek, xAI, Google… through their /v1 URLs; AbstractCore's <code>openai-compatible</code> provider). Each card shows the provider's mark or name, its status ("Not connected", or "Connected · 48 models") and ONE button: <strong>Connect</strong>, or <strong>Edit</strong> when it is connected. Both open a dialog with the API key field, <strong>Test connection</strong> and <strong>Save</strong>. Test connection checks the key (<code>POST …/provider-endpoint-profiles/discover-models</code>, which stores nothing): "Key works · 48 models", or the reason (the key was refused, the provider is limiting requests, it could not be reached). Nothing is stored untested. Connect saves a NEW provider connection (<code>openai-key</code>, <code>openai-key-2</code>, …, <code>create_only</code>), never replacing one you have; Edit replaces that connection's key in place and offers <strong>Disconnect</strong>. The key is never shown again; Edit shows its fingerprint only. The same cards are the Providers tab's <strong>Cloud providers</strong> section. A step of its own rather than part of Local engines: the engines step is about software on this computer, and a key saved here is offered by the next step</td>
 </tr>
 <tr>
 <td>Default models</td>

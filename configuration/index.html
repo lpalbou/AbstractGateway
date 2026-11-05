@@ -1940,12 +1940,16 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.16.0</code> (decisions through <code>run_facade.decide</code>, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- <code>abstractcore&gt;=2.32.0</code> (the <code>decision</code> output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
-- <code>abstractvoice&gt;=0.18.2</code> (the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
-- <code>abstractagent&gt;=0.5.0</code> (ReAct honours <code>_runtime.conversation</code>: public conversation updates and questions on entity visits and task starts; the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
+- <code>AbstractRuntime&gt;=0.18.1</code> (the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, <code>set_model_idle_unload</code> / <code>set_model_residency_locks</code>; a gateway stop interrupts a run instead of failing it, <code>update_kind</code> in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through <code>run_facade.decide</code>, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- <code>abstractcore&gt;=2.34.0</code> (the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, <code>ModelNotDownloadedError</code>, the <code>decision</code> output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- <code>abstractvoice&gt;=0.20.0</code> (segment offsets on streamed speech for the exact read-aloud resume; the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
+- <code>abstractagent&gt;=0.6.0</code> (public updates typed <code>progress</code> or <code>finding</code>; ReAct honours <code>_runtime.conversation</code>: public conversation updates and questions on entity visits and task starts; the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
 - <code>AbstractMemory[lancedb]&gt;=0.4.0</code> (the memory graph, <code>abstractmemory.graph</code>)
-- <code>abstractskill&gt;=0.3.4</code> (the curated skill shelf the gateway seeds into <code>&lt;data dir&gt;/skills/registry</code>)</p>
+- <code>abstractskill&gt;=0.3.4</code> (the curated skill shelf the gateway seeds into <code>&lt;data dir&gt;/skills/registry</code>)
+- <code>abstractavatar&gt;=0.1.1</code> (the avatar design catalog: an entity's identity names a design this catalog has and the
+  Watch can draw; without it no identity is set or recorded. At each start the gateway writes the recorded default
+  identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
+  skipped. See <a href="../entities/">entities.md</a>)</p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -3836,6 +3840,19 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--model-host
 <li><strong>Limits</strong>: <code>--model-host-memory-gb GB</code> kills and restarts the child when its resident memory passes
   GB (default 80 % of this machine's memory; <code>0</code> turns it off); <code>--model-host-nice N</code> (default 5) lets
   the gateway answer first when inference uses every CPU. No environment variable.</li>
+<li><strong>Idle unload</strong>: a loaded model that no request has used for 60 minutes is unloaded from memory;
+  the next request loads it again (and re-reads its context, so that first answer is slower). Change
+  the time with <code>serve --model-idle-unload MINUTES</code> (for this run) or the saved setting
+  <code>models.idle_unload_minutes</code> (Models page, <strong>Unload unused models after (minutes)</strong>, or
+  <code>abstractgateway config set models.idle_unload_minutes MINUTES</code>); <code>0</code> never unloads. The flag wins
+  over the saved setting, which wins over 60. A model kept loaded (<strong>Keep loaded</strong>) never unloads this
+  way, and the gateway records the lock (<code>models.kept_loaded</code>): it is set again after a gateway or
+  model-host restart. A model unloaded with <strong>Force unload</strong> is no longer kept. The Models page and
+  the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min", "Kept loaded:
+  never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
+  loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
+  LM Studio, llama.cpp server) keeps its own rule. Needs AbstractRuntime 0.18 or later; an older runtime
+  is reported in the log.</li>
 <li><strong>Supervision</strong>: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (<code>model_host.state: failed</code>, <code>status: degraded</code>) until the gateway
@@ -3849,6 +3866,11 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--model-host
   it; send the message again in a few seconds." (status 424, not retried automatically: the request may
   be what crashed it). A request while it restarts fails at once with status 503 (retried by the
   runtime's policy). A provider error (KV full, a GGUF error) is that request's error, as before.</li>
+<li><strong>A stop the gateway asked for is not a failure</strong> (backlog 1103): when the gateway stops or restarts
+  (a signal, the tray or console Restart, an update, a network change) or restarts the child on purpose
+  (a llama.cpp update), a request in flight is interrupted. The run stays running at its last durable step
+  and the call is sent again when the gateway is back: no retry used, no incident, no notification. Once a
+  stop begins no new workflow step starts; a request made during a requested restart waits for the new child.</li>
 <li><strong>Incidents</strong>: each unexpected exit writes <code>&lt;data dir&gt;/incidents/model-host-&lt;UTC stamp&gt;-&lt;id&gt;-&lt;kind&gt;.json</code>
   (0600, schema <code>abstractgateway.incident.v1</code>, the newest 200 kept): <code>kind</code> (<code>exit</code>, <code>memory_ceiling</code>,
   <code>unresponsive</code>, <code>gave_up</code>), <code>pid</code>, <code>exit_code</code>, <code>signal</code>, <code>description</code>, <code>rss_bytes_last</code>,
@@ -3962,17 +3984,20 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
   Host and port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is configured, else
   <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.
   <code>--unsandboxed-commands</code>, <code>--push-relay</code>, <code>--pool-*</code>, <code>--run-index</code> and <code>--gc-tuning</code> have no
   environment variable.
+  While the gateway runs, the Mac does not idle-sleep; closing the lid or choosing Sleep still sleeps it.
   - <code>--no-runner</code>: serve the HTTP API only, next to <code>abstractgateway runner</code>
     (<a href="#split-mode-api-and-runner-in-two-processes-opt-in">split mode</a>).
   - <code>--model-host process|in-process</code>: where the models run (default <code>process</code> on every OS,
     <code>in-process</code> with <code>--reload</code>); <code>--model-host-memory-gb GB</code>, <code>--model-host-nice N</code>: the
     child's limits (<a href="#model-host-the-models-run-in-a-supervised-child-process">model host</a>).
+  - <code>--model-idle-unload MINUTES</code>: unload a model no request has used for MINUTES (default: the saved
+    <code>models.idle_unload_minutes</code>, else 60; <code>0</code> never unloads; a model kept loaded never unloads).
   - <code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with <code>--host 127.0.0.1</code>, a <code>--port</code> other than the configured one and
     <code>--print-token</code> is treated as a test gateway and shows no icon either.
@@ -4012,13 +4037,18 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
   model and the <code>/v1</code> model host, mail, feeds, push, bridges)
 - <code>abstractgateway push-relay --apns-key-file F --key-id K --team-id T --topic BUNDLE_ID … [--listen HOST:PORT]</code>:
   run the stateless Apple push relay with your own key (extra <code>push-relay</code>; <a href="../push/#run-your-own-relay">push.md</a>)
-- <code>scripts/perf/ci.sh [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]</code> (from a checkout): the
-  load test CI runs on pull requests and every night (<code>.github/workflows/perf.yml</code>). It builds a synthetic
-  data folder (<code>scripts/perf/make_fixture.py</code>: 10k runs, 100k artifacts, 50 automations, no real data),
-  starts a hermetic gateway on it (<code>--no-tray</code>, scratch home, empty environment, outbound network refused,
-  paused) and fails when a p99 goes over its bound (<code>/me</code> 50 ms, <code>/triggers/connections</code> 100 ms, session
-  artifacts 100 ms, <code>/runs?limit=20</code> 200 ms, <code>/automations</code> 500 ms), a probe answers anything but 200, or
-  CPU at rest over 2 minutes goes over <code>--cpu-max</code> (default 5% of a core, 10% on CI runners)
+- <code>scripts/perf/ci.sh [--enforce] [--cpu-max PCT] [--port P] [--work DIR] [--reuse-fixture]</code> (from a
+  checkout): the load test CI runs on pull requests and every night (<code>.github/workflows/perf.yml</code>). It
+  builds a synthetic data folder (<code>scripts/perf/make_fixture.py</code>: 10k runs, 100k artifacts, 50
+  automations, no real data), starts a hermetic gateway on it (<code>--no-tray</code>, scratch home, empty
+  environment, outbound network refused, paused) and measures each probe's p99 against its limit (<code>/me</code>
+  50 ms, <code>/triggers/connections</code> 100 ms, session artifacts 100 ms, <code>/runs?limit=20</code> 200 ms,
+  <code>/automations</code> 500 ms) and CPU at rest over 2 minutes against <code>--cpu-max</code> (default 5% of a core, 10% on
+  CI runners). Without <code>--enforce</code> an exceeded limit is reported (printed, and written to the GitHub job
+  summary) and the script exits 0; with <code>--enforce</code> it fails the run. A probe that answers anything but
+  200, or a gateway that does not boot, fails in both modes. Pull requests run it without <code>--enforce</code>;
+  the nightly and manual runs pass <code>--enforce</code>, so a shared runner's slow minute never turns a pull
+  request red (root ADR 0050, rule 5: no wall-clock gate on the default path)
 - <code>abstractgateway network status|set|addresses|restart</code>: who can reach the
   gateway and the URLs to copy (<a href="#network-exposure-localhost--local-network--internet">network exposure</a>)
 - <code>abstractgateway claim [--open] [--port P | --url URL] [--json]</code>: one-time

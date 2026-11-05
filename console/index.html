@@ -1427,7 +1427,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Models</td>
 <td><strong>Providers</strong></td>
-<td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Cloud providers</strong>: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports, an API-key field checked before anything is stored, saved as a new connection, keys shown as fingerprints, <strong>More settings</strong> for the base URL and allowed models), then custom OpenAI-compatible servers; then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
+<td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Cloud providers</strong>: the kit's cloud provider cards (the setup guide's Cloud providers step: one card per cloud provider AbstractCore supports natively, OVH AI Endpoints, and any other OpenAI-compatible endpoint; one button per card, <strong>Connect</strong> or <strong>Edit</strong>, opening a dialog that tests the key before anything is stored; Connect saves a new connection, Edit replaces that connection's key or disconnects it; keys shown as fingerprints), then <strong>Advanced connection</strong> (the full connection editor: allowed models, a server on your network); then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
 </tr>
 <tr>
 <td>Models</td>
@@ -2812,6 +2812,9 @@ you can click.</p>
 <li><strong>▦ Memory &amp; GPU</strong> shows the meters and the itemization; <code>m</code> pages it on a short terminal.</li>
 <li><strong>▣ Models</strong> has the <strong>Show configured / cached</strong> switch (<code>a</code>; resident models only by default) and <strong>Load model</strong> (<code>w</code>, a dialog with Provider, Model, the <strong>lock in memory</strong> switch and <strong>[Cancel] [Load model]</strong>). Its table has the columns <strong>Modality</strong>, <strong>Provider</strong>, <strong>Model</strong>, <strong>Resident</strong>, <strong>Size</strong>, <strong>Context</strong>, <strong>Flags</strong> and <strong>Actions</strong>. Row buttons: <strong>Estimate</strong> (<code>e</code>), <strong>Lock</strong> / <strong>Unlock</strong> (<code>k</code>) and <strong>Unload</strong> (<code>u</code>).<ul>
 <li>Unload asks <strong>[Unload] [Cancel]</strong>; a locked model then asks <strong>[Force unload] [Cancel]</strong>.</li>
+<li>The selected model's facts line ends with the idle-unload line the web Models page shows:
+  "Unused for 12 min, unloads in 48 min", "Kept loaded: never unloads", "In use now" or
+  "Stays loaded: unloading unused models is off" (nothing when the runtime reports nothing).</li>
 <li>Unlock asks <strong>[Unlock] [Cancel]</strong>.</li>
 </ul>
 </li>

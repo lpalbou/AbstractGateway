@@ -1302,6 +1302,17 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>inspect<spa
 abstractgateway<span class="w"> </span>entity<span class="w"> </span>card<span class="w"> </span>Castor<span class="w">         </span><span class="c1"># the identity card: a page to know your companion</span>
 abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span class="w"> </span>Castor<span class="w">       </span><span class="c1"># both attestation chains + the spark hash</span>
 </code></pre></div>
+<p>Through the running gateway's routes (<code>--url</code>, else the gateway running for this data dir;
+<code>--token</code>, else <code>$ABSTRACTGATEWAY_AUTH_TOKEN</code>, else this data dir's bootstrap admin token for a
+loopback URL; <code>--json</code> prints the route's payload; a refusal prints the gateway's sentence and
+exits 2):</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>entity<span class="w"> </span>identity<span class="w"> </span>get<span class="w"> </span>Castor<span class="w"> </span><span class="o">[</span>--rev<span class="w"> </span>N<span class="o">]</span><span class="w">     </span><span class="c1"># its look, voice, reference, fingerprint, age</span>
+abstractgateway<span class="w"> </span>entity<span class="w"> </span>identity<span class="w"> </span><span class="nb">set</span><span class="w"> </span>Castor<span class="w"> </span>--style<span class="w"> </span>watch-lotus<span class="w"> </span>--color<span class="w"> </span><span class="s2">"#3366cc"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--provider<span class="w"> </span>kokoro<span class="w"> </span>--model<span class="w"> </span>kokoro-82m<span class="w"> </span>--voice<span class="w"> </span>am_adam<span class="w"> </span><span class="o">[</span>--speed<span class="w"> </span><span class="m">1</span>.1<span class="o">]</span><span class="w"> </span><span class="o">[</span>--quality-preset<span class="w"> </span>P<span class="o">]</span>
+abstractgateway<span class="w"> </span>entity<span class="w"> </span>record<span class="w"> </span>Castor<span class="w"> </span><span class="o">[</span>--track-record<span class="w"> </span><span class="p">|</span><span class="w"> </span>--reputation<span class="w"> </span><span class="p">|</span><span class="w"> </span>--acquaintances<span class="o">]</span><span class="w"> </span><span class="o">[</span>--since<span class="w"> </span>ISO<span class="o">]</span>
+</code></pre></div>
+<p><code>entity record</code> prints "No experience yet" where nothing was counted, and says what the numbers
+mean: success is the work finishing (completion rate only); how good it was is not assessed yet.</p>
 <p>HTTP (rides the same auth as every <code>/api/gateway/*</code> endpoint):</p>
 <table>
 <thead>
@@ -1372,6 +1383,11 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span
 <td><code>/api/gateway/entities/{name}/replay/stream</code></td>
 <td>The same stream as a live tail (SSE; <code>Last-Event-ID</code> resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both.</td>
 </tr>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/entities/{name}/track-record</code>, <code>/reputation</code>, <code>/acquaintances</code></td>
+<td>What it has done (runs, successes, failures, tokens, per kind of task), how far it can be trusted per kind of task (with how many outcomes that rests on), and the entities and humans it met. Derived from its home's records; nothing is stored. See <a href="../api/#track-record-reputation-and-acquaintances">API: track record, reputation and acquaintances</a>.</td>
+</tr>
 </tbody>
 </table>
 <h3 id="the-entitys-mind-and-voice">The entity's mind and voice<a class="headerlink" href="#the-entitys-mind-and-voice" title="Permanent link">&para;</a></h3>
@@ -1400,17 +1416,47 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span
 <td>An admin or its creator (the creator: a model the gateway offers, else <code>403 not_offered</code> naming the offered models). <code>{provider, model, thinking?, speculation?}</code> sets its own mind; <code>{"clear": true}</code> returns it to the gateway default. Each change is recorded in its history (<code>substrate_changed</code>). <code>speculation</code> is MTP: <code>false</code> (off) or <code>{"mode": "native_mtp", "num_draft_tokens": N}</code>.</td>
 </tr>
 <tr>
+<td>GET</td>
+<td><code>/api/gateway/entities/{name}/identity[?rev=N]</code></td>
+<td>Its digital identity (framework ADR 0052): <code>{entity_id, identity: {rev, avatar: {style, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}</code>. <code>?rev=N</code> serves an earlier revision from the home's biography. <code>identity.change</code> is why that revision was written: <code>{cause, written_by, at}</code> from its biography row (<code>cause</code>: <code>recorded_default</code>, <code>chosen</code>; null when the home has no row for it). A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409).</td>
+</tr>
+<tr>
+<td>PUT</td>
+<td><code>/api/gateway/entities/{name}/identity</code></td>
+<td>An admin or its creator: <code>{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}</code>, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one this gateway offers (400: "Castor can't speak with zz: it isn't a kokoro voice this gateway offers. Choose one of: …"); its model is not downloaded (409, <code>error.download</code>: "Castor's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is <code>rev + 1</code>, recorded in the home's biography and as an <code>identity_changed</code> host marker.</td>
+</tr>
+<tr>
 <td>GET/PUT</td>
 <td><code>/api/gateway/entities/{name}/voice</code></td>
-<td>Its voice: <code>{provider, model, voice}</code> or <code>{"clear": true}</code>; unset, it speaks with the gateway's default voice (<code>effective</code>). PUT: an admin or its creator (the creator: a voice the gateway offers, else <code>403 not_offered</code>).</td>
+<td>Its voice: <code>{provider, model, voice}</code> or <code>{"clear": true}</code>; unset, it speaks with the gateway's default voice (<code>effective</code>). PUT: an admin or its creator (the creator: a voice the gateway offers, else <code>403 not_offered</code>). On a home with an identity record: served from the record (<code>source: identity</code>, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and <code>clear</code> is refused (409).</td>
 </tr>
 <tr>
 <td>GET/PUT</td>
 <td><code>/api/gateway/entities/{name}/appearance</code></td>
-<td>How apps draw it (the colour and shape of its orb): <code>{color: "#rrggbb", shape: planet\|kitty\|face\|wave}</code>, the whole look replaced, or <code>{"clear": true}</code>; unset, apps use their own look. Also accepted at creation (<code>appearance</code> on <code>POST /entities</code>) and returned on each row of the list</td>
+<td>How apps draw it (the colour and shape of its orb): <code>{color: "#rrggbb", shape: planet\|kitty\|face\|wave}</code>, the whole look replaced, or <code>{"clear": true}</code>; unset, apps use their own look. Also accepted at creation (<code>appearance</code> on <code>POST /entities</code>) and returned on each row of the list. On a home with an identity record: the record's colour and the shape its design draws (<code>watch-shape-&lt;shape&gt;</code>, else <code>planet</code>; <code>source: identity</code>); a PUT changes the record's look (what is not given keeps its value; the voice is kept), <code>clear</code> is refused (409), and a record with no voice yet refuses a look change with its sentence.</td>
 </tr>
 </tbody>
 </table>
+<p><strong>The digital identity.</strong> Every entity has one record in its home, <code>identity.json</code>
+(AbstractRuntime's format): an avatar design from the abstractavatar catalog, its
+colour, and its voice. An entity born now gets its identity at birth: the one
+<code>POST /entities</code> names in <code>identity</code> (checked before anything is created), else the
+recorded default (a design and colour computed from its id, the gateway's default
+voice as a value, or no voice when the gateway has none); a birth <code>appearance</code> becomes
+the default's look (a chosen look needs a voice: refused before creation when the
+gateway has no default voice). Each existing home without a record gets the recorded
+default once when the gateway starts (a home closed for maintenance is skipped and
+logged, a record is never overwritten), else at its first <code>GET /identity</code>. A later
+change of the gateway's default voice never changes a recorded identity. The entity
+speaks with the record's voice only: its TTS lanes answer <code>voice_source: identity</code>,
+<code>identity_ref</code> and the <code>X-Identity-Ref</code> header (<code>entity:castor#3</code>), and a record with
+no voice refuses with "Castor has no voice yet: choose one in its Identity settings
+or set the Gateway default voice". The reference also rides each visit
+(<code>_runtime.identity_ref</code>, beside the signed stamp, and on the open response), each
+meet leg, relay row and status row, each public update row of a visit, and the visit's state (<code>GET /visit/{run_id}/state</code>, top-level <code>identity_ref</code>); a home
+without a record carries none. The list rows carry <code>identity</code> (the record with its
+<code>watch_code</code>, or null). Visits, meet legs and summons record who started them
+(<code>_meta.origin</code>: kind <code>person</code>, actor the same <code>person:&lt;user&gt;</code> as the participants).</p>
 <p>An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still
 name a provider and model for one visit. There is no environment variable for
@@ -1521,7 +1567,8 @@ separate; <code>ask_user</code> is an interaction primitive in this mode even wh
 <p>Read <code>GET /api/gateway/entities/{name}/visit/{run_id}/state</code>. In conversational mode it adds:</p>
 <ul>
 <li><code>public_updates</code>: up to 64 explicit, safe actor updates with <code>id</code>, <code>text</code>, <code>run_id</code>,
-  <code>session_id</code>, <code>iteration</code> and <code>source_call_ids</code>.</li>
+  <code>session_id</code>, <code>iteration</code>, <code>source_call_ids</code> and <code>update_kind</code> (<code>"finding"</code> or <code>"progress"</code>,
+  as typed by the actor).</li>
 <li><code>public_messages</code>: up to 64 accepted human corrections with <code>role: "user"</code>,
   <code>kind: "guidance"</code>, <code>id</code>, <code>text</code>, <code>run_id</code>, <code>session_id</code>, <code>speaker</code> and
   <code>guidance_status: "accepted"</code>.</li>

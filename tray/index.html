@@ -1568,9 +1568,14 @@ and the model table with unload buttons. A paused gateway shows a banner on
 every console tab with a <em>Resume</em> button.</p>
 <h2 id="conversations">Conversations<a class="headerlink" href="#conversations" title="Permanent link">&para;</a></h2>
 <p><strong>Conversations ▸</strong> is the machine's work as a person sees it. A row is a
-<strong>conversation</strong> — a conversation turn or an automation's occurrence, never a
-sub-run or an automation's controller — under its <strong>title</strong>: the automation's
-name for an occurrence, else the first line of what the person typed (cut at
+<strong>conversation</strong> turn — never a sub-run, an automation's controller or an
+automation's occurrence. An automation's run is listed under <strong>Automations ▸ ·
+Running (N)</strong> instead, with the same row and submenu: the runtime tags every run
+with a <code>session_kind</code> (<code>chat</code> / <code>discussion</code> = a conversation, <code>automation</code> /
+<code>occurrence</code> = an automation's run; <code>GET /host/runs</code> serves it on each row) and
+the menu sorts by that tag alone. A wake that runs in its caller's conversation
+is tagged <code>chat</code> and stays a conversation. A row reads under its <strong>title</strong>: the
+automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (<code>GET /host/runs</code> serves it as
 <code>title</code> with <code>title_source</code>; the Observer's cards use the same text). The list
 is <strong>host-wide</strong>, not per-principal: memory, GPU and loaded models on this menu
@@ -1602,7 +1607,9 @@ each under an information line, nothing hidden without saying so:</p>
   full arguments from</code>GET /host/runs/{run_id}/wait<code>).</code>🟡 <title> · a
   question`: the question, one line; free-text answers stay in the clients
   (the Assistant, Code, the console).</li>
-<li><strong>Automations ▸</strong> (its own item under Conversations ▸) — the automations
+<li><strong>Automations ▸</strong> (its own item under Conversations ▸) — first <strong>Running
+  (N)</strong>, the automations' active runs (the rows above, shown only when one
+  runs), then the automations
   (<code>GET /automations</code>) under <strong>Active (N)</strong> and <strong>Paused (N)</strong>: <code>⏱
   &lt;automation title&gt; · Every day at 09:00 · next Fri 17 Oct 09:00</code>, <code>⏱
   &lt;title&gt; · When Python news has a new item</code> — the trigger in the gateway's
