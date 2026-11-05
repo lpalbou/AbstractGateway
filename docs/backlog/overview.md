@@ -22,10 +22,15 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 22
-- Proposed: 52
+- Proposed: 54
 - Completed: 70
 - Deprecated: 4
 - Recurrent: 0
+
+2026-11-06: recounted proposed items (53 existing, plus 1010 = 54), including
+topic folders. Legacy date-named, three-digit and unnumbered files remain flagged
+for dedicated filename hygiene; 1010 is unique across lifecycle directories.
+Agora was unavailable at intake; 1010's hub mirror remains pending.
 
 <!-- 2026-11-03: 1008 and 1009 filed completed (salvaged from PR #22, there 0962 and 0966): completed 70. 2026-10-29: 0979 planned (shared Core store incident; merge desk). 2026-10-29: 0976 planned; Planned recomputed from the directory (16 listed, 19 files). 0967 filed completed, 0968 planned (ADR 0002). Counts recomputed from the directories on 2026-08-29 while filing
      0234. They had drifted (planned 0→1, proposed 30→38, completed
@@ -148,6 +153,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [1010 Typed clone failures and explicit segment retry](proposed/1010_typed_clone_failures_and_explicit_segment_retry.md) | P2; operator schedules lower-level work, Voice 0067 defines policy and Runtime exposes the typed contract. |
 | [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
 | [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
 | [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
