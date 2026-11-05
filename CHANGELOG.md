@@ -10,6 +10,15 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-11-05
+
+### Fixed
+
+- **0.20.0 was tagged but never published**: the FastAPI app still reported version 0.19.0 (`app.py`), so the
+  release workflow refused the tag before building anything. 0.20.1 is the same release as 0.20.0 below, with the
+  app version bumped and a test that fails when the app version and the package version differ
+  (`tests/test_app_version.py`).
+
 ## [0.20.0] - 2026-11-04
 
 ### Added

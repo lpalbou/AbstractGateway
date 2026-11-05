@@ -27,7 +27,8 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.20.0** ([CHANGELOG](CHANGELOG.md#0200---2026-11-04)): every entity has one
+**What's new in 0.20.1** ([CHANGELOG](CHANGELOG.md#0201---2026-11-05)): 0.20.0 was tagged but never
+published; 0.20.1 is that release. Every entity has one
 recorded look and voice, its digital identity, set from the Entity app: the gateway refuses a design
 it cannot draw or a voice it cannot speak (not offered here, or not downloaded) instead of using
 another one, and every entity gets a default look and voice from the day it is born. Each entity
@@ -235,7 +236,7 @@ Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
 
 | Tag | Image | Platforms |
 |---|---|---|
-| `<version>` (for example `0.20.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>` (for example `0.20.1`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
 | `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
