@@ -116,8 +116,10 @@ _role_lock = threading.Lock()
 #         `decide` flow node.
 # 0.17.0: `EffectInterrupted` (a gateway stop interrupts a run: runner.py, model_host.py), and the
 #         discovery facade's `ModelNotDownloadedError` (memory_store.py).
-# 0.18.0: the digital identity record (`abstractruntime.identity.digital_identity`, entity_identity.py).
-ABSTRACTRUNTIME_FLOOR = "0.18.0"
+# 0.18.0: the digital identity record (`abstractruntime.identity.digital_identity`, entity_identity.py) and
+#         `set_model_idle_unload` / `set_model_residency_locks` on the host facade (kept_models.py).
+# 0.18.1: replay `public_update` messages carry the run's `identity_ref`.
+ABSTRACTRUNTIME_FLOOR = "0.18.1"
 
 
 def _installed_runtime_version() -> str:

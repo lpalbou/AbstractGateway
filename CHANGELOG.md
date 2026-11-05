@@ -10,6 +10,213 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-04
+
+### Added
+
+- **Automations are listed active first, then paused, each by last activity** (`automation_order.py`,
+  framework ADR 0048). `GET /api/gateway/automations` serves the order every app draws: automations that
+  are neither paused nor archived, most recent activity first, then paused ones the same way. Each summary
+  (the listing and `GET /automations/{id}`) carries `section` (`active`, `paused` or `archived`) and
+  `last_activity_at` (the automation's last change), and every page counts `paused_automations_count` and
+  `archived_automations_count` (the same count as `archived_automations`, which stays). Older scheduled runs are placed by the same rule instead of closing the last
+  page. A cursor from an earlier gateway is refused with 422 `invalid_request`; start from the first page.
+- **The tray folds paused automations into a "Paused (N)" submenu**, in the gateway's order, in both the
+  Automations and the Sessions menus.
+- **While the gateway runs, the Mac does not idle-sleep** (`keep_awake.py`), so phones and watches keep reaching
+  it. `abstractgateway serve` holds the macOS `PreventUserIdleSystemSleep` assertion "AbstractGateway" until it
+  stops; closing the lid or choosing Sleep still sleeps the Mac, and the display still turns off. Other systems:
+  unchanged.
+- **Unused models unload after 60 minutes; Keep loaded survives restarts** (root backlog 1115). A loaded
+  model that no request has used for the idle-unload time is unloaded from memory by AbstractCore; the
+  next request loads it again. The time is `serve --model-idle-unload MINUTES` (for one run) or the saved
+  setting `models.idle_unload_minutes` (default 60, `0` never; Models page **Unload unused models after
+  (minutes)**, `abstractgateway config set models.idle_unload_minutes MINUTES`). A model kept loaded never
+  unloads, and the gateway now records the lock and sets it again after a gateway or model-host restart
+  (an unlock or a forced unload ends it). The Models page and the terminal console say, per loaded model,
+  "Unused for 12 min, unloads in 48 min", "Kept loaded: never unloads", "In use now" or "Stays loaded:
+  unloading unused models is off". Each unload is one line in `<data dir>/logs/model-host.log`
+  ("unloaded <model> after N min idle; freed X GB"). AbstractRuntime floor 0.18.0 (`set_model_idle_unload`,
+  `set_model_residency_locks`), AbstractCore floor 2.34.0 (the idle unload).
+- **Entity visit state carries the type of each public update** (`entity_session_tools.py`).
+  `public_updates` rows have `update_kind`, `"finding"` or `"progress"`, as typed by the actor
+  and as the replay view reports it. See [docs/entities.md](docs/entities.md).
+- **Read-aloud streams resume exactly after a break** (`POST /runs/{run_id}/voice/tts/stream` and the entity route).
+  With AbstractVoice's segment fields (AbstractVoice ADR 0009), every `audio` line carries `segment`, `text_start` and
+  `text_end` (code-point offsets into the request `text`), a `segment_end` line follows each text segment's last
+  audio, and `done` counts `segments`. After a break, request the text from `text_end` of the last `segment_end`
+  received and skip the seconds already received of the unfinished segment: the seam is exact at a segment boundary
+  and within a few words inside a segment, never a replay. The gateway forwards the fields unchanged and the audit
+  log's `voice_stream` counts `segments`.
+- **Every entity has a digital identity: a look and a voice, one record in its home** (framework ADR 0052, backlog
+  1119; AbstractRuntime's `identity.json`). `GET /entities/{name}/identity[?rev=N]` serves the record (the design with
+  its Watch code, the colour, the voice), its reference (`entity:castor#3`), the fingerprint and the age;
+  `PUT /entities/{name}/identity` (an admin or the creator) sets the whole record, refused in this order for every
+  role: the home is closed for maintenance (409), the design is not in the avatar catalog this gateway loaded or can't
+  be drawn on the Watch (400), the voice is not offered here (400), its model is not downloaded (409 with the download
+  action). An identity is never cleared. An entity born now gets its identity at birth (`identity` on
+  `POST /entities`, else the recorded default; a birth `appearance` becomes its look), and every existing home gets
+  the recorded default once when the gateway starts (homes closed for maintenance are skipped and logged), else at its
+  first `GET /identity`. The entity speaks with the record's voice and never another: its TTS lanes answer
+  `voice_source: identity` with `identity_ref` and `X-Identity-Ref`, and a record with no voice refuses with "Castor has
+  no voice yet: choose one in its Identity settings or set the Gateway default voice". The reference rides each visit
+  (beside the signed stamp), meet leg, relay and status row, and public update row; the list rows carry `identity`.
+  New dependency `abstractavatar>=0.1.1`; needs AbstractRuntime 0.18.0.
+- **Track record, reputation and acquaintances, read-only** (`entity_record.py`,
+  `routes/session_record.py`; the framework's ADR 0052). `GET /api/gateway/entities/{name}/track-record`
+  (`?since=`), `/reputation` and `/acquaintances` read the entity's own home; the same three under
+  `/api/gateway/sessions/{session_id}/` read a regular agent's session in the caller's runtime plane
+  (another account's session is 404 `session_not_found`). The answer is AbstractRuntime's, unchanged:
+  `basis: "completion-rate only"` and `not_counted` included. A record the runtime cannot read is a
+  500 `record_unreadable`, never an empty record. Needs AbstractRuntime 0.18.0. See
+  [docs/api.md](docs/api.md#track-record-reputation-and-acquaintances).
+- **A conversation can carry a temporary identity** (framework ADR 0052 §9: a regular agent's look and voice).
+  `POST /runs/start` takes `identity` with a `session_id`, checked like an entity's identity (the design in the
+  avatar catalog and drawable on the Watch, the voice offered, its model downloaded) and kept on the session
+  (`session_identities.json` in the owner's data folder, never in an entity home). Every run of the session carries
+  it with its reference `session:<sid>#<rev>`; a later turn inherits it, another identity is `rev + 1`. A session
+  that names none has none (no Assistant identity exists on the gateway): no reference, no borrowed voice. The run
+  TTS lanes speak with that voice when the request names none (`identity_ref`, `X-Identity-Ref`).
+- **`abstractgateway entity identity get|set <name>` and `abstractgateway entity record <name>
+  [--track-record|--reputation|--acquaintances]`**, through the running gateway's routes, in plain words ("No
+  experience yet"; the completion-rate basis said in a sentence); `--json` prints the payload.
+
+- **`GET /entities/{name}/identity[?rev=N]` says why the revision was written**: `identity.change` =
+  `{cause, written_by, at}` from its biography row.
+- **A visit's state (`GET /entities/{name}/visit/{run_id}/state`) carries the visit's `identity_ref`**, so an app
+  rejoining a visit draws the right look before the first public update.
+
+- **`GET /sessions/{session_id}/identity[?rev=N]`** resolves a conversation's reference to its look (the entity
+  shape; `identity: null` when the session has none), and **`GET /runs/{run_id}` carries the run's `identity_ref`**
+  when it has one (an entity visit's or a conversation's).
+
+### Changed
+
+- **Setup guide and Providers tab: shorter copy, one button per cloud card.** The Local engines and Cloud providers
+  subtitles are one line each ("Run AI models on this computer. Cloud accounts come in the next step."; "Paste a
+  provider's API key to use its models; the key stays on this gateway."). The Providers tab mounts the kit's cloud
+  cards like the guide does (one button, **Connect** or **Edit**, no "More settings"), and the section below them is
+  **Advanced connection** (the full connection editor: allowed models, a server on your network). The cards include
+  **OVH AI Endpoints** and the generic **OpenAI-compatible endpoint**. An OVH key is checked with a test request
+  (AbstractCore's key probe for endpoints that list their models without a key), so a wrong key is refused.
+- **The load test reports its latency and CPU limits on pull requests and enforces them nightly.**
+  `scripts/perf/ci.sh` gains `--enforce`. Without it an exceeded p99 or CPU-at-rest limit is printed (and
+  written to the GitHub job summary as a table) and the script exits 0; with it the run fails, as before.
+  A probe that answers anything but 200, or a gateway that does not boot, fails in both modes. The `Perf`
+  workflow passes `--enforce` on its nightly and manual runs only, so a slow shared runner no longer turns
+  a pull request red. No product code changes.
+- **Provider logos only with permission** (AbstractFramework backlog 1100). The console's
+  engine, cloud provider and model catalog cards show Anthropic, OVHcloud, Portkey, Ollama, DeepSeek, NVIDIA, Google,
+  Meta and Microsoft by name (a text badge in the logo's slot) until their owners approve in writing, and Mistral
+  until its official brand-kit file replaces the Hugging Face avatar; OpenAI, OpenRouter, Hugging Face and LM Studio
+  keep their logos. Vendored from the abstractuic kit (`BRAND_LOGO_PERMITTED`; `console_islands.py` and
+  `console_themes.py` re-synced). The console and the first-run guide end with one line: "Product names and logos
+  are trademarks of their owners. AbstractFramework is not affiliated with or endorsed by them."
+- **Resources: each resident model's row shows its slot pool.** The row says how many requests run and wait on its
+  one copy, for example "1 of 1 slot busy (up to 4) · 3 requests waiting", in the warning colour while requests
+  wait, followed by the reason no other slot is built ("another slot ... needs 8.3 GiB of GPU memory for its
+  135,680-token context, 1.0 GiB free"). `model_residency_row_v1` carries `slots`, `slots_max`, `active`, `queued`
+  and `slot_refusal_reason` (AbstractCore ADR 0011), read from AbstractRuntime's model listing.
+- **Tests: a real server is used only once it answers HTTP; wall-clock bounds are opt-in.** Every test
+  that starts a real `abstractgateway serve` waits through one shared helper (`tests/serve_ready.py`,
+  `wait_until_answers`) until `GET /api/health` answers with the boot over (a status other than
+  `starting`), instead of a boot log line or audit record that
+  is written before the port is bound (`test_a_real_serve_audits_the_flag_at_boot[True]` was refused a
+  connection on a 3.10 main run). Elapsed-time assertions now go through `tests/timing.py`: reported by
+  default and enforced only with `ABSTRACTGATEWAY_TIMING_STRICT=1`; where the intent is "did not block",
+  an ordering or event check replaces the stopwatch (a host rebuild that holds until `/api/health` has
+  answered, a read that returns while a writer still holds the memory home, configuration reads that
+  return beside a frozen model-host child, a Stop that leaves the stream unfinished, a watchdog that
+  ends the stream before the engine's first audio). Every test-local wait helper's bound is `patient()`
+  (x5 unless strict).
+- **The streamed route hands the engine the request text exactly as sent** (no leading or trailing whitespace
+  stripped), so segment offsets index the client's own text. A blank text is still refused (400).
+- **On a home with an identity record, `voice` and `appearance` read and write through the record**: `GET` serves the
+  record (`source: identity`; the appearance's shape is the one its design draws), `PUT` changes it (`rev + 1`, the
+  identity's checks for every role), `clear` is refused (409). A home without a record keeps the old files and their
+  behaviour. The list row's `appearance` is the record's look.
+- **Visits, meet legs and summons record who started them** (`_meta.origin`, kind `person`, the actor in the same
+  `person:<user>` form as the participants), so they count in the entity's track record; a visit is told an identity
+  change made since the previous summon (`_visit.identity_since`).
+- **The identity card shows the home's biography markers** (`phase_changed`, `identity_changed`) with their time
+  instead of a blank "state" moment.
+- **The identity's voice refusals read for the identity page**: "Castor can't speak with zz: it isn't a kokoro voice
+  this gateway offers. Choose one of: …" and "Castor's voice needs the kokoro model … which is not downloaded on this
+  computer yet. Download it (…), then save the identity again." (they used to speak of the default voice).
+
+- **An identity record or a track record that cannot be read names its file, not its absolute path**
+  (`castor/identity.json: …`): `GET /entities/{name}/identity`, the voice and appearance routes, the entity TTS
+  lanes, and the `record_unreadable` answer of the track-record, reputation and acquaintances routes. The gateway
+  log keeps the full path.
+- **A look change on an identity with no voice is refused with 400**, the identity checks' status for a missing
+  voice (it was 409): a birth `appearance` on a gateway with no default voice, and `PUT /appearance` on a voiceless
+  recorded default.
+
+### Fixed
+
+- **A text embedding model that is not downloaded is one readable sentence per process**, not an error per account
+  on every boot: "Semantic memory search is off: the text embedding model Qwen/Qwen3-Embedding-0.6B is not
+  downloaded. Download it from the console (Multimodal, Embeddings, Download) or run `abstractcore models download
+  huggingface Qwen/Qwen3-Embedding-0.6B`; structured memory keeps working." The model and provider come from
+  AbstractCore's typed `ModelNotDownloadedError` (its `model` and `provider` attributes, read through AbstractRuntime's
+  discovery facade), never from the error's wording. AbstractRuntime floor 0.17.0 (the facade's model errors).
+- **The container docs list the image tags that exist.** `README.md`, `docs/deployment.md` and
+  `docs/getting-started.md` named `0.13.x` tags; they now give the tags every release publishes on GHCR:
+  `<version>` and `latest` (the light image, linux/amd64 and linux/arm64) and `<version>-gpu` and `gpu-latest`
+  (the experimental NVIDIA image, linux/amd64 only, built best-effort, so a release can ship without it).
+- **The setup-code help says where the six words are.** The console's "Set up your gateway" form and the
+  onboarding answer no longer say the installer printed the code (it does only when it did not open a browser,
+  or with `--server`): they name `abstractgateway claim --code` on the gateway's machine, which always shows
+  it. `docs/first-run.md` says when the installer's summary shows it and that `serve` never prints it.
+- **Stopping or restarting the gateway never fails a run** (backlog 1103; `model_host.py`, `runner.py`,
+  `host_control.py`, `engines_install.py`). Since the model host became the default (gateway #28, #74), a polite stop
+  (SIGTERM, the tray or console Restart, an update, a network change) stopped the model host while a run's model call
+  was in flight. The call failed with 424 ("the model host stopped while answering"), the run was marked failed, an
+  automation used a retry, and an `automation_failed` email went out. Now:
+  - when the gateway stops the model host, or restarts it on purpose (a llama.cpp update), the call in flight is
+    interrupted (AbstractRuntime's `EffectInterrupted`), not failed. No incident is written, the run stays running
+    at its last durable step, and the call is sent again when the gateway is back. No retry is used and nothing is
+    notified;
+  - a call made during a restart the gateway asked for waits for the new model host;
+  - once a stop begins, no new workflow step starts, and the drain waits only for the step each run is executing;
+  - the shutdown line says "runner drain TIMED OUT (…): N run(s) interrupted; they continue at the next start" instead
+    of "done" when runs were still executing;
+  - a model host that dies on its own (a crash, the memory ceiling, unresponsive) still fails the request with 424
+    and an incident; its sentence names the incident file only when one was written for that exit (it used to
+    point at `<data dir>/incidents` even when nothing had been recorded).
+
+  AbstractRuntime floor 0.17.0 (`EffectInterrupted`).
+- **A saved API key no longer shows as a second provider card** (for example "Anthropic" next to "Anthropic (API
+  key) · Not connected"). `GET /api/gateway/discovery/providers` now merges a saved connection's fields into
+  AbstractCore's row for it, so the console's cloud provider cards show one card per provider with its connection.
+  Registry rows such as `anthropic` are unchanged. This applied to every saved cloud connection (`openrouter-key`
+  too).
+- **A started run keeps its workflow snapshot** (`hosts/bundle_host.py`, backlog 1009). The update that adds the
+  snapshot reference and the session id right after a run starts now holds the run's mutation lock, so it no
+  longer races the runner's first step (the reference was lost, or a finished run went back to its first state).
+  The start waits at most 0.5 s for it.
+- **Push notifications follow a forwarder setting saved mid-pass** (`push/dispatcher.py`, backlog 1009). The
+  dispatcher takes its change tokens before reading the setting and the registered devices, so a save that lands
+  between the read and the wait is no longer missed.
+- **A gateway-level test that `/v1` reuses the model the runtime pool holds** (`tests/test_v1_reuses_resident_model.py`,
+  backlog 1008), so a second copy of a loaded model cannot come back unnoticed.
+- **Push: an event appended by another process while a pass ran is no longer slept past** (split mode). The
+  dispatcher took the event stream's change token when its wait started, after the pass had read the stream,
+  so an append written by another process during the pass (no listener fires across processes) was already
+  in the token and the wait slept until the next registration or setting change. The token is now taken
+  before the pass reads, like the registration and setting tokens (backlog 1009). Pinned by
+  `test_an_append_from_another_process_during_a_pass_is_not_missed`.
+- **MCP connection test: a server that never answers is always reported as "did not answer initialize
+  within N seconds".** The MCP client's own request timeout equalled the test's deadline, so it could fire
+  first and the Settings sentence became "request timed out after 1.0s"; it is now a backstop set 2 s past
+  the deadline (`CLIENT_TIMEOUT_GRACE_S`).
+- **The menu-bar icon no longer lists automation runs as conversations.** `GET /host/runs` serves the runtime's
+  `session_kind` and `automation_id` on each row (`admin_runtimes.py`), and the tray sorts its rows by that tag
+  (`tray/menu_model.is_automation_run`): an automation's active run is listed under **Automations ▸ Running (N)**,
+  never under Conversations or its Recent tally, and the header line counts them apart ("1 conversation running ·
+  2 automations running"). The classic menu lists them under "Automations running (N)". A wake running in its
+  caller's conversation is tagged `chat` and stays a conversation.
+
 ## [0.19.0] - 2026-11-02
 
 AbstractGateway 0.18.0 was prepared on 2026-10-28 but never published to PyPI (the last published version

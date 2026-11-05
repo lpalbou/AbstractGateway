@@ -27,6 +27,25 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.20.0** ([CHANGELOG](CHANGELOG.md#0200---2026-11-04)): every entity has one
+recorded look and voice, its digital identity, set from the Entity app: the gateway refuses a design
+it cannot draw or a voice it cannot speak (not offered here, or not downloaded) instead of using
+another one, and every entity gets a default look and voice from the day it is born. Each entity
+also has a track record (sessions, runs, successes, failures, tokens), a reputation per kind of task
+(a completion rate only for now: how good the work was is not assessed yet) and the list of the
+entities and people it met. A regular agent's conversation can carry a temporary look and voice
+too, kept with the conversation. From the terminal, `abstractgateway entity identity get|set` and
+`abstractgateway entity record` show and change the same things. Models nobody uses are unloaded after 60 minutes (change it on the Models
+page or with `serve --model-idle-unload MINUTES`; 0 never unloads), and a model you keep loaded stays
+loaded, even after a restart; each loaded model says when it unloads. Stopping or restarting the gateway never fails a run any more:
+the run waits and carries on at the next start. One card per cloud provider (Anthropic no longer
+shows twice), shorter setup-guide copy with one Connect or Edit button per card, OVH AI Endpoints
+and any OpenAI-compatible endpoint; provider names shown as text badges until each owner approves
+its logo. Automations are listed active first, then paused. The Mac stays awake while the gateway
+runs. The Resources page shows each loaded model's slot pool. When the default embedding model is
+not downloaded yet, the log says so in one sentence naming the model and where to download it.
+Read-aloud resumes exactly where a broken stream stopped.
+
 **What's new in 0.19.0** ([CHANGELOG](CHANGELOG.md#0190---2026-11-02); it also ships the
 changes prepared as 0.18.0, which was not published): a fresh gateway is set up from the
 browser with an admin password, and accounts sign in with a password or a token; the models
@@ -216,7 +235,7 @@ Release images are published to GHCR as `ghcr.io/lpalbou/abstractgateway`:
 
 | Tag | Image | Platforms |
 |---|---|---|
-| `<version>` (for example `0.19.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
+| `<version>` (for example `0.20.0`), `latest` | the light, portable server image | linux/amd64, linux/arm64 |
 | `<version>-gpu`, `gpu-latest` | the experimental full GPU image (NVIDIA) | linux/amd64 |
 
 ```bash
