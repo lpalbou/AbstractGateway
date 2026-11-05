@@ -369,11 +369,27 @@ def test_scheduled_runs_carry_the_builtin_tool_deny_list(gw) -> None:
     rs = get_gateway_service().host.run_store
 
     def _child():
-        items = client.get(f"/api/gateway/runs?limit=50&session_id={parent}", headers=HEADERS).json().get("items") or []
-        kids = [x for x in items if x.get("parent_run_id") == parent]
-        return kids[0]["run_id"] if kids else None
+        # The recorded event: the scheduled execution exists as the wrapper's child in the run store
+        # (not a filtered HTTP listing of it).
+        kids = rs.list_children(parent_run_id=parent) or []
+        return kids[0].run_id if kids else None
 
-    _wait(lambda: _child() is not None)
+    def _wrapper_state() -> str:
+        run = rs.load(parent)
+        waiting = getattr(run, "waiting", None)
+        from abstractgateway import host_control, shutdown_drain
+
+        # The runner's step gate: closed by a pause or a stop that began (process-wide state an
+        # earlier test could leave behind); CI main 8a12518 waited 50 s here with no child.
+        return (f"wrapper {parent}: status={getattr(run.status, 'value', run.status)} node={run.current_node} "
+                f"waiting={getattr(waiting, 'reason', None)} until={getattr(waiting, 'until', None)}; "
+                f"step_gate={host_control.step_gate()} paused={host_control.is_paused()} "
+                f"stop_begun={host_control.stop_begun()} drain_began={shutdown_drain.began()}")
+
+    try:
+        _wait(lambda: _child() is not None)
+    except AssertionError:
+        raise AssertionError("the scheduled execution never started; " + _wrapper_state()) from None
     child_vars = rs.load(_child()).vars
     assert data in child_vars["workspace_builtin_deny_prefixes"]
     assert child_vars["workspace_builtin_allow"] == [child_vars["workspace_root"]] == [wrapper["workspace_root"]]
