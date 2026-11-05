@@ -19714,7 +19714,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @router.get("/discovery/capabilities")
-async def discovery_capabilities() -> Dict[str, Any]:
+async def discovery_capabilities(scope: str = "all") -> Dict[str, Any]:
     """List optional gateway capabilities for thin clients (best-effort).
 
     OFF the event loop (gateway load 2026-10-26, the 04:07 watchdog exit): the payload reads
@@ -19726,8 +19726,29 @@ async def discovery_capabilities() -> Dict[str, Any]:
     # Blocking probe, off the event loop: it imports torch/transformers to list
     # model names and has been measured at 30s. On the loop it stalls EVERY other
     # request in the process (measured: a 0.02s route took 16.2s behind one).
+    if scope == "voice":
+        return await off_loop("watchers", _discovery_voice_capabilities_payload)
+    if scope != "all":
+        raise HTTPException(status_code=422, detail="scope must be all or voice")
     music_probe = await _discovery_to_thread(_gateway_music_capability_probe)
     return await off_loop("watchers", _discovery_capabilities_payload, music_probe)
+
+
+def _discovery_voice_capabilities_payload() -> Dict[str, Any]:
+    """The same voice contract without unrelated media/provider discovery."""
+    run_facade, run_err = _gateway_abstractcore_run_facade()
+    available = bool(run_facade is not None and not run_err)
+    caps = {
+        "abstractvoice": _optional_package_status("abstractvoice", "abstractvoice"),
+        "capability_plugins": {"capabilities": {
+            "voice": {"available": available}, "audio": {"available": available},
+        }},
+    }
+    tts = _voice_contract_descriptor(caps, kind="tts")
+    stt = _voice_contract_descriptor(caps, kind="stt")
+    return {"capabilities": {"contracts": {"version": 1, "assistant": {"voice": {
+        "tts": tts, "stt": stt, "listen": _listen_voice_contract_descriptor(stt=stt),
+    }}}}}
 
 
 def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, Any]:

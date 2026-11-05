@@ -1993,7 +1993,7 @@ loads the `abstractnote` workflows: see [apps.md](./apps.md) (the Note app).
 
 These exist to help thin clients adapt to the deployed gateway.
 
-- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
+- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`. Add `?scope=voice` for only `capabilities.contracts.assistant.voice` (TTS, STT, listen), with the same authentication and voice descriptors but without music/image/provider discovery. The default `scope=all` keeps the full response. Clients must cache the scoped response separately; older Gateways may ignore the query and return the full response.
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
 - Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`. Round
   12: each process-spawning tool row (AbstractRuntime's `SANDBOXED_TOOL_NAMES`:

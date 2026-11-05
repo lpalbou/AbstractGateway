@@ -72,9 +72,13 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
         r1 = client.get("/api/gateway/discovery/capabilities")
         assert r1.status_code in {401, 403}, r1.text
 
+        assert client.get("/api/gateway/discovery/capabilities?scope=voice").status_code in {401, 403}
         r2 = client.get("/api/gateway/discovery/capabilities", headers=headers)
         assert r2.status_code == 200, r2.text
         body = r2.json()
+        narrow = client.get("/api/gateway/discovery/capabilities?scope=voice", headers=headers)
+        assert narrow.status_code == 200
+        assert narrow.json()["capabilities"]["contracts"]["assistant"]["voice"] == body["capabilities"]["contracts"]["assistant"]["voice"]
         caps = body.get("capabilities")
         assert isinstance(caps, dict)
         for k in ("voice", "tools", "visualflow", "vision_fallback", "media"):
@@ -723,3 +727,31 @@ def test_model_residency_contract_advertises_configured_core_server(monkeypatch:
     assert contracts["assistant"]["media"]["edited_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/edit"
     assert contracts["assistant"]["media"]["upscaled_image"]["direct_endpoint"]["endpoint"] == "/api/gateway/runs/{run_id}/images/upscale"
     assert contracts["assistant"]["media"]["upscaled_image"]["direct_endpoint"]["provider_models_task"] == "image_upscale"
+
+
+@pytest.mark.parametrize("installed,route", [(True, True), (False, True), (True, False)])
+def test_voice_scope_skips_unrelated_discovery(monkeypatch, installed, route):
+    from fastapi import FastAPI
+    from types import SimpleNamespace
+    from abstractgateway.routes import gateway as gw
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("voice discovery invoked an unrelated media probe")
+
+    monkeypatch.setattr(gw, "_gateway_music_capability_probe", forbidden)
+    monkeypatch.setattr(gw, "_discovery_capabilities_payload", forbidden)
+    monkeypatch.setattr(gw, "_optional_package_status", lambda *a: {"installed": installed})
+    facade = SimpleNamespace(stream_voice=lambda: None) if route else None
+    monkeypatch.setattr(gw, "_gateway_abstractcore_run_facade", lambda: (facade, None if route else "disabled"))
+    monkeypatch.setattr(gw, "_configured_voice_output_defaults", lambda kind: {"model": "configured-" + kind})
+    monkeypatch.setattr(gw, "_resolved_voice_engine", lambda kind: "qwen3-tts")
+    app = FastAPI()
+    app.get("/capabilities")(gw.discovery_capabilities)
+    with TestClient(app) as client:
+        response = client.get("/capabilities?scope=voice")
+        assert response.status_code == 200
+        voice = response.json()["capabilities"]["contracts"]["assistant"]["voice"]
+        assert voice["tts"]["available"] is (installed and route)
+        assert voice["tts"]["active_model"] == "configured-tts"
+        assert voice["stt"]["active_model"] == "configured-stt"
+        assert client.get("/capabilities?scope=invalid").status_code == 422
