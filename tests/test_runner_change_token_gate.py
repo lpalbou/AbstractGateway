@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import builtins
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -72,20 +73,43 @@ def test_benchmark_11500_quiet_runs_probe_under_1ms_and_reads_no_file(tmp_path: 
     _probe(r)
     calls = {"open": 0, "scandir": 0, "stat": 0}
     real_open, real_scandir, real_stat = builtins.open, os.scandir, os.stat
+    # Only the probing thread's calls count: the patch is process-wide, and another thread of the
+    # test process (a pool, a watcher) may stat a file meanwhile (`assert 203 <= 200`, v0.20.1 publish
+    # run, Test Python 3.13; backlog 1128 item 2).
+    prober = threading.get_ident()
 
     def counting(name, real):
         def f(*a, **k):
-            calls[name] += 1
+            if threading.get_ident() == prober:
+                calls[name] += 1
             return real(*a, **k)
         return f
 
     monkeypatch.setattr(builtins, "open", counting("open", real_open))
     monkeypatch.setattr(os, "scandir", counting("scandir", real_scandir))
     monkeypatch.setattr(os, "stat", counting("stat", real_stat))
+    # A neighbour thread stats files the whole time, as a busy process does: its calls are not the probe's.
+    # It has stat'ed at least once inside the counted window before the probes start, so a count that
+    # is not thread-scoped is over by construction, not by luck.
+    stop, stated = threading.Event(), threading.Event()
+
+    def neighbour() -> None:
+        while not stop.is_set():
+            os.stat(tmp_path)
+            stated.set()
+            time.sleep(0)
+
+    busy = threading.Thread(target=neighbour, daemon=True)
+    busy.start()
     passes = 200
-    t = time.perf_counter()
-    due = [_probe(r) for _ in range(passes)]
-    per_pass = (time.perf_counter() - t) / passes
+    try:
+        assert stated.wait(5), "the neighbour thread never ran"
+        t = time.perf_counter()
+        due = [_probe(r) for _ in range(passes)]
+        per_pass = (time.perf_counter() - t) / passes
+    finally:
+        stop.set()
+        busy.join(timeout=5)
     monkeypatch.undo()
     assert not any(due)
     assert calls["open"] == 0 and calls["scandir"] == 0
