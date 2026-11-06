@@ -1008,7 +1008,14 @@ class ModelHostSupervisor:
         self.ping_misses_to_kill = int(ping_misses_to_kill)
         self.memory_sample_s = float(memory_sample_s)
         self.ready_timeout_s = float(ready_timeout_s)
-        self._child_argv = list(child_argv) if child_argv else [sys.executable, "-m", "abstractgateway.model_host_child"]
+        # The working directory is runtime DATA, which contains cache directories
+        # named abstractcore/embeddings. Never put it on the import path: it can
+        # shadow editable packages (or contain executable files). The -c bootstrap
+        # also supports Python 3.10, which has no -P flag. Explicit PYTHONPATH and
+        # installed packages remain available; custom child commands stay intact.
+        self._child_argv = list(child_argv) if child_argv else [sys.executable, "-c",
+            "import sys; sys.path[:] = [p for p in sys.path if p != '']; "
+            "from abstractgateway.model_host_child import main; raise SystemExit(main())"]
         self._authkey = secrets.token_bytes(32)
         self._sock_dir = _socket_dir()
         self._lock = threading.RLock()

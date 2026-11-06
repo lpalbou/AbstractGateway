@@ -85,6 +85,26 @@ def test_provider_exception_keeps_its_type_and_message(tmp_path, fake):
         sup.stop()
 
 
+@pytest.mark.parametrize("executable_package", [False, True])
+def test_runtime_data_cannot_shadow_embedding_package(tmp_path, fake, executable_package):
+    data = tmp_path / "data"
+    cache = data / "abstractcore" / "embeddings"
+    cache.mkdir(parents=True)
+    if executable_package:
+        (cache.parent / "__init__.py").write_text("raise RuntimeError('executed runtime data')\n")
+    # Both the normal cache-directory collision and executable package-shaped
+    # data must leave installed imports intact in a real child process.
+    sup = _sup(tmp_path)
+    try:
+        client = mh.ModelHostClient(sup, kind="embeddings", ctor=dict(
+            provider="lmstudio", model="fake-model", manager_kwargs=dict(
+                cache_dir=cache, provider_kwargs={"base_url": fake.base_url})))
+        state = client.residency()
+        assert state["model"] == "fake-model"
+    finally:
+        sup.stop()
+
+
 def test_a_stop_reaches_the_generation_in_the_child(tmp_path, fake):
     fake.delay_s = 2.0  # 4 chunks: 8 s, far longer than the Stop needs to land
     sup = _sup(tmp_path)
