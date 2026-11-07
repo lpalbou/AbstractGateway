@@ -17,6 +17,9 @@ CommonMark parser, never a regex or a text heuristic:
 - Line breaks inside a paragraph are kept (`breaks`): a model's "one fact per line" reads the
   same as in the plain-text part.
 
+Over the size budgets (`MAX_MARKDOWN_INPUT_CHARS`, `MAX_RENDERED_HTML_BYTES`) nothing is rendered: the
+caller shows the whole text escaped, as plain text.
+
 The plain-text part of the email is NOT produced here: it carries the model's text exactly as
 written. The model's title is never Markdown (the caller escapes it).
 
@@ -29,13 +32,22 @@ inside the labelled model block of a single notice; everything else stays plain 
 from __future__ import annotations
 
 import html
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 ALLOWED_SCHEMES = ("http", "https", "mailto")
+
+# Size budgets. Every rendered element carries its own inline style (~100-170 bytes), and the parser
+# completes missing table cells, so a few KB of model text can render to megabytes (a 5.2 KB table with
+# a 300-column header renders to 8 MB): Gmail clips a message above ~102 KB, SMTP servers refuse
+# 10-25 MB, and the HTML is stored in the outbox. Past either budget the body is NOT rendered and the
+# email shows the whole text as escaped plain text, the way it did before Markdown (never truncated);
+# the input budget also bounds the parser's own time on long input.
+MAX_MARKDOWN_INPUT_CHARS = 100_000
+MAX_RENDERED_HTML_BYTES = 200_000
 
 # The layout's palette (notifications.C_*), repeated here so this module has no import cycle;
 # a test keeps the two equal.
@@ -152,7 +164,14 @@ def _build() -> MarkdownIt:
 _MD = _build()
 
 
-def render_model_markdown(text: str) -> str:
-    """HTML (inline-styled, no raw HTML, allowlisted links, no images) for the model's text."""
+def render_model_markdown(text: str) -> Optional[str]:
+    """HTML (inline-styled, no raw HTML, allowlisted links, no images) for the model's text, or None
+    when the text or its rendering is over budget (the caller then shows the text as plain text)."""
 
-    return _MD.render(str(text or ""))
+    source = str(text or "")
+    if len(source) > MAX_MARKDOWN_INPUT_CHARS:
+        return None
+    rendered = _MD.render(source)
+    if len(rendered.encode("utf-8")) > MAX_RENDERED_HTML_BYTES:
+        return None
+    return rendered

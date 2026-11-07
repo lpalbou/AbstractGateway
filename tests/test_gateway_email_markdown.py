@@ -225,3 +225,42 @@ def test_markdown_it_py_is_a_declared_dependency() -> None:
 
     deps = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]["dependencies"]
     assert any(d.replace(" ", "").startswith("markdown-it-py>=") for d in deps)
+
+
+def _amplifying_table() -> str:
+    """The review's case (2026-11-07): 5.2 KB of model text, a 300-column header and 2,000 one-word
+    rows, which the parser completes cell by cell into 8 MB of styled HTML."""
+
+    return "|a" * 300 + "|\n" + "|-" * 300 + "|\n" + "x\n" * 2000
+
+
+def test_an_amplifying_text_falls_back_to_the_whole_text_as_plain_text() -> None:
+    from abstractgateway.mail.mail_markdown import MAX_RENDERED_HTML_BYTES, render_model_markdown
+
+    body = _amplifying_table()
+    assert 5_000 < len(body) < 5_500
+    assert render_model_markdown(body) is None  # rendered, it is megabytes: over the budget
+    _, text, html_body = _render(body)
+    assert len(html_body.encode("utf-8")) < MAX_RENDERED_HTML_BYTES
+    block = _model_block(html_body)
+    assert "white-space:pre-wrap" in html_body and "<table" not in block and "<td" not in block
+    # Not truncated: every line of the text is in the HTML, escaped, and the plain part is unchanged.
+    assert block.count("\nx") == 2000 and ("|a" * 300) in block
+    assert body in text
+
+
+def test_an_over_long_text_is_never_parsed() -> None:
+    from abstractgateway.mail import mail_markdown
+
+    body = "**word** " * (mail_markdown.MAX_MARKDOWN_INPUT_CHARS // 9 + 1)
+    assert len(body) > mail_markdown.MAX_MARKDOWN_INPUT_CHARS
+    assert mail_markdown.render_model_markdown(body) is None
+    _, _, html_body = _render(body)
+    assert "<strong" not in _model_block(html_body) and "**word**" in html_body
+
+
+def test_a_long_briefing_stays_rendered() -> None:
+    from abstractgateway.mail.mail_markdown import render_model_markdown
+
+    long_briefing = "\n\n".join([BRIEFING] * 20)  # ~20 KB of ordinary Markdown
+    assert render_model_markdown(long_briefing) is not None

@@ -504,14 +504,23 @@ def _block_question(prompt: str, choices: List[str]) -> str:
     return quote + listing
 
 
+def _model_body_html(body: str) -> str:
+    """The model's Markdown, rendered by a CommonMark parser with raw HTML off and allowlisted links
+    (mail_markdown, backlog 1011); over its size budget, the whole text escaped as plain text."""
+
+    rendered = render_model_markdown(body)
+    if rendered is None:
+        return f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">{_h(body)}</div>'
+    return f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word">{rendered}</div>'
+
+
 def _block_model(title: str, body: str, *, label: str = "Written by the automation (model-authored text)") -> str:
     return (
         f'<div style="margin:0 0 16px;padding:12px 14px;background:{C_SOFT};border:1px solid {C_LINE};border-radius:6px">'
         f'<p style="margin:0 0 6px;color:{C_MUTED};font-size:12px">{_h(label)}</p>'
+        # The title stays plain text.
         + (f'<p style="margin:0 0 6px;color:{C_TEXT};font-size:15px;font-weight:bold">{_h(title)}</p>' if title else "")
-        # The body is the model's Markdown, rendered by a CommonMark parser with raw HTML off and
-        # allowlisted links (mail_markdown, backlog 1011); the title above stays plain text.
-        + (f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word">{render_model_markdown(body)}</div>' if body else "")
+        + (_model_body_html(body) if body else "")
         + "</div>"
     )
 
