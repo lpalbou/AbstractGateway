@@ -140,20 +140,27 @@ def plan(
     """Whether this gateway can serve https on its Tailscale name now (read-only).
     `starting` means: go ahead and start the command."""
     if not binary:
-        return _status("unavailable", "Tailscale is not installed on this computer.")
+        return _status(
+            "unavailable",
+            "Tailscale is not installed on this computer. Install it here and on your phone (tailscale.com/download), "
+            "sign both in to the same tailnet, and the gateway serves https on its Tailscale name by itself.",
+        )
     status = run_json([binary, "status", "--json"])
     if not status or status.get("BackendState") != "Running":
-        return _status("unavailable", "Tailscale is not running on this computer.")
+        return _status("unavailable", "Tailscale is installed but not running on this computer: start it and sign in.")
     me = status.get("Self") if isinstance(status.get("Self"), dict) else {}
     name = str(me.get("DNSName") or "").strip().rstrip(".").lower()
     if not name:
-        return _status("unavailable", "This computer has no Tailscale name (MagicDNS is off).")
+        return _status(
+            "unavailable", "This computer has no Tailscale name: turn on MagicDNS (Tailscale admin console → DNS)."
+        )
     url = f"https://{name}"
     cert_domains = [str(d).strip().rstrip(".").lower() for d in (status.get("CertDomains") or [])]
     if name not in cert_domains:
         return _status(
             "unavailable",
-            "HTTPS certificates are not enabled for this tailnet (Tailscale admin console → DNS → HTTPS Certificates).",
+            "HTTPS certificates are not enabled for this tailnet: turn them on (Tailscale admin console → DNS → HTTPS "
+            "Certificates); the gateway picks it up within 30 seconds.",
             url=url,
         )
     config = run_json([binary, "serve", "status", "--json"]) or {}

@@ -1422,8 +1422,9 @@ fn ready_view(
     );
     // tailscale_https (the gateway's tailscale_https.py): the gateway serves
     // https on its Tailscale name itself while it runs; say whether it does,
-    // and why not (the web's netOtherAddressMarkup). Only where Tailscale runs.
-    if let (Some(_), Some(th)) = (&ts_name, raw.get("tailscale_https")) {
+    // and why not (the web's netOtherAddressMarkup), in every state: a fresh
+    // install without Tailscale reads here how to unlock https.
+    if let Some(th) = raw.get("tailscale_https") {
         let state = th.get("state").and_then(Value::as_str).unwrap_or("");
         let url = th.get("url").and_then(Value::as_str).unwrap_or("");
         let reason = th.get("reason").and_then(Value::as_str).unwrap_or("");
@@ -1436,6 +1437,7 @@ fn ready_view(
                 "off" => "off",
                 "starting" => "starting",
                 "taken" => "set up outside the gateway",
+                "unavailable" => "not available yet",
                 _ => "not served",
             };
             if reason.is_empty() {

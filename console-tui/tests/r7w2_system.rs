@@ -154,6 +154,34 @@ fn network_page_speaks_the_web_sentences() {
 }
 
 #[test]
+fn network_without_tailscale_says_how_to_unlock_https() {
+    // A fresh install without Tailscale: the page says what to install so voice and camera work on phones.
+    let mut raw = network("localhost", false, false);
+    raw["tailscale"] = Value::Null;
+    raw["addresses"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|a| a["kind"] != "tailscale");
+    raw["tailscale_https"] = json!({"state": "unavailable", "url": null, "target": null,
+        "reason": "Tailscale is not installed on this computer. Install it here and on your phone (tailscale.com/download), sign both in to the same tailnet, and the gateway serves https on its Tailscale name by itself."});
+    let (_h, s) = net_page(Size::new(120, 60), raw);
+    // The sentence wraps inside the box: drop the frame and the line breaks before matching.
+    let flat: String = s
+        .replace('│', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        flat.contains("HTTPS on the Tailscale name: not available yet. Tailscale is not installed on this computer. Install it here and on your phone"),
+        "the unlock sentence:\n{s}"
+    );
+    assert!(
+        !flat.contains("including its Tailscale name"),
+        "no Tailscale name claimed:\n{s}"
+    );
+}
+
+#[test]
 fn network_proxy_fields_are_shown_in_the_other_address_card() {
     // R15 D1: no "Advanced" fold — the origins and the switch are always
     // shown inside "Reached through another address?", set or not.

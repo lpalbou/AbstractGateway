@@ -2671,12 +2671,13 @@ CONSOLE_UI_JS = r"""
         + `<p class="ui-card__note">Nothing to set up: the gateway accepts every address above${ts && ts.dns_name ? ", including its Tailscale name" : ""}, and a proxy on this computer passes the real client address.</p>`;
       // tailscale_https (tailscale_https.py): the gateway serves https on its
       // Tailscale name itself while it runs; this says whether it does, and why
-      // not. Shown only where Tailscale runs on this computer.
+      // not, in every state: a fresh install without Tailscale reads here how to
+      // unlock https (voice and camera on phones need it).
       const th = d.tailscale_https;
-      if (ts && ts.dns_name && th && th.state === "active" && th.url) {
+      if (th && th.state === "active" && th.url) {
         out += `<p class="ui-card__note" data-net-tailscale-https="active">HTTPS (voice and camera on phones and other computers): <a href="${esc(th.url)}">${esc(th.url)}</a>, served by the gateway while it runs.</p>`;
-      } else if (ts && ts.dns_name && th && th.state) {
-        const NET_TS_HTTPS_WORD = { off: "off", starting: "starting", taken: "set up outside the gateway" };
+      } else if (th && th.state) {
+        const NET_TS_HTTPS_WORD = { off: "off", starting: "starting", taken: "set up outside the gateway", unavailable: "not available yet" };
         out += `<p class="ui-card__note" data-net-tailscale-https="${esc(th.state)}">HTTPS on the Tailscale name: ${esc(NET_TS_HTTPS_WORD[th.state] || "not served")}.${th.reason ? ` ${esc(th.reason)}` : ""}</p>`;
       }
       // R15 D1: allowed origins and proxy trust are shown IN this card (they
