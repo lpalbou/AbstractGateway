@@ -143,6 +143,14 @@ def _core_styles(state: Any) -> None:
     _style_tokens(state.tokens)
 
 
+def _link_text_as_written(url: str) -> str:
+    """The text of an autolink is the address exactly as written: the parser's default decodes
+    punycode and percent-escapes, so `<https://xn--pple-43d.com>` would read `https://аpple.com`
+    with a Cyrillic а (review F4, 2026-11-07). The href is still the parser's normalized URL."""
+
+    return url
+
+
 def _render_fence(self: Any, tokens: List[Token], idx: int, options: Any, env: Any) -> str:
     return f'<pre style="{_PRE}">{html.escape(tokens[idx].content, quote=True)}</pre>\n'
 
@@ -171,6 +179,7 @@ def _build() -> MarkdownIt:
     md = MarkdownIt("commonmark", {"html": False, "breaks": True, "linkify": False, "typographer": False})
     md.enable(["table", "strikethrough"])
     md.validateLink = allowed_link  # type: ignore[method-assign]
+    md.normalizeLinkText = _link_text_as_written  # type: ignore[method-assign]
     md.core.ruler.push("mail_inline_styles", _core_styles)
     md.add_render_rule("fence", _render_fence)
     md.add_render_rule("code_block", _render_fence)

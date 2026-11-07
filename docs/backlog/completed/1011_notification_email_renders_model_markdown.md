@@ -119,6 +119,8 @@ plain part is the model's Markdown as written. Recorded in `mail_markdown.py`'s 
 - F1: size budgets (`MAX_MARKDOWN_INPUT_CHARS` 100,000, `MAX_RENDERED_HTML_BYTES` 200,000): over either, the whole
   text is shown escaped as plain text (the review's 5.2 KB table that rendered to 8 MB).
 - F2: floor `markdown-it-py>=4.0.0`.
+- F3: a link whose href is refused (an empty target, `[x]()`) becomes its text.
+- F4: autolink text is the address as written (`normalizeLinkText` decodes no punycode or percent-escapes).
 
 ## Not done
 

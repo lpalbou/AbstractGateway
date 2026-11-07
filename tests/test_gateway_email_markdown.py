@@ -288,3 +288,13 @@ def test_a_refused_link_keeps_its_text() -> None:
     block = _model_block(html_body)
     assert "the label" in block and "<a" not in block
 
+
+def test_autolink_text_is_the_address_as_written() -> None:
+    """Link text never decodes punycode or percent-escapes (review F4): a look-alike host shows as the
+    `xn--` form the plain-text part shows, never as its Unicode spoof."""
+
+    _, _, html_body = _render("<https://xn--pple-43d.com/login> and <https://example.org/a%E2%80%AEb>")
+    block = _model_block(html_body)
+    assert ">https://xn--pple-43d.com/login</a>" in block
+    assert "\u0430pple" not in block
+    assert ">https://example.org/a%E2%80%AEb</a>" in block and "\u202e" not in block

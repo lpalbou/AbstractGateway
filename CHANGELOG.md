@@ -109,7 +109,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text),
   only `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`,
   `tel:`, relative paths stay visible as written, never a link), and an image becomes a link to its
-  address, never a remote load. A link with an empty target (`[x]()`) is its text, never `href=""`.
+  address, never a remote load. A link with an empty target (`[x]()`) is its text, never `href=""`. A link's text is its address as written: a
+  look-alike host such as `xn--pple-43d.com` is never decoded to its Unicode spoof (`аpple.com`).
 - **A short model text can never become a huge email.** Every rendered element carries its own style and
   the parser completes missing table cells, so 5 KB of text could render to 8 MB of HTML (Gmail clips a
   message above about 100 KB; mail servers refuse 10-25 MB). A text over 100,000 characters, or one whose
