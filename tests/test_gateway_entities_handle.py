@@ -12,7 +12,6 @@ changes zero bytes on disk (localhost -> VPS = one config edit).
 from __future__ import annotations
 
 import copy
-import json
 from pathlib import Path
 
 import pytest
@@ -92,6 +91,35 @@ def test_offline_box_with_no_declared_address_has_no_handle(registry: EntityRegi
     assert registry.list_entities()[0]["handle"] is None
 
 
+def _address_leaves(value, host: str, port: int, path: str = "$") -> list:
+    """Every field of `value` that carries the declared address: a string holding the host (alone or
+    in `host:port`, a URL, a handle) or the port as a value of its own ("8080" or 8080). Never a
+    substring of the whole document: a timestamp's microseconds (`…38.248080`) or a SHA-256 can
+    contain "8080" by coincidence (backlog 1128 item 4)."""
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            found += _address_leaves(item, host, port, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for i, item in enumerate(value):
+            found += _address_leaves(item, host, port, f"{path}[{i}]")
+    elif isinstance(value, str):
+        if host in value or value.strip() == str(port):
+            found.append(path)
+    elif isinstance(value, int) and not isinstance(value, bool) and value == port:
+        found.append(path)
+    return found
+
+
+def test_the_address_check_finds_an_address_and_ignores_coincidences():
+    """The check above goes red on an address written into a manifest, never on a timestamp."""
+    clean = {"created_at": "2026-11-04T13:55:38.248080+00:00", "sha256": "ab8080cd" * 8, "name": "Castor"}
+    assert _address_leaves(clean, "127.0.0.1", 8080) == []
+    assert _address_leaves({"handle": "castor@127.0.0.1:8080"}, "127.0.0.1", 8080) == ["$.handle"]
+    assert _address_leaves({"reach": {"url": "http://127.0.0.1:8080/x"}}, "127.0.0.1", 8080) == ["$.reach.url"]
+    assert _address_leaves({"net": [{"port": 8080}, {"port": "8080"}]}, "127.0.0.1", 8080) == ["$.net[0].port", "$.net[1].port"]
+
+
 def test_address_is_never_identity(registry: EntityRegistry, monkeypatch: pytest.MonkeyPatch):
     """Core C1 pin + laurent's consequence (d): nothing AT REST derives
     from the address — creating under one address and reading under
@@ -100,7 +128,7 @@ def test_address_is_never_identity(registry: EntityRegistry, monkeypatch: pytest
     monkeypatch.setenv("ABSTRACTGATEWAY_DECLARED_ADDRESS", "127.0.0.1:8080")
     created = registry.create(name="Castor", spark=_spark())
     assert "127.0.0.1" not in created.entity_id
-    assert "8080" not in json.dumps(created.manifest)
+    assert _address_leaves(created.manifest, "127.0.0.1", 8080) == []
 
     before = _home_bytes(registry, "castor")
     monkeypatch.setenv("ABSTRACTGATEWAY_DECLARED_ADDRESS", "10.0.0.9:9999")
