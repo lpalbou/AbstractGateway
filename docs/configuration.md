@@ -451,12 +451,16 @@ for a proxy or tunnel with a name of its own. The console shows this under
 
 ### Reached through Tailscale (https)
 
-New install, and you want voice and camera on your phone? Install Tailscale
-on this computer and on the phone (tailscale.com/download), sign both in to
-the same tailnet, and turn on MagicDNS and HTTPS Certificates in the Tailscale
-admin console (DNS page). That is all: the gateway notices within 30 seconds
-and the console's **Network** page shows the `https://…ts.net` address to open
-on the phone. Until then that page says which of these steps is missing.
+Tailscale is optional, never required: the gateway runs fully without it. It is
+offered as the easy way to an https address when this computer has no domain
+name (voice and camera on phones need https). If you want that: install
+Tailscale (open-source client) on this computer and on the phone
+(tailscale.com/download), sign both in to the same tailnet, and turn on
+MagicDNS and HTTPS Certificates in the Tailscale admin console (DNS page). The
+gateway notices within 30 seconds and the console's **Network** page shows the
+`https://…ts.net` address to open on the phone; while Tailscale is installed
+but not ready, that page says which step is missing. Without Tailscale the page
+shows one line offering it, and nothing else.
 
 Reached through Tailscale? Nothing to set up: while it runs, the gateway serves
 `https://<host>.<tailnet>.ts.net/` itself (the console at `/console`, the apps

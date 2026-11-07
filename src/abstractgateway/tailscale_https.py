@@ -140,11 +140,7 @@ def plan(
     """Whether this gateway can serve https on its Tailscale name now (read-only).
     `starting` means: go ahead and start the command."""
     if not binary:
-        return _status(
-            "unavailable",
-            "Tailscale is not installed on this computer. Install it here and on your phone (tailscale.com/download), "
-            "sign both in to the same tailnet, and the gateway serves https on its Tailscale name by itself.",
-        )
+        return _status("unavailable", "Tailscale is not installed on this computer.", target=None, url=None) | {"installed": False}
     status = run_json([binary, "status", "--json"])
     if not status or status.get("BackendState") != "Running":
         return _status("unavailable", "Tailscale is installed but not running on this computer: start it and sign in.")

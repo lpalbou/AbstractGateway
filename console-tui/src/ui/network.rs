@@ -1425,29 +1425,37 @@ fn ready_view(
     // and why not (the web's netOtherAddressMarkup), in every state: a fresh
     // install without Tailscale reads here how to unlock https.
     if let Some(th) = raw.get("tailscale_https") {
-        let state = th.get("state").and_then(Value::as_str).unwrap_or("");
-        let url = th.get("url").and_then(Value::as_str).unwrap_or("");
-        let reason = th.get("reason").and_then(Value::as_str).unwrap_or("");
-        let line = if state == "active" && !url.is_empty() {
-            format!(
-                "HTTPS (voice and camera on phones and other computers): {url}, served by the gateway while it runs."
-            )
+        if th.get("installed").and_then(Value::as_bool) == Some(false) {
+            // Optional, never a dependency: one line offering the easy https path.
+            p.wrap(
+                "No domain name for this computer? Tailscale (open-source client, tailscale.com/download) gives it an https address for voice and camera on phones; once installed, the gateway serves it by itself.",
+                t.text_muted,
+            );
         } else {
-            let word = match state {
-                "off" => "off",
-                "starting" => "starting",
-                "taken" => "set up outside the gateway",
-                "unavailable" => "not available yet",
-                _ => "not served",
-            };
-            if reason.is_empty() {
-                format!("HTTPS on the Tailscale name: {word}.")
+            let state = th.get("state").and_then(Value::as_str).unwrap_or("");
+            let url = th.get("url").and_then(Value::as_str).unwrap_or("");
+            let reason = th.get("reason").and_then(Value::as_str).unwrap_or("");
+            let line = if state == "active" && !url.is_empty() {
+                format!(
+                    "HTTPS (voice and camera on phones and other computers): {url}, served by the gateway while it runs."
+                )
             } else {
-                format!("HTTPS on the Tailscale name: {word}. {reason}")
+                let word = match state {
+                    "off" => "off",
+                    "starting" => "starting",
+                    "taken" => "set up outside the gateway",
+                    "unavailable" => "not available yet",
+                    _ => "not served",
+                };
+                if reason.is_empty() {
+                    format!("HTTPS on the Tailscale name: {word}.")
+                } else {
+                    format!("HTTPS on the Tailscale name: {word}. {reason}")
+                }
+            };
+            if !state.is_empty() {
+                p.wrap(&line, t.text_muted);
             }
-        };
-        if !state.is_empty() {
-            p.wrap(&line, t.text_muted);
         }
     }
     if d.proxy.present {

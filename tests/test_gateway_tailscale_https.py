@@ -133,7 +133,7 @@ def test_plan_says_why_https_cannot_be_served():
     target = "http://127.0.0.1:8080"
     assert th.plan(target, binary=None)["state"] == "unavailable"
     assert "not installed" in th.plan(target, binary=None)["reason"]
-    assert "Install it here and on your phone" in th.plan(target, binary=None)["reason"]  # a fresh install learns the way
+    assert th.plan(target, binary=None)["installed"] is False  # the consoles show one optional offer, not a state line
     stopped = th.plan(target, binary="ts", run_json=lambda cmd: {"BackendState": "Stopped"})
     assert stopped["state"] == "unavailable" and "not running" in stopped["reason"]
     no_cert = th.plan(target, binary="ts", run_json=lambda cmd: {**RUNNING, "CertDomains": []} if cmd[1] == "status" else {})

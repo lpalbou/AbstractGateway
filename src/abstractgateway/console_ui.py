@@ -2671,10 +2671,13 @@ CONSOLE_UI_JS = r"""
         + `<p class="ui-card__note">Nothing to set up: the gateway accepts every address above${ts && ts.dns_name ? ", including its Tailscale name" : ""}, and a proxy on this computer passes the real client address.</p>`;
       // tailscale_https (tailscale_https.py): the gateway serves https on its
       // Tailscale name itself while it runs; this says whether it does, and why
-      // not, in every state: a fresh install without Tailscale reads here how to
-      // unlock https (voice and camera on phones need it).
+      // not. Tailscale is OPTIONAL and never a dependency: without it, one muted
+      // line offers it as the easy way to https on a machine with no domain name
+      // (voice and camera on phones need https); with it, the state and the next step.
       const th = d.tailscale_https;
-      if (th && th.state === "active" && th.url) {
+      if (th && th.installed === false) {
+        out += `<p class="ui-card__note" data-net-tailscale-https="not-installed">No domain name for this computer? <a href="https://tailscale.com/download" target="_blank" rel="noopener">Tailscale</a> (open-source client) gives it an https address for voice and camera on phones; once installed, the gateway serves it by itself.</p>`;
+      } else if (th && th.state === "active" && th.url) {
         out += `<p class="ui-card__note" data-net-tailscale-https="active">HTTPS (voice and camera on phones and other computers): <a href="${esc(th.url)}">${esc(th.url)}</a>, served by the gateway while it runs.</p>`;
       } else if (th && th.state) {
         const NET_TS_HTTPS_WORD = { off: "off", starting: "starting", taken: "set up outside the gateway", unavailable: "not available yet" };

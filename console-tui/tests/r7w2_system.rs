@@ -162,8 +162,8 @@ fn network_without_tailscale_says_how_to_unlock_https() {
         .as_array_mut()
         .unwrap()
         .retain(|a| a["kind"] != "tailscale");
-    raw["tailscale_https"] = json!({"state": "unavailable", "url": null, "target": null,
-        "reason": "Tailscale is not installed on this computer. Install it here and on your phone (tailscale.com/download), sign both in to the same tailnet, and the gateway serves https on its Tailscale name by itself."});
+    raw["tailscale_https"] = json!({"state": "unavailable", "url": null, "target": null, "installed": false,
+        "reason": "Tailscale is not installed on this computer."});
     let (_h, s) = net_page(Size::new(120, 60), raw);
     // The sentence wraps inside the box: drop the frame and the line breaks before matching.
     let flat: String = s
@@ -172,12 +172,16 @@ fn network_without_tailscale_says_how_to_unlock_https() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(
-        flat.contains("HTTPS on the Tailscale name: not available yet. Tailscale is not installed on this computer. Install it here and on your phone"),
+        flat.contains("No domain name for this computer? Tailscale (open-source client, tailscale.com/download) gives it an https address"),
         "the unlock sentence:\n{s}"
     );
     assert!(
         !flat.contains("including its Tailscale name"),
         "no Tailscale name claimed:\n{s}"
+    );
+    assert!(
+        !flat.contains("HTTPS on the Tailscale name"),
+        "no state line without Tailscale (optional, never a dependency):\n{s}"
     );
 }
 
