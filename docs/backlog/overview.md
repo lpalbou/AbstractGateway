@@ -22,11 +22,12 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 22
-- Proposed: 55
+- Proposed: 56
 - Completed: 70
 - Deprecated: 4
 - Recurrent: 0
 
+2026-11-07: 1012 proposed (lean entity tile read + card cache, operator ask): proposed 56.
 2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55.
 
 2026-11-06: recounted proposed items (53 existing, plus 1010 = 54), including
@@ -157,6 +158,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 | --- | --- |
 | [1010 Typed clone failures and explicit segment retry](proposed/1010_typed_clone_failures_and_explicit_segment_retry.md) | P2; operator schedules lower-level work, Voice 0067 defines policy and Runtime exposes the typed contract. |
 | [1011 Notification emails render model Markdown](proposed/1011_notification_email_renders_model_markdown.md) | P2; operator report 2026-11-07 (literal `**` in an automation result email); safe CommonMark with raw HTML off, scheme allowlist, inline styles; not scheduled. |
+| [1012 Lean entity tile read and card cache](proposed/1012_entity_tile_lean_read_and_card_cache.md) | P2; operator ask 2026-11-07; Board tiles read 88 KB / 1.2 s cards; sections filter or tile read, cache by journal seq; Observer 0.12.2 mitigates client-side. |
 | [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
 | [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
 | [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
