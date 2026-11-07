@@ -206,24 +206,89 @@ REASON_ADMIN_ONLY_TOOL = "admin_only_tool"
 _LIST_CAP = 12
 
 
+class ChecksOnTheEventLoop(RuntimeError):
+    """An offered-list check was called on the event loop (it blocks: run it off the loop)."""
+
+
 def _run_async(fn: Any, *args: Any, **kwargs: Any) -> Any:
-    """Run the async route function `fn` from a sync entity handler (a worker thread)."""
+    """Run the async route function `fn` from a sync check, in a worker thread: an AnyIO worker
+    (a sync route handler) goes back to the request's loop; any other thread runs its own loop.
+    Called ON a running loop it raises `ChecksOnTheEventLoop` (it would block that loop, and
+    `asyncio.run` cannot run there: the 0.20.2 conversation-identity check refused every voice)."""
+    import asyncio
     import functools
 
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise ChecksOnTheEventLoop(f"{getattr(fn, '__name__', fn)} was called on the event loop; run the check off the loop")
     try:
         import anyio.from_thread
 
         return anyio.from_thread.run(functools.partial(fn, *args, **kwargs))
     except RuntimeError:
-        import asyncio
-
         return asyncio.run(fn(*args, **kwargs))
 
 
-def _bare_request() -> Any:
+def _route_defaults(fn: Any, given: Mapping[str, Any]) -> dict:
+    """`given` plus the declared default of every other parameter of the route function `fn`.
+    A FastAPI parameter's default is a `Query(...)` object, not its value: called directly, the
+    route received that object (0.20.2: `language=Query(None)` filtered every voice out, so the
+    identity check found no voice the picker listed)."""
+    import inspect
+
+    from pydantic.fields import FieldInfo
+    from pydantic_core import PydanticUndefined
+
+    out = dict(given)
+    for name, param in inspect.signature(fn).parameters.items():
+        if name in out or param.default is inspect.Parameter.empty:
+            continue
+        default = param.default
+        if isinstance(default, FieldInfo):
+            default = None if default.default is PydanticUndefined else default.default
+        out[name] = default
+    return out
+
+
+def _caller_request(principal: Any) -> Any:
+    """A request standing for the caller in a check that has no HTTP request of its own: no
+    headers, the caller's principal in its state (`request.state.gateway_principal`)."""
     from starlette.requests import Request as _Request
 
-    return _Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b""})
+    return _Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": b"",
+                     "state": {"gateway_principal": principal}})
+
+
+async def _as_caller(fn: Any, principal: Any, plane_owner: Any, kwargs: Mapping[str, Any]) -> Any:
+    """Await the route function `fn` as the CALLER: their principal and, for an admin acting on
+    an entity in another account's plane, that plane (`entity_access.entity_plane_resolver`) are
+    set for the call, so the answer is the one the caller's own picker got (their plane's models
+    and voices: its account's own voices in front of the shared library)."""
+    from .security.principal import reset_current_gateway_principal, set_current_gateway_principal
+    from .service import _ENTITY_PLANE_OWNER
+
+    token = set_current_gateway_principal(principal)
+    owner_token = _ENTITY_PLANE_OWNER.set(plane_owner)
+    try:
+        return await fn(**kwargs)
+    finally:
+        _ENTITY_PLANE_OWNER.reset(owner_token)
+        reset_current_gateway_principal(token)
+
+
+def _call_route_as_caller(fn: Any, request: Any = None, **kwargs: Any) -> Any:
+    """`fn(request, **kwargs)` (every other parameter at its declared default), as the caller of
+    this check (`current_gateway_principal()`), from a worker thread. `request`: the caller's
+    real request when the check has one, else `_caller_request`."""
+    from .security.principal import current_gateway_principal
+    from .service import _ENTITY_PLANE_OWNER
+
+    principal = current_gateway_principal()
+    req = request if request is not None else _caller_request(principal)
+    return _run_async(_as_caller, fn, principal, _ENTITY_PLANE_OWNER.get(), _route_defaults(fn, {"request": req, **kwargs}))
 
 
 def _listed(values: list) -> str:
@@ -232,22 +297,16 @@ def _listed(values: list) -> str:
     return ", ".join(shown) + (f" and {more} more" if more > 0 else "")
 
 
-def offered_text_models(provider: str) -> tuple[list, Optional[str]]:
-    """(models, error) — what `GET /discovery/providers/{provider}/models` offers a member."""
+def offered_text_models(provider: str, request: Any = None) -> tuple[list, Optional[str]]:
+    """(models, error) — what `GET /discovery/providers/{provider}/models` offers the caller."""
     from fastapi import HTTPException
 
     from .routes.gateway import discovery_provider_models
 
     try:
-        body = _run_async(
-            discovery_provider_models,
-            _bare_request(),
-            provider_name=str(provider),
-            base_url=None,
-            input_type=None,
-            output_type=None,
-            capability_route=None,
-        )
+        body = _call_route_as_caller(discovery_provider_models, request, provider_name=str(provider))
+    except ChecksOnTheEventLoop:
+        raise
     except HTTPException as e:
         detail = e.detail if isinstance(e.detail, str) else str(e.detail)
         return [], detail
@@ -272,22 +331,20 @@ def mind_bound_problem(provider: str, model: str) -> Optional[str]:
     return f"{model} isn't a {provider} model this gateway offers. Offered: {_listed(models)}."
 
 
-def offered_voices(provider: str, model: Optional[str]) -> tuple[list, list, Optional[str]]:
-    """(voice ids, speech models, error) — what `GET /voice/voices` offers a member for `provider`."""
+def offered_voices(provider: str, model: Optional[str], request: Any = None) -> tuple[list, list, Optional[str]]:
+    """(voice ids, speech models, error) — what `GET /voice/voices?provider=` lists for the
+    CALLER (`_call_route_as_caller`): the voices the picker shows are the voices a save accepts.
+    In a gateway with user accounts that is the shared library (built-in voices and the ones an
+    administrator made) plus the voices of the account whose plane serves the call: the caller's
+    own, or, for an admin acting on another account's entity, that account's."""
     from fastapi import HTTPException
 
     from .routes.gateway import voice_voices_catalog
 
     try:
-        body = _run_async(
-            voice_voices_catalog,
-            _bare_request(),
-            base_url=None,
-            provider=str(provider),
-            model=None,
-            providers_only=False,
-            compact=True,
-        )
+        body = _call_route_as_caller(voice_voices_catalog, request, provider=str(provider), compact=True)
+    except ChecksOnTheEventLoop:
+        raise
     except HTTPException as e:
         return [], [], e.detail if isinstance(e.detail, str) else str(e.detail)
     except Exception as e:  # noqa: BLE001
@@ -310,6 +367,18 @@ def offered_voices(provider: str, model: Optional[str]) -> tuple[list, list, Opt
     return voices, models, err
 
 
+#: Whose voices an entity may speak with (said in the refusal of any other voice). An entity
+#: lives in its creator's runtime plane and every route that makes it speak runs there (an
+#: admin acting on it included: `entity_access.entity_plane_resolver`), so its creator's own
+#: (private) voices are heard by everyone who meets it; another account's own voice is not in
+#: that plane and could never be spoken. Shared voices are the built-in ones and those an
+#: administrator made or shared (`POST /voice/clones/{id}/deploy`).
+ENTITY_VOICES_SENTENCE = (
+    "An entity speaks with this gateway's shared voices and its creator's own voices; another "
+    "person's own voice stays theirs until an administrator shares it with everyone."
+)
+
+
 def voice_bound_problem(provider: str, model: str, voice: str) -> Optional[str]:
     voices, models, err = offered_voices(provider, model)
     if not voices:
@@ -319,7 +388,7 @@ def voice_bound_problem(provider: str, model: str, voice: str) -> Optional[str]:
             "Choose a voice from the list, or the Gateway default voice."
         )
     if not any(v.lower() == str(voice).strip().lower() for v in voices):
-        return f"{voice} isn't a {provider} voice this gateway offers. Offered: {_listed(voices)}."
+        return f"{voice} isn't a {provider} voice this entity can use. {ENTITY_VOICES_SENTENCE} Offered: {_listed(voices)}."
     if models and not any(m.lower() == str(model).strip().lower() for m in models):
         return f"{model} isn't a {provider} speech model this gateway offers. Offered: {_listed(models)}."
     return None

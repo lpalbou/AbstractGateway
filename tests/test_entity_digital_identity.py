@@ -59,7 +59,7 @@ def _gateway_knows(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.entity_identity as ei
     import abstractgateway.entity_settings_access as esa
 
-    monkeypatch.setattr(esa, "offered_voices", lambda p, m: (*OFFERED_VOICES.get(p, ([], [])), None))
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m, *_r: (*OFFERED_VOICES.get(p, ([], [])), None))
     monkeypatch.setattr(core_config, "model_not_downloaded", _missing)
     monkeypatch.setattr(ei, "gateway_default_voice", lambda data_dir: dict(DEFAULT_VOICE))
     monkeypatch.setattr(
@@ -223,7 +223,11 @@ def test_the_refusal_ladder_in_order_for_every_role(world, role) -> None:
     _unchanged(world, 1)
     # 3. the voice offered (before its download), for an admin too.
     r = c.put(url, headers=h, json=not_offered)
-    assert r.status_code == 400 and r.json()["detail"] == "Aster can't speak with zz_nobody: it isn't a kokoro voice this gateway offers. Choose one of: af_heart, am_adam."
+    assert r.status_code == 400 and r.json()["detail"] == (
+        "Aster can't speak with zz_nobody: it isn't a kokoro voice Aster can use. An entity speaks with this gateway's shared "
+        "voices and its creator's own voices; another person's own voice stays theirs until an administrator shares it with "
+        "everyone. Choose one of: af_heart, am_adam."
+    )
     # 4. the model downloaded.
     r = c.put(url, headers=h, json=not_downloaded)
     assert r.status_code == 409 and r.json()["error"]["download"] == {"provider": "kokoro", "model": "kokoro-big"}, r.text
@@ -562,10 +566,10 @@ def test_the_sentences_say_what_is_missing_and_what_to_do_never_the_default_voic
 
     c = door["c"]
     _born(c, "Castor")
-    monkeypatch.setattr(esa, "offered_voices", lambda p, m: ([], [], "the engine is not installed"))
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m, *_r: ([], [], "the engine is not installed"))
     r = c.put("/api/gateway/entities/castor/identity", json=CHOSEN)
     assert r.json()["detail"] == "Castor can't speak with am_adam: this gateway offers no kokoro voice right now (the engine is not installed). Choose a voice it offers."
-    monkeypatch.setattr(esa, "offered_voices", lambda p, m: (["am_adam"], ["kokoro-82m"], None))
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m, *_r: (["am_adam"], ["kokoro-82m"], None))
     r = c.put("/api/gateway/entities/castor/identity", json={**CHOSEN, "voice": {**CHOSEN["voice"], "model": "kokoro-x"}})
     assert r.json()["detail"] == "Castor can't speak with kokoro-x: it isn't a kokoro speech model this gateway offers. Choose one of: kokoro-82m."
     for refused in (r,):

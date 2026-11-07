@@ -40,7 +40,7 @@ def _gateway_knows(monkeypatch: pytest.MonkeyPatch) -> None:
     import abstractgateway.core_config as core_config
     import abstractgateway.entity_settings_access as esa
 
-    monkeypatch.setattr(esa, "offered_voices", lambda p, m: (*OFFERED_VOICES.get(p, ([], [])), None))
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m, *_r: (*OFFERED_VOICES.get(p, ([], [])), None))
     monkeypatch.setattr(core_config, "model_not_downloaded", lambda p, m: ({"message": f"{m} is not downloaded yet.", "download": {"provider": p, "model": m}} if m == "kokoro-big" else None))
 
 

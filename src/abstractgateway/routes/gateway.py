@@ -9344,7 +9344,12 @@ def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, An
 
 
 def _apply_session_identity(
-    req: "StartRunRequest", input_data: Dict[str, Any], *, principal: Optional[GatewayPrincipal], session_id: Optional[str]
+    req: "StartRunRequest",
+    input_data: Dict[str, Any],
+    *,
+    principal: Optional[GatewayPrincipal],
+    session_id: Optional[str],
+    request: Optional[Request] = None,
 ) -> Optional[JSONResponse]:
     """The conversation's identity on this run (ADR 0052 §9; session_identity.py): a client-sent
     `_runtime.identity`/`identity_ref` is dropped; `req.identity` goes through the identity ladder
@@ -9364,7 +9369,7 @@ def _apply_session_identity(
     try:
         if req.identity is not None:
             avatar, voice = choice_from_body(req.identity.avatar, req.identity.voice)
-            check_choice("This conversation", avatar, voice)
+            check_choice("This conversation", avatar, voice, request=request, for_conversation=True)
         user = str(getattr(principal, "user_id", "") or "").strip() or "operator"
         record = resolve_session_identity(
             Path(get_gateway_service().config.data_dir), session_id, avatar=avatar, voice=voice, actor=f"person:{user}"
@@ -9467,7 +9472,11 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data["workspace"] = dict(req.workspace)
         _apply_run_stream_switch(input_data, interactive=True)
         _strip_client_automation_attribution(input_data)
-        identity_refused = _apply_session_identity(req, input_data, principal=principal, session_id=session_id)
+        # Off the loop: the voice check lists the caller's voices through the voice route, and the
+        # record is a file write (on the loop the check could not run and refused every voice).
+        identity_refused = await off_loop(
+            "light", _apply_session_identity, req, input_data, principal=principal, session_id=session_id, request=request
+        )
         if identity_refused is not None:
             return identity_refused
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
