@@ -2667,11 +2667,17 @@ CONSOLE_UI_JS = r"""
     // Tailscale need no manual origin and no nginx.
     function netOtherAddressMarkup(d) {
       const ts = d.tailscale;
-      const port = (d.effective && d.effective.port) || (d.configured && d.configured.port) || 8080;
       let out = `<section class="ui-net-other" data-net-other aria-labelledby="net-other-h"><div class="ui-section-title"><h3 id="net-other-h">Reached through another address?</h3><span class="ui-sub">Tailscale, a reverse proxy</span></div>`
         + `<p class="ui-card__note">Nothing to set up: the gateway accepts every address above${ts && ts.dns_name ? ", including its Tailscale name" : ""}, and a proxy on this computer passes the real client address.</p>`;
-      if (ts && ts.dns_name) {
-        out += `<p class="ui-card__note" data-net-tailscale-https>Voice and camera need https: on this computer run <code>tailscale serve --bg http://127.0.0.1:${esc(port)}</code>, then open <code>https://${esc(ts.dns_name)}</code>. <code>tailscale serve reset</code> undoes it.</p>`;
+      // tailscale_https (tailscale_https.py): the gateway serves https on its
+      // Tailscale name itself while it runs; this says whether it does, and why
+      // not. Shown only where Tailscale runs on this computer.
+      const th = d.tailscale_https;
+      if (ts && ts.dns_name && th && th.state === "active" && th.url) {
+        out += `<p class="ui-card__note" data-net-tailscale-https="active">HTTPS (voice and camera on phones and other computers): <a href="${esc(th.url)}">${esc(th.url)}</a>, served by the gateway while it runs.</p>`;
+      } else if (ts && ts.dns_name && th && th.state) {
+        const NET_TS_HTTPS_WORD = { off: "off", starting: "starting", taken: "set up outside the gateway" };
+        out += `<p class="ui-card__note" data-net-tailscale-https="${esc(th.state)}">HTTPS on the Tailscale name: ${esc(NET_TS_HTTPS_WORD[th.state] || "not served")}.${th.reason ? ` ${esc(th.reason)}` : ""}</p>`;
       }
       // R15 D1: allowed origins and proxy trust are shown IN this card (they
       // used to sit behind an "Advanced" disclosure below the page).

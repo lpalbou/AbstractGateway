@@ -198,7 +198,7 @@ def test_split_mode_boots_runs_and_reports_itself(tmp_path: Path) -> None:
         [sys.executable, "-m", "abstractgateway", "runner", "--data-dir", str(data), "--model-host", "in-process"],
         env=env, stdout=runner_log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     api = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "serve", "--no-runner", "--data-dir", str(data),
+        [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--no-runner", "--data-dir", str(data),
          "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
         env=env, stdout=api_log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     procs = (("runner", runner, runner_log), ("api", api, api_log))

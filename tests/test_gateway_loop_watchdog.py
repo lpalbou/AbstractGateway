@@ -198,7 +198,7 @@ def test_real_serve_with_a_blocked_loop_exits_with_the_watchdog_code(tmp_path: P
     env["ABSTRACTGATEWAY_AUTH_TOKEN"] = "watchdog-test-token"
     env.pop("ABSTRACTGATEWAY_ADMIN_TOKEN", None)
     port = _free_port()
-    args = ["serve", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2"]
+    args = ["serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2"]
     proc = subprocess.run([sys.executable, "-c", _LIVE, *args], capture_output=True, text=True, timeout=120, env=env, cwd=str(tmp_path))
     err = proc.stderr
     assert "Event-loop watchdog: exits with code 75 when the event loop is blocked for 2s" in err, err[-4000:]

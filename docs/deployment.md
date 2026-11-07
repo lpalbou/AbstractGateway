@@ -303,10 +303,10 @@ themselves always listen on `127.0.0.1`; nothing else needs to reach them,
 and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
 Tailscale Funnel, ngrok) to the gateway's port works the same way.
 
-Reached through Tailscale? On the gateway machine run
-`tailscale serve --bg http://127.0.0.1:<port>` and open
-`https://<host>.<tailnet>.ts.net/`; `tailscale serve reset` undoes it. Voice
-and camera in the browser need this https address. See
+Reached through Tailscale? The gateway serves
+`https://<host>.<tailnet>.ts.net/` itself while it runs (`tailscale serve` in
+the foreground, ended with the gateway; `serve --tailscale-https off` turns it
+off). Voice and camera in the browser need this https address. See
 [configuration.md](./configuration.md#reached-through-tailscale-https).
 
 ## Where local clients find the gateway (`~/.abstractframework/gateway.json`)

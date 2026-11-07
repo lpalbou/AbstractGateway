@@ -2033,10 +2033,25 @@ for a proxy or tunnel with a name of its own. The console shows this under
 
 ### Reached through Tailscale (https)
 
-Reached through Tailscale? On the gateway machine run
-`tailscale serve --bg http://127.0.0.1:<port>` and open
-`https://<host>.<tailnet>.ts.net/` (the console at `/console`, the apps at
-`/apps/<app>/`). `tailscale serve reset` undoes it. Voice and camera in the
+Reached through Tailscale? Nothing to set up: while it runs, the gateway serves
+`https://<host>.<tailnet>.ts.net/` itself (the console at `/console`, the apps
+at `/apps/<app>/`). At launch it starts `tailscale serve
+http://127.0.0.1:<port>` in the foreground, as its own child, so the address
+exists only while the gateway is up: Tailscale removes it the moment the
+command ends, and a watchdog ends the command within a second if the gateway
+stops abruptly. While the address is not served (Tailscale not running yet,
+HTTPS certificates not enabled for the tailnet, the command ended), the gateway
+checks again every 30 seconds, so Tailscale coming up later needs no restart.
+It never replaces an existing `tailscale serve` or `tailscale funnel` on port
+443 (someone's `--bg` configuration, another gateway): the console's
+**Network** page says so. For a `tailscale serve --bg`, `tailscale serve reset`
+hands the address back to the gateway; a Tailscale Funnel (open to the
+internet) is left as it is, and resetting it would end the public address.
+`serve --tailscale-https off` turns this off. `GET /api/gateway/network`
+reports it as `tailscale_https`: `{state: off | unavailable | taken | starting
+| active | failed, url, target, reason}`; the command's output is in
+`<data dir>/logs/tailscale-https.log`. The tailnet needs MagicDNS and HTTPS
+Certificates (Tailscale admin console → DNS). Voice and camera in the
 browser need this https address: browsers offer the microphone, the camera,
 the clipboard and `crypto.randomUUID` only on https pages (or on the gateway
 machine itself), never on a plain `http://` address such as
@@ -3277,7 +3292,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -3294,6 +3309,9 @@ Most-used:
   - `--no-tray`: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with `--host 127.0.0.1`, a `--port` other than the configured one and
     `--print-token` is treated as a test gateway and shows no icon either.
+  - `--tailscale-https on|off` (default `on`): serve `https://<this computer's Tailscale name>` to
+    this gateway while it runs, and pick it up when Tailscale comes up later; `off` for a test or
+    scratch gateway. See [Reached through Tailscale](#reached-through-tailscale-https).
   - `--watchdog-seconds N` (default 30, `0` = off): a gateway whose event loop stays blocked for N
     seconds writes the blocked stacks to its log and exits with code 75 so its service manager
     restarts it; see [deployment.md](docs/deployment.md).
@@ -13857,10 +13875,10 @@ themselves always listen on `127.0.0.1`; nothing else needs to reach them,
 and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
 Tailscale Funnel, ngrok) to the gateway's port works the same way.
 
-Reached through Tailscale? On the gateway machine run
-`tailscale serve --bg http://127.0.0.1:<port>` and open
-`https://<host>.<tailnet>.ts.net/`; `tailscale serve reset` undoes it. Voice
-and camera in the browser need this https address. See
+Reached through Tailscale? The gateway serves
+`https://<host>.<tailnet>.ts.net/` itself while it runs (`tailscale serve` in
+the foreground, ended with the gateway; `serve --tailscale-https off` turns it
+off). Voice and camera in the browser need this https address. See
 [configuration.md](docs/configuration.md#reached-through-tailscale-https).
 
 ## Where local clients find the gateway (`~/.abstractframework/gateway.json`)

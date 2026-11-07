@@ -2,6 +2,7 @@
 
     GET  /network?lookup_public=0|1     status: configured vs effective, auth, addresses, warnings,
                                          browser_url (the address this caller uses) + browser_url_listed
+                                         + tailscale_https (https on the Tailscale name, tailscale_https.py)
     POST /network {mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?}
                                          store a change      400 / 409 refused
     POST /network/restart                restart to apply (host_control)     409 when it cannot apply
@@ -91,6 +92,11 @@ async def network_status(
     if lookup_public and not admin:
         raise HTTPException(status_code=403, detail="Admin principal required for the WAN address lookup")
     out = await off_loop("watchers", ne.network_status, _data_dir(), lookup_public=bool(lookup_public), is_admin=admin)
+    # https://<Tailscale name> while this gateway runs (tailscale_https.py):
+    # off | unavailable | taken | starting | active | failed, with the reason.
+    from ..tailscale_https import get_tailscale_https
+
+    out["tailscale_https"] = get_tailscale_https().status()
     # The address THIS caller uses (e.g. https://<host>.ts.net behind
     # `tailscale serve`), and whether it is one of the addresses above: a
     # client shows it instead of a plain-http LAN address the caller did

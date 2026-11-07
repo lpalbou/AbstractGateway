@@ -58,7 +58,7 @@ def _serve_once(tmp_path: Path, data: Path) -> dict:
     }
     log = (tmp_path / f"serve-{port}.log").open("w")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
+        [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
         env=env, stdout=log, stderr=subprocess.STDOUT, cwd=str(tmp_path),
     )
     try:

@@ -151,7 +151,7 @@ def test_after_a_model_host_restart_the_next_chat_answers_and_the_model_is_built
         }
         log = tmp_path / "gateway.log"
         gw = subprocess.Popen(
-            [sys.executable, "-m", "abstractgateway", "serve", "--model-host", "process", "--data-dir", str(data),
+            [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--model-host", "process", "--data-dir", str(data),
              "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
             env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
         client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=30.0, trust_env=False)

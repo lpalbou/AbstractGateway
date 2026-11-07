@@ -656,6 +656,15 @@ def _hermetic_unconfigure() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_real_tailscale_serve(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `serve` starts `tailscale serve` (tailscale_https.py), which changes this
+    # machine's tailnet configuration: in-process, no test ever finds the real
+    # CLI. Gateways a test starts as a subprocess pass `--tailscale-https off`.
+    # tests/test_gateway_tailscale_https.py drives a fake CLI explicitly.
+    monkeypatch.setattr("abstractgateway.tailscale_https._tailscale_binary", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_repo_root_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # Prevent accidental writes to a developer’s real repo when running tests in an
     # environment where the gateway is configured for backlog browsing/triage.

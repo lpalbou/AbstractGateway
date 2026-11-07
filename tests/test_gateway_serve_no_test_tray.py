@@ -69,7 +69,7 @@ def _serve(tmp_path: Path, extra: list) -> tuple:
     log_path = tmp_path / "serve.log"
     log = log_path.open("w")
     proc = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), *extra],
+        [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), *extra],
         env=env, stdout=log, stderr=subprocess.STDOUT, cwd=str(tmp_path),
     )
     return proc, port, data, log, log_path

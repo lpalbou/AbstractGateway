@@ -159,7 +159,7 @@ def test_real_serve_writes_the_incident_into_the_data_dir_before_exiting(tmp_pat
     env["ABSTRACTGATEWAY_AUTH_TOKEN"] = "watchdog-test-token"
     env.pop("ABSTRACTGATEWAY_ADMIN_TOKEN", None)
     port = _free_port()
-    args = ["serve", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2"]
+    args = ["serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2"]
     proc = subprocess.run([sys.executable, "-c", _LIVE, *args], capture_output=True, text=True, timeout=120, env=env, cwd=str(tmp_path))
     assert proc.returncode == loop_watchdog.WATCHDOG_EXIT_CODE, proc.stderr[-4000:]
     files = sorted((tmp_path / "data" / "incidents").glob("watchdog-*.json"))

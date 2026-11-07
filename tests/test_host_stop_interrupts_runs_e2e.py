@@ -75,7 +75,7 @@ class _Gateway:
     def boot(self) -> None:
         self.boots += 1
         self.log = self.tmp / f"gateway-{self.boots}.log"
-        argv = [sys.executable, "-m", "abstractgateway", "serve", "--model-host", "process", "--data-dir",
+        argv = [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--model-host", "process", "--data-dir",
                 str(self.data), "--host", "127.0.0.1", "--port", str(self.port), "--no-tray"]
         self.proc = subprocess.Popen(argv, env=self.env, stdout=self.log.open("w"), stderr=subprocess.STDOUT,
                                      cwd=str(self.tmp))

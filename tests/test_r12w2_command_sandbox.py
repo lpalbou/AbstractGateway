@@ -236,7 +236,7 @@ def test_a_real_serve_audits_the_flag_at_boot(tmp_path: Path, flag: bool) -> Non
         "NO_COLOR": "1",
         "R12W2_CANARY_TOKEN": "must-not-reach-commands",
     }
-    argv = [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--no-tray"]
+    argv = [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray"]
     if flag:
         argv.append("--unsandboxed-commands")
     log_path = tmp_path / "serve.log"

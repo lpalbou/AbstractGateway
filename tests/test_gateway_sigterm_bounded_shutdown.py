@@ -47,7 +47,7 @@ def test_sigterm_with_a_live_stream_exits_zero_within_the_budget(tmp_path: Path)
         "ABSTRACTGATEWAY_STORE_BACKEND": "file",
     }
     log = tmp_path / "gateway.log"
-    gw = subprocess.Popen([sys.executable, "-m", "abstractgateway", "serve", "--data-dir", str(data),
+    gw = subprocess.Popen([sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--data-dir", str(data),
                            "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
                           env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     base = f"http://127.0.0.1:{port}"

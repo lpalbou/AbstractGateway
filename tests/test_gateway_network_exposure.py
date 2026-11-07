@@ -499,6 +499,8 @@ def test_routes_read_is_user_level_writes_are_admin(tmp_path, monkeypatch) -> No
         assert client.get("/api/gateway/network").status_code == 401
         r = client.get("/api/gateway/network", headers=user)
         assert r.status_code == 200 and r.json()["writable"] is False
+        # https on the Tailscale name (tailscale_https.py) is part of every read.
+        assert r.json()["tailscale_https"]["state"] in ("off", "unavailable", "taken", "starting", "active", "failed")
         assert client.get("/api/gateway/network?lookup_public=1", headers=user).status_code == 403
         for path, body in (("/api/gateway/network", {"mode": "lan"}), ("/api/gateway/network/restart", {})):
             refused = client.post(path, headers=user, json=body)

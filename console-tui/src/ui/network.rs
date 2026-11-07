@@ -1420,17 +1420,33 @@ fn ready_view(
         ),
         t.text_muted,
     );
-    if let Some(name) = &ts_name {
-        let port = d
-            .effective_port
-            .or(Some(d.configured_port).filter(|p| *p > 0))
-            .unwrap_or(8080);
-        p.wrap(
-            &format!(
-                "Voice and camera need https: on this computer run tailscale serve --bg http://127.0.0.1:{port}, then open https://{name}. tailscale serve reset undoes it."
-            ),
-            t.text_muted,
-        );
+    // tailscale_https (the gateway's tailscale_https.py): the gateway serves
+    // https on its Tailscale name itself while it runs; say whether it does,
+    // and why not (the web's netOtherAddressMarkup). Only where Tailscale runs.
+    if let (Some(_), Some(th)) = (&ts_name, raw.get("tailscale_https")) {
+        let state = th.get("state").and_then(Value::as_str).unwrap_or("");
+        let url = th.get("url").and_then(Value::as_str).unwrap_or("");
+        let reason = th.get("reason").and_then(Value::as_str).unwrap_or("");
+        let line = if state == "active" && !url.is_empty() {
+            format!(
+                "HTTPS (voice and camera on phones and other computers): {url}, served by the gateway while it runs."
+            )
+        } else {
+            let word = match state {
+                "off" => "off",
+                "starting" => "starting",
+                "taken" => "set up outside the gateway",
+                _ => "not served",
+            };
+            if reason.is_empty() {
+                format!("HTTPS on the Tailscale name: {word}.")
+            } else {
+                format!("HTTPS on the Tailscale name: {word}. {reason}")
+            }
+        };
+        if !state.is_empty() {
+            p.wrap(&line, t.text_muted);
+        }
     }
     if d.proxy.present {
         proxy_view(cx, ctx, t, &d, &mut p, nu, on_page.clone());

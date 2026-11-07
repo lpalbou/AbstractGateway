@@ -611,6 +611,30 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
 
     threading.Thread(target=_write_pointer_when_bound, name="gateway-pointer", daemon=True).start()
 
+    # HTTPS on this computer's Tailscale name while the gateway runs (operator
+    # rulings 2026-10-10: on by default; the address exists only while the
+    # gateway is up). Started once the listener is bound, like the tray.
+    from . import tailscale_https
+
+    ts_https = tailscale_https.get_tailscale_https()
+    ts_https_stop = threading.Event()
+    if getattr(args, "tailscale_https", "on") == "off":
+        ts_https.disable()
+        _stderr("Tailscale https: off (--tailscale-https off)")
+    else:
+
+        def _serve_tailscale_https_when_bound() -> None:
+            if not _wait_until_bound(server):
+                return
+            ts_https.keep_serving(
+                bind_host=str(args.host),
+                port=_bound_port(server, int(args.port)),
+                log_dir=Path(data_dir) / "logs",
+                stop_event=ts_https_stop,
+            )
+
+        threading.Thread(target=_serve_tailscale_https_when_bound, name="gateway-tailscale-https", daemon=True).start()
+
     tray = get_tray_supervisor()
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
@@ -685,6 +709,8 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
                 signal.signal(signal.SIGTERM, _previous_sigterm)
         keep_awake.release(awake)
         tray.stop()
+        ts_https_stop.set()
+        ts_https.stop()
         host_control.unregister_server()
         loop_watchdog.configure(None)
     # uvicorn.run()'s own contract: a server that never started (port in
@@ -978,6 +1004,15 @@ def main(argv: list[str] | None = None) -> None:
         dest="tray",
         help="Show the menu bar / tray icon for this run although it was not started as the machine's gateway "
         "service (a `serve` from a terminal, a test or a script shows none).",
+    )
+    serve.add_argument(
+        "--tailscale-https",
+        choices=("on", "off"),
+        default="on",
+        dest="tailscale_https",
+        help="Serve https://<this computer's Tailscale name> to this gateway while it runs (`tailscale serve` in the "
+        "foreground: the address ends with the gateway), and pick it up later if Tailscale comes up after the start. "
+        "Never replaces an existing `tailscale serve` or `tailscale funnel` on port 443. Default: on.",
     )
     serve.add_argument(
         "--tray-menu",

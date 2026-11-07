@@ -47,6 +47,7 @@ fn network(configured: &str, pinned: bool, restart: bool) -> Value {
              "note": "Tailscale name: devices on your tailnet"}
         ],
         "tailscale": {"dns_name": "scratch-mac.tail1234.ts.net", "ips": ["100.101.102.103"]},
+        "tailscale_https": {"state": "active", "url": "https://scratch-mac.tail1234.ts.net", "target": "http://127.0.0.1:18811", "reason": ""},
         "copy_hint": "http://127.0.0.1:18811",
         "checked_at": "2026-10-04T02:11:23.920397Z",
         "warnings": ["Traffic is plain HTTP: sign-in passwords, tokens and session cookies cross the network unencrypted. Use it on networks you trust."],
@@ -125,7 +126,7 @@ fn network_page_speaks_the_web_sentences() {
         "What to know about Local network (1)",
         "Reached through another address?  Tailscale, a reverse proxy",
         "including its Tailscale name",
-        "tailscale serve --bg http://127.0.0.1:18811",
+        "HTTPS (voice and camera on phones and other computers): https://scratch-mac.tail1234.ts.net, served by the gateway",
         "The OpenAI-compatible API has its own page:",
         // R15 D1: the proxy fields are IN "Reached through another address?".
         "Allowed origins  [Saved setting]",
