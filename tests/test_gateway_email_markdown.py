@@ -151,6 +151,10 @@ def test_raw_html_from_the_model_is_escaped_text(body: str) -> None:
         "[x](https:///no-host)",
         "![pixel](data:image/png;base64,iVBORw0KGgo=)",
         "[x][r]\n\n[r]: file:///etc/passwd",
+        # Empty destinations: the parser never asks validateLink about them (review F3).
+        "[x]()",
+        "[x](<>)",
+        "[x][r]\n\n[r]: <>",
     ],
 )
 def test_only_http_https_and_mailto_targets_become_links(body: str) -> None:
@@ -277,3 +281,10 @@ def test_a_long_briefing_stays_rendered() -> None:
 
     long_briefing = "\n\n".join([BRIEFING] * 20)  # ~20 KB of ordinary Markdown
     assert render_model_markdown(long_briefing) is not None
+
+
+def test_a_refused_link_keeps_its_text() -> None:
+    _, _, html_body = _render("before [the label]() after")
+    block = _model_block(html_body)
+    assert "the label" in block and "<a" not in block
+

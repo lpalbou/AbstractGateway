@@ -120,7 +120,26 @@ def _style_tokens(tokens: List[Token]) -> None:
             _style_tokens(token.children)
 
 
+def _demote_refused_links(tokens: List[Token]) -> None:
+    """A link whose href is not allowed becomes its text. The parser asks `validateLink` only for a
+    non-empty destination, so `[x]()` would otherwise keep `href=""` (review F3, 2026-11-07)."""
+
+    for token in tokens:
+        if token.children:
+            children = token.children
+            i = 0
+            while i < len(children):
+                child = children[i]
+                if child.type == "link_open" and not allowed_link(str(child.attrGet("href") or "")):
+                    close = next(j for j in range(i + 1, len(children)) if children[j].type == "link_close")
+                    del children[close]
+                    del children[i]
+                    continue
+                i += 1
+
+
 def _core_styles(state: Any) -> None:
+    _demote_refused_links(state.tokens)
     _style_tokens(state.tokens)
 
 
