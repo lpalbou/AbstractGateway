@@ -15,8 +15,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 ### Changed
 
 - **The web console's kit components come from ui-kit 0.9.15** (`console_islands.py`, `console_themes.py`
-  re-synced). The Sandbox chat's read-aloud says "speaking" only while audio is audible, tells you when the
-  browser paused playback, and a repeated Play during synthesis no longer starts a second request.
+  re-synced). The Sandbox chat's read-aloud says "speaking" only while audio is audible, no longer stays
+  on "loading" when the browser blocks playback, and resumes browser-paused audio without synthesizing it again.
 
 ### Fixed
 
