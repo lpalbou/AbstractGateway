@@ -21,11 +21,13 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 22
+- Planned: 23
 - Proposed: 54
 - Completed: 70
 - Deprecated: 5
 - Recurrent: 0
+
+2026-11-07: 1147 planned (P0: every installed workflow version stays loadable; new runs take the latest; a session resumes on its own version): planned 23.
 
 2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55; 1010
 deprecated the same day (the clone check never fails since AbstractVoice d0abd24; nothing typed left to expose):
@@ -129,6 +131,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Acceptance summary |
 | --- | --- |
+| [1147_every_installed_workflow_version_stays_loadable.md](planned/1147_every_installed_workflow_version_stays_loadable.md) | P0. Only the installed AbstractNote (and shipped) bundle version loads, so old sessions, waiting runs and pinned automations break on every upgrade (live: Notes processor FAILED 2026-11-07 on `abstractnote@0.3.0:note-drain`). Keep every served version write-once in the data dir and load it; new runs and unversioned automations take the installed latest; resumes use the exact version; a missing one is a typed `workflow_version_unavailable` with the recovery. Companion: abstractnote 0041. |
 | [0968_model_host_stage_2_remaining_engines_and_mcp.md](planned/0968_model_host_stage_2_remaining_engines_and_mcp.md) | Model host stage 2 (ADR 0002): direct speech routes, embeddings, tool-built providers and MCP into the child; the 0944 load drill; console controls |
 | [0940_push_every_registered_device.md](planned/0940_push_every_registered_device.md) | Every active registration of the account is pushed (phones and watches), filtered only by a Notify me alert's channels; one rule in docs/tests; hardware check of the wrist; Fable + adversarial review recorded first. |
 | [0936_mcp_user_credentials_and_access.md](planned/0936_mcp_user_credentials_and_access.md) | Admin-approved servers and user grants, optional shared tokens, personal token overrides, per-user activation and connection status across Assistant clients. |
