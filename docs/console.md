@@ -91,7 +91,13 @@ shows the same row ([api.md](./api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
-reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+reasoning effort and MTP, and **Test** sends a one-word probe. Reasoning and MTP
+follow the chosen model, here, in the **Sandbox** and in the entity create form:
+changing the provider or the model puts them back on the default (and saving
+does not carry the old model's MTP over), Off and the MTP depths are offered only
+when the gateway says that model supports MTP (otherwise the control is disabled
+and says why), and the entity create form offers only the reasoning levels the
+model serves. For voice output
 (`output.voice`) the provider, model and voice are the shared voice picker of
 every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
 **Engine voices** and **Shared voices**, a language filter when the engine

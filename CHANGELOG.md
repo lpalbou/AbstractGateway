@@ -127,6 +127,14 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   step's result in the run ledger says so (`metadata.speculation_dropped`: "MTP was not used: <model> does not
   support MTP, so this ran without it."). "Off", no choice, an MTP-capable model and an unknown card are left
   exactly as asked.
+- **The console's reasoning and MTP controls follow the chosen model** (`console.py`: Sandbox, the route Edit
+  window, the entity create form; operator rule 2026-11-07). Changing the model now puts reasoning and MTP back on
+  the default in all three (the Sandbox kept the reasoning, the route window kept both, the entity form kept the
+  reasoning), and saving a route with another model no longer carries the old model's MTP over. Off and the MTP
+  depths are offered only when the gateway's capability card says the model supports MTP, at the depths it lists;
+  otherwise the control is disabled and says why in words (the kit's: "This model does not support MTP.", the
+  gateway's code under Technical details) instead of a tooltip. The entity create form offers only the reasoning
+  levels the chosen model serves, not a fixed list.
 
 ### Security
 

@@ -277,9 +277,13 @@ def test_console_carries_the_reasoning_selectors() -> None:
     html = gateway_console_html()
     for select_id in ("sandbox-reasoning", "entity-new-thinking"):
         assert f'id="{select_id}"' in html, select_id
-    # Each select carries the six contract values.
+    # The sandbox select carries the six contract values.
     for value in ("none", "minimal", "low", "medium", "high", "xhigh"):
-        assert html.count(f'<option value="{value}">') >= 2, f"{value} missing from a select"
+        assert html.count(f'<option value="{value}">') >= 1, f"{value} missing from the sandbox select"
+    # The entity create form offers only the chosen model's own levels (operator rule 2026-11-07):
+    # its select is filled from the capability card, never a fixed list
+    # (tests/test_console_model_options.py drives it).
+    assert "async function refreshEntityReasoning()" in html
     # Round 3: the entity's Mind is the kit's shared picker (reasoning + MTP from
     # the model's capabilities), "Gateway default" first, options only with a pinned model.
     assert 'id="entity-mind-picker"' in html
