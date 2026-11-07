@@ -104,6 +104,16 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
   holds (a pool of N stuck for good under N identity starts).
 
+- **The console's Runs tab shows every session again** (`console.py`, and the terminal console's Runs tab,
+  `console-tui/src/api.rs`). Since session kinds, a root-runs listing serves conversations only, so AbstractNote's
+  sessions (and Docs assistant chats) were missing from the console's Runs tab. The Runs tab is a technical listing:
+  it now asks `GET /runs` for `kind=all` and lists everything running on the gateway, as before. What apps get by
+  default is unchanged (conversations).
+- **The seat preemption test no longer flakes** (`tests/test_gateway_entities_summon.py`). It rewrote the holder
+  run's stored status to waiting behind the background runner, whose own save could overwrite it (the run then
+  read "completed", not "cancelled"). The holder now runs a small flow that genuinely waits for an event, so the run
+  is waiting through the runtime itself and the human summon cancels it for real.
+
 - **The console kit sync and its drift pins find abstractuic from a worktree** (`console_theme_sync.find_abstractuic`):
   the kit is looked up beside the repo or any of its parents, so `abstractgateway/untracked/<worktree>` (where
   releases are cut) runs the pins instead of skipping them. A bundle rebuilt with packages other than the

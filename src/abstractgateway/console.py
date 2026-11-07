@@ -9010,7 +9010,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const rootOnly = $("runs-root-only").checked;
 	        const runsPageSize = 100;
 	        const runsOffset = Math.max(0, state.runsOffset || 0);
-	        const q = new URLSearchParams({ limit: String(runsPageSize), offset: String(runsOffset), include_ledger_len: "false", root_only: String(rootOnly) });
+	        // kind=all: the Runs tab is a technical listing and shows EVERY
+	        // session on the gateway (operator ruling, 0.21.0). Without it a
+	        // root_only listing serves conversations only and Notes / Docs
+	        // sessions vanish from the console (session_kinds.py).
+	        const q = new URLSearchParams({ limit: String(runsPageSize), offset: String(runsOffset), include_ledger_len: "false", root_only: String(rootOnly), kind: "all" });
 	        if (status) q.set("status", status);
 	        if (search) q.set("query", search);
         const data = await api("/api/gateway/runs?" + q.toString());

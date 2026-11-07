@@ -1106,6 +1106,10 @@ impl GatewayClient {
     /// One PAGE of runs with the console's filters (parity with the web
     /// console's Runs toolbar). `include_ledger_len=false` matches the web
     /// and skips a per-row cost the server warns is slow on file ledgers.
+    /// `kind=all`: the Runs tab is a technical listing and shows EVERY
+    /// session on the gateway (operator ruling, 0.21.0); without it a
+    /// root_only listing serves conversations only and Notes / Docs
+    /// sessions vanish from the console.
     pub fn runs(
         &self,
         limit: u32,
@@ -1115,7 +1119,7 @@ impl GatewayClient {
         root_only: bool,
     ) -> ApiResult<Value> {
         let mut path = format!(
-            "/runs?limit={limit}&offset={offset}&root_only={root_only}&include_ledger_len=false"
+            "/runs?limit={limit}&offset={offset}&root_only={root_only}&include_ledger_len=false&kind=all"
         );
         if !status.is_empty() {
             path.push_str(&format!("&status={}", urlencode(status)));

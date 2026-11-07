@@ -1,6 +1,10 @@
 # Changelog — abstractgateway-console
 
 ## [Unreleased]
+### Fixed
+- **The Runs tab shows every session again** (`api.rs`, AbstractGateway 0.21.0). Since session kinds, a root-runs
+  listing serves conversations only, so AbstractNote's sessions and Docs assistant chats were missing from the
+  Runs tab. Its read now asks `GET /runs` for `kind=all` (with root runs only on or off), like the web console.
 
 ## [0.18.0] - 2026-11-04
 ### Added
