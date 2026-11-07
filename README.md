@@ -27,6 +27,13 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.20.3** ([CHANGELOG](CHANGELOG.md#0203---2026-11-07)): AbstractNote's captures and
+background processing no longer appear among your conversations or automations: they are listed as
+notes (`kind=notes` on `GET /runs` and `GET /automations`), and Note's own Processing page is
+unchanged. Saving an entity's or a conversation's identity with a voice the voice picker shows works
+again; an entity speaks with the shared voices and its creator's own voices, and another person's own
+voice is refused with that sentence.
+
 **What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
 support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated
 media discovery; the model worker no longer imports folders from the gateway's data directory; the web
