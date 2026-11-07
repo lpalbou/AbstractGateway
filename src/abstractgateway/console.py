@@ -883,6 +883,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: var(--font-size-sm); text-align: center; }
 	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
 	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
+	    /* The Summon form's tools-per-phase grid fits a phone (400 px) without sideways scrolling: its
+	       block may shrink inside the grid section, and on a narrow screen the table drops its minimum
+	       width, the cells get tighter and a long tool name wraps. Every tool and phase stays. */
+	    #entity-advanced > .entity-config-block { min-width: 0; }
+	    @media (max-width: 479.98px) {
+	      #entity-new-matrix .entity-matrix-table { min-width: 0; width: 100%; }
+	      #entity-new-matrix .entity-matrix-table th, #entity-new-matrix .entity-matrix-table td { padding: 5px 4px; }
+	      #entity-new-matrix .entity-matrix-table tbody th { text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }
+	    }
 	    .entity-subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
 	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: var(--font-size-sm); }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
