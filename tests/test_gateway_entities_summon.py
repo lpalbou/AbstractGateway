@@ -93,10 +93,81 @@ def _write_min_bundle(*, bundles_dir: Path, bundle_id: str = "min", flow_id: str
         zf.writestr(f"flows/{flow_id}.json", json.dumps(flow))
 
 
+# The event this flow waits for. Nothing in these tests ever emits it, so a
+# run of the "hold" bundle stays WAITING through the real runtime until
+# something cancels it.
+_HOLD_EVENT_KEY = "test.summon.hold"
+
+
+def _write_hold_bundle(*, bundles_dir: Path, bundle_id: str = "hold", flow_id: str = "root") -> None:
+    """A flow that GENUINELY waits: start -> wait_event(_HOLD_EVENT_KEY). The
+    runner ticks it to WAITING (reason event) and then leaves it alone, so a
+    test can hold a live run without editing the run store behind the
+    runner's back."""
+    bundles_dir.mkdir(parents=True, exist_ok=True)
+    flow = {
+        "id": flow_id,
+        "name": "hold",
+        "description": "",
+        "interfaces": [],
+        "nodes": [
+            {
+                "id": "node-1",
+                "type": "on_flow_start",
+                "position": {"x": 0.0, "y": 0.0},
+                "data": {
+                    "nodeType": "on_flow_start",
+                    "label": "On Flow Start",
+                    "inputs": [],
+                    "outputs": [{"id": "exec-out", "label": "", "type": "execution"}],
+                },
+            },
+            {
+                "id": "node-2",
+                "type": "wait_event",
+                "position": {"x": 200.0, "y": 0.0},
+                "data": {
+                    "nodeType": "wait_event",
+                    "label": "Wait Event",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "event_key", "label": "event_key", "type": "string"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "event_data", "label": "event_data", "type": "object"},
+                    ],
+                    "pinDefaults": {"event_key": _HOLD_EVENT_KEY},
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "node-1", "sourceHandle": "exec-out", "target": "node-2", "targetHandle": "exec-in"}
+        ],
+        "entryNode": "node-1",
+    }
+    manifest = {
+        "bundle_format_version": "1",
+        "bundle_id": bundle_id,
+        "bundle_version": "0.0.0",
+        "created_at": "2026-11-07T00:00:00+00:00",
+        "entrypoints": [{"flow_id": flow_id, "name": "hold", "description": "", "interfaces": []}],
+        "default_entrypoint": flow_id,
+        "flows": {flow_id: f"flows/{flow_id}.json"},
+        "artifacts": {},
+        "assets": {},
+        "metadata": {},
+    }
+    with zipfile.ZipFile(bundles_dir / f"{bundle_id}.flow", "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr(f"flows/{flow_id}.json", json.dumps(flow))
+
+
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     bundles_dir = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles_dir)
+    _write_hold_bundle(bundles_dir=bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
 
@@ -375,33 +446,31 @@ def test_human_preempts_a_live_agent_run_at_the_door(client: TestClient):
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-    payload = {"prompt": "hi", "bundle_id": "min", "flow_id": "root", "input_data": {"provider": "mock", "model": "mock-model"}}
+    # The holder's flow waits for an event nobody sends: the runner ticks it
+    # to WAITING through the real runtime and then leaves it alone, so the
+    # run is genuinely live (non-terminal, cancellable) with no run-store
+    # edit racing the runner's own saves (the flake of CI run 42339700058:
+    # the runner's save overwrote a WAITING written behind its back).
+    payload = {"prompt": "hi", "bundle_id": "hold", "flow_id": "root", "input_data": {"provider": "mock", "model": "mock-model"}}
     r1 = client.post("/api/gateway/entities/Castor/summon", json=payload)
     assert r1.status_code == 200, r1.text
     run_1 = r1.json()["run_id"]
 
-    # Freeze the holder run as LIVE deterministically: WAITING with no due
-    # wait is inert to the tick loop (never scheduled), non-terminal to the
-    # seat, and legitimately cancellable (cancel_run cancels RUNNING/WAITING).
-    # First let the runner finish its own tick of this run (the tiny flow ends
-    # at once): freezing it while that tick is still saving let the tick's
-    # final save overwrite the freeze under a loaded machine (flaky, REVIEW/19).
-    from abstractruntime.core.models import RunStatus
     from abstractgateway.service import get_gateway_service
 
     svc = get_gateway_service()
+    # Readiness only (no correctness rides on time): wait until the runner
+    # has parked the run on its event.
     deadline = time.time() + 30.0
     while time.time() < deadline:
         cur = svc.host.run_store.load(run_1)
-        if cur is not None and getattr(cur.status, "value", cur.status) in {"completed", "failed", "cancelled"}:
+        if cur is not None and getattr(cur.status, "value", cur.status) == "waiting" and cur.waiting is not None:
             break
         time.sleep(0.02)
     else:
-        raise AssertionError("the runner never finished the holder's first tick")
-    run = svc.host.run_store.load(run_1)
-    run.status = RunStatus.WAITING
-    run.waiting = None
-    svc.host.run_store.save(run)
+        raise AssertionError("the runner never parked the holder's run on its event")
+    assert getattr(cur.waiting.reason, "value", cur.waiting.reason) == "event"
+    assert cur.waiting.wait_key == _HOLD_EVENT_KEY
 
     # An agent cannot displace the live holder...
     r_agent = client.post("/api/gateway/entities/Castor/summon", json=payload)
