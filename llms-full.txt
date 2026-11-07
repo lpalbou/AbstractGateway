@@ -2625,7 +2625,7 @@ are user-level; every write is admin-only.
 | `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
 | `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
 | `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
-| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
+| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`, `kind`: AbstractNote's own work only with `kind=notes` or `all`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
 | `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |
 | `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
@@ -4700,7 +4700,9 @@ automation's occurrence. An automation's run is listed under **Automations ▸ �
 Running (N)** instead, with the same row and submenu: the runtime tags every run
 with a `session_kind` (`chat` / `discussion` = a conversation, `automation` /
 `occurrence` = an automation's run; `GET /host/runs` serves it on each row) and
-the menu sorts by that tag alone. A wake that runs in its caller's conversation
+the menu sorts by that tag alone. AbstractNote's own work (its captures and its
+processing automations, session purpose `notes`) is in neither menu: `GET
+/host/runs` leaves it out. A wake that runs in its caller's conversation
 is tagged `chat` and stays a conversation. A row reads under its **title**: the
 automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as
@@ -8550,12 +8552,15 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+- `GET /api/gateway/host/runs?limit=25&window_hours=24&kind=` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, session_kind, automation_id, created_at, updated_at,
+  activity, role, session_kind, kind, automation_id, created_at, updated_at,
   ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
   active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `kind` is the session's purpose as in `GET /runs` (`conversation`, `docs`,
+  `notes`): AbstractNote's own work (`notes`) is left out unless `kind=notes`
+  (only it) or `kind=all`, before `limit` applies.
   `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
   automation's run, `chat` / `discussion` = a conversation); the tray lists
   the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
@@ -15580,7 +15585,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `docs`: `POST /runs/start` marks it (a capture from Note, its phone or watch), a one-time
   migration (`abstractnote_bundle_v1`) marks the existing ones, and the sessions Note's
   automations open are `notes` by their workflow. Turn listings and `GET /sessions/search` leave
-  them out by default and list them with `kind=notes`. `GET /automations` takes `kind=user`
+  them out by default and list them with `kind=notes` (a search runs the migration too). The
+  host-wide `GET /host/runs` (the tray's Conversations and Automations menus) leaves them out unless
+  `kind=notes` or `kind=all`, and each row carries `kind`. `GET /automations` takes `kind=user`
   (the default), `notes` or `all`, every row carries `kind`, and the paused and archived counts
   count the listed kind. A purpose, never the creating client. AbstractNote reads its automations
   by id, so its Processing page is unchanged. A docs-qa run named by a namespaced `flow_id`
@@ -15598,7 +15605,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   the caller's picker lists are the voices a save accepts.
 - **A conversation's identity accepts a voice again** (`POST /runs/start` with `identity`). Its voice
   check ran on the event loop, where it could not run, and refused every voice ("asyncio.run() cannot
-  be called from a running event loop"); it now runs off the loop.
+  be called from a running event loop"). The caller's voices are now read on the loop
+  (`offered_voices_async`) and the rest of the check runs off it; the synchronous check refuses to run
+  in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
+  holds (a pool of N stuck for good under N identity starts).
 
 ## [0.20.2] - 2026-11-07
 
