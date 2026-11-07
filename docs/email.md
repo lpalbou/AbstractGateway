@@ -370,14 +370,15 @@ Send an email`, `… asked you a question`, `… finished`, `… failed`. The bo
 - **Footer**: why you receive the email (which switch or option), the note that replying does
   nothing, and a reference line with the run or automation id.
 
-**Model-written text is formatted, never trusted.** An automation's `notify` body and a Notify
-me body are read as Markdown: headings, bold and italic, lists, quotes, code, tables and links show
-as formatted text in the HTML part. The text stays untrusted: HTML written in it shows as text,
-only `http`, `https` and `mailto` addresses become links (anything else stays visible as written),
-and an image is a link to its address, never loaded. Long lines and wide tables wrap or scroll
-inside the email, so it fits a phone screen. The plain-text part carries the text exactly as it was
-written, and the title is never formatted. A digest of held-back notifications (see the send limits
-above) shows each notice's plain text as it is.
+**Model-written text is formatted, never trusted.** An automation's `notify` body and a Notify me
+body are read as Markdown: headings, bold and italic, lists, quotes, code, tables and links show as
+formatted text in the HTML part. The text stays untrusted: HTML written in it shows as text, only
+`http`, `https` and `mailto` addresses become links (anything else stays visible as written), and an
+image is a link to its address, never loaded. Long lines and wide tables wrap or scroll inside the
+email, so it fits a phone screen. A very long text, or one whose formatting would make the email
+very large (over about 200 KB), is shown whole as plain text instead. The plain-text part carries
+the text exactly as it was written, and the title is never formatted. A digest of held-back
+notifications (see the send limits above) shows each notice's plain text as it is.
 
 An approval or question is emailed once per wait: when the same approval is issued again at the
 same step (a retried node, a restart), nothing new is sent; a different tool call or a different

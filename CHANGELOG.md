@@ -41,13 +41,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (castor, ephemeral); a grown life recomputes once.
   `/cognition` and `/tile` share one live fold of the phase (`_live_now`). Host-marker moments now carry `details.change`
   for a work-order change (`set` or `cleared`).
-- **Notification emails show the automation's text formatted, not as raw Markdown**
-  (`mail/mail_markdown.py`, `mail/notifications.py`; backlog 1011). An automation result email showed
-  `**First, the technology story**` with its asterisks. The model-written body of an automation result
-  and of a flow's Notify me step is now rendered by a CommonMark parser (`markdown-it-py`, now a declared
-  dependency, `>=4.0.0`: its parser bounds the table cells it completes): headings, bold and italic, lists, quotes, code, tables and links, each element
-  styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside a
-  paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
+- **Notification emails show the automation's text formatted, not as raw Markdown** (`mail/mail_markdown.py`,
+  `mail/notifications.py`; backlog 1011). An automation result email showed `**First, the technology story**`
+  with its asterisks. The model-written body of an automation result and of a flow's Notify me step is now
+  rendered by a CommonMark parser (`markdown-it-py`, now a declared dependency, `>=4.0.0`: its parser bounds
+  the table cells it completes): headings, bold and italic, lists, quotes, code, tables and links, each
+  element styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside
+  a paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
   never formatted, and the digest of held-back notices keeps its plain lines.
 - **A notification email never grows wider than its layout**: the layout's column is fixed to its width,
   a wide table scrolls inside its own box and long words, links and code wrap, so a long briefing reads on
@@ -111,11 +111,12 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Security
 
-- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text),
-  only `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`,
-  `tel:`, relative paths stay visible as written, never a link), and an image becomes a link to its
-  address, never a remote load. A link with an empty target (`[x]()`) is its text, never `href=""`. A link's text is its address as written: a
-  look-alike host such as `xn--pple-43d.com` is never decoded to its Unicode spoof (`аpple.com`).
+- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text), only
+  `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`, `tel:`,
+  relative paths stay visible as written, never a link), and an image becomes a link to its address, never a
+  remote load. A link with an empty target (`[x]()`) is its text, never `href=""`. A link's text is its
+  address as written: a look-alike host such as `xn--pple-43d.com` is never decoded to its Unicode spoof
+  (`аpple.com`).
 - **A short model text can never become a huge email.** Every rendered element carries its own style and
   the parser completes missing table cells, so 5 KB of text could render to 8 MB of HTML (Gmail clips a
   message above about 100 KB; mail servers refuse 10-25 MB). A text over 100,000 characters, or one whose

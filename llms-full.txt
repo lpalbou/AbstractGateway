@@ -13436,14 +13436,15 @@ Send an email`, `… asked you a question`, `… finished`, `… failed`. The bo
 - **Footer**: why you receive the email (which switch or option), the note that replying does
   nothing, and a reference line with the run or automation id.
 
-**Model-written text is formatted, never trusted.** An automation's `notify` body and a Notify
-me body are read as Markdown: headings, bold and italic, lists, quotes, code, tables and links show
-as formatted text in the HTML part. The text stays untrusted: HTML written in it shows as text,
-only `http`, `https` and `mailto` addresses become links (anything else stays visible as written),
-and an image is a link to its address, never loaded. Long lines and wide tables wrap or scroll
-inside the email, so it fits a phone screen. The plain-text part carries the text exactly as it was
-written, and the title is never formatted. A digest of held-back notifications (see the send limits
-above) shows each notice's plain text as it is.
+**Model-written text is formatted, never trusted.** An automation's `notify` body and a Notify me
+body are read as Markdown: headings, bold and italic, lists, quotes, code, tables and links show as
+formatted text in the HTML part. The text stays untrusted: HTML written in it shows as text, only
+`http`, `https` and `mailto` addresses become links (anything else stays visible as written), and an
+image is a link to its address, never loaded. Long lines and wide tables wrap or scroll inside the
+email, so it fits a phone screen. A very long text, or one whose formatting would make the email
+very large (over about 200 KB), is shown whole as plain text instead. The plain-text part carries
+the text exactly as it was written, and the title is never formatted. A digest of held-back
+notifications (see the send limits above) shows each notice's plain text as it is.
 
 An approval or question is emailed once per wait: when the same approval is issued again at the
 same step (a retried node, a restart), nothing new is sent; a different tool call or a different
@@ -15609,13 +15610,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (castor, ephemeral); a grown life recomputes once.
   `/cognition` and `/tile` share one live fold of the phase (`_live_now`). Host-marker moments now carry `details.change`
   for a work-order change (`set` or `cleared`).
-- **Notification emails show the automation's text formatted, not as raw Markdown**
-  (`mail/mail_markdown.py`, `mail/notifications.py`; backlog 1011). An automation result email showed
-  `**First, the technology story**` with its asterisks. The model-written body of an automation result
-  and of a flow's Notify me step is now rendered by a CommonMark parser (`markdown-it-py`, now a declared
-  dependency, `>=3.0.0`): headings, bold and italic, lists, quotes, code, tables and links, each element
-  styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside a
-  paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
+- **Notification emails show the automation's text formatted, not as raw Markdown** (`mail/mail_markdown.py`,
+  `mail/notifications.py`; backlog 1011). An automation result email showed `**First, the technology story**`
+  with its asterisks. The model-written body of an automation result and of a flow's Notify me step is now
+  rendered by a CommonMark parser (`markdown-it-py`, now a declared dependency, `>=4.0.0`: its parser bounds
+  the table cells it completes): headings, bold and italic, lists, quotes, code, tables and links, each
+  element styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside
+  a paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
   never formatted, and the digest of held-back notices keeps its plain lines.
 - **A notification email never grows wider than its layout**: the layout's column is fixed to its width,
   a wide table scrolls inside its own box and long words, links and code wrap, so a long briefing reads on
@@ -15672,12 +15673,23 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
   holds (a pool of N stuck for good under N identity starts).
 
+- **The console kit sync and its drift pins find abstractuic from a worktree** (`console_theme_sync.find_abstractuic`):
+  the kit is looked up beside the repo or any of its parents, so `abstractgateway/untracked/<worktree>` (where
+  releases are cut) runs the pins instead of skipping them. A bundle rebuilt with packages other than the
+  release lockfile's is named as such, never reported as drift.
+
 ### Security
 
-- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text),
-  only `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`,
-  `tel:`, relative paths stay visible as written, never a link), and an image becomes a link to its
-  address, never a remote load.
+- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text), only
+  `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`, `tel:`,
+  relative paths stay visible as written, never a link), and an image becomes a link to its address, never a
+  remote load. A link with an empty target (`[x]()`) is its text, never `href=""`. A link's text is its
+  address as written: a look-alike host such as `xn--pple-43d.com` is never decoded to its Unicode spoof
+  (`аpple.com`).
+- **A short model text can never become a huge email.** Every rendered element carries its own style and
+  the parser completes missing table cells, so 5 KB of text could render to 8 MB of HTML (Gmail clips a
+  message above about 100 KB; mail servers refuse 10-25 MB). A text over 100,000 characters, or one whose
+  rendering is over 200 KB, is shown whole as plain text instead, as before Markdown: never truncated.
 
 ## [0.20.2] - 2026-11-07
 
