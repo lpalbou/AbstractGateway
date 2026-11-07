@@ -1,10 +1,15 @@
 # 1010-abstractgateway: [IMPROVEMENT] Expose typed clone failures and explicit segment retries
+> Deprecated: 2026-11-07 — superseded. Since AbstractVoice main d0abd24 a cloned reply never fails its speaker check
+> (operator ruling 2026-11-07: a hard failure is worse than a small difference): the opening is regenerated once and then
+> spoken, later windows are recorded (`low_windows`) and playback continues. There is no typed clone failure left to
+> expose and no client-side retry to offer; the per-segment records already ride the streamed-speech metrics
+> (`segments`). Voice item 0067 is deprecated the same day for the same reason.
 
 > Created: 2026-11-06
 > Type: improvement
 > Priority: P2
 > Labels: voice, streaming, contracts
-> Status: proposed
+> Status: deprecated
 
 - Work-item id: abstractgateway-1010
 - Owner: framework (intake; implementation belongs to Gateway with Runtime/Voice)

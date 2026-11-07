@@ -22,12 +22,14 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 22
-- Proposed: 55
+- Proposed: 54
 - Completed: 70
-- Deprecated: 4
+- Deprecated: 5
 - Recurrent: 0
 
-2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55.
+2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55; 1010
+deprecated the same day (the clone check never fails since AbstractVoice d0abd24; nothing typed left to expose):
+proposed 54, deprecated 5.
 
 2026-11-06: recounted proposed items (53 existing, plus 1010 = 54), including
 topic folders. Legacy date-named, three-digit and unnumbered files remain flagged
@@ -155,7 +157,6 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
-| [1010 Typed clone failures and explicit segment retry](proposed/1010_typed_clone_failures_and_explicit_segment_retry.md) | P2; operator schedules lower-level work, Voice 0067 defines policy and Runtime exposes the typed contract. |
 | [1011 Notification emails render model Markdown](proposed/1011_notification_email_renders_model_markdown.md) | P2; operator report 2026-11-07 (literal `**` in an automation result email); safe CommonMark with raw HTML off, scheme allowlist, inline styles; not scheduled. |
 | [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
 | [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
@@ -262,6 +263,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Reason |
 | --- | --- |
+| [1010_typed_clone_failures_and_explicit_segment_retry.md](deprecated/1010_typed_clone_failures_and_explicit_segment_retry.md) | Superseded 2026-11-07: a cloned reply never fails its speaker check any more (AbstractVoice d0abd24: regenerate the opening once, then speak; later windows recorded in `low_windows`); no typed failure or client retry to expose; Voice 0067 deprecated the same day. |
 | [0944_openai_endpoint_as_a_separately_supervised_process.md](deprecated/0944_openai_endpoint_as_a_separately_supervised_process.md) | Superseded by ADR 0002 (2026-10-29): `/v1` is served by the model host child (a separate `/v1` process would load every model twice); drill and controls in 0968 |
 | [deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md](deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md) | Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram. |
 
