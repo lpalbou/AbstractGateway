@@ -53,7 +53,10 @@ def test_generated_module_matches_the_kit_source_exactly(tmp_path: Path) -> None
     current = (Path(console_theme_sync.__file__).parent / console_theme_sync.GENERATED_MODULE).read_text(
         encoding="utf-8"
     )
-    assert current == regenerated, (
+    import hashlib
+
+    # Digests, not the whole modules: pytest's diff of two large strings runs for minutes (review F6).
+    assert hashlib.sha256(current.encode("utf-8")).hexdigest() == hashlib.sha256(regenerated.encode("utf-8")).hexdigest(), (
         "console_themes.py is STALE vs the abstractuic kit source — run "
         "`python -m abstractgateway.console_theme_sync` and re-verify the console"
     )

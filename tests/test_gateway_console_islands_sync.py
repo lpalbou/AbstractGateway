@@ -96,7 +96,13 @@ def test_vendored_islands_match_the_bundle_built_from_the_kit(tmp_path: Path) ->
         build_islands_bundle(kit, node_modules, require_node())
     regenerated = console_islands_sync.generate_console_islands_module(kit)
     current = (Path(console_islands_sync.__file__).parent / console_islands_sync.GENERATED_MODULE).read_text(encoding="utf-8")
-    assert current == regenerated, "console_islands.py is STALE vs the bundle built from the released kit: re-run the sync"
+    # Digests, not the 1.7 MB strings: pytest's diff of two such strings runs for minutes (review F6).
+    current_sha = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    regenerated_sha = hashlib.sha256(regenerated.encode("utf-8")).hexdigest()
+    assert current_sha == regenerated_sha, (
+        f"console_islands.py is STALE vs the bundle built from the released kit (sha256 {current_sha[:12]} != "
+        f"{regenerated_sha[:12]}): re-run the sync"
+    )
 
 
 def test_vendored_copy_is_internally_consistent() -> None:
