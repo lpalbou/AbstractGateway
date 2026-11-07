@@ -46,6 +46,7 @@ __all__ = [
     "compose_tile",
     "entity_tile_contract",
     "home_cache_key",
+    "store_identity",
     "last_meaningful_moment",
     "memory_facts",
     "now_since",
@@ -104,13 +105,18 @@ class BoundedCache:
     (concurrent pollers of one cold key wait for the first instead of stacking compositor reads
     on the shared thread pool); a compute that raises caches nothing."""
 
+    _STRIPES = 32
+
     def __init__(self, maxsize: int) -> None:
         if int(maxsize) < 1:
             raise ValueError("maxsize must be >= 1")
         self.maxsize = int(maxsize)
         self._data: "OrderedDict[Hashable, Any]" = OrderedDict()
         self._lock = threading.Lock()
-        self._key_locks: Dict[Hashable, threading.Lock] = {}
+        # Striped compute locks: a key always maps to the same lock, nothing to create or clean up
+        # (a per-key lock popped after its compute could be recreated while a waiter still held the
+        # old one, and two computes of one key would then run side by side).
+        self._stripes = tuple(threading.Lock() for _ in range(self._STRIPES))
         self.hits = 0
         self.misses = 0
 
@@ -145,22 +151,16 @@ class BoundedCache:
         hit = self.get(key)
         if hit is not None:
             return hit
-        with self._lock:
-            key_lock = self._key_locks.setdefault(key, threading.Lock())
-        with key_lock:
+        with self._stripes[hash(key) % len(self._stripes)]:
             hit = self.get(key)
             if hit is not None:
                 return hit
             with self._lock:
                 self.misses += 1
-            try:
-                value, cacheable = compute()
-                if cacheable:
-                    self.put(key, value)
-                return value
-            finally:
-                with self._lock:
-                    self._key_locks.pop(key, None)
+            value, cacheable = compute()
+            if cacheable:
+                self.put(key, value)
+            return value
 
 
 # The engine card per (home directory, journal seq, parameters). 17 entities × a few parameter
@@ -180,6 +180,17 @@ def home_cache_key(home_dir: Any) -> str:
         return str(Path(home_dir).resolve())
     except OSError:
         return str(home_dir)
+
+
+def store_identity(path: Any) -> Tuple[int, int]:
+    """Which memory database file this is (device, inode): a home restored from a backup or deleted
+    and re-created under the same name is another file, so its seq never meets the old life's
+    cached card. (-1, -1) when it cannot be read (then the directory + seq key still holds)."""
+    try:
+        st = Path(path).stat()
+        return (int(st.st_dev), int(st.st_ino))
+    except OSError:
+        return (-1, -1)
 
 
 # --------------------------------------------------------------------------- the memory half
@@ -362,7 +373,7 @@ def compose_tile(
     moments: Sequence[Mapping[str, Any]],
     memory: Mapping[str, Any],
     sleeps: Optional[int],
-    as_of_seq: int,
+    as_of_seq: Optional[int],
     warnings: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """The tile payload (version 1). `now` is the shared live fold (`_live_now` in the routes)."""
@@ -381,6 +392,9 @@ def compose_tile(
         "mind": dict(mind) if mind else None,
         "now": {
             "phase": tile_phase,
+            # The operator state under the phase: "awake" under phase sleep is the resting default
+            # (nothing running, IDLE-IS-SLEEP), which a person reads as resting, not asleep.
+            "state": str(state.get("state") or "") or None,
             "detail": now.get("sleep_detail") if tile_phase == "sleep" else None,
             "busy": bool(now.get("working")),
             "since": now_since(phase=phase, state=state, loop=loop, chat=chat, moments=moments),
@@ -391,7 +405,7 @@ def compose_tile(
         "latest_lesson": memory.get("latest_lesson"),
         "last_moment": last_meaningful_moment(moments),
         "counts": {**dict(memory.get("counts") or {}), "sleeps": int(sleeps) if isinstance(sleeps, int) else None},
-        "as_of_seq": int(as_of_seq),
+        "as_of_seq": int(as_of_seq) if as_of_seq is not None else None,
         "read_at": datetime.now(timezone.utc).isoformat(),
     }
     if warnings:

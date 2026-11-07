@@ -1498,12 +1498,28 @@ def entity_tile(name: str) -> Dict[str, Any]:
 
     now = _live_now(registry, name, home_dir)
     warnings: List[str] = list(now["warnings"])
+    if now["rest_warning"]:
+        warnings.append(now["rest_warning"])
 
-    home = registry.get_home(slug)
-    engine = home.engine_card()
-    if not engine["engine"]:
-        warnings.append("#FALLBACK engine lacks the entity_card read; no memory facts — upgrade abstractmemory")
+    # Each source degrades to a labelled warning (the /cognition contract): a broken store or a
+    # malformed history line costs its facts, never the whole tile.
+    from ..entities import MaintenanceHoldActive
+
+    engine: Dict[str, Any] = {"card": None, "substrate": None, "engine": True, "seq": None}
+    try:
+        engine = registry.get_home(slug).engine_card()
+        if not engine["engine"]:
+            warnings.append("#FALLBACK engine lacks the entity_card read; no memory facts — upgrade abstractmemory")
+    except MaintenanceHoldActive:
+        raise
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK memory facts unavailable: {e}")
     memory = memory_facts(engine["card"] or {})
+    moments: List[Dict[str, Any]] = []
+    try:
+        moments = registry.life_moments(slug)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK moments unavailable: {e}")
 
     look: Optional[Dict[str, Any]] = None
     try:
@@ -1525,7 +1541,11 @@ def entity_tile(name: str) -> Dict[str, Any]:
     # card's `mind_substrate`, free from the engine cache). Never the gateway-wide default: that is
     # not the entity's, and resolving it probes the host (~100 ms of subprocesses per read).
     mind: Optional[Dict[str, Any]] = None
-    stored = read_entity_substrate(home_dir)
+    try:
+        stored = read_entity_substrate(home_dir)
+    except Exception as e:  # noqa: BLE001
+        stored = {}
+        warnings.append(f"#FALLBACK model choice unreadable: {e}")
     lived = engine.get("substrate") if isinstance(engine.get("substrate"), dict) else {}
     if stored.get("model"):
         mind = {"model": stored["model"], "source": "entity"}
@@ -1545,10 +1565,10 @@ def entity_tile(name: str) -> Dict[str, Any]:
         look=look,
         mind=mind,
         now=now,
-        moments=registry.life_moments(slug),
+        moments=moments,
         memory=memory,
         sleeps=sleeps,
-        as_of_seq=int(engine["seq"]),
+        as_of_seq=engine["seq"],
         warnings=warnings,
     )
 
@@ -2459,12 +2479,14 @@ def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
     # host crash mid-drive leaves status="running" at rest forever), or a
     # chat turn in flight. A parked/orphaned run is present, not working.
     working = bool(loop.get("running") and loop.get("phase") == "day") or visit_in_flight or chat_in_flight
+    # Kept apart from `warnings` so /cognition serves its warnings in their historical order.
+    rest_warning: Optional[str] = None
     if (
         bool(visit.get("open"))
         and str(visit.get("status") or "") == "running"
         and not visit_in_flight
     ):
-        warnings.append(
+        rest_warning = (
             "#FALLBACK visit run rests at status=running with no drive in flight "
             "(interrupted mid-turn?) — resume it with POST /visit/{run_id}/tick"
         )
@@ -2485,6 +2507,7 @@ def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
         "settling": settling,
         "working": working,
         "warnings": warnings,
+        "rest_warning": rest_warning,
     }
 
 
@@ -2601,6 +2624,8 @@ def entity_cognition(name: str) -> Dict[str, Any]:
         warnings.append(f"#FALLBACK loop spend unreadable: {e}")
 
     working = now["working"]
+    if now["rest_warning"]:
+        warnings.append(now["rest_warning"])
     # Drive ratios (G1, cognition-health directive 2026-07-18): memory's
     # cognition_health fold over the home's full ladder — the same ladder,
     # diary convention, and ref-attr set the card compositor reads (the

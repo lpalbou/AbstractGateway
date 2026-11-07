@@ -106,9 +106,9 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         assert tile["now"]["since"]
         assert tile["into_lately"] == [] and tile["on_its_mind"] is None and tile["latest_lesson"] is None
         assert tile["counts"] == {"open_questions": 0, "open_problems": 0, "lessons": 0, "interests": 0, "sleeps": tile["counts"]["sleeps"]}
-        # Its look comes from its identity record when it has one (framework ADR 0052).
-        if tile["look"] is not None:
-            assert set(tile["look"]) == {"style", "color"}
+        # Its look comes from its identity record (framework ADR 0052: birth records the default).
+        assert set(tile["look"]) == {"style", "color"} and tile["look"]["style"] and tile["look"]["color"].startswith("#")
+        assert tile["now"]["state"] == "asleep"
 
         _form("interest", "tides", "what the tide keeps and what it takes back", turn="t1")
         _form("interest", "lighthouses", "why a light that only warns is still a kind of welcome", turn="t2",
@@ -128,9 +128,18 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         assert grown["mind"] == {"model": "test-9b", "source": "lived"}
 
         # Waking and sleeping again: the last moment is that sleep, the phase says since when.
+        from abstractgateway.entity_tile import LIFE_MOMENTS_CACHE
+
+        hits = LIFE_MOMENTS_CACHE.hits
+        client.get("/api/gateway/entities/Tessa/tile")
+        assert LIFE_MOMENTS_CACHE.hits == hits + 1  # nothing new in the files: the merged moments are reused
         assert client.post("/api/gateway/entities/Tessa/state", json={"state": "awake"}).status_code == 200
         # A new moment lands in the marker stream: the cached moments are read again.
-        assert client.get("/api/gateway/entities/Tessa/tile").json()["last_moment"]["kind"] == "wake"
+        woke = client.get("/api/gateway/entities/Tessa/tile").json()
+        assert woke["last_moment"]["kind"] == "wake"
+        # Awake with nothing running is the resting default: phase sleep (IDLE-IS-SLEEP), state awake —
+        # the tile serves both so a client says "resting", never "asleep", right after a wake.
+        assert woke["now"]["phase"] == "sleep" and woke["now"]["state"] == "awake"
         assert client.post("/api/gateway/entities/Tessa/state", json={"state": "asleep", "reason": "rest"}).status_code == 200
         slept = client.get("/api/gateway/entities/Tessa/tile").json()
         assert slept["last_moment"]["kind"] == "sleep"
@@ -151,6 +160,26 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         assert len(json.dumps(again)) < 4096
 
         assert client.get("/api/gateway/entities/Nobody/tile").status_code == 404
+
+        # One broken source costs its facts, never the tile (labelled, like /cognition).
+        from abstractgateway.entities import EntityRegistry
+
+        def _broken(self, slug, **_kw):
+            raise RuntimeError("state history unreadable (test)")
+
+        import pytest as _pytest
+
+        with _pytest.MonkeyPatch.context() as mp:
+            mp.setattr(EntityRegistry, "life_moments", _broken)
+            degraded = client.get("/api/gateway/entities/Tessa/tile")
+        assert degraded.status_code == 200, degraded.text
+        body = degraded.json()
+        assert body["last_moment"] is None and body["latest_lesson"]["text"]
+        assert any("moments unavailable" in w for w in body["warnings"])
+
+        # A held home answers 409 like every other door.
+        assert client.post("/api/gateway/entities/Tessa/maintenance-window", json={"action": "open", "reason": "doctoring"}).status_code == 200
+        assert client.get("/api/gateway/entities/Tessa/tile").status_code == 409
 
 
 def test_engine_card_is_cached_until_the_life_grows():
@@ -304,3 +333,26 @@ def test_discovery_contract_advertises_the_tile_read():
     finally:
         reset_current_gateway_principal(token)
     assert contracts["common"]["entities"]["tile"] == {"available": True, "version": 1, "endpoint": "/api/gateway/entities/{name}/tile"}
+
+
+def test_a_recreated_home_never_meets_the_old_lifes_cache(tmp_path: Path):
+    """A home restored from a backup (or deleted and re-created under the same name) is another
+    memory file: same directory, maybe the same seq, never the old cached card."""
+    import os
+    import shutil
+
+    from abstractgateway.entities import EntityRegistry
+    from abstractgateway.entity_tile import ENGINE_CARD_CACHE
+
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    registry.create(name="Phoenix", spark=_spark("Phoenix"))
+    registry.card("phoenix")
+    misses = ENGINE_CARD_CACHE.misses
+    registry.card("phoenix")
+    assert ENGINE_CARD_CACHE.misses == misses  # same file, same seq: a hit
+    db = registry.entities_dir / "phoenix" / "memory.sqlite3"
+    copy = tmp_path / "restored.sqlite3"
+    shutil.copy2(db, copy)
+    os.replace(copy, db)  # the same bytes in a new file (a restore)
+    registry.card("phoenix")
+    assert ENGINE_CARD_CACHE.misses == misses + 1

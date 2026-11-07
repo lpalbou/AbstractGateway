@@ -586,7 +586,7 @@ class EntityHome:
         except Exception:
             card["age_days"] = None
 
-        card["mind_substrate"] = None if as_of is not None else engine["substrate"]
+        card["mind_substrate"] = None if as_of is not None else copy.deepcopy(engine["substrate"])
         if as_of is not None:
             warnings.append(
                 "mind_substrate omitted on anchored cards: the substrate scan reads current store rows "
@@ -622,11 +622,19 @@ class EntityHome:
         and journal at that seq, so a repeated read of an unchanged life is free; a read during which
         the journal moved is served but not kept. `{"card": dict|None, "substrate": dict|None,
         "engine": bool, "seq": int}` — callers must not mutate the shared `card` sections."""
-        from .entity_tile import ENGINE_CARD_CACHE, home_cache_key
+        from .entity_tile import ENGINE_CARD_CACHE, home_cache_key, store_identity
 
         eid = self.entity_id
         seq_before = int(self.memory.current_seq())
-        key = ("engine_card", home_cache_key(self.home_dir), seq_before, int(current_window_events), int(top_n), as_of)
+        key = (
+            "engine_card",
+            home_cache_key(self.home_dir),
+            store_identity(Path(self.home_dir) / MEMORY_FILENAME),
+            seq_before,
+            int(current_window_events),
+            int(top_n),
+            as_of,
+        )
 
         def _compute() -> Tuple[Dict[str, Any], bool]:
             reader = getattr(self.memory, "entity_card", None)
@@ -2512,7 +2520,8 @@ class EntityRegistry:
                 "state-history moments omitted on anchored cards (timestamp ledger, no journal-seq axis)",
             ]
         moments = self.life_moments(slug, as_of=as_of)
-        payload["moments"] = moments[-max(0, int(moments_limit)):]
+        # Copies: the rows are shared with the moments cache.
+        payload["moments"] = copy.deepcopy(moments[-max(0, int(moments_limit)):])
         return payload
 
     def life_moments(self, slug: str, *, as_of: Optional[int] = None) -> List[Dict[str, Any]]:
