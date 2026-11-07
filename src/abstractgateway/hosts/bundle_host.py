@@ -2125,6 +2125,12 @@ class WorkflowBundleGatewayHost:
                         pass
                 setattr(runtime, "_gateway_default_route_error", default_route_error)
                 _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
+                # A saved MTP request (a flow node, an automation, an entity mind) that the selected
+                # model cannot honour is dropped before the call and recorded on the step, instead of
+                # failing every run (operator rule 2026-11-07; speculation_guard.py).
+                from ..speculation_guard import install_speculation_guard
+
+                install_speculation_guard(runtime)
                 runtime.set_workflow_registry(wf_reg)
                 capabilities.update({"llm", "tools"})
             else:

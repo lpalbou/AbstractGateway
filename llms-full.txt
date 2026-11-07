@@ -15687,6 +15687,15 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   the kit is looked up beside the repo or any of its parents, so `abstractgateway/untracked/<worktree>` (where
   releases are cut) runs the pins instead of skipping them. A bundle rebuilt with packages other than the
   release lockfile's is named as such, never reported as drift.
+- **A saved MTP choice no longer fails runs on a model without MTP** (`speculation_guard.py`, wired in
+  `hosts/bundle_host.py` and the entity chat client in `entity_chat.py`). A flow node, an automation or an entity
+  mind saved with "MTP depth 2, require acceleration" and then pointed at a model without MTP made every run fail
+  ("The openai-compatible provider has no native MTP adapter"). Before each model call the gateway now reads the
+  execution host's capability card for that model (`execution.speculation.supported`, the same card the console and
+  the apps read): when it says the model has no MTP, the MTP request is left out, the step runs without it, and the
+  step's result in the run ledger says so (`metadata.speculation_dropped`: "MTP was not used: <model> does not
+  support MTP, so this ran without it."). "Off", no choice, an MTP-capable model and an unknown card are left
+  exactly as asked.
 
 ### Security
 
