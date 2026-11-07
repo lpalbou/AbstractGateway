@@ -225,12 +225,7 @@ def _resolve_gateway_default_endpoint_profile(
         kwargs.update(default_text_route_connection_kwargs(provider_s, base_dir=data_root))
         return provider_s, kwargs, None
 
-    llm_kwargs: Dict[str, Any] = {}
-    if profile.base_url:
-        llm_kwargs["base_url"] = profile.base_url
-    if profile.api_key:
-        llm_kwargs["api_key"] = profile.api_key
-    return profile.provider_family, llm_kwargs, profile.virtual_provider_id
+    return profile.provider_family, profile.client_kwargs(), profile.virtual_provider_id
 
 
 def personal_voice_stores_supported() -> bool:

@@ -1717,12 +1717,7 @@ class EntityRegistry:
                 f"provider endpoint profile {raw!r} is not configured or is disabled "
                 "(the entity's substrate names a remote endpoint the gateway cannot resolve)",
             )
-        kwargs: Dict[str, Any] = {}
-        if profile.base_url:
-            kwargs["base_url"] = profile.base_url
-        if profile.api_key:
-            kwargs["api_key"] = profile.api_key
-        return str(profile.provider_family or "").strip().lower(), kwargs
+        return str(profile.provider_family or "").strip().lower(), profile.client_kwargs()
 
     def _entity_llm_handler(self, slug: str) -> Any:
         """The door's LLM_CALL handler for one entity's runtime: substrate

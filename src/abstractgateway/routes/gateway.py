@@ -83,6 +83,7 @@ from ..provider_defaults import (
     resolve_gateway_provider_model,
 )
 from ..provider_endpoint_profiles import (
+    NO_PROVIDER_KEY,
     ProviderEndpointProfileError,
     ProviderEndpointProfileExistsError,
     ProviderEndpointProfileStore,
@@ -94,6 +95,7 @@ from ..provider_endpoint_profiles import (
     normalize_scope,
     profile_id_from_virtual_provider,
     resolve_effective_endpoint_profile,
+    same_base_url,
 )
 from ..endpoint_vision_catalog import (
     apply_endpoint_evidence,
@@ -16834,6 +16836,14 @@ def _request_provider_api_key(request: Request) -> Optional[str]:
     return None
 
 
+def _profile_discovery_api_key(profile: Any, request: Request) -> Optional[str]:
+    """The key a model listing of a saved connection carries: its stored key, else the caller's
+    own header key, else explicitly none for a connection with an address (never the gateway's
+    configured key or OPENAI_API_KEY)."""
+    stored = str(getattr(profile, "api_key", "") or "").strip()
+    return stored or _request_provider_api_key(request) or profile.call_api_key() or None
+
+
 def _gateway_profile_dirs() -> tuple[Path, Path]:
     svc = get_gateway_service()
     current = Path(svc.config.data_dir).expanduser().resolve()
@@ -20436,7 +20446,7 @@ async def _endpoint_profile_vision_entries(
                 discovery.list_provider_models,
                 profile.provider_family,
                 base_url=profile.base_url or None,
-                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                provider_api_key=_profile_discovery_api_key(profile, request),
                 timeout_s=_provider_models_timeout_s(),
             )
         except Exception as e:
@@ -20547,7 +20557,7 @@ async def vision_provider_models_catalog(
                     discovery.list_vision_provider_models,
                     task=task_value,
                     base_url=named_profile.base_url or None,
-                    provider_api_key=named_profile.api_key or _request_provider_api_key(request),
+                    provider_api_key=_profile_discovery_api_key(named_profile, request),
                     provider=named_profile.provider_family,
                     providers_only=False,
                 )
@@ -20923,7 +20933,7 @@ async def discovery_providers(
                     discovery.list_provider_models,
                     prof.provider_family,
                     base_url=prof.base_url or None,
-                    provider_api_key=prof.api_key or _request_provider_api_key(request),
+                    provider_api_key=_profile_discovery_api_key(prof, request),
                     timeout_s=_provider_models_timeout_s(),
                 )
                 models2 = payload2.get("models") if isinstance(payload2, dict) else None
@@ -21046,7 +21056,7 @@ async def discovery_provider_models(
                             discovery.list_provider_models,
                             profile.provider_family,
                             base_url=profile.base_url or None,
-                            provider_api_key=profile.api_key or _request_provider_api_key(request),
+                            provider_api_key=_profile_discovery_api_key(profile, request),
                             input_type=input_type,
                             output_type=output_type,
                             capability_route=capability_route,
@@ -21103,7 +21113,7 @@ async def discovery_provider_models(
                 discovery.list_provider_models,
                 profile.provider_family,
                 base_url=profile.base_url or None,
-                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                provider_api_key=_profile_discovery_api_key(profile, request),
                 input_type=input_type,
                 output_type=output_type,
                 capability_route=capability_route,
@@ -28481,9 +28491,25 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
         current_base_dir=current_base,
         root_base_dir=root_base,
     )
-    provider_api_key = body_api_key or (profile.api_key if profile is not None else "") or _request_provider_api_key(request) or direct_kwargs.get("api_key")
-    if not base_url and isinstance(direct_kwargs.get("base_url"), str):
-        base_url = str(direct_kwargs.get("base_url") or "").strip()
+    configured_base_url = str(direct_kwargs.get("base_url") or "").strip()
+    if not base_url and configured_base_url:
+        base_url = configured_base_url
+    typed_base_url = req.base_url is not None and bool(str(req.base_url or "").strip())
+    # A stored key goes only to the address it was saved for (security, 0.21.0): the tested
+    # connection's key at its own address, the configured connection's key (AbstractCore store,
+    # OPENAI_API_KEY) only with no address or that connection's own address. A key the caller sends
+    # is the caller's choice. Anything else checks the address keyless.
+    provider_api_key = body_api_key or ""
+    if not provider_api_key and profile is not None and str(profile.api_key or "").strip():
+        if not typed_base_url or same_base_url(base_url, profile.base_url):
+            provider_api_key = str(profile.api_key).strip()
+    if not provider_api_key:
+        provider_api_key = _request_provider_api_key(request) or ""
+    if not provider_api_key and direct_kwargs.get("api_key"):
+        if not base_url or same_base_url(base_url, configured_base_url):
+            provider_api_key = str(direct_kwargs.get("api_key"))
+    # No key for this address: say so explicitly, or AbstractCore falls back to OPENAI_API_KEY.
+    call_api_key = provider_api_key or (NO_PROVIDER_KEY if base_url else None)
 
     discovery, err = _gateway_abstractcore_discovery_facade()
     profile_public = profile.public_dict() if profile is not None else None
@@ -28508,7 +28534,7 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
             discovery.list_provider_models,
             provider_family,
             base_url=base_url or None,
-            provider_api_key=provider_api_key,
+            provider_api_key=call_api_key,
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:
@@ -28586,12 +28612,7 @@ def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Op
     except ProviderEndpointProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if profile is not None:
-        kwargs: Dict[str, Any] = {}
-        if profile.base_url:
-            kwargs["base_url"] = profile.base_url
-        if profile.api_key:
-            kwargs["api_key"] = profile.api_key
-        return profile.provider_family, kwargs, profile.public_dict()
+        return profile.provider_family, profile.client_kwargs(), profile.public_dict()
     kwargs = configured_provider_request_kwargs(
         provider,
         current_base_dir=current_base,

@@ -144,6 +144,16 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Security
 
+- **A stored provider key goes only to the address it was saved for** (`routes/gateway.py`,
+  `provider_endpoint_profiles.py`, `entities.py`, `hosts/bundle_host.py`). Checking a typed address for models
+  (a connection's **Test**) with no key sent the gateway's configured OpenAI-compatible key (the AbstractCore
+  store's, or `OPENAI_API_KEY`) to that address, on the local network over plain HTTP or to a third party; and a
+  saved connection with an address and no key let AbstractCore fall back to `OPENAI_API_KEY` on every model call.
+  Now the configured key is used only with no address or with its own address, a saved connection's key only at
+  its saved address (testing another address runs without a key, and saving a new address without typing the key
+  again removes the stored key), and a connection with no key calls its address with none (AbstractCore's explicit
+  "EMPTY", never a fallback). A key you type, or send in the provider-key header, is still used as given.
+
 - **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text), only
   `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`, `tel:`,
   relative paths stay visible as written, never a link), and an image becomes a link to its address, never a

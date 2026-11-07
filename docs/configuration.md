@@ -1190,7 +1190,11 @@ setup does not ask users to classify models manually.
 
 The console's **Test** action calls the selected provider through
 `POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
-previews model discovery before saving. Leave **Visible models**
+previews model discovery before saving. A stored key is sent only to the
+address it was saved for: Test with another address runs without a key, and
+saving a connection with a new address requires typing its key again (a
+connection with an address and no key calls it with none, never with
+`OPENAI_API_KEY`). Leave **Visible models**
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
 connections and direct providers that are already usable from scoped

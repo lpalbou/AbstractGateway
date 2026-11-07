@@ -101,7 +101,10 @@ console presents them as provider connections.
 - `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
   discover models for a draft or saved profile by calling the configured
   provider family and base URL with the entered or server-side key. The raw key
-  is never returned.
+  is never returned. A server-side key goes only to the address it was saved
+  for: a saved connection's key to its saved base URL, the configured
+  provider key (AbstractCore store or `OPENAI_API_KEY`) only with no base URL
+  or its own; any other typed address is checked without a key.
 - `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
   update or delete a profile.
 
