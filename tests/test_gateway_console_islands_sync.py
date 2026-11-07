@@ -7,9 +7,12 @@ bundles them (`ui-kit/scripts/build_islands.mjs`); `console_islands_sync`
 vendors the bundle + the kit's component CSS into `console_islands.py`.
 
 These pins make the copy impossible to rot silently: the kit-source hash is
-recomputed from the checkout (a kit change without a re-sync fails here),
-the built bundle is byte-compared when the kit has been built, and the
-served page is checked to carry and mount the islands.
+recomputed from the released kit (a kit change without a re-sync fails here),
+the bundle is rebuilt from the released sources and byte-compared, and the
+served page is checked to carry and mount the islands. With an abstractuic
+checkout present, nothing here skips: no tag for the pinned version, no
+installed kit packages or no built bundle under ABSTRACTUIC_SRC fails with the
+fix. Only a checkout without abstractuic beside it (CI, a wheel) skips.
 """
 
 from __future__ import annotations
@@ -29,37 +32,59 @@ from abstractgateway import console_islands_sync
 from abstractgateway.console import gateway_console_html
 from abstractgateway.console_islands import ISLANDS_CSS, ISLANDS_JS, ISLANDS_PROVENANCE
 from abstractgateway.console_themes import KIT_THEME_SPECS
-from kit_release import explicit_kit_src, released_ui_kit, skip_reason
+from kit_release import build_islands_bundle, explicit_kit_src, no_release_message, released_ui_kit
 
 pytestmark = pytest.mark.basic
 
 
-def test_vendored_islands_match_the_kit_sources(tmp_path: Path) -> None:
-    """THE DRIFT PIN, against the RELEASED kit the console pins (its tag in the
-    abstractuic checkout), never a checkout that moved ahead of it. Skips
-    honestly outside the monorepo (no kit checkout)."""
+def _pinned_kit(tmp_path: Path) -> Path:
+    """The kit the console pins: ABSTRACTUIC_SRC as given, else the abstractuic checkout's files at
+    the tag that released the vendored ui-kit version (a failure when no tag carries it)."""
     kit = console_islands_sync.locate_kit()
     if kit is None:
         pytest.skip("abstractuic ui-kit not present (non-monorepo checkout)")
+    if explicit_kit_src():
+        return kit
     pinned = ISLANDS_PROVENANCE["kit_version"]
-    if not explicit_kit_src():
-        released = released_ui_kit(kit, pinned, tmp_path)
-        if released is not None:
-            kit = released
-        elif console_islands_sync.kit_version(kit) != pinned:
-            pytest.skip(skip_reason(console_islands_sync.kit_version(kit), pinned))
-    assert console_islands_sync.kit_sources_sha256(kit) == ISLANDS_PROVENANCE["kit_sources_sha256"], (
-        "the abstractuic kit changed since the console islands were vendored: run "
-        "`(cd abstractuic/ui-kit && node scripts/build_islands.mjs)` then "
-        "`python -m abstractgateway.console_islands_sync`, and re-verify the console"
-    )
+    released = released_ui_kit(kit, pinned, tmp_path / "released")
+    if released is None:
+        pytest.fail(no_release_message(console_islands_sync.kit_version(kit), pinned), pytrace=False)
+    return released
+
+
+def test_vendored_islands_match_the_kit_sources(tmp_path: Path) -> None:
+    """THE DRIFT PIN, against the RELEASED kit the console pins (the abstractuic tag that released
+    that ui-kit version), never a checkout that moved ahead of it."""
+    kit = _pinned_kit(tmp_path)
     assert console_islands_sync.kit_version(kit) == ISLANDS_PROVENANCE["kit_version"]
-    if (kit / console_islands_sync.BUNDLE_RELPATH).is_file():
-        regenerated = console_islands_sync.generate_console_islands_module(kit)
-        current = (Path(console_islands_sync.__file__).parent / console_islands_sync.GENERATED_MODULE).read_text(
-            encoding="utf-8"
-        )
-        assert current == regenerated, "console_islands.py is STALE vs the kit's built bundle — re-run the sync"
+    assert console_islands_sync.kit_sources_sha256(kit) == ISLANDS_PROVENANCE["kit_sources_sha256"], (
+        "the abstractuic kit changed since the console islands were vendored: build the islands from the "
+        "kit release (`node scripts/build_islands.mjs` in its ui-kit) and run "
+        "`ABSTRACTUIC_SRC=<that ui-kit>/src python -m abstractgateway.console_islands_sync`, then re-verify the console"
+    )
+
+
+def test_vendored_islands_match_the_bundle_built_from_the_kit(tmp_path: Path) -> None:
+    """The vendored module is exactly what the sync writes from the released kit's bundle. The
+    bundle is not in git: it is rebuilt here from the released sources with the checkout's installed
+    packages (a checkout's own `islands/dist` can predate its sources). Under ABSTRACTUIC_SRC the
+    person's kit must have been built."""
+    kit = _pinned_kit(tmp_path)
+    if explicit_kit_src():
+        if not (kit / console_islands_sync.BUNDLE_RELPATH).is_file():
+            pytest.fail(
+                f"{kit / console_islands_sync.BUNDLE_RELPATH} is not built: run `node scripts/build_islands.mjs` in {kit}",
+                pytrace=False,
+            )
+    else:
+        checkout = console_islands_sync.locate_kit()
+        node_modules = next((d for d in (checkout / "node_modules", checkout.parent / "node_modules") if (d / "esbuild").is_dir()), None)
+        if node_modules is None:
+            pytest.fail(f"abstractuic's packages are not installed (no esbuild under {checkout.parent}/node_modules): run `npm ci` in {checkout.parent}", pytrace=False)
+        build_islands_bundle(kit, node_modules, require_node())
+    regenerated = console_islands_sync.generate_console_islands_module(kit)
+    current = (Path(console_islands_sync.__file__).parent / console_islands_sync.GENERATED_MODULE).read_text(encoding="utf-8")
+    assert current == regenerated, "console_islands.py is STALE vs the bundle built from the released kit: re-run the sync"
 
 
 def test_vendored_copy_is_internally_consistent() -> None:
