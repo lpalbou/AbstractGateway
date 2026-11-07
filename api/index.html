@@ -5160,7 +5160,7 @@ loads the <code>abstractnote</code> workflows: see <a href="../apps/">apps.md</a
 <h2 id="discovery-endpoints-optional">Discovery endpoints (optional)<a class="headerlink" href="#discovery-endpoints-optional" title="Permanent link">&para;</a></h2>
 <p>These exist to help thin clients adapt to the deployed gateway.</p>
 <ul>
-<li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code></li>
+<li>Capabilities (best-effort): <code>GET /api/gateway/discovery/capabilities</code>. Add <code>?scope=voice</code> for only <code>capabilities.contracts.assistant.voice</code> (TTS, STT, listen), with the same authentication and voice descriptors but without music/image/provider discovery. The default <code>scope=all</code> keeps the full response. Clients must cache the scoped response separately; older Gateways may ignore the query and return the full response.</li>
 <li>Providers/models discovery (best-effort): <code>GET /api/gateway/discovery/providers</code>, <code>GET /api/gateway/discovery/providers/{provider}/models</code></li>
 <li>Tools (thin-client allowlist help): <code>GET /api/gateway/discovery/tools</code>. Round
   12: each process-spawning tool row (AbstractRuntime's <code>SANDBOXED_TOOL_NAMES</code>:
