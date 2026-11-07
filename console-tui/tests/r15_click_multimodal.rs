@@ -483,6 +483,15 @@ fn the_multimodal_words_are_the_webs() {
     assert_eq!(fx["apply"]["title"], routes::APPLY_TIP);
     assert_eq!(fx["refresh"]["title"], routes::REFRESH_TIP);
     assert_eq!(fx["empty"], routes::EMPTY);
+    // The route window's MTP select (operator rule 2026-11-07).
+    let mtp: Vec<&str> = fx["mtp_options"]
+        .as_array()
+        .expect("fixture mtp_options")
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(routes::ROUTE_MTP_CHOICES.to_vec(), mtp);
+    assert_eq!(fx["mtp_custom"], routes::ROUTE_MTP_CUSTOM);
     let head = routes::head_actions(true);
     assert_eq!(fx["apply"]["label"], head[0].label.as_str());
     assert!(head[1]

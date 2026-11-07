@@ -444,6 +444,11 @@ pub enum Cmd {
         provider: String,
         model: String,
     },
+    /// MTP support of the route editor's picked text pair.
+    RouteMtpCaps {
+        provider: String,
+        model: String,
+    },
     /// Docs assistant: start the docs-qa run (`op` = its busy entry).
     DocsAsk {
         question: String,
@@ -2683,6 +2688,18 @@ fn handle(
                 },
             };
             wake.post(move || crate::ui::sandbox::publish_mtp(&s, sup));
+        }
+
+        Cmd::RouteMtpCaps { provider, model } => {
+            let s = *store;
+            let sup = match require_client(client) {
+                Ok(c) => crate::ui::sandbox::load_mtp(&c, &provider, &model),
+                Err(e) => crate::ui::sandbox::MtpSupport::Unknown {
+                    target: format!("{provider}/{model}"),
+                    detail: Some(e.message),
+                },
+            };
+            wake.post(move || crate::ui::sandbox::publish_route_mtp(&s, sup));
         }
 
         Cmd::DocsAsk {

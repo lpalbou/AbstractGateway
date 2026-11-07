@@ -1106,6 +1106,17 @@ pub fn publish_mtp(store: &Store, sup: MtpSupport) {
     }
 }
 
+/// Publish the route editor's MTP probe (UI thread) — only if it is still
+/// for the pair the editor has picked.
+pub fn publish_route_mtp(store: &Store, sup: MtpSupport) {
+    if store
+        .route_mtp
+        .with_untracked(|m| m.target() == sup.target())
+    {
+        store.route_mtp.set(sup);
+    }
+}
+
 // ---------------------------------------------------------------------
 // State (one Copy bundle of signals, held by the Store)
 // ---------------------------------------------------------------------

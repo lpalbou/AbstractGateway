@@ -1343,7 +1343,7 @@ you can click.
   Row buttons, each with a tooltip: ✎ **Edit** or ⊞ **Configure** (`e`, also `Enter`), ⌀ **Clear** (`x`), ⤓ **Download** (`w`, admin; the tooltip names the artifact and provider) and ⧉ **Copy** (`c`, the install command when there is no download tool). A route that a parent route covers reads "Covered by input.text".
   **Configure capability default** is one dialog with:
   - the choice between use default and override;
-  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice;
+  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice. As on the web, changing the provider or the model puts Reasoning and MTP back on the default (a save then clears the old model's MTP), and MTP (Off included) is offered only when the gateway says that model supports it; otherwise it is disabled and the line under it says why;
   - the buttons **[Cancel] [Clear] [Test] [Save]**.
   Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a **Download** button. When discovery fails, the field takes a typed model id and offers **Retry model discovery**. Clear asks first; downloads ask first and name the size.
 

@@ -975,6 +975,17 @@ def _one(src: str, pattern: str, what: str, flags: int = 0) -> str:
     return m[0]
 
 
+def route_mtp_wording(src: str) -> dict:
+    """The route window's MTP select (console.py `#modal-default-speculation`): its options and
+    the custom entry `loadDefaultSpeculation` adds for a stored value outside them (operator rule
+    2026-11-07; the notes under it are the Sandbox's, in r15_web_wording_sandbox.json)."""
+    select = _one(src, r'<select id="modal-default-speculation">(.*?)</select>', "the route MTP select", re.S)
+    return {
+        "mtp_options": [html.unescape(o) for o in re.findall(r"<option[^>]*>([^<]*)</option>", select)],
+        "mtp_custom": _one(src, r'option\.value = "custom"; option\.textContent = "([^"]+)";', "the route MTP custom option"),
+    }
+
+
 def multimodal_wording() -> dict:
     """Multimodal: the page head, the scope sentences, the table's columns,
     the row actions' words and tooltip templates (R14-W7 icon buttons:
@@ -1068,6 +1079,7 @@ def multimodal_wording() -> dict:
         "dialog": {"title": mtitle, "lead": mdesc, "buttons": buttons,
                    "base_url_placeholder": _one(modal, r'id="modal-default-base-url"[^>]*placeholder="([^"]+)"', "base URL placeholder"),
                    "labels": ["Provider", "Model", "Voice", "Reasoning"] if all(f"<label>{x}<select" in modal or f'>{x}<select' in modal for x in ("Provider", "Model", "Voice", "Reasoning")) else fail("modal labels moved")},
+        **route_mtp_wording(src),
     }
 
 

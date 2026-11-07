@@ -10293,7 +10293,7 @@ you can click.
   Row buttons, each with a tooltip: ✎ **Edit** or ⊞ **Configure** (`e`, also `Enter`), ⌀ **Clear** (`x`), ⤓ **Download** (`w`, admin; the tooltip names the artifact and provider) and ⧉ **Copy** (`c`, the install command when there is no download tool). A route that a parent route covers reads "Covered by input.text".
   **Configure capability default** is one dialog with:
   - the choice between use default and override;
-  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice;
+  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice. As on the web, changing the provider or the model puts Reasoning and MTP back on the default (a save then clears the old model's MTP), and MTP (Off included) is offered only when the gateway says that model supports it; otherwise it is disabled and the line under it says why;
   - the buttons **[Cancel] [Clear] [Test] [Save]**.
   Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a **Download** button. When discovery fails, the field takes a typed model id and offers **Retry model discovery**. Clear asks first; downloads ask first and name the size.
 
@@ -15711,7 +15711,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   gateway's code under Technical details) instead of a tooltip. The entity create form offers only the reasoning
   levels the chosen model serves, not a fixed list. The terminal console's Sandbox follows the same rule with the
   same words (crate `abstractgateway-console` 0.18.1): it kept the reasoning across a model change and sent MTP Off
-  to a model without MTP.
+  to a model without MTP. So does its route Edit window (Multimodal): it kept both across a model change and saved
+  the old model's MTP with the new one.
 - **The Summon entity form fits a phone** (`console.py`). Its tools-per-phase table kept a 420 px minimum width inside
   a dialog about 400 px wide, so on a phone the whole form scrolled sideways. The table now fits at 400 px (tighter
   cells, long tool names wrap); every tool and phase is still shown, and the desktop layout is unchanged.

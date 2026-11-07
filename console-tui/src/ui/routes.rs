@@ -2246,6 +2246,42 @@ fn speculation_options(text: &str, ix: usize) -> Result<String, String> {
     })
 }
 
+/// The MTP select of the text route (the web's `#modal-default-speculation`
+/// options; the custom entry is added only for a stored value outside them,
+/// like the web's `loadDefaultSpeculation`).
+pub const ROUTE_MTP_CHOICES: [&str; 6] = [
+    "inherit (no override)",
+    "off",
+    "depth 2",
+    "depth 3",
+    "depth 4",
+    "depth 5",
+];
+pub const ROUTE_MTP_CUSTOM: &str = "custom (preserve configured value)";
+
+/// The route editor's MTP options (the web's `gateMtpSelect`): Off, the
+/// custom value and a depth only when the card says supported, a depth only
+/// when it is listed; inherit always.
+pub fn route_mtp_options(sup: &crate::ui::sandbox::MtpSupport, custom: bool) -> Vec<SelectOption> {
+    let supported = sup.supported();
+    let mut out: Vec<SelectOption> = ROUTE_MTP_CHOICES
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let o = SelectOption::new(*label);
+            match i {
+                0 => o,
+                1 => o.disabled(!supported),
+                _ => o.disabled(!sup.depths().contains(&(i as u64))),
+            }
+        })
+        .collect();
+    if custom {
+        out.push(SelectOption::new(ROUTE_MTP_CUSTOM).disabled(!supported));
+    }
+    out
+}
+
 /// The editor's title and purpose line (the web modal's words).
 pub const DIALOG_TITLE: &str = "Configure capability default";
 pub const DIALOG_LEAD: &str = "Select a provider and one of its discovered models.";
@@ -2356,6 +2392,10 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         let speculation_ix = mcx.signal(speculation_index(
             &serde_json::from_str::<Value>(&spec_init).unwrap_or(Value::Null),
         ));
+        // The stored value outside the web's options keeps its own entry
+        // until a model change resets MTP (the web's custom option).
+        let custom_kept = mcx.signal(speculation_ix.get_untracked() == 6);
+        store.route_mtp.set(crate::ui::sandbox::MtpSupport::NoPair);
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let esc_armed = mcx.signal(false);
@@ -2472,6 +2512,97 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                     }
                     Some(_) => model_ix.set(0), // empty list → free-text lane
                     None => {}                  // still loading — stay armed
+                }
+            });
+        }
+
+        // Reasoning and MTP follow the picked text pair (operator rule
+        // 2026-11-07; the web's resetDefaultModelOptions and
+        // refreshDefaultSpeculationSupport): a provider or model change puts
+        // both back on "not set" / inherit, so a save never keeps the old
+        // model's MTP; the pair's capability card decides whether MTP is
+        // offered. The saved pair resolving when the editor opens is not a
+        // change.
+        if is_text {
+            let prov_options_m = prov_options.clone();
+            let ctx_m = ctx2.clone();
+            let saved_target = explicit
+                .then(|| {
+                    row.model
+                        .as_ref()
+                        .map(|m| format!("{}/{m}", row.provider.clone().unwrap_or_default()))
+                })
+                .flatten();
+            let resolved = mcx.signal(!explicit);
+            let last_target = mcx.signal(saved_target);
+            mcx.effect(move || {
+                let pair = picked_pair(
+                    &store,
+                    &prov_options_m,
+                    custom_row,
+                    prov_ix,
+                    prov_custom,
+                    model_ix,
+                    model_custom,
+                    &saved_sig.get_untracked(),
+                );
+                let target = pair.as_ref().map(|(p, m)| format!("{p}/{m}"));
+                if !resolved.get_untracked() && target.is_some() {
+                    resolved.set(true);
+                }
+                if resolved.get_untracked() && target != last_target.get_untracked() {
+                    last_target.set(target.clone());
+                    if reasoning_ix.get_untracked() != 0 {
+                        reasoning_ix.set(0);
+                    }
+                    if speculation_ix.get_untracked() != 0 {
+                        speculation_ix.set(0);
+                    }
+                    if !spec_json.get_untracked().is_empty() {
+                        spec_json.set(String::new());
+                    }
+                    if custom_kept.get_untracked() {
+                        custom_kept.set(false);
+                    }
+                }
+                if store.route_mtp.with_untracked(|s| s.target().map(str::to_string)) == target {
+                    return;
+                }
+                match pair {
+                    None => store.route_mtp.set(crate::ui::sandbox::MtpSupport::NoPair),
+                    Some((provider, model)) => {
+                        store.route_mtp.set(crate::ui::sandbox::MtpSupport::Checking {
+                            target: format!("{provider}/{model}"),
+                        });
+                        if store.conn.with_untracked(ConnPhase::is_connected) {
+                            ctx_m.send(Cmd::RouteMtpCaps { provider, model });
+                        }
+                    }
+                }
+            });
+            // A card that says this model has no MTP: a stored choice is not
+            // shown as chosen, and the save clears it (the web's rule).
+            mcx.effect(move || {
+                let unsupported = store.route_mtp.with(|s| {
+                    matches!(
+                        s,
+                        crate::ui::sandbox::MtpSupport::Known {
+                            supported: false,
+                            ..
+                        }
+                    )
+                });
+                if !unsupported {
+                    return;
+                }
+                if speculation_ix.get_untracked() != 0 {
+                    speculation_ix.set(0);
+                }
+                if !spec_json.get_untracked().is_empty() {
+                    spec_json.set(String::new());
+                }
+                if custom_kept.get_untracked() {
+                    custom_kept.set(false);
                 }
             });
         }
@@ -2977,21 +3108,48 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                 .build(),
                         ))
                         .child(if is_text {
-                            efield(
-                                &t,
-                                "MTP",
-                                Select::new(["inherit", "off", "depth 2", "depth 3", "depth 4", "depth 5", "custom (JSON)"]
-                                    .iter().map(|label| SelectOption::new(*label)).collect::<Vec<_>>())
-                                    .value(speculation_ix)
-                                    .on_change(move |ix| {
-                                        match speculation_options(&spec_json.get_untracked(), ix) {
-                                            Ok(value) => { spec_json.set(value); form_error.set(None); }
-                                            Err(error) => form_error.set(Some(error)),
-                                        }
-                                    })
-                                    .layout(LayoutStyle::default().w(28).h(1).shrink(0.0))
-                                    .element(gcx, &t).build(),
-                            )
+                            // MTP (Off included) only for a model whose card
+                            // says supported; otherwise disabled, and the
+                            // line under it says why (the web's words).
+                            Element::new()
+                                .style(LayoutStyle::column().shrink(0.0))
+                                .child(efield(
+                                    &t,
+                                    "MTP",
+                                    dyn_view_scoped(LayoutStyle::default().w(36).h(1).shrink(0.0), move |scx| {
+                                        let t = use_theme(scx).get().tokens;
+                                        let sup = store.route_mtp.get();
+                                        Select::new(route_mtp_options(&sup, custom_kept.get()))
+                                            .value(speculation_ix)
+                                            .disabled(!sup.supported())
+                                            .on_change(move |ix| {
+                                                match speculation_options(&spec_json.get_untracked(), ix) {
+                                                    Ok(value) => { spec_json.set(value); form_error.set(None); }
+                                                    Err(error) => form_error.set(Some(error)),
+                                                }
+                                            })
+                                            .layout(LayoutStyle::default().w(36).h(1).shrink(0.0))
+                                            .element(scx, &t)
+                                            .build()
+                                    }),
+                                ))
+                                .child(efield(
+                                    &t,
+                                    "",
+                                    dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                                        let t = abstracttui::app::current_theme().tokens;
+                                        let note = store.route_mtp.get().reason();
+                                        Element::new()
+                                            .style(LayoutStyle::column().shrink(0.0))
+                                            .children(
+                                                super::util::wrap_text(&note, 52)
+                                                    .into_iter()
+                                                    .map(|l| line(vec![span(l, t.text_faint)])),
+                                            )
+                                            .build()
+                                    }),
+                                ))
+                                .build()
                         } else {
                             Element::new().style(LayoutStyle::default().h(0)).build()
                         })

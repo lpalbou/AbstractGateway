@@ -136,7 +136,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   gateway's code under Technical details) instead of a tooltip. The entity create form offers only the reasoning
   levels the chosen model serves, not a fixed list. The terminal console's Sandbox follows the same rule with the
   same words (crate `abstractgateway-console` 0.18.1): it kept the reasoning across a model change and sent MTP Off
-  to a model without MTP.
+  to a model without MTP. So does its route Edit window (Multimodal): it kept both across a model change and saved
+  the old model's MTP with the new one.
 - **The Summon entity form fits a phone** (`console.py`). Its tools-per-phase table kept a 420 px minimum width inside
   a dialog about 400 px wide, so on a phone the whole form scrolled sideways. The table now fits at 400 px (tighter
   cells, long tool names wrap); every tool and phase is still shown, and the desktop layout is unchanged.

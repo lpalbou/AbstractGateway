@@ -3058,6 +3058,9 @@ pub struct Store {
     /// Result of the route editor's Test verb (single slot — one form
     /// modal at a time; openers reset it).
     pub route_test: Signal<Loadable<RouteTestOutcome>>,
+    /// MTP support of the route editor's picked text pair (single slot,
+    /// keyed by its target inside the value; the editor opener resets it).
+    pub route_mtp: Signal<crate::ui::sandbox::MtpSupport>,
     /// Manage snapshot for the SELECTED entity (single slot, keyed by
     /// name inside the data — consumers check it matches their row).
     pub entity_detail: Signal<Loadable<EntityDetail>>,
@@ -3941,6 +3944,7 @@ impl Store {
             docs: crate::ui::docs::DocsState::create(cx),
             voices: cx.signal(Loadable::default()),
             route_test: cx.signal(Loadable::default()),
+            route_mtp: cx.signal(crate::ui::sandbox::MtpSupport::NoPair),
             entity_detail: cx.signal(Loadable::default()),
             entity_policy: cx.signal(Loadable::default()),
             entity_prompt: cx.signal(Loadable::default()),
@@ -4035,6 +4039,7 @@ impl Store {
             docs,
             voices,
             route_test,
+            route_mtp,
             entity_detail,
             entity_policy,
             entity_prompt,
@@ -4100,6 +4105,7 @@ impl Store {
         docs.reset();
         voices.set(Loadable::NotAsked);
         route_test.set(Loadable::NotAsked);
+        route_mtp.set(crate::ui::sandbox::MtpSupport::NoPair);
         entity_detail.set(Loadable::NotAsked);
         entity_policy.set(Loadable::NotAsked);
         entity_prompt.set(Loadable::NotAsked);

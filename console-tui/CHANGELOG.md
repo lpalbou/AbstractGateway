@@ -11,6 +11,13 @@
   support MTP." (or the gateway's own message), "MTP is offered when the gateway confirms this model supports it."
   when the gateway cannot say, with the gateway's code after "Technical details:". A choice the model cannot take is
   never sent (Off used to be sent to a model without MTP).
+- **Multimodal → route Edit: reasoning and MTP follow the chosen model too** (the web route window's rule and words).
+  Changing the provider or the model puts Reasoning on "not set" and MTP on "inherit (no override)", and saving with
+  another model no longer keeps the old model's MTP (it was kept, with the reasoning). The editor asks the gateway
+  about the chosen model: MTP, Off included, is offered only when it supports it, at the depths it lists; otherwise the
+  control is disabled, the line under it says why (the same sentences as the Sandbox, with "Technical details:"), and
+  a stored choice is not shown as chosen and is cleared on save. The select's choices now read like the web's
+  ("inherit (no override)", "custom (preserve configured value)" only for a stored value outside the list).
 
 ### Fixed
 - **The Runs tab shows every session again** (`api.rs`, AbstractGateway 0.21.0). Since session kinds, a root-runs
