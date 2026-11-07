@@ -59,8 +59,8 @@ def test_base_install_is_remote_light_server() -> None:
     # 0.1.1: the frozen avatar design catalog with `watch_code` (framework ADR 0052): the identity door
     # refuses a design the Watch cannot draw (backlog 1128 item 5).
     assert _floor(deps, "abstractavatar") >= Version("0.1.1")
-    # 3.0: the API mail/mail_markdown.py uses (backlog 1011).
-    assert _floor(deps, "markdown-it-py") >= Version("3.0.0")
+    # 4.0.0: the parser's bound on auto-completed table cells (3.0.0 has none: a 44 KB table took 44 GB).
+    assert _floor(deps, "markdown-it-py") >= Version("4.0.0")
     joined = "\n".join(deps)
     assert "mcp-worker" not in joined
     assert "multimodal" not in joined

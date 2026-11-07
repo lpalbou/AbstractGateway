@@ -45,7 +45,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   (`mail/mail_markdown.py`, `mail/notifications.py`; backlog 1011). An automation result email showed
   `**First, the technology story**` with its asterisks. The model-written body of an automation result
   and of a flow's Notify me step is now rendered by a CommonMark parser (`markdown-it-py`, now a declared
-  dependency, `>=3.0.0`): headings, bold and italic, lists, quotes, code, tables and links, each element
+  dependency, `>=4.0.0`: its parser bounds the table cells it completes): headings, bold and italic, lists, quotes, code, tables and links, each element
   styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside a
   paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
   never formatted, and the digest of held-back notices keeps its plain lines.

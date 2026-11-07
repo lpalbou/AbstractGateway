@@ -80,7 +80,7 @@ asked to write.
 - Width: the layout's one-column table is `table-layout:fixed` (nothing inside can widen it), paragraphs, list
   items, links, inline code and `<pre>` wrap anywhere, a table sits in an `overflow-x:auto` box and its cells
   wrap at word boundaries (`overflow-wrap:break-word;word-break:normal`), so short words are never split.
-- `markdown-it-py>=3.0.0` declared in `pyproject.toml` (tests pass on 3.0.0 and 4.0.0).
+- `markdown-it-py>=4.0.0` declared in `pyproject.toml` (first declared `>=3.0.0`; raised after the review found 3.0.0 has no bound on auto-completed table cells, F2).
 - Decided: `breaks: True` (a model's one-fact-per-line text keeps its lines, as in the plain part).
 
 ### The digest rule (decided and recorded)
@@ -113,6 +113,12 @@ plain part is the model's Markdown as written. Recorded in `mail_markdown.py`'s 
   mail triage result with a table and an image, a flow's Notify me with a code block and injection attempts,
   and a stress case (a 300-character token in a 6-column table). HTML, text parts and screenshots are under
   `abstractgateway/untracked/mail-markdown-1011/` (not tracked).
+
+## Review follow-ups (2026-11-07, `review-gateway-g4g6.md`)
+
+- F1: size budgets (`MAX_MARKDOWN_INPUT_CHARS` 100,000, `MAX_RENDERED_HTML_BYTES` 200,000): over either, the whole
+  text is shown escaped as plain text (the review's 5.2 KB table that rendered to 8 MB).
+- F2: floor `markdown-it-py>=4.0.0`.
 
 ## Not done
 

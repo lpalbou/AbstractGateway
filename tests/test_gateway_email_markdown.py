@@ -224,7 +224,20 @@ def test_markdown_it_py_is_a_declared_dependency() -> None:
     from pathlib import Path
 
     deps = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]["dependencies"]
-    assert any(d.replace(" ", "").startswith("markdown-it-py>=") for d in deps)
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    (req,) = [Requirement(d) for d in deps if Requirement(d).name == "markdown-it-py"]
+    # 4.0.0 bounds the table cells the parser completes; 3.0.0 does not (review F2, 2026-11-07).
+    assert any(spec.operator == ">=" and Version(spec.version) >= Version("4.0.0") for spec in req.specifier)
+
+
+def test_the_installed_parser_bounds_completed_table_cells() -> None:
+    import importlib
+
+    # `markdown_it.rules_block.table` the attribute is the rule function; the module holds the bound.
+    table = importlib.import_module("markdown_it.rules_block.table")
+    assert table.MAX_AUTOCOMPLETED_CELLS > 0
 
 
 def _amplifying_table() -> str:
