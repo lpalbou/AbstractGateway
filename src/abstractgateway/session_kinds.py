@@ -221,6 +221,22 @@ def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: 
         return out
 
 
+_MIGRATION_SCAN_LOCK = threading.Lock()
+
+
+def run_pending_migrations(data_dir: Any, list_root_rows: Any) -> Dict[str, int]:
+    """Run the pending migrations once: `list_root_rows()` (a whole-index scan) is called only
+    when one is pending, and concurrent callers (every listing after an upgrade) wait for the
+    first scan instead of repeating it. Blocking: call it off the event loop."""
+    if not pending_migrations(data_dir):
+        return {}
+    with _MIGRATION_SCAN_LOCK:
+        pending = pending_migrations(data_dir)
+        if not pending:
+            return {}
+        return migrate_sessions(data_dir, list_root_rows(), pending)
+
+
 def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:
     """Record `kind` for `session_id` (idempotent). A conversation needs no
     mark. Returns True when the file changed."""

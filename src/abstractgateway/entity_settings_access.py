@@ -217,6 +217,7 @@ def _run_async(fn: Any, *args: Any, **kwargs: Any) -> Any:
     `asyncio.run` cannot run there: the 0.20.2 conversation-identity check refused every voice)."""
     import asyncio
     import functools
+    import threading
 
     try:
         asyncio.get_running_loop()
@@ -224,11 +225,25 @@ def _run_async(fn: Any, *args: Any, **kwargs: Any) -> Any:
         pass
     else:
         raise ChecksOnTheEventLoop(f"{getattr(fn, '__name__', fn)} was called on the event loop; run the check off the loop")
-    try:
-        import anyio.from_thread
+    if threading.current_thread().name.startswith("gw-"):
+        # A gateway work pool's worker (work_pools.off_loop): the route awaits work in those
+        # pools itself, so running it here holds one worker while it waits for another: a pool
+        # of N deadlocks under N such calls (adversarial review of 0.20.3, P1). Ask from the
+        # loop instead (`offered_voices_async`).
+        raise ChecksOnTheEventLoop(
+            f"{getattr(fn, '__name__', fn)} was called in a gateway work-pool thread; ask from the loop (offered_voices_async)"
+        )
+    import anyio.from_thread
 
+    try:
+        from anyio import NoEventLoopError as _not_an_anyio_worker  # AnyIO 4.11+
+    except ImportError:  # older AnyIO: a plain RuntimeError says the same
+        _not_an_anyio_worker = RuntimeError
+    try:
         return anyio.from_thread.run(functools.partial(fn, *args, **kwargs))
-    except RuntimeError:
+    except _not_an_anyio_worker:
+        # Not an AnyIO worker (the identity CLI, a plain thread): this thread runs its own loop.
+        # On AnyIO 4.11+ a RuntimeError the route itself raises is not caught here.
         return asyncio.run(fn(*args, **kwargs))
 
 
@@ -248,7 +263,12 @@ def _route_defaults(fn: Any, given: Mapping[str, Any]) -> dict:
             continue
         default = param.default
         if isinstance(default, FieldInfo):
-            default = None if default.default is PydanticUndefined else default.default
+            if default.default_factory is not None:
+                default = default.default_factory()
+            elif default.default is PydanticUndefined:
+                raise TypeError(f"{getattr(fn, '__name__', fn)}() needs {name!r}: it has no default to call it with")
+            else:
+                default = default.default
         out[name] = default
     return out
 
@@ -349,6 +369,29 @@ def offered_voices(provider: str, model: Optional[str], request: Any = None) -> 
         return [], [], e.detail if isinstance(e.detail, str) else str(e.detail)
     except Exception as e:  # noqa: BLE001
         return [], [], str(e)
+    return _voices_of_catalog(body, provider)
+
+
+async def offered_voices_async(provider: str, model: Optional[str], request: Any = None) -> tuple[list, list, Optional[str]]:
+    """`offered_voices` for async code: awaits the voice route on the running loop, in the
+    caller's own context (their principal and plane), never in a work-pool thread."""
+    from fastapi import HTTPException
+
+    from .routes.gateway import voice_voices_catalog
+    from .security.principal import current_gateway_principal
+
+    req = request if request is not None else _caller_request(current_gateway_principal())
+    try:
+        body = await voice_voices_catalog(**_route_defaults(voice_voices_catalog, {"request": req, "provider": str(provider), "compact": True}))
+    except HTTPException as e:
+        return [], [], e.detail if isinstance(e.detail, str) else str(e.detail)
+    except Exception as e:  # noqa: BLE001
+        return [], [], str(e)
+    return _voices_of_catalog(body, provider)
+
+
+def _voices_of_catalog(body: Mapping[str, Any], provider: str) -> tuple[list, list, Optional[str]]:
+    """(voice ids, speech models, error) of one `GET /voice/voices?provider=` answer."""
     prov = str(provider).strip().lower()
     voices: list = []
     for item in body.get("items") or []:

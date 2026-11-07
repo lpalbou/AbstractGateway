@@ -29,7 +29,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `docs`: `POST /runs/start` marks it (a capture from Note, its phone or watch), a one-time
   migration (`abstractnote_bundle_v1`) marks the existing ones, and the sessions Note's
   automations open are `notes` by their workflow. Turn listings and `GET /sessions/search` leave
-  them out by default and list them with `kind=notes`. `GET /automations` takes `kind=user`
+  them out by default and list them with `kind=notes` (a search runs the migration too). The
+  host-wide `GET /host/runs` (the tray's Conversations and Automations menus) leaves them out unless
+  `kind=notes` or `kind=all`, and each row carries `kind`. `GET /automations` takes `kind=user`
   (the default), `notes` or `all`, every row carries `kind`, and the paused and archived counts
   count the listed kind. A purpose, never the creating client. AbstractNote reads its automations
   by id, so its Processing page is unchanged. A docs-qa run named by a namespaced `flow_id`
@@ -47,7 +49,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   the caller's picker lists are the voices a save accepts.
 - **A conversation's identity accepts a voice again** (`POST /runs/start` with `identity`). Its voice
   check ran on the event loop, where it could not run, and refused every voice ("asyncio.run() cannot
-  be called from a running event loop"); it now runs off the loop.
+  be called from a running event loop"). The caller's voices are now read on the loop
+  (`offered_voices_async`) and the rest of the check runs off it; the synchronous check refuses to run
+  in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
+  holds (a pool of N stuck for good under N identity starts).
 
 ## [0.20.2] - 2026-11-07
 

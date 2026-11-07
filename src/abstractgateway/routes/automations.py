@@ -1298,8 +1298,8 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     rows, next_cursor = order_page(ordered_automations(entries), cursor=cursor, limit=limit)
     waits_by_automation = pending_waits_by_automation(run_store, limit=_ITEMS_MAX) if any(k == "controller" for _key, (k, _o) in rows) else {}
     items: List[Dict[str, Any]] = []
-    for _key, (kind, obj) in rows:
-        if kind == "controller":
+    for _key, (row_kind, obj) in rows:
+        if row_kind == "controller":
             try:
                 summary = automation_summary_row(
                     svc, principal, obj, owner_zone=owner_zone, waits=waits_by_automation.get(str(obj.run_id), [])

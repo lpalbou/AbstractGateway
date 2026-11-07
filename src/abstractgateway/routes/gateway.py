@@ -9349,7 +9349,7 @@ def _apply_session_identity(
     *,
     principal: Optional[GatewayPrincipal],
     session_id: Optional[str],
-    request: Optional[Request] = None,
+    offered_voices: Optional[tuple] = None,
 ) -> Optional[JSONResponse]:
     """The conversation's identity on this run (ADR 0052 §9; session_identity.py): a client-sent
     `_runtime.identity`/`identity_ref` is dropped; `req.identity` goes through the identity ladder
@@ -9369,7 +9369,7 @@ def _apply_session_identity(
     try:
         if req.identity is not None:
             avatar, voice = choice_from_body(req.identity.avatar, req.identity.voice)
-            check_choice("This conversation", avatar, voice, request=request, for_conversation=True)
+            check_choice("This conversation", avatar, voice, for_conversation=True, offered=offered_voices)
         user = str(getattr(principal, "user_id", "") or "").strip() or "operator"
         record = resolve_session_identity(
             Path(get_gateway_service().config.data_dir), session_id, avatar=avatar, voice=voice, actor=f"person:{user}"
@@ -9472,10 +9472,17 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data["workspace"] = dict(req.workspace)
         _apply_run_stream_switch(input_data, interactive=True)
         _strip_client_automation_attribution(input_data)
-        # Off the loop: the voice check lists the caller's voices through the voice route, and the
-        # record is a file write (on the loop the check could not run and refused every voice).
+        # The caller's voices are read HERE, on the loop (the voice route awaits work in the pools:
+        # read from a pool thread it holds one worker while waiting for another, review P1); the
+        # rest of the ladder and the record's file write run off the loop.
+        offered = None
+        voice_body = getattr(req.identity, "voice", None) if session_id and req.identity is not None else None
+        if voice_body is not None and str(getattr(voice_body, "provider", "") or "").strip():
+            from ..entity_settings_access import offered_voices_async
+
+            offered = await offered_voices_async(str(voice_body.provider).strip(), str(getattr(voice_body, "model", "") or "").strip() or None, request)
         identity_refused = await off_loop(
-            "light", _apply_session_identity, req, input_data, principal=principal, session_id=session_id, request=request
+            "light", _apply_session_identity, req, input_data, principal=principal, session_id=session_id, offered_voices=offered
         )
         if identity_refused is not None:
             return identity_refused
@@ -10077,6 +10084,23 @@ def _drop_superseded_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return [row for row in rows if row.get("role") != "occurrence" or id(row) in keep]
 
 
+async def run_session_kind_migrations(svc: Any) -> None:
+    """The pending one-time session-kind migrations of this plane (session_kinds.MIGRATIONS):
+    one whole-index scan, off the event loop (the heavy pool), shared by concurrent callers.
+    `GET /runs` and `GET /sessions/search` run it first. Raises SessionKindsUnreadable."""
+    from ..session_kinds import pending_migrations, run_pending_migrations
+
+    if not pending_migrations(svc.config.data_dir):
+        return
+    rs = svc.host.run_store
+
+    def _rows() -> List[Dict[str, Any]]:
+        lister = getattr(rs, "list_run_index", None)
+        return lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
+
+    await off_loop("heavy", run_pending_migrations, svc.config.data_dir, _rows)  # a whole-index listing
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -10140,26 +10164,12 @@ async def list_runs(
     )
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
-    from ..session_kinds import (
-        SessionKindsUnreadable,
-        kind_of as _kind_of_row,
-        migrate_sessions,
-        pending_migrations,
-        session_kinds as _session_kinds,
-    )
+    from ..session_kinds import SessionKindsUnreadable, kind_of as _kind_of_row, session_kinds as _session_kinds
 
     # One-time migrations: sessions whose turn root ran docs-qa / an AbstractNote workflow
-    # (before their kind existed) become docs chats / note sessions. Off the event loop (it
-    # reads the index); one scan for every pending migration.
+    # (before their kind existed) become docs chats / note sessions.
     try:
-        pending = pending_migrations(svc.config.data_dir)
-        if pending:
-            def _migrate() -> Dict[str, int]:
-                lister = getattr(rs, "list_run_index", None)
-                rows = lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
-                return migrate_sessions(svc.config.data_dir, rows, pending)
-
-            await off_loop("heavy", _migrate)  # a whole-index listing: the heavy pool
+        await run_session_kind_migrations(svc)
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
@@ -30450,6 +30460,7 @@ async def host_runs(
     request: Request,
     limit: int = Query(25, ge=1, le=200, description="Maximum runs (most recent first, across planes)."),
     window_hours: float = Query(24.0, gt=0, description="Finished runs updated within this many hours (active runs are always listed)."),
+    kind: Optional[str] = Query(None, description="Session purposes listed: by default every purpose but `notes` (AbstractNote's own background work); `notes` lists only those, `all` everything. Every row carries `kind`."),
 ) -> Dict[str, Any]:
     """Runs on this MACHINE, across data planes. Admin only.
 
@@ -30484,10 +30495,14 @@ async def host_runs(
     Pause / Stop / approve on every other plane's row.
     """
     principal = _require_admin_principal(request)
-    from ..admin_runtimes import recent_runs_host_wide
+    from ..admin_runtimes import HOST_RUN_KINDS_DEFAULT, recent_runs_host_wide
 
+    want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else None
+    if want_kind not in (None, "notes", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected notes|all, or none for every purpose but notes)")
+    kinds = HOST_RUN_KINDS_DEFAULT if want_kind is None else (("notes",) if want_kind == "notes" else None)
     svc = get_gateway_service()
-    key = (int(limit), round(float(window_hours), 3))
+    key = (int(limit), round(float(window_hours), 3), kinds)
     now = time.time()
     cached = _HOST_RUNS_CACHE
     if cached["payload"] is not None and cached["key"] == key and (now - float(cached["at"])) < _HOST_RUNS_TTL_S:
@@ -30501,6 +30516,7 @@ async def host_runs(
             since_epoch=now - (float(window_hours) * 3600.0),
             default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
             default_ledger_store=getattr(getattr(svc, "host", None), "ledger_store", None),
+            kinds=kinds,
         )
         _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
     # Per caller, so outside the cache.

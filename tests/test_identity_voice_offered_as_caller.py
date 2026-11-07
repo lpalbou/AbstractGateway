@@ -186,3 +186,52 @@ def test_route_defaults_never_pass_a_fastapi_parameter_object() -> None:
         kwargs = _route_defaults(fn, given)
         assert not [k for k, v in kwargs.items() if isinstance(v, FieldInfo)], kwargs
     assert _route_defaults(voice_voices_catalog, {"request": None})["language"] is None
+
+
+def test_a_conversation_identity_never_nests_in_the_light_pool(world) -> None:
+    """Review P1: read from a light-pool thread, the voice route waited for a second light worker
+    while holding one; with one light worker POST /runs/start hung forever (and so did the pool)."""
+    import threading
+
+    from abstractgateway import work_pools
+
+    before = dict(work_pools._sizes)
+    work_pools.configure_pools(light=1)
+    out: Dict[str, Any] = {}
+    try:
+        def start() -> None:
+            body = {"bundle_id": "no-such-bundle", "flow_id": "root", "session_id": "s-pool", "input_data": {"prompt": "hi"},
+                    "identity": _identity("a1ce0000")}
+            r = world["c"].post("/api/gateway/runs/start", headers=world["alice"], json=body)
+            out["status"], out["text"] = r.status_code, r.text
+
+        t = threading.Thread(target=start, daemon=True)
+        t.start()
+        t.join(30)
+        assert not t.is_alive(), f"POST /runs/start hung with one light worker: {work_pools.pool_stats()['light']}"
+        assert "can't speak with" not in out["text"], out
+    finally:
+        work_pools.configure_pools(light=before["light"])
+
+
+def test_the_sync_check_refuses_to_run_in_a_work_pool_thread() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from abstractgateway.entity_settings_access import ChecksOnTheEventLoop, offered_voices
+
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="gw-light") as pool:
+        with pytest.raises(ChecksOnTheEventLoop, match="work-pool thread"):
+            pool.submit(offered_voices, PROVIDER, MODEL).result(timeout=30)
+
+
+def test_a_required_route_parameter_is_never_filled_with_none() -> None:
+    from fastapi import Query
+
+    from abstractgateway.entity_settings_access import _route_defaults
+
+    async def route(request: Any, needed: str = Query(...), many: list = Query(default_factory=list)) -> None:  # pragma: no cover
+        return None
+
+    with pytest.raises(TypeError, match="needs 'needed'"):
+        _route_defaults(route, {"request": None})
+    assert _route_defaults(route, {"request": None, "needed": "x"})["many"] == []

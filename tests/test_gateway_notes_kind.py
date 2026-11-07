@@ -137,6 +137,36 @@ def test_kind_notes_is_accepted_and_validated(client: TestClient) -> None:
     assert r.status_code == 200, r.text
 
 
+def test_a_search_runs_the_migration_first(client: TestClient) -> None:
+    """A search may come before any listing after an upgrade: it marks the old note sessions too."""
+    from abstractgateway.session_kinds import NOTES_MIGRATION
+
+    save_runs(_note_root("note-watch-old"))
+    r = client.get("/api/gateway/sessions/search?q=milk", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    stored = _stored(client)
+    assert NOTES_MIGRATION in stored["migrations"] and stored["sessions"]["note-watch-old"]["kind"] == "notes"
+
+
+def test_the_host_run_list_leaves_note_work_out(client: TestClient) -> None:
+    """The tray's Conversations and Automations menus read `GET /host/runs` (every plane)."""
+    ctl = _note_controller()
+    drain = _drain_occurrence(ctl.run_id, 1)
+    conv = chat_run(session_id="s-conv", created_at="2026-11-06T07:00:00+00:00")
+    save_runs(conv, _note_root("note-watch-1"), ctl, drain)
+    window = "&window_hours=100000"
+    default = client.get(f"/api/gateway/host/runs?limit=50{window}", headers=HEADERS)
+    assert default.status_code == 200, default.text
+    assert {r["session_id"] for r in default.json()["items"]} == {"s-conv"}
+    assert all(r["kind"] == "conversation" for r in default.json()["items"])
+    notes = client.get(f"/api/gateway/host/runs?limit=50&kind=notes{window}", headers=HEADERS).json()
+    assert {r["session_id"] for r in notes["items"]} == {"note-watch-1", drain.session_id}
+    assert all(r["kind"] == "notes" for r in notes["items"])
+    every = client.get(f"/api/gateway/host/runs?limit=50&kind=all{window}", headers=HEADERS).json()
+    assert {r["session_id"] for r in every["items"]} == {"s-conv", "note-watch-1", drain.session_id}
+    assert client.get("/api/gateway/host/runs?kind=bogus", headers=HEADERS).status_code == 400
+
+
 def test_existing_note_sessions_are_migrated_once_by_bundle_id(client: TestClient) -> None:
     import base64
 

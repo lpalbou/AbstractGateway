@@ -3052,12 +3052,15 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+- `GET /api/gateway/host/runs?limit=25&window_hours=24&kind=` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, session_kind, automation_id, created_at, updated_at,
+  activity, role, session_kind, kind, automation_id, created_at, updated_at,
   ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
   active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `kind` is the session's purpose as in `GET /runs` (`conversation`, `docs`,
+  `notes`): AbstractNote's own work (`notes`) is left out unless `kind=notes`
+  (only it) or `kind=all`, before `limit` applies.
   `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
   automation's run, `chat` / `discussion` = a conversation); the tray lists
   the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
