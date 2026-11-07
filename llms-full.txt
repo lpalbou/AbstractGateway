@@ -7491,7 +7491,7 @@ loads the `abstractnote` workflows: see [apps.md](docs/apps.md) (the Note app).
 
 These exist to help thin clients adapt to the deployed gateway.
 
-- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
+- Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`. Add `?scope=voice` for only `capabilities.contracts.assistant.voice` (TTS, STT, listen), with the same authentication and voice descriptors but without music/image/provider discovery. The default `scope=all` keeps the full response. Clients must cache the scoped response separately; older Gateways may ignore the query and return the full response.
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
 - Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`. Round
   12: each process-spawning tool row (AbstractRuntime's `SANDBOXED_TOOL_NAMES`:
@@ -13952,6 +13952,11 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
+support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated
+media discovery; the model worker no longer imports folders from the gateway's data directory; the web
+console's kit components come from ui-kit 0.9.15 (read-aloud says "speaking" only while audible).
+
 **What's new in 0.20.1** ([CHANGELOG](CHANGELOG.md#0201---2026-11-05)): 0.20.0 was tagged but never
 published; 0.20.1 is that release. Every entity has one
 recorded look and voice, its digital identity, set from the Entity app: the gateway refuses a design
@@ -15517,6 +15522,25 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.20.2] - 2026-11-07
+
+### Changed
+
+- **The web console's kit components come from ui-kit 0.9.15** (`console_islands.py`, `console_themes.py`
+  re-synced). The Sandbox chat's read-aloud says "speaking" only while audio is audible, tells you when the
+  browser paused playback, and a repeated Play during synthesis no longer starts a second request.
+
+### Fixed
+
+- **Model workers import installed packages, never folders in the gateway's data directory**
+  (`model_host.py`). The worker process started with the data directory on its import path, where cache
+  folders named `abstractcore/embeddings` could shadow an editable AbstractCore and break embeddings for
+  Notes and other clients. The worker now drops the working directory from its import path (Python 3.10
+  included); an explicit `PYTHONPATH` and installed packages are unchanged.
+- Speech clients can request `GET /api/gateway/discovery/capabilities?scope=voice`
+  to check TTS/STT without waiting for unrelated media discovery. The existing
+  full discovery response and authentication remain unchanged.
 
 ## [0.20.1] - 2026-11-05
 
