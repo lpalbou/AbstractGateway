@@ -1531,6 +1531,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font-size: var(--font-size-sm);
 	      font-weight: 600;
 	    }
+	    /* A model option the selected model cannot take reads as unavailable, not as a live choice. */
+	    #sandbox-speculation:disabled, #modal-default-speculation:disabled, #entity-new-thinking:disabled { opacity: .55; cursor: not-allowed; }
+	    /* The model notes are sentences, not field labels (the label's capitals do not apply). */
+	    #modal-default-speculation-status, #entity-new-thinking-note { display: block; text-transform: none; letter-spacing: normal; font-weight: 400; }
 	    .model-option-details { display: inline; }
 	    .model-option-details summary { display: inline; cursor: pointer; text-decoration: underline; }
 	    .model-option-details[open] summary { margin-right: 4px; }
