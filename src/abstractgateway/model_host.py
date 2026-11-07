@@ -1,7 +1,8 @@
 """The model host: AbstractCore's providers and model pool in a supervised child process (ADR 0002).
 
 In the `process` mode (`serve --model-host process`, the default on every OS) the gateway process loads
-no model and calls no provider. One child, `python -m abstractgateway.model_host_child`, holds them:
+no model and calls no provider. One child, started as `python -c CHILD_BOOTSTRAP` (it runs
+`abstractgateway.model_host_child.main` with the data directory kept off the import path), holds them:
 
 - the runtime's LLM clients. In the gateway each one is a `ModelHostClient`: a proxy with the same
   API as the AbstractRuntime client it stands for (`MultiLocalAbstractCoreLLMClient` in the bundle
@@ -987,6 +988,21 @@ def _socket_dir() -> Path:
     raise RuntimeError("unreachable")
 
 
+# How the child starts. Its working directory is runtime DATA, which contains cache directories named
+# abstractcore/embeddings: it must never be on the import path, where it can shadow editable packages
+# (or hold executable files). Python puts it there as '' (the -c entry) and, from PYTHONPATH, as the
+# absolute directory for an empty entry (`:/x`, `/x::`), for "." and for the directory or a symlink to
+# it; so every entry that resolves to the working directory is dropped (os.path.realpath), not only ''.
+# A -c bootstrap rather than `-m abstractgateway.model_host_child`, which would put the working
+# directory first, and rather than -P, which Python 3.10 lacks. Other PYTHONPATH entries and installed
+# packages stay available; a custom `child_argv` is used as given.
+CHILD_BOOTSTRAP = (
+    "import os, sys; _cwd = os.path.realpath(os.getcwd()); "
+    "sys.path[:] = [p for p in sys.path if p and os.path.realpath(p) != _cwd]; "
+    "from abstractgateway.model_host_child import main; raise SystemExit(main())"
+)
+
+
 class ModelHostSupervisor:
     """Starts, watches and restarts the model host child; hands out connections to it."""
 
@@ -1008,14 +1024,7 @@ class ModelHostSupervisor:
         self.ping_misses_to_kill = int(ping_misses_to_kill)
         self.memory_sample_s = float(memory_sample_s)
         self.ready_timeout_s = float(ready_timeout_s)
-        # The working directory is runtime DATA, which contains cache directories
-        # named abstractcore/embeddings. Never put it on the import path: it can
-        # shadow editable packages (or contain executable files). The -c bootstrap
-        # also supports Python 3.10, which has no -P flag. Explicit PYTHONPATH and
-        # installed packages remain available; custom child commands stay intact.
-        self._child_argv = list(child_argv) if child_argv else [sys.executable, "-c",
-            "import sys; sys.path[:] = [p for p in sys.path if p != '']; "
-            "from abstractgateway.model_host_child import main; raise SystemExit(main())"]
+        self._child_argv = list(child_argv) if child_argv else [sys.executable, "-c", CHILD_BOOTSTRAP]
         self._authkey = secrets.token_bytes(32)
         self._sock_dir = _socket_dir()
         self._lock = threading.RLock()

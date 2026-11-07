@@ -1,6 +1,6 @@
 """ADR 0002: the model host child and its proxy, with a real child process and a fake model server.
 
-Each test starts `python -m abstractgateway.model_host_child` through `ModelHostSupervisor` and calls
+Each test starts the child (`python -c model_host.CHILD_BOOTSTRAP`) through `ModelHostSupervisor` and calls
 AbstractRuntime's `LocalAbstractCoreLLMClient` in it through `ModelHostClient`; the provider is Core's
 `openai-compatible` one, pointed at `FakeOpenAIServer` (no weights, no network).
 """
@@ -86,12 +86,23 @@ def test_provider_exception_keeps_its_type_and_message(tmp_path, fake):
 
 
 @pytest.mark.parametrize("executable_package", [False, True])
-def test_runtime_data_cannot_shadow_embedding_package(tmp_path, fake, executable_package):
+@pytest.mark.parametrize("pythonpath", [None, ":{other}", "{other}::", ".", "{data}", "{link}"])
+def test_runtime_data_cannot_shadow_embedding_package(tmp_path, fake, monkeypatch, executable_package, pythonpath):
     data = tmp_path / "data"
     cache = data / "abstractcore" / "embeddings"
     cache.mkdir(parents=True)
     if executable_package:
         (cache.parent / "__init__.py").write_text("raise RuntimeError('executed runtime data')\n")
+    if pythonpath is not None:
+        # The child runs with the data dir as its working directory. An empty PYTHONPATH entry, ".",
+        # the data dir itself or a symlink to it all put that directory back on the import path
+        # (Python turns them into its absolute path), so each one must be dropped by realpath.
+        other = tmp_path / "other"
+        other.mkdir()
+        (tmp_path / "link").symlink_to(data, target_is_directory=True)
+        extra = os.environ.get("PYTHONPATH", "")
+        value = pythonpath.format(other=other, data=data, link=tmp_path / "link")
+        monkeypatch.setenv("PYTHONPATH", value + (os.pathsep + extra if extra else ""))
     # Both the normal cache-directory collision and executable package-shaped
     # data must leave installed imports intact in a real child process.
     sup = _sup(tmp_path)
