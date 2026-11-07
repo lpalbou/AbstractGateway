@@ -19726,6 +19726,11 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         flow_editor=flow_editor,
         assistant=assistant,
     )
+    # The lean entity tile read (backlog 1012); the roster (`GET /entities`) carries the same
+    # descriptor as `reads.tile`.
+    from ..entity_tile import entity_tile_contract
+
+    common["entities"] = {"tile": entity_tile_contract()}
 
     return {
         "version": 1,
