@@ -214,15 +214,16 @@ def _resolve_gateway_default_endpoint_profile(
             raise WorkflowBundleError(
                 reason or f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled."
             )
+        # The text route's own endpoint wins over the provider connection's:
+        # it is the more specific setting, made for this default (backlog 0994
+        # item 64 -- runs ignored it). Absent -> unchanged. The configured key
+        # goes to it only when it is the configured address (security, 0.21.0).
         kwargs = configured_provider_request_kwargs(
             provider_s,
             current_base_dir=data_root,
             root_base_dir=catalog_root,
+            base_url=default_text_route_connection_kwargs(provider_s, base_dir=data_root).get("base_url"),
         )
-        # The text route's own endpoint wins over the provider connection's:
-        # it is the more specific setting, made for this default (backlog 0994
-        # item 64 -- runs ignored it). Absent -> unchanged.
-        kwargs.update(default_text_route_connection_kwargs(provider_s, base_dir=data_root))
         return provider_s, kwargs, None
 
     return profile.provider_family, profile.client_kwargs(), profile.virtual_provider_id

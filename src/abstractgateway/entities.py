@@ -1779,7 +1779,18 @@ class EntityRegistry:
                 # gateway text route's own endpoint when this is its provider.
                 route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind["base_url"])
                 if route_base_url:
-                    llm_kwargs["base_url"] = route_base_url
+                    # The configured key goes to this address only when it is the
+                    # configured one (security, 0.21.0).
+                    from .provider_connections import configured_provider_request_kwargs
+
+                    llm_kwargs.update(
+                        configured_provider_request_kwargs(
+                            provider,
+                            current_base_dir=self.data_dir,
+                            root_base_dir=self.root_data_dir,
+                            base_url=route_base_url,
+                        )
+                    )
             factory = _ec._default_llm_factory  # late-bound module attribute
             llm = factory(provider, **llm_kwargs)
 

@@ -91,7 +91,9 @@ shows the same row ([api.md](./api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
-reasoning effort and MTP, and **Test** sends a one-word probe. Reasoning and MTP
+reasoning effort and MTP, and **Test** sends a one-word probe. A Base URL other
+than the provider's configured (or default) address is called without the
+provider's configured key. Reasoning and MTP
 follow the chosen model, here, in the **Sandbox** and in the entity create form:
 changing the provider or the model puts them back on the default (and saving
 does not carry the old model's MTP over), Off and the MTP depths are offered only

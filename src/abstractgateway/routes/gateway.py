@@ -28613,13 +28613,14 @@ def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Op
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if profile is not None:
         return profile.provider_family, profile.client_kwargs(), profile.public_dict()
+    # The text route's own endpoint, for the route's provider (as runs do); the configured key
+    # goes to it only when it is the configured address.
     kwargs = configured_provider_request_kwargs(
         provider,
         current_base_dir=current_base,
         root_base_dir=root_base,
+        base_url=default_text_route_connection_kwargs(provider, base_dir=current_base).get("base_url"),
     )
-    # The text route's own endpoint, for the route's provider (as runs do).
-    kwargs.update(default_text_route_connection_kwargs(provider, base_dir=current_base))
     return str(provider or "").strip(), kwargs, None
 
 

@@ -688,6 +688,19 @@ class EntityChatHost:
                 llm_kwargs["speculation"] = speculation
             if base_url:
                 llm_kwargs["base_url"] = base_url
+                if not str(provider).strip().lower().startswith("endpoint:"):
+                    # The configured key goes to this address only when it is the
+                    # configured one (security, 0.21.0).
+                    from .provider_connections import configured_provider_request_kwargs
+
+                    llm_kwargs.update(
+                        configured_provider_request_kwargs(
+                            str(provider).strip().lower(),
+                            current_base_dir=self._registry.data_dir,
+                            root_base_dir=self._registry.root_data_dir,
+                            base_url=base_url,
+                        )
+                    )
             factory = self._llm_factory or _default_llm_factory
             llm = factory(str(provider).strip().lower(), **llm_kwargs)
 

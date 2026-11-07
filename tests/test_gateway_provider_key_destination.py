@@ -264,3 +264,81 @@ def test_a_run_on_a_saved_keyless_connection_is_explicitly_keyless(tmp_path: Pat
     with pytest.MonkeyPatch.context() as mp:
         mp.setenv("OPENAI_API_KEY", ENV_KEY)
         assert OpenAICompatibleProvider._resolve_api_key(object.__new__(OpenAICompatibleProvider), NO_PROVIDER_KEY) == NO_PROVIDER_KEY
+
+
+# --- The text route's own Base URL (runs, the console Sandbox, entity minds) ----------------------
+
+
+def _route_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, route_url: str, configured_url: str) -> None:
+    """The text route = openai-compatible at `route_url`; the configured connection's key (the
+    AbstractCore store's and OPENAI_API_KEY) belongs to `configured_url`."""
+    from abstractcore.config.manager import ConfigurationManager
+    from automations_fixtures import gateway_env
+    from test_gateway_text_route_base_url import _scoped_core_store, _write_auto_llm_bundle
+    from abstractgateway.core_config import save_gateway_capability_default
+
+    store = _scoped_core_store(tmp_path, monkeypatch)
+    assert ConfigurationManager(config_file=store, apply_env=False).set_api_key("openai-compatible", CONFIG_KEY)
+    monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
+    monkeypatch.setenv("OPENAI_BASE_URL", configured_url)
+    gateway_env(monkeypatch, tmp_path, runner=True)
+    _write_auto_llm_bundle(tmp_path / "bundles")
+    save_gateway_capability_default("input", "text", provider="openai-compatible", model="fake-model",
+                                    base_url=route_url, base_dir=tmp_path / "runtime")
+
+
+def _chat_auth(up: _Upstream) -> list[str | None]:
+    return [a for p, a in up.seen if p.endswith("/chat/completions")]
+
+
+def test_a_run_on_a_text_route_with_its_own_address_never_carries_the_configured_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    from fastapi.testclient import TestClient
+    from automations_fixtures import HEADERS as RUN_HEADERS
+    from test_gateway_text_route_base_url import _run_to_end
+
+    _route_on(tmp_path, monkeypatch, route_url=upstream.url, configured_url="https://configured.example.test/v1")
+    from abstractgateway.app import app
+
+    with TestClient(app) as c:
+        run = _run_to_end(c)
+        sandbox = c.post(
+            "/api/gateway/sandbox/generate",
+            headers=RUN_HEADERS,
+            json={"capability": "input.text", "provider": "openai-compatible", "model": "fake-model", "prompt": "hi"},
+        )
+    assert run.get("status") == "completed", json.dumps(run)[:1500]
+    assert sandbox.status_code == 200, sandbox.text
+    assert len(_chat_auth(upstream)) >= 2, upstream.seen
+    assert upstream.auth() == [None] * len(upstream.seen), upstream.seen
+
+
+def test_a_text_route_at_the_configured_address_still_gets_the_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    from fastapi.testclient import TestClient
+    from test_gateway_text_route_base_url import _run_to_end
+
+    _route_on(tmp_path, monkeypatch, route_url=upstream.url + "/", configured_url=upstream.url)
+    from abstractgateway.app import app
+
+    with TestClient(app) as c:
+        run = _run_to_end(c)
+    assert run.get("status") == "completed", json.dumps(run)[:1500]
+    assert _chat_auth(upstream) and set(_chat_auth(upstream)) == {f"Bearer {CONFIG_KEY}"}, upstream.seen
+
+
+def test_configured_kwargs_send_the_key_only_to_its_own_address(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one rule every route-address site uses (runs, Sandbox, entity minds)."""
+    from abstractgateway.provider_connections import configured_provider_request_kwargs
+    from abstractgateway.provider_endpoint_profiles import NO_PROVIDER_KEY
+
+    monkeypatch.setenv("OPENAI_API_KEY", ENV_KEY)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    dirs = {"current_base_dir": tmp_path, "root_base_dir": tmp_path}
+    # openai: the provider's own default address keeps the key; another address gets none.
+    assert configured_provider_request_kwargs("openai", base_url="https://api.openai.com/v1/", **dirs)["api_key"] == ENV_KEY
+    assert configured_provider_request_kwargs("openai", base_url="http://192.168.1.9:8000/v1", **dirs)["api_key"] == NO_PROVIDER_KEY
+    # No address of its own: unchanged.
+    assert configured_provider_request_kwargs("openai", **dirs) == {"api_key": ENV_KEY}
