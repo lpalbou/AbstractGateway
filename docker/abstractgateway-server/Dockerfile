@@ -46,34 +46,17 @@ COPY flows/bundles/basic-agent.flow \
      flows/bundles/memact-agent@0.1.0.flow \
      /tmp/abstractgateway-src/flows/bundles/
 COPY docker/abstractgateway-server/entrypoint.sh /usr/local/bin/abstractgateway-docker-entrypoint
+# Installs the gateway (local source or the PyPI version), retrying a pinned PyPI install while the
+# index catches up with a release published minutes earlier.
+COPY docker/abstractgateway-server/install-gateway.sh /usr/local/bin/abstractgateway-install
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libmagic1 \
     && python -m pip install --upgrade pip \
-    && if [ "$ABSTRACTGATEWAY_INSTALL_MODE" = "local" ]; then \
-        if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
-            python -m pip install "/tmp/abstractgateway-src[${ABSTRACTGATEWAY_EXTRAS}]"; \
-        else \
-            python -m pip install "/tmp/abstractgateway-src"; \
-        fi; \
-    else \
-        if [ -n "$ABSTRACTGATEWAY_VERSION" ]; then \
-            if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
-                python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]==${ABSTRACTGATEWAY_VERSION}"; \
-            else \
-                python -m pip install "abstractgateway==${ABSTRACTGATEWAY_VERSION}"; \
-            fi; \
-        else \
-            if [ -n "$ABSTRACTGATEWAY_EXTRAS" ]; then \
-                python -m pip install "abstractgateway[${ABSTRACTGATEWAY_EXTRAS}]"; \
-            else \
-                python -m pip install "abstractgateway"; \
-            fi; \
-        fi; \
-    fi \
+    && sh /usr/local/bin/abstractgateway-install \
     && apt-get purge -y --auto-remove build-essential \
     && chmod +x /usr/local/bin/abstractgateway-docker-entrypoint \
-    && rm -rf /var/lib/apt/lists/* /tmp/abstractgateway-src
+    && rm -rf /var/lib/apt/lists/* /tmp/abstractgateway-src /usr/local/bin/abstractgateway-install
 
 USER abstractgateway
 WORKDIR /home/abstractgateway
