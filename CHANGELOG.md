@@ -10,10 +10,48 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
-## [0.20.3] - 2026-11-07
+## [0.21.0] - 2026-11-07
+
+(0.20.3 was prepared but never published; its changes are part of this release.)
+
+### Added
+
+- **A lean entity tile read: `GET /entities/{name}/tile`** (`entity_tile.py`, backlog 1012). One small card about an entity
+  read the whole identity card (up to 90 KB and 0.5-1 s warm for a long life such as ephemeral). The tile serves exactly what a
+  card shows a person, about 2 KB: name, look, age, its model; what it is doing now and since when (the same phase
+  `/cognition` folds, busy, and a warning when its own time stopped after repeated failures); its newest interests, its newest
+  open problem or question, its latest lesson, its last meaningful moment (a closed set of kinds: visits, sleeps, its own
+  time, phase and model changes, never the operator reading its diary or the birth recording of its identity) and counts.
+  `now.state` tells the resting default (awake, nothing running) from sleep. A source that cannot be read costs its facts
+  with a labelled warning, never the tile.
+  The roster (`GET /entities`) and the discovery contract (`common.entities.tile`) advertise it; clients fall back to the
+  card on older gateways. Measured on a copy of ephemeral: 5-9 ms warm (0.5-1 s on the first read after its life grew).
 
 ### Changed
 
+- **The console's kit islands and themes come from the published ui-kit 0.9.16** (`console_islands.py`,
+  `console_themes.py`, synced from the AbstractUIC v0.10.3 release; they were at 0.9.15). The console
+  now carries the same kit version as the apps: its voice picker is the kit's rebuilt VoiceSettings
+  (on the shared `useVoiceSample`, `voiceChoices` and `voiceChoicePatch` helpers; the kit says behaviour
+  is unchanged) and the kit's latest component styles.
+- **The identity card is computed once per state of a life** (`EntityHome.engine_card`). The engine compositor's result and
+  the newest model stamp are cached per (home directory, memory file, journal seq, parameters) — the communities rule,
+  tenant-safe, and a home restored from a backup never meets the old life's card —
+  bounded to 64 entries; and the merged host moments per (home, marker and state-history file size and time). A repeated
+  card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (castor, ephemeral); a grown life recomputes once.
+  `/cognition` and `/tile` share one live fold of the phase (`_live_now`). Host-marker moments now carry `details.change`
+  for a work-order change (`set` or `cleared`).
+- **Notification emails show the automation's text formatted, not as raw Markdown**
+  (`mail/mail_markdown.py`, `mail/notifications.py`; backlog 1011). An automation result email showed
+  `**First, the technology story**` with its asterisks. The model-written body of an automation result
+  and of a flow's Notify me step is now rendered by a CommonMark parser (`markdown-it-py`, now a declared
+  dependency, `>=3.0.0`): headings, bold and italic, lists, quotes, code, tables and links, each element
+  styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside a
+  paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
+  never formatted, and the digest of held-back notices keeps its plain lines.
+- **A notification email never grows wider than its layout**: the layout's column is fixed to its width,
+  a wide table scrolls inside its own box and long words, links and code wrap, so a long briefing reads on
+  a 400 px phone screen.
 - **Whose voices an entity may speak with, said in the refusal.** An entity lives and speaks in its
   creator's plane, so it may speak with the gateway's shared voices (built-in, made or shared by an
   administrator) and its creator's own voices; another person's own voice, or an unknown id, is
@@ -39,6 +77,18 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Fixed
 
+- **The release's container image build waits for PyPI instead of failing** (`docker/abstractgateway-server/install-gateway.sh`,
+  both Dockerfiles). The v0.20.2 image job failed with "No matching distribution found for
+  abstractgateway==0.20.2" minutes after the publish. The pinned PyPI install inside the image build is
+  now retried with a bounded backoff (5 retries over about 5 minutes) before the build fails.
+- **The model worker never imports from the data directory, whatever `PYTHONPATH` looks like**
+  (`model_host.py`, `CHILD_BOOTSTRAP`). 0.20.2 dropped only the `''` entry from the worker's import
+  path, but Python also puts the working directory (the data directory, which holds cache folders
+  named `abstractcore/embeddings`) on the path for an empty `PYTHONPATH` entry (`:/x`, `/x::`), for
+  `.`, and for the directory or a symlink to it; a cache folder could then shadow AbstractCore again.
+  Every entry that resolves to the working directory is now dropped. The stale
+  `python -m abstractgateway.model_host_child` mentions (module docstrings, ADR 0002, a test) now
+  name the real start command.
 - **Saving an identity with a voice the picker shows works again** (`entity_settings_access.py`,
   `entity_identity.py`). "Castor can't speak with 250b665e…: this gateway offers no qwen3-tts voice
   right now" while the signed-in `GET /voice/voices?provider=qwen3-tts` listed 93 voices: the check
@@ -53,6 +103,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   (`offered_voices_async`) and the rest of the check runs off it; the synchronous check refuses to run
   in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
   holds (a pool of N stuck for good under N identity starts).
+
+### Security
+
+- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text),
+  only `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`,
+  `tel:`, relative paths stay visible as written, never a link), and an image becomes a link to its
+  address, never a remote load.
 
 ## [0.20.2] - 2026-11-07
 
