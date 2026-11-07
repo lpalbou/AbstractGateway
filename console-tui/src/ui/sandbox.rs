@@ -527,23 +527,43 @@ pub fn expand_home(raw: &str) -> PathBuf {
     PathBuf::from(t)
 }
 
+/// The web console's MTP sentences (console.py `MTP_UNKNOWN` …, the kit's
+/// `SpeculationSelect` words; operator rule 2026-11-07).
+pub const MTP_UNKNOWN: &str = "MTP is offered when the gateway confirms this model supports it.";
+pub const MTP_UNSUPPORTED: &str = "This model does not support MTP.";
+pub const MTP_CHECKING: &str = "Checking whether this model supports MTP…";
+pub const MTP_RELOAD: &str = "Model reload required before MTP can run.";
+pub const MTP_NOT_READY: &str = "MTP is supported but not ready on this instance.";
+pub const MTP_READINESS_UNKNOWN: &str =
+    "MTP support verified; loaded-instance readiness is unknown.";
+/// The disclosure the web puts the gateway's own reason code under.
+pub const TECHNICAL_DETAILS: &str = "Technical details";
+
 /// What `/discovery/models/capabilities` says about per-request MTP for
-/// one pair — the web's `refreshSandboxSpeculationSupport`.
+/// one pair — the web's `refreshSandboxSpeculationSupport`. MTP (Off and
+/// the depths) is offered only for a `Known` card that says supported.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MtpSupport {
-    /// No pair resolved: explicit depths stay disabled.
+    /// No pair resolved: MTP is not offered.
     NoPair,
     Checking {
         target: String,
     },
+    /// The card answered (`execution.speculation.supported` is a boolean).
     Known {
         target: String,
+        supported: bool,
+        /// The depths the card lists (empty unless supported).
         depths: Vec<u64>,
-        reason: String,
+        /// The web's `mtpCardNote` (may be empty: supported and ready).
+        note: String,
+        /// The gateway's reason code (or the execution error).
+        detail: Option<String>,
     },
+    /// No card, or the probe failed: MTP is not offered.
     Unknown {
         target: String,
-        reason: String,
+        detail: Option<String>,
     },
 }
 
@@ -556,34 +576,79 @@ impl MtpSupport {
             | MtpSupport::Unknown { target, .. } => Some(target),
         }
     }
-    /// Depths the Select may offer (inherit/off are always available).
+    /// The card says this model supports MTP: Off and its depths are offered.
+    pub fn supported(&self) -> bool {
+        matches!(
+            self,
+            MtpSupport::Known {
+                supported: true,
+                ..
+            }
+        )
+    }
+    /// Depths the Select may offer (none unless supported).
     pub fn depths(&self) -> &[u64] {
         match self {
-            MtpSupport::Known { depths, .. } => depths,
+            MtpSupport::Known {
+                supported: true,
+                depths,
+                ..
+            } => depths,
             _ => &[],
         }
     }
-    /// The web's label title for this state.
-    pub fn reason(&self) -> String {
+    /// The web's note under the MTP control, one plain sentence.
+    pub fn note(&self) -> String {
         match self {
-            MtpSupport::NoPair => "choose a provider and model to check MTP support".into(),
-            MtpSupport::Checking { .. } => {
-                "Checking this execution host's MTP support. Off and inherit remain available."
-                    .into()
+            MtpSupport::NoPair | MtpSupport::Unknown { .. } => MTP_UNKNOWN.into(),
+            MtpSupport::Checking { .. } => MTP_CHECKING.into(),
+            MtpSupport::Known { note, .. } => note.clone(),
+        }
+    }
+    /// The gateway's reason code (the web's Technical details), if any.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            MtpSupport::Known { detail, .. } | MtpSupport::Unknown { detail, .. } => {
+                detail.as_deref()
             }
-            MtpSupport::Known { reason, .. } | MtpSupport::Unknown { reason, .. } => reason.clone(),
+            _ => None,
+        }
+    }
+    /// The note with its Technical details, as one line of text.
+    pub fn reason(&self) -> String {
+        let note = self.note();
+        match self.detail() {
+            Some(d) if !note.is_empty() => format!("{note} · {TECHNICAL_DETAILS}: {d}"),
+            _ => note,
         }
     }
 }
 
-/// Parse the capabilities payload exactly as the web does: depths only
-/// when `execution.speculation.supported === true`; the reason is
-/// `message || reason || (ready ? … : …)`.
+/// Parse the capabilities payload exactly as the web does (`mtpCard`,
+/// `mtpCardNote`): a card only when `execution.speculation.supported` is a
+/// boolean; depths only when it is true; the note is the gateway's
+/// `message`, else the web's sentence for the card's state; the details are
+/// `reason`, else `execution.error`.
 pub fn mtp_support_from(target: &str, v: &Value) -> MtpSupport {
     let caps = v.get("execution").and_then(|e| e.get("speculation"));
-    let depths: Vec<u64> = match caps {
-        Some(c) if c.get("supported").and_then(Value::as_bool) == Some(true) => c
-            .get("supported_depths")
+    let text = |o: Option<&Value>, k: &str| {
+        o.and_then(|c| c.get(k))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let detail = text(caps, "reason").or_else(|| text(v.get("execution"), "error"));
+    let Some(supported) = caps
+        .and_then(|c| c.get("supported"))
+        .and_then(Value::as_bool)
+    else {
+        return MtpSupport::Unknown {
+            target: target.to_string(),
+            detail,
+        };
+    };
+    let depths: Vec<u64> = if supported {
+        caps.and_then(|c| c.get("supported_depths"))
             .and_then(Value::as_array)
             .map(|a| {
                 a.iter()
@@ -593,26 +658,30 @@ pub fn mtp_support_from(target: &str, v: &Value) -> MtpSupport {
                     })
                     .collect()
             })
-            .unwrap_or_default(),
-        _ => Vec::new(),
+            .unwrap_or_default()
+    } else {
+        Vec::new()
     };
-    let text = |k: &str| {
-        caps.and_then(|c| c.get(k))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-    };
-    let reason = text("message").or_else(|| text("reason")).unwrap_or_else(|| {
-        if caps.and_then(|c| c.get("ready")).and_then(Value::as_bool) == Some(true) {
-            "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default.".into()
+    let flag = |k: &str| caps.and_then(|c| c.get(k)).and_then(Value::as_bool);
+    let note = text(caps, "message").unwrap_or_else(|| {
+        if !supported {
+            MTP_UNSUPPORTED.into()
+        } else if flag("requires_reload") == Some(true) {
+            MTP_RELOAD.into()
+        } else if flag("ready") == Some(false) {
+            MTP_NOT_READY.into()
+        } else if flag("ready") != Some(true) {
+            MTP_READINESS_UNKNOWN.into()
         } else {
-            "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.".into()
+            String::new()
         }
     });
     MtpSupport::Known {
         target: target.to_string(),
+        supported,
         depths,
-        reason,
+        note,
+        detail,
     }
 }
 
@@ -1015,14 +1084,15 @@ pub fn publish_speech(store: &Store, r: ApiResult<MediaOutcome>) {
 }
 
 /// Ask the gateway which MTP depths the pair can run (worker thread);
-/// a failed probe is `Unknown` with the web's "MTP support unknown" text.
+/// a failed probe is `Unknown` (MTP not offered), the error as its
+/// Technical details — the web's catch branch.
 pub fn load_mtp(c: &GatewayClient, provider: &str, model: &str) -> MtpSupport {
     let target = format!("{provider}/{model}");
     match c.model_capabilities(provider, model) {
         Ok(v) => mtp_support_from(&target, &v),
         Err(e) => MtpSupport::Unknown {
             target,
-            reason: format!("MTP support unknown: {}", e.message),
+            detail: Some(e.message),
         },
     }
 }
@@ -1370,9 +1440,10 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
-    // MTP depth availability follows the picked text pair (the web's
-    // refreshSandboxSpeculationSupport): a NEW pair resets the choice to
-    // inherit, marks the depths as being checked, and asks the gateway.
+    // MTP follows the picked text pair (the web's
+    // refreshSandboxSpeculationSupport; operator rule 2026-11-07): a NEW
+    // pair puts reasoning AND MTP back on the default, marks MTP as being
+    // checked (not offered meanwhile), and asks the gateway.
     {
         let ctx2 = ctx.clone();
         cx.effect(move || {
@@ -1383,6 +1454,9 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
             if ws.mtp_ix.get_untracked() != 0 {
                 ws.mtp_ix.set(0);
+            }
+            if ws.reasoning_ix.get_untracked() != 0 {
+                ws.reasoning_ix.set(0);
             }
             match pair {
                 None => ws.mtp.set(MtpSupport::NoPair),
@@ -1965,22 +2039,15 @@ fn seconds_row(gcx: Scope, ctx: &Ctx, t: &TokenSet, sig: Signal<String>) -> View
     )
 }
 
-/// "MTP: depths 2 available · <the gateway's reason>".
+/// "MTP: <the web's note> · Technical details: <the gateway's code>"
+/// (nothing when the card is supported and ready with no message).
 pub fn mtp_line(sup: &MtpSupport) -> String {
-    let depths = sup.depths();
-    let head = match sup {
-        MtpSupport::Known { .. } if !depths.is_empty() => format!(
-            "depths {} available · ",
-            depths
-                .iter()
-                .map(u64::to_string)
-                .collect::<Vec<_>>()
-                .join("/")
-        ),
-        MtpSupport::Known { .. } => "no explicit depth available · ".to_string(),
-        _ => String::new(),
-    };
-    format!("MTP: {head}{}", sup.reason())
+    let reason = sup.reason();
+    if reason.is_empty() {
+        String::new()
+    } else {
+        format!("MTP: {reason}")
+    }
 }
 
 /// The web's composer toolbar (System prompt · Reasoning · MTP), inline:
@@ -2044,11 +2111,12 @@ fn options_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .child(
                     Select::new(mtp_options(&sup))
                         .value(ws.mtp_ix)
+                        .disabled(!sup.supported())
                         .layout(LayoutStyle::default().w(12).h(1).shrink(0.0))
                         .element(dcx, &t)
                         .build(),
                 ),
-            if compact {
+            if compact && !mtp_line(&sup).is_empty() {
                 format!("{MTP_HELP} {}", mtp_line(&sup))
             } else {
                 MTP_HELP.to_string()
@@ -2099,19 +2167,20 @@ fn options_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .build()
 }
 
-/// The MTP Select's options: inherit/off always; a depth only when the
-/// gateway reported it supported for the picked pair (the web disables
-/// the rest; the reason rides as each disabled option's hint).
+/// The MTP Select's options (the web's `gateMtpSelect`): Off and a depth
+/// only when the card says supported, a depth only when it is listed; for
+/// any other card everything but inherit is disabled (and the Select too).
 pub fn mtp_options(sup: &MtpSupport) -> Vec<SelectOption> {
+    let supported = sup.supported();
     MTP_CHOICES
         .iter()
         .enumerate()
         .map(|(i, label)| {
             let o = SelectOption::new(*label);
-            if i < 2 {
-                o
-            } else {
-                o.disabled(!sup.depths().contains(&(i as u64)))
+            match i {
+                0 => o,
+                1 => o.disabled(!supported),
+                _ => o.disabled(!sup.depths().contains(&(i as u64))),
             }
         })
         .collect()
@@ -2722,9 +2791,14 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
         );
         return;
     }
-    // An explicit MTP depth the gateway did not report for this pair is
-    // refused (the dialog already disables it; this is the send guard).
-    let mtp_ix = ws.mtp_ix.get_untracked();
+    // MTP rides only for a model whose card says supported (the web sends
+    // nothing from a disabled select); an explicit depth the card did not
+    // list is refused (the dialog already disables it; this is the guard).
+    let mtp_ix = if ws.mtp.with_untracked(MtpSupport::supported) {
+        ws.mtp_ix.get_untracked()
+    } else {
+        0
+    };
     if mtp_ix >= 2
         && !ws
             .mtp
@@ -3570,35 +3644,71 @@ mod tests {
 
     #[test]
     fn mtp_support_follows_the_web_reading() {
+        let disabled =
+            |s: &MtpSupport| -> Vec<bool> { mtp_options(s).iter().map(|o| o.disabled).collect() };
+        // Supported and ready: Off and the listed depths, no note.
         let v = json!({"model": "m", "execution": {"speculation": {"supported": true,
             "supported_depths": [2, "3"], "ready": true}}});
         let s = mtp_support_from("p/m", &v);
+        assert!(s.supported());
         assert_eq!(s.depths(), &[2, 3]);
-        assert!(s.reason().starts_with("MTP ready."));
-        let opts = mtp_options(&s);
-        let disabled: Vec<bool> = opts.iter().map(|o| o.disabled).collect();
+        assert_eq!(mtp_line(&s), "");
         assert_eq!(
-            disabled,
+            disabled(&s),
             [false, false, false, false, true, true],
-            "inherit/off always; 2,3 on; 4,5 off"
+            "inherit/off; 2,3 on; 4,5 off"
         );
-        // supported:false → no depths even if listed; message wins.
+        // Supported, readiness not reported: the web's sentence.
+        let s = mtp_support_from(
+            "p/m",
+            &json!({"execution": {"speculation": {"supported": true, "supported_depths": [2]}}}),
+        );
+        assert_eq!(s.note(), MTP_READINESS_UNKNOWN);
+        let s = mtp_support_from(
+            "p/m",
+            &json!({"execution": {"speculation": {"supported": true, "ready": false}}}),
+        );
+        assert_eq!(s.note(), MTP_NOT_READY);
+        let s = mtp_support_from(
+            "p/m",
+            &json!({"execution": {"speculation": {"supported": true, "requires_reload": true}}}),
+        );
+        assert_eq!(s.note(), MTP_RELOAD);
+        // supported:false: no depths even if listed, Off not offered either;
+        // the gateway's message wins, its reason is the Technical details.
         let v = json!({"execution": {"speculation": {"supported": false, "supported_depths": [2],
-            "message": "native MTP needs the mlx backend"}}});
+            "message": "native MTP needs the mlx backend", "reason": "backend_unsupported"}}});
         let s = mtp_support_from("p/m", &v);
+        assert!(!s.supported());
         assert!(s.depths().is_empty());
-        assert_eq!(s.reason(), "native MTP needs the mlx backend");
+        assert_eq!(
+            s.reason(),
+            "native MTP needs the mlx backend · Technical details: backend_unsupported"
+        );
+        assert_eq!(disabled(&s), [false, true, true, true, true, true]);
+        let s = mtp_support_from(
+            "p/m",
+            &json!({"execution": {"speculation": {"supported": false}}}),
+        );
+        assert_eq!(s.reason(), MTP_UNSUPPORTED);
+        // No card: unknown, the execution error as the details.
         let s = mtp_support_from(
             "p/m",
             &json!({"execution": {"available": false, "error": "x"}}),
         );
-        assert!(s.reason().starts_with("MTP support is unavailable"));
-        assert!(
-            mtp_options(&MtpSupport::Checking {
-                target: "p/m".into()
-            })[2]
-                .disabled
+        assert!(!s.supported());
+        assert_eq!(s.reason(), format!("{MTP_UNKNOWN} · Technical details: x"));
+        // While checking and with no pair, nothing but inherit.
+        let checking = MtpSupport::Checking {
+            target: "p/m".into(),
+        };
+        assert_eq!(checking.reason(), MTP_CHECKING);
+        assert_eq!(disabled(&checking), [false, true, true, true, true, true]);
+        assert_eq!(
+            disabled(&MtpSupport::NoPair),
+            [false, true, true, true, true, true]
         );
+        assert_eq!(MtpSupport::NoPair.reason(), MTP_UNKNOWN);
     }
 
     #[test]

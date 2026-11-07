@@ -866,7 +866,112 @@ fn mtp_depths_follow_the_capabilities_probe() {
     h.store.sandbox.set(Loadable::NotAsked);
     let s = h.turns(3);
     assert!(
-        s.contains("MTP: depths 2 available"),
+        s.contains("MTP: depth 2 only on this host"),
         "the inline MTP line:\n{s}"
+    );
+}
+
+/// Operator rule 2026-11-07 (the web console's refreshSandboxSpeculationSupport):
+/// changing the model puts reasoning AND MTP back on the default; a choice
+/// made for one model never rides along to the next.
+#[test]
+fn a_model_change_puts_reasoning_and_mtp_back_on_the_default() {
+    use abstractgateway_console::ui::sandbox::{mtp_support_from, publish_mtp};
+    let mut h = harness(Size::new(110, 34));
+    h.connect();
+    text_ready(&mut h);
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Ready(vec!["test-model-a".into(), "test-model-b".into()]),
+        );
+    });
+    h.review();
+    publish_mtp(
+        &h.store,
+        mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"speculation": {"supported": true, "supported_depths": [2], "ready": true}}}),
+        ),
+    );
+    h.store.sandbox_ws.reasoning_ix.set(5); // high
+    h.store.sandbox_ws.mtp_ix.set(2); // depth 2
+    h.turns(2);
+    // The same model keeps the choices.
+    assert_eq!(
+        (
+            h.store.sandbox_ws.reasoning_ix.get_untracked(),
+            h.store.sandbox_ws.mtp_ix.get_untracked()
+        ),
+        (5, 2)
+    );
+    while h.find_cmd(|_| false).is_some() {}
+    h.ui.sb_model.set("test-model-b".into());
+    h.turns(3);
+    assert_eq!(
+        (
+            h.store.sandbox_ws.reasoning_ix.get_untracked(),
+            h.store.sandbox_ws.mtp_ix.get_untracked()
+        ),
+        (0, 0),
+        "another model: reasoning and MTP back on the default"
+    );
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxMtpCaps { .. })) {
+        Some(Cmd::SandboxMtpCaps { model, .. }) => assert_eq!(model, "test-model-b"),
+        other => panic!("the new model is probed, got {other:?}"),
+    }
+}
+
+/// MTP (Off included) is offered only when the model's capability card
+/// says supported; otherwise the control says why in the web's words (the
+/// gateway's code under Technical details) and nothing is sent.
+#[test]
+fn mtp_is_offered_only_for_a_model_that_supports_it() {
+    use abstractgateway_console::ui::sandbox::{mtp_support_from, publish_mtp};
+    let mut h = harness(Size::new(110, 34));
+    h.connect();
+    text_ready(&mut h);
+    h.ui.sb_prompt.set("q".into());
+    h.review();
+    publish_mtp(
+        &h.store,
+        mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"speculation": {"supported": false, "reason": "backend_unsupported"}}}),
+        ),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains(
+            "MTP: This model does not support MTP. · Technical details: backend_unsupported"
+        ),
+        "the unsupported card in words:\n{s}"
+    );
+    // Even a forced Off is not sent for a model without MTP.
+    h.store.sandbox_ws.mtp_ix.set(1);
+    h.turns(2);
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
+        Some(Cmd::SandboxTest { request, .. }) => assert!(
+            request.0.get("speculation").is_none(),
+            "no MTP for a model without it: {}",
+            request.0
+        ),
+        other => panic!("expected SandboxTest, got {other:?}"),
+    }
+    // No card at all: the web's "offered when the gateway confirms" sentence.
+    publish_mtp(
+        &h.store,
+        mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"available": false, "error": "no execution host"}}),
+        ),
+    );
+    h.store.sandbox.set(Loadable::NotAsked);
+    let s = h.turns(3);
+    assert!(
+        s.contains("MTP: MTP is offered when the gateway confirms this model supports it. · Technical details: no execution host"),
+        "an unknown card in words:\n{s}"
     );
 }

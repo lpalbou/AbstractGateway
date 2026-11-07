@@ -1,6 +1,17 @@
 # Changelog — abstractgateway-console
 
 ## [Unreleased]
+
+## [0.18.1] - 2026-11-07
+### Changed
+- **Sandbox: reasoning and MTP follow the chosen model** (AbstractGateway 0.21.0, operator rule 2026-11-07; the web
+  console's rule and words). Changing the provider or the model puts Reasoning and MTP back on the default (the
+  reasoning was kept). MTP, Off included, is offered only when the gateway's capability card says the model supports
+  it, at the depths it lists; otherwise the control is disabled and the line under it says why: "This model does not
+  support MTP." (or the gateway's own message), "MTP is offered when the gateway confirms this model supports it."
+  when the gateway cannot say, with the gateway's code after "Technical details:". A choice the model cannot take is
+  never sent (Off used to be sent to a model without MTP).
+
 ### Fixed
 - **The Runs tab shows every session again** (`api.rs`, AbstractGateway 0.21.0). Since session kinds, a root-runs
   listing serves conversations only, so AbstractNote's sessions and Docs assistant chats were missing from the

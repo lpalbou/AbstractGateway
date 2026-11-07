@@ -32,5 +32,12 @@
   "seconds_help": "How long the generated clip is.",
   "seconds_refusal": "Length must be a positive number of seconds.",
   "clear_tip": "Clear the chat",
-  "attach_tip": "Attach files to your question"
+  "attach_tip": "Attach files to your question",
+  "mtp_unknown": "MTP is offered when the gateway confirms this model supports it.",
+  "mtp_unsupported": "This model does not support MTP.",
+  "mtp_checking": "Checking whether this model supports MTP…",
+  "mtp_reload": "Model reload required before MTP can run.",
+  "mtp_not_ready": "MTP is supported but not ready on this instance.",
+  "mtp_readiness_unknown": "MTP support verified; loaded-instance readiness is unknown.",
+  "technical_details": "Technical details"
 }

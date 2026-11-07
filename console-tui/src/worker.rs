@@ -2679,7 +2679,7 @@ fn handle(
                 Ok(c) => crate::ui::sandbox::load_mtp(&c, &provider, &model),
                 Err(e) => crate::ui::sandbox::MtpSupport::Unknown {
                     target: format!("{provider}/{model}"),
-                    reason: format!("MTP support unknown: {}", e.message),
+                    detail: Some(e.message),
                 },
             };
             wake.post(move || crate::ui::sandbox::publish_mtp(&s, sup));

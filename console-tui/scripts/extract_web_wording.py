@@ -857,7 +857,24 @@ def sandbox_wording() -> dict:
     isl = read_b("console_islands.py")
     out["clear_tip"] = one_in(r'af-sandbox-chat__clear","aria-label":"Clear chat","data-af-tip":"([^"]+)"', "Clear tooltip", isl)
     out["attach_tip"] = one_in(r'"data-af-tip":"(Attach files to your question)"', "Attach tooltip", isl)
+    out.update(sandbox_mtp_wording(src))
     return out
+
+
+def sandbox_mtp_wording(src: str) -> dict:
+    """The MTP control's notes (operator rule 2026-11-07; console.py `MTP_UNKNOWN` …,
+    `mtpCardNote`, `showModelOptionNote`): what the control says when MTP is not offered,
+    while it is checked, and for a supported card's readiness, plus the disclosure the
+    gateway's reason code sits under."""
+    return {
+        "mtp_unknown": _one(src, r'const MTP_UNKNOWN = "([^"]+)";', "MTP_UNKNOWN"),
+        "mtp_unsupported": _one(src, r'const MTP_UNSUPPORTED = "([^"]+)";', "MTP_UNSUPPORTED"),
+        "mtp_checking": _one(src, r'const MTP_CHECKING = "([^"]+)";', "MTP_CHECKING"),
+        "mtp_reload": _one(src, r'caps\.requires_reload === true \? "([^"]+)"', "mtpCardNote reload"),
+        "mtp_not_ready": _one(src, r'caps\.ready === false \? "([^"]+)"', "mtpCardNote not ready"),
+        "mtp_readiness_unknown": _one(src, r'caps\.ready !== true \? "([^"]+)"', "mtpCardNote readiness"),
+        "technical_details": _one(src, r'summary\.textContent = "(Technical details)";', "Technical details"),
+    }
 
 
 def entity_wording() -> dict:

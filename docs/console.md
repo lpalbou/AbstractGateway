@@ -1360,7 +1360,7 @@ you can click.
   Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.
 
 - **T Sandbox** tries a model directly. **Output** is a choice: **Text**, **Image**, **Voice**, **Music**, **SFX** or **Video**. Each choice's tooltip names the provider and model it uses, or says "not configured". A line says what the next message generates and which route it comes from.
-  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
+  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. As on the web, changing the provider or the model puts Reasoning and MTP back on the default, and MTP (Off included) is offered only when the gateway says the model supports it; otherwise it is disabled and the line under the row says why. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
   Under the message field, the buttons are **Send** (`g`, or `Enter` in the field), **Attach** (`a`), **Speak** (`v`, speaks a text reply through output.voice), **Play audio** (`p`) and **Stop** (`s`) after a clip, and **Clear chat** (`x`).
   **Attach a file** is a dialog with **[Upload] [Remove all] [Close]**. When Sandbox refuses an action, it says why under the buttons (for example "output.music is not configured — configure it on Multimodal (0) first"). The session's change journal sits below.
 

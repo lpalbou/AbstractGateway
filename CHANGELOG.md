@@ -134,7 +134,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   depths are offered only when the gateway's capability card says the model supports MTP, at the depths it lists;
   otherwise the control is disabled and says why in words (the kit's: "This model does not support MTP.", the
   gateway's code under Technical details) instead of a tooltip. The entity create form offers only the reasoning
-  levels the chosen model serves, not a fixed list.
+  levels the chosen model serves, not a fixed list. The terminal console's Sandbox follows the same rule with the
+  same words (crate `abstractgateway-console` 0.18.1): it kept the reasoning across a model change and sent MTP Off
+  to a model without MTP.
 
 ### Security
 
