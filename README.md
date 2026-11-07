@@ -27,6 +27,11 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
+support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated
+media discovery; the model worker no longer imports folders from the gateway's data directory; the web
+console's kit components come from ui-kit 0.9.15 (read-aloud says "speaking" only while audible).
+
 **What's new in 0.20.1** ([CHANGELOG](CHANGELOG.md#0201---2026-11-05)): 0.20.0 was tagged but never
 published; 0.20.1 is that release. Every entity has one
 recorded look and voice, its digital identity, set from the Entity app: the gateway refuses a design

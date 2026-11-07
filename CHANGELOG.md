@@ -10,6 +10,25 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-11-07
+
+### Changed
+
+- **The web console's kit components come from ui-kit 0.9.15** (`console_islands.py`, `console_themes.py`
+  re-synced). The Sandbox chat's read-aloud says "speaking" only while audio is audible, no longer stays
+  on "loading" when the browser blocks playback, and resumes browser-paused audio without synthesizing it again.
+
+### Fixed
+
+- **Model workers import installed packages, never folders in the gateway's data directory**
+  (`model_host.py`). The worker process started with the data directory on its import path, where cache
+  folders named `abstractcore/embeddings` could shadow an editable AbstractCore and break embeddings for
+  Notes and other clients. The worker now drops the working directory from its import path (Python 3.10
+  included); an explicit `PYTHONPATH` and installed packages are unchanged.
+- Speech clients can request `GET /api/gateway/discovery/capabilities?scope=voice`
+  to check TTS/STT without waiting for unrelated media discovery. The existing
+  full discovery response and authentication remain unchanged.
+
 ## [0.20.1] - 2026-11-05
 
 ### Fixed
