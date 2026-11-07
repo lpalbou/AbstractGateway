@@ -23,12 +23,14 @@ can trust without importing local gateway packages.
 
 - Planned: 22
 - Proposed: 54
-- Completed: 71
+- Completed: 72
 - Deprecated: 4
 - Recurrent: 0
 
+2026-11-07: 1012 proposed (lean entity tile read + card cache, operator ask): proposed 56.
 2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55.
 2026-11-07: 1011 completed (operator scope G4 for 0.21.0, unreleased): proposed 54, completed 71.
+2026-11-07: 1012 completed (operator scope G5 for 0.21.0: GET /entities/{name}/tile + card cache, unreleased): proposed 54, completed 72.
 
 2026-11-06: recounted proposed items (53 existing, plus 1010 = 54), including
 topic folders. Legacy date-named, three-digit and unnumbered files remain flagged
@@ -200,6 +202,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| 1012 Lean entity tile read and card cache (completed 2026-11-07, unreleased) | `proposed/1012_entity_tile_lean_read_and_card_cache.md` | [completed/1012_entity_tile_lean_read_and_card_cache.md](completed/1012_entity_tile_lean_read_and_card_cache.md) | `GET /entities/{name}/tile` (advertised as `reads.tile` / `common.entities.tile`) + engine card cache keyed by home, memory db file and journal seq | tests/test_gateway_entity_tile.py (10 mutants red); warm tile 3-9 ms vs card 175-552 ms on copies of real homes |
 | 1011 Notification emails render the model's Markdown safely (completed 2026-11-07, unreleased) | `proposed/1011_notification_email_renders_model_markdown.md` | [completed/1011_notification_email_renders_model_markdown.md](completed/1011_notification_email_renders_model_markdown.md) | CommonMark with raw HTML off, http/https/mailto links only, images as links, inline styles, fixed-width layout; plain part and title unchanged; digest stays plain | `tests/test_gateway_email_markdown.py` 26 passed, mutation-checked (html=True, no allowlist); 600/400 px renders |
 | 1009 Post-start run update and push dispatcher wait races (completed 2026-11-03, unreleased) | (filed completed; was 0966 on PR #22) | [completed/1009_post_start_run_update_and_push_wait_races.md](completed/1009_post_start_run_update_and_push_wait_races.md) | Post-start load-modify-saves under the run's mutation lock; push change tokens taken before the reads | each new test red without its fix |
 | 1008 `/v1` reuses the pool's resident model: gateway-level test (completed 2026-11-03, unreleased) | (filed completed; was 0962 on PR #22) | [completed/1008_v1_reuses_the_pools_resident_model_test.md](completed/1008_v1_reuses_the_pools_resident_model_test.md) | Test only; the fix is AbstractCore 2.31.1 (0859), under main's floor | `tests/test_v1_reuses_resident_model.py` 2 passed |
