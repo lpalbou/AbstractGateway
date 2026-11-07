@@ -2724,8 +2724,10 @@ class StartRunRequest(_SpeculationControlRequest):
     kind: Optional[str] = Field(
         default=None,
         description=(
-            "What the session is for: `conversation` (default) or `docs` (a Docs assistant chat; needs session_id). "
-            "Turn listings (GET /runs?root_only=true) show conversations unless asked for `kind=docs`."
+            "What the session is for: `conversation` (default), `docs` (a Docs assistant chat) or `notes` "
+            "(AbstractNote's own work); `docs` and `notes` need session_id. A run of the docs-qa or abstractnote "
+            "bundle gets that kind without it. Turn listings (GET /runs?root_only=true) show conversations unless "
+            "asked for `kind=docs` or `kind=notes`."
         ),
     )
     identity: Optional[IdentityBody] = Field(
@@ -9440,17 +9442,18 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if session_kind_req != "conversation" and not (isinstance(req.session_id, str) and req.session_id.strip()):
             raise HTTPException(status_code=400, detail=f"kind {session_kind_req!r} needs a session_id (the session it describes)")
     if session_kind_req is None and isinstance(req.session_id, str) and req.session_id.strip():
-        # A docs-qa run is a docs chat whichever client starts it (the terminal console too).
-        from ..session_kinds import DOCS_QA_BUNDLE_ID
+        # The purpose follows the workflow's bundle, whichever client starts it: a docs-qa run
+        # is a docs chat (the terminal console too), an AbstractNote run (a capture from Note,
+        # its phone or watch) is a note session.
+        from ..session_kinds import start_kind
 
-        if bundle_id and bundle_id.split("@", 1)[0] == DOCS_QA_BUNDLE_ID:
-            session_kind_req = "docs"
-    if session_kind_req == "docs":
+        session_kind_req = start_kind(bundle_id, flow_id)
+    if session_kind_req in ("docs", "notes"):
         # Marked BEFORE the run starts, so the conversation lists never show it.
         from ..session_kinds import SessionKindsUnreadable, mark_session_kind
 
         try:
-            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), "docs")
+            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
         except SessionKindsUnreadable as exc:
             raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
@@ -10080,7 +10083,7 @@ async def list_runs(
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, each listed run carries steps / llm_calls / tool_calls / tokens_total: the totals of that run and every sub-run below it, read from the ledger (null when the gateway has no ledger store)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
-    kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats) or `all`. Every row carries `kind`."),
+    kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats), `notes` (AbstractNote's captures and background processing) or `all`. Every row carries `kind`."),
     archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
@@ -10128,24 +10131,32 @@ async def list_runs(
     )
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
-    from ..session_kinds import SessionKindsUnreadable, docs_qa_migration_done, migrate_docs_qa_sessions, session_kinds as _session_kinds
+    from ..session_kinds import (
+        SessionKindsUnreadable,
+        kind_of as _kind_of_row,
+        migrate_sessions,
+        pending_migrations,
+        session_kinds as _session_kinds,
+    )
 
-    # One-time migration: sessions whose turn root ran docs-qa (before the
-    # kind existed) become docs chats. Off the event loop (it reads the index).
+    # One-time migrations: sessions whose turn root ran docs-qa / an AbstractNote workflow
+    # (before their kind existed) become docs chats / note sessions. Off the event loop (it
+    # reads the index); one scan for every pending migration.
     try:
-        if not docs_qa_migration_done(svc.config.data_dir):
-            def _migrate() -> int:
+        pending = pending_migrations(svc.config.data_dir)
+        if pending:
+            def _migrate() -> Dict[str, int]:
                 lister = getattr(rs, "list_run_index", None)
                 rows = lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
-                return migrate_docs_qa_sessions(svc.config.data_dir, rows)
+                return migrate_sessions(svc.config.data_dir, rows, pending)
 
             await off_loop("heavy", _migrate)  # a whole-index listing: the heavy pool
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
     want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
-    if want_kind not in ("conversation", "docs", "all"):
-        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|all)")
+    if want_kind not in ("conversation", "docs", "notes", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|notes|all)")
     try:
         kinds_map = _session_kinds(svc.config.data_dir)
     except SessionKindsUnreadable as exc:
@@ -10156,7 +10167,9 @@ async def list_runs(
         return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
 
     def _kind_of(summary: Dict[str, Any]) -> str:
-        return kinds_map.get(str(summary.get("session_id") or ""), "conversation")
+        # The mark, else the row's own workflow (an AbstractNote automation's occurrence
+        # sessions are notes without a mark: session_kinds.kind_of).
+        return _kind_of_row(kinds_map, summary.get("session_id"), summary.get("workflow_id"))
 
     def _matches_query(summary: Dict[str, Any]) -> bool:
         """The console query language over the three identity fields shown

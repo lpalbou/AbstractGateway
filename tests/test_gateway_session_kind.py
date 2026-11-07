@@ -1,4 +1,5 @@
-"""Session purpose (round 8, R8.3 S6): `kind` = conversation (default) | docs.
+"""Session purpose (round 8, R8.3 S6): `kind` = conversation (default) | docs (| notes, 0.20.3:
+tests/test_gateway_notes_kind.py).
 
 - `POST /runs/start` takes `kind: "docs"` (with a session_id) for a Docs
   assistant chat; anything else is refused;
@@ -81,12 +82,12 @@ def test_a_docs_chat_is_archivable_and_counted_with_its_purpose(client: TestClie
 
 def test_kind_is_validated(client: TestClient) -> None:
     base = {"registry_scope": "tenant_catalog", "bundle_id": "docs-qa", "flow_id": "docsqa001", "input_data": {"prompt": "x"}}
-    r = client.post("/api/gateway/runs/start", headers=HEADERS, json={**base, "session_id": "s", "kind": "notes"})
-    assert r.status_code == 400 and "kind must be one of conversation, docs" in r.text
+    r = client.post("/api/gateway/runs/start", headers=HEADERS, json={**base, "session_id": "s", "kind": "bogus"})
+    assert r.status_code == 400 and "kind must be one of conversation, docs, notes" in r.text
     r = client.post("/api/gateway/runs/start", headers=HEADERS, json={**base, "kind": "docs"})
     assert r.status_code == 400 and "needs a session_id" in r.text
-    r = client.get("/api/gateway/runs?root_only=true&kind=notes", headers=HEADERS)
-    assert r.status_code == 400 and "conversation|docs|all" in r.text
+    r = client.get("/api/gateway/runs?root_only=true&kind=bogus", headers=HEADERS)
+    assert r.status_code == 400 and "conversation|docs|notes|all" in r.text
 
 
 def _docs_qa_run(session_id: str, workflow_id: str):

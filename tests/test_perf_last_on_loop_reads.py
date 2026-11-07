@@ -134,8 +134,8 @@ def test_runs_docs_chat_migration_runs_in_the_heavy_pool(env) -> None:
     from abstractgateway import session_kinds
 
     calls = _Calls()
-    env.mp.setattr(session_kinds, "docs_qa_migration_done", lambda _d: False)
-    env.mp.setattr(session_kinds, "migrate_docs_qa_sessions", calls.wrap(result=0))
+    env.mp.setattr(session_kinds, "pending_migrations", lambda _d: (session_kinds.DOCS_QA_MIGRATION, session_kinds.NOTES_MIGRATION))
+    env.mp.setattr(session_kinds, "migrate_sessions", calls.wrap(result={}))
 
     r, gap = _drive(env, calls, lambda c: c.get("/api/gateway/runs?limit=5", headers=H))
     assert r.status_code == 200, r.text

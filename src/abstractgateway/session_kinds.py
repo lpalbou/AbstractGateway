@@ -1,24 +1,34 @@
-"""What a session is FOR: `conversation` (the default) or `docs` (a Docs
-assistant chat, round 8 R8.3).
+"""What a session is FOR: `conversation` (the default), `docs` (a Docs
+assistant chat, round 8 R8.3) or `notes` (AbstractNote's own background work).
 
 A purpose, never a client: every app and the console list the same pool of
-sessions. Docs-assistant chats live in that pool (ledgered, archivable,
-readable by `session_id`), and the turn listings (`GET /runs?root_only=true`)
-default to conversations, so a docs chat never shows in a conversation list;
-`kind=docs` lists them for the drawer's history.
+sessions. Docs-assistant chats and note sessions live in that pool (ledgered,
+archivable, readable by `session_id`), and the turn listings
+(`GET /runs?root_only=true`) default to conversations, so neither shows in a
+conversation list; `kind=docs` / `kind=notes` list them.
 
 The mark lives beside the session archive in the principal's runtime data dir
 (`<data_dir>/session_kinds.json`); a session without a mark is a conversation
-(that is the migration):
+(that is the migration), except a note session (below):
 
     {"schema": "gateway_session_kinds_v1",
-     "sessions": {session_id: {"kind": "docs", "marked_at"}}}
+     "sessions": {session_id: {"kind": "docs" | "notes", "marked_at"}}}
 
-Sessions of the shipped docs-qa workflow are docs chats whatever client
-started them: `POST /runs/start` marks a docs-qa run's session, and a
-one-time migration (`docs_qa_bundle_v1`, recorded in the file) marks every
-existing session whose turn root ran docs-qa (matched on the workflow's
-bundle id, never on text), so older docs chats leave the conversation lists.
+A purpose follows the WORKFLOW's bundle id (exact, never text), whatever client
+started the run:
+
+- `docs-qa` -> docs. `POST /runs/start` marks a docs-qa run's session, and a
+  one-time migration (`docs_qa_bundle_v1`, recorded in the file) marked every
+  existing session whose turn root ran docs-qa.
+- `abstractnote` (AbstractNote's workflows, `abstractnote@<version>:<flow>`) ->
+  notes. `POST /runs/start` marks the session of a note run (a capture from
+  AbstractNote, its phone or watch), and a one-time migration
+  (`abstractnote_bundle_v1`) marks every existing session whose parent-less
+  turn root ran one. The sessions an AUTOMATION opens (Note's processor,
+  reflect and consolidate automations: one session per occurrence in their
+  fresh-context mode) never pass through `POST /runs/start`; they are notes by
+  their root's workflow at read time (`kind_of`), so the file does not grow by
+  one entry per background occurrence.
 
 An unreadable file is an error (the routes answer 500), never "no docs
 sessions": that would put every docs chat back in the conversation lists.
@@ -37,10 +47,17 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 SCHEMA = "gateway_session_kinds_v1"
 FILENAME = "session_kinds.json"
-KINDS = ("conversation", "docs")
+KINDS = ("conversation", "docs", "notes")
 DEFAULT_KIND = "conversation"
 DOCS_QA_BUNDLE_ID = "docs-qa"
 DOCS_QA_MIGRATION = "docs_qa_bundle_v1"
+#: AbstractNote's workflows (`abstractnote.flows.build.BUNDLE_ID`, loaded by abstractnote_seam.py).
+NOTES_BUNDLE_ID = "abstractnote"
+NOTES_MIGRATION = "abstractnote_bundle_v1"
+#: The bundle a session's purpose follows.
+BUNDLE_KINDS = {DOCS_QA_BUNDLE_ID: "docs", NOTES_BUNDLE_ID: "notes"}
+#: The one-time migrations, in order: (name, bundle id, kind).
+MIGRATIONS = ((DOCS_QA_MIGRATION, DOCS_QA_BUNDLE_ID, "docs"), (NOTES_MIGRATION, NOTES_BUNDLE_ID, "notes"))
 
 _LOCK = threading.RLock()
 
@@ -83,12 +100,42 @@ def workflow_bundle_id(workflow_id: Any) -> Optional[str]:
     wid = str(workflow_id or "").strip()
     if ":" not in wid:
         return None
-    ref = wid.split(":", 1)[0]
+    return bundle_base_id(wid.split(":", 1)[0])
+
+
+def bundle_base_id(bundle_ref: Any) -> Optional[str]:
+    """The public bundle id of a bundle reference (`<bundle>[@<version>]`, a catalog bundle's
+    internal id decoded), or None."""
+    ref = str(bundle_ref or "").strip()
+    if not ref:
+        return None
     base = ref.rsplit("@", 1)[0] if "@" in ref else ref
     from .workflow_catalog import parse_catalog_internal_bundle_id
 
     parsed = parse_catalog_internal_bundle_id(base)
     return parsed[2] if parsed else (base or None)
+
+
+def start_kind(bundle_id: Any, flow_id: Any) -> Optional[str]:
+    """The purpose a run start implies (`POST /runs/start`): the kind of the requested bundle
+    (`bundle_id`, else the bundle of a namespaced `flow_id`), None for a conversation."""
+    bid = bundle_base_id(bundle_id) or workflow_bundle_id(flow_id)
+    return BUNDLE_KINDS.get(bid or "")
+
+
+def is_notes_workflow(workflow_id: Any) -> bool:
+    """True when `workflow_id` is one of AbstractNote's workflows (`abstractnote@<version>:<flow>`)."""
+    return workflow_bundle_id(workflow_id) == NOTES_BUNDLE_ID
+
+
+def kind_of(kinds_map: Dict[str, str], session_id: Any, workflow_id: Any = None) -> str:
+    """The purpose of a listed row: the session's mark, else `notes` when the row runs an
+    AbstractNote workflow (the sessions Note's automations open are never marked, module doc),
+    else a conversation."""
+    mark = kinds_map.get(str(session_id or ""))
+    if mark:
+        return mark
+    return "notes" if is_notes_workflow(workflow_id) else DEFAULT_KIND
 
 
 # Read cache (gateway load 2026-10-26): `GET /runs` read this file on every call, on the event
@@ -137,31 +184,41 @@ def _write(data_dir: Any, data: Dict[str, Any]) -> None:
     _forget(data_dir)
 
 
-def docs_qa_migration_done(data_dir: Any) -> bool:
+def pending_migrations(data_dir: Any) -> Tuple[str, ...]:
+    """The one-time migrations (MIGRATIONS) this plane has not run yet."""
     with _LOCK:
-        return DOCS_QA_MIGRATION in (_load_cached(data_dir).get("migrations") or {})
+        done = _load_cached(data_dir).get("migrations") or {}
+        return tuple(name for name, _bundle, _kind in MIGRATIONS if name not in done)
 
 
-def migrate_docs_qa_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]]) -> int:
-    """Mark (once) every session whose turn root ran the docs-qa bundle.
-    Returns how many sessions it marked; a second call changes nothing."""
+def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: Optional[Iterable[str]] = None) -> Dict[str, int]:
+    """Run (once each) the pending migrations among `names` (all by default) over the turn roots
+    `root_rows`: every session whose PARENT-LESS turn root ran the migration's bundle gets its
+    kind, unless the session already has one. Returns `{migration: sessions marked}` for the
+    migrations that ran now; a second call changes nothing. One read, one write."""
+    rows = list(root_rows)
     with _LOCK:
         data = _load(data_dir)
         migrations = data.setdefault("migrations", {})
-        if DOCS_QA_MIGRATION in migrations:
-            return 0
+        wanted = set(names) if names is not None else {name for name, _b, _k in MIGRATIONS}
         now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-        marked = 0
-        for row in root_rows:
-            sid = str(row.get("session_id") or "").strip()
-            if not sid or row.get("parent_run_id") or workflow_bundle_id(row.get("workflow_id")) != DOCS_QA_BUNDLE_ID:
+        out: Dict[str, int] = {}
+        for name, bundle, kind in MIGRATIONS:
+            if name not in wanted or name in migrations:
                 continue
-            if (data["sessions"].get(sid) or {}).get("kind") != "docs":
-                data["sessions"][sid] = {"kind": "docs", "marked_at": now, "by": DOCS_QA_MIGRATION}
-                marked += 1
-        migrations[DOCS_QA_MIGRATION] = {"at": now, "marked": marked}
-        _write(data_dir, data)
-        return marked
+            marked = 0
+            for row in rows:
+                sid = str(row.get("session_id") or "").strip()
+                if not sid or row.get("parent_run_id") or workflow_bundle_id(row.get("workflow_id")) != bundle:
+                    continue
+                if (data["sessions"].get(sid) or {}).get("kind") in (None, DEFAULT_KIND):
+                    data["sessions"][sid] = {"kind": kind, "marked_at": now, "by": name}
+                    marked += 1
+            migrations[name] = {"at": now, "marked": marked}
+            out[name] = marked
+        if out:
+            _write(data_dir, data)
+        return out
 
 
 def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:

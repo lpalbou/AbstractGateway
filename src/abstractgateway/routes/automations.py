@@ -456,6 +456,8 @@ def automation_summary_row(
         # "<automation> · <flow>" without one read per automation (Triggers page: Handled by).
         "target": _target_projection(base.get("target")),
         "flow_name": _flow_name(svc, base.get("target")),
+        # What it is for (`GET /automations?kind=`): `notes` for AbstractNote's own processing.
+        "kind": automation_kind_of_target(base.get("target")),
         "context_mode": base["context_mode"],
         "growing_max_tokens": base["growing_max_tokens"],
         # The automation's folder (= definition.workspace_root): apps open it
@@ -539,6 +541,7 @@ def legacy_summary_row(run: Any, run_store: Any, *, owner_zone: Optional[str] = 
         "automation_id": legacy["automation_id"],
         "title": legacy["title"],
         "status": legacy["status"],
+        "kind": "user",  # a person's own schedule, from before automations (`GET /automations?kind=`)
         # No binding exists for a legacy schedule: its root run id stands in.
         "trigger": {"binding_id": str(run.run_id), "source_id": "schedule", "source_version": 1, "config": config},
         "context_mode": legacy["context_mode"],
@@ -1199,11 +1202,47 @@ def invalidate_automations_listing(svc: Any) -> None:
     _LIST_MEMO.bump_service(svc)
 
 
-def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
+#: What an automation is FOR (`GET /automations?kind=`): `user` (the default: the automations a
+#: person creates and manages in the apps) or `notes` (AbstractNote's own processor, reflect and
+#: consolidate automations, whose target is an `abstractnote` workflow), or `all`. A purpose,
+#: never the creating client (operator ruling 2026-09-27); like the session kinds
+#: (session_kinds.py), it follows the target workflow's bundle id, never text.
+AUTOMATION_KINDS = ("user", "notes")
+AUTOMATION_KIND_FILTERS = AUTOMATION_KINDS + ("all",)
+
+
+def automation_kind_of_target(target: Any) -> str:
+    """`notes` when the automation's target runs an AbstractNote workflow, else `user`."""
+    from ..session_kinds import NOTES_BUNDLE_ID, bundle_base_id, is_notes_workflow
+
+    if not isinstance(target, dict):
+        return "user"
+    if is_notes_workflow(target.get("workflow_id")) or bundle_base_id(target.get("bundle_ref")) == NOTES_BUNDLE_ID:
+        return "notes"
+    return "user"
+
+
+def automation_kind(controller: Any) -> str:
+    """The purpose of one controller run (`automation_kind_of_target` of its definition)."""
+    meta = (getattr(controller, "vars", None) or {}).get("_meta") or {}
+    definition = meta.get("automation") if isinstance(meta, dict) else None
+    return automation_kind_of_target(definition.get("target") if isinstance(definition, dict) else None)
+
+
+def _parse_automation_kind(kind: Optional[str]) -> str:
+    want = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "user"
+    if want not in AUTOMATION_KIND_FILTERS:
+        raise AutomationError(422, "invalid_request", f"unknown kind {kind!r} (expected {'|'.join(AUTOMATION_KIND_FILTERS)})", field="kind")
+    return want
+
+
+def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False, kind: str = "user") -> Dict[str, Any]:
     """One page of this principal's automations in the listing order (`automation_order`, ADR
     0048): active ones first, then paused ones, each by last activity, newest first. Every
     controller is loaded once per computation: its status and `updated_at` place it, and only the
-    rows of the page are projected into summaries."""
+    rows of the page are projected into summaries. `kind` (AUTOMATION_KINDS, or `all`) keeps the
+    automations of that purpose; the counts count them only."""
+    kind = _parse_automation_kind(kind)
     if archived_only and status:
         raise AutomationError(422, "invalid_request", "archived_only and status cannot be combined", field="archived_only")
     wanted = filter_values(status) if status else None
@@ -1236,6 +1275,8 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
         except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError, AttributeError) as e:
             logger.warning("automations list: skipping malformed automation %s: %s", row.get("run_id"), e)
             continue
+        if kind != "all" and automation_kind(controller) != kind:
+            continue
         statuses.append(st)
         if st in wanted:
             key = automation_order_key(status=st, last_activity_at=controller.updated_at, automation_id=str(controller.run_id))
@@ -1246,6 +1287,8 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
         if run is None:
             _forget_index_row(run_store, str(row["run_id"]))
             continue
+        if kind not in ("all", "user"):
+            continue  # a pre-automation scheduled root is a person's own (it names no target bundle)
         summary = legacy_summary_row(run, run_store, owner_zone=owner_zone)
         statuses.append(summary["status"])
         if summary["status"] in wanted:
@@ -1280,23 +1323,23 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     }
 
 
-def _principal_list_key(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool) -> Any:
-    return (_LIST_MEMO.plane_key(svc), _principal_tuple(principal), status, cursor, int(limit), bool(archived_only))
+def _principal_list_key(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool, kind: str = "user") -> Any:
+    return (_LIST_MEMO.plane_key(svc), _principal_tuple(principal), status, cursor, int(limit), bool(archived_only), kind)
 
 
-def list_automations_shared(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False) -> Dict[str, Any]:
+def list_automations_shared(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False, kind: str = "user") -> Dict[str, Any]:
     """`_list` through the single flight and the answer cache (thread side)."""
-    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only)
-    return _LIST_MEMO.get(svc, key, lambda: _list(svc, principal, status, cursor, limit, archived_only))
+    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only, kind)
+    return _LIST_MEMO.get(svc, key, lambda: _list(svc, principal, status, cursor, limit, archived_only, kind))
 
 
-async def _list_shared_async(request: Request, svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool) -> Dict[str, Any]:
+async def _list_shared_async(request: Request, svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool, kind: str = "user") -> Dict[str, Any]:
     """Event-loop side: a cached answer is returned without a thread; a request joining a
     computation in progress waits on the loop (no worker thread held); the leader's
     computation runs in a worker thread as a task of its own, to its end, even when every
     request waiting for it is gone."""
     memo = _LIST_MEMO
-    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only)
+    key = _principal_list_key(svc, principal, status, cursor, limit, archived_only, kind)
     plane = memo.plane_key(svc)
     memo._watch_ledger(svc, plane)
     stamp = memo.stamp(svc, plane)
@@ -1308,7 +1351,7 @@ async def _list_shared_async(request: Request, svc: Any, principal: Any, status:
         # A task of its own (the request's context copied into the worker thread): it runs to
         # its end even when this request is abandoned, and lands the answer for every waiter.
         task = asyncio.ensure_future(
-            _off_the_event_loop(memo._compute, key, flight, stamp, lambda: _list(svc, principal, status, cursor, limit, archived_only))
+            _off_the_event_loop(memo._compute, key, flight, stamp, lambda: _list(svc, principal, status, cursor, limit, archived_only, kind))
         )
         _LIST_TASKS.add(task)
         task.add_done_callback(_LIST_TASKS.discard)
@@ -1324,6 +1367,7 @@ async def list_automations_route(
     limit: int = Query(50, ge=1, le=200),
     changed_since: Optional[str] = Query(None, description="Not supported in v1 (422 unsupported_feature): poll full pages."),
     archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `paused_automations_count` and `archived_automations_count` (how many this principal has paused and archived; `archived_automations` is the same count)."),
+    kind: Optional[str] = Query(None, description="What the listed automations are for: `user` (the default: the ones a person creates and manages), `notes` (AbstractNote's own processing, whose target is an `abstractnote` workflow) or `all`. The counts count the listed kind."),
 ) -> Dict[str, Any]:
     """Every automation of this principal as full pages, in the listing order
     (ADR 0048, `automation_order`): active ones first, then paused ones, each by
@@ -1338,8 +1382,9 @@ async def list_automations_route(
     principal = _principal_from_request(request)
     if changed_since is not None:
         raise AutomationError(422, "unsupported_feature", str(ChangedSinceUnsupported()), field="changed_since")
+    want_kind = _parse_automation_kind(kind)
     svc = get_gateway_service()
-    return await _list_shared_async(request, svc, principal, status, cursor, limit, bool(archived_only))
+    return await _list_shared_async(request, svc, principal, status, cursor, limit, bool(archived_only), want_kind)
 
 
 def _get(svc: Any, principal: Any, automation_id: str) -> Dict[str, Any]:
