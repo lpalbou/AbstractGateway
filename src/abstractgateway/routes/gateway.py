@@ -16836,6 +16836,25 @@ def _request_provider_api_key(request: Request) -> Optional[str]:
     return None
 
 
+def _typed_address_api_key(request: Request, provider: Optional[str], base_url: Optional[str]) -> Optional[str]:
+    """THE key of a request that names its own provider address (`base_url` in the query or
+    body): the caller's own provider-key header; else, with no address, None (the usual
+    resolution); else the configured key of `provider` only when `base_url` is that provider's
+    configured (or default) address, and AbstractCore's explicit no-key value for any other
+    address, so neither the configured key nor OPENAI_API_KEY reaches a caller-chosen host."""
+    own = _request_provider_api_key(request)
+    if own:
+        return own
+    target = str(base_url or "").strip()
+    if not target:
+        return None
+    current_base, root_base = _gateway_profile_dirs()
+    kwargs = configured_provider_request_kwargs(
+        str(provider or "").strip(), current_base_dir=current_base, root_base_dir=root_base, base_url=target
+    )
+    return str(kwargs.get("api_key") or "") or NO_PROVIDER_KEY
+
+
 def _profile_discovery_api_key(profile: Any, request: Request) -> Optional[str]:
     """The key a model listing of a saved connection carries: its stored key, else the caller's
     own header key, else explicitly none for a connection with an address (never the gateway's
@@ -20000,7 +20019,7 @@ async def voice_voices_catalog(
         payload = await _discovery_to_thread(
             discovery.get_voice_catalog,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             voice_openai_api_key=_voice_openai_api_key(),
             provider=provider,
             model=model,
@@ -20067,7 +20086,7 @@ async def audio_speech_models_catalog(
                 _voice_providers_payload = await _discovery_to_thread(
                     discovery.get_voice_catalog,
                     base_url=base_url,
-                    provider_api_key=_request_provider_api_key(request),
+                    provider_api_key=_typed_address_api_key(request, provider, base_url),
                     voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
@@ -20130,7 +20149,7 @@ async def audio_speech_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_tts_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20177,7 +20196,7 @@ async def audio_transcription_models_catalog(
                 _voice_providers_payload = await _discovery_to_thread(
                     discovery.get_voice_catalog,
                     base_url=base_url,
-                    provider_api_key=_request_provider_api_key(request),
+                    provider_api_key=_typed_address_api_key(request, provider, base_url),
                     voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
@@ -20251,7 +20270,7 @@ async def audio_transcription_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_stt_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20311,7 +20330,7 @@ async def audio_music_providers_catalog(
             discovery.list_music_providers,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, None, base_url),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -20380,7 +20399,7 @@ async def audio_music_models_catalog(
             discovery.list_music_models,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20615,7 +20634,7 @@ async def vision_provider_models_catalog(
             discovery.list_vision_provider_models,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
             providers_only=providers_only,
         )
@@ -20719,7 +20738,7 @@ async def vision_adapters_catalog(
             model=model_value,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20803,7 +20822,7 @@ async def embedding_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_embedding_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
             providers_only=providers_only,
         )
@@ -21171,7 +21190,12 @@ async def discovery_provider_models(
             discovery.list_provider_models,
             prov,
             base_url=base_url or direct_kwargs.get("base_url"),
-            provider_api_key=_request_provider_api_key(request) or direct_kwargs.get("api_key"),
+            # A typed address gets the configured key only when it is the configured one.
+            provider_api_key=(
+                _typed_address_api_key(request, prov, base_url)
+                if str(base_url or "").strip()
+                else (_request_provider_api_key(request) or direct_kwargs.get("api_key"))
+            ),
             input_type=input_type,
             output_type=output_type,
             capability_route=capability_route,
@@ -28838,13 +28862,23 @@ async def provider_endpoint_profiles_update(request: Request, profile_id: str, r
         if principal.is_admin():
             requested_scope = "gateway"
         store = _endpoint_profile_store_for_scope(scope=requested_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        new_base_url = normalize_base_url(req.base_url if req.base_url is not None else existing.base_url)
+        # The stored key belongs to the address it was saved with (security, 0.21.0): it is carried
+        # over (a scope move lands in another store) only when the address is unchanged; a new
+        # address without a typed key saves no key.
+        if req.api_key is not None:
+            api_key_value: Optional[str] = req.api_key
+        elif req.clear_api_key or not same_base_url(new_base_url, existing.base_url):
+            api_key_value = None
+        else:
+            api_key_value = existing.api_key
         profile = store.upsert_profile(
             profile_id=profile_id,
             display_name=req.display_name if req.display_name is not None else existing.display_name,
             description=req.description if req.description is not None else existing.description,
             provider_family=req.provider_family if req.provider_family is not None else existing.provider_family,
-            base_url=req.base_url if req.base_url is not None else existing.base_url,
-            api_key=req.api_key if req.api_key is not None else (None if req.clear_api_key else existing.api_key),
+            base_url=new_base_url,
+            api_key=api_key_value,
             clear_api_key=req.clear_api_key,
             scope=requested_scope,
             capabilities=req.capabilities if req.capabilities is not None else existing.capabilities,
@@ -29303,7 +29337,8 @@ async def model_context_estimate(
 @router.post("/blocs/upsert_text")
 async def bloc_upsert_text(request: Request, req: _GatewayUpsertTextBlocRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29334,7 +29369,8 @@ async def bloc_record(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29365,7 +29401,8 @@ async def bloc_list(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29378,7 +29415,8 @@ async def bloc_list(
 @router.post("/blocs/delete")
 async def bloc_delete(request: Request, req: _GatewayBlocDeleteRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29411,7 +29449,8 @@ async def bloc_kv_manifest(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29442,7 +29481,8 @@ async def bloc_kv_list(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29455,7 +29495,8 @@ async def bloc_kv_list(
 @router.post("/blocs/kv/ensure")
 async def bloc_kv_ensure(request: Request, req: _GatewayBlocKVEnsureRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29468,7 +29509,8 @@ async def bloc_kv_ensure(request: Request, req: _GatewayBlocKVEnsureRequest) -> 
 @router.post("/blocs/kv/load")
 async def bloc_kv_load(request: Request, req: _GatewayBlocKVLoadRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29481,7 +29523,8 @@ async def bloc_kv_load(request: Request, req: _GatewayBlocKVLoadRequest) -> Dict
 @router.post("/blocs/kv/delete")
 async def bloc_kv_delete(request: Request, req: _GatewayBlocKVDeleteRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29494,7 +29537,8 @@ async def bloc_kv_delete(request: Request, req: _GatewayBlocKVDeleteRequest) -> 
 @router.post("/blocs/kv/prune")
 async def bloc_kv_prune(request: Request, req: _GatewayBlocKVPruneRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(

@@ -150,6 +150,32 @@ def test_a_saved_flow_with_mtp_on_a_model_without_mtp_runs_without_it_and_the_le
     assert note["message"].startswith("MTP was not used: fake-model does not support MTP")
 
 
+def test_a_run_level_mtp_request_on_a_model_without_mtp_runs_without_it_and_the_ledger_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_server: FakeOpenAIServer
+) -> None:
+    """Review NO-GO item 3: an automation or `/runs/start` puts MTP on the RUN
+    (`_runtime.speculation`); AbstractRuntime applies it inside the LLM_CALL handler to a step that
+    names none. The guard drops it for that call too (the handler sees no run-level request), and
+    the step records why."""
+    from abstractruntime import RunStatus
+
+    bundle_id, flow_id = _bundle(tmp_path / "bundles", None)  # the node itself asks no MTP
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    host = _host_with_real_llm_handler(tmp_path, monkeypatch, fake_server)
+
+    run_id = host.start_run(flow_id=flow_id, bundle_id=bundle_id, input_data={"_runtime": {"speculation": STRICT_MTP}})
+    assert host.runtime.get_state(run_id).vars["_runtime"]["speculation"] == STRICT_MTP
+    state = _run_to_end(host, run_id)
+
+    assert state.status == RunStatus.COMPLETED, state.error
+    assert fake_server.requests, "the model was called"
+    note = (_llm_step_results(host, run_id)[-1].get("metadata") or {}).get("speculation_dropped")
+    assert note and note["requested"] == STRICT_MTP and note["used"] is False, note
+    assert note["message"].startswith("MTP was not used: fake-model does not support MTP")
+    # The run keeps what it was started with; only that call ran without it.
+    assert host.runtime.get_state(run_id).vars["_runtime"]["speculation"] == STRICT_MTP
+
+
 def test_without_the_guard_the_same_saved_flow_fails_inside_abstractcore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_server: FakeOpenAIServer
 ) -> None:

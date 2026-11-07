@@ -342,3 +342,112 @@ def test_configured_kwargs_send_the_key_only_to_its_own_address(tmp_path: Path, 
     assert configured_provider_request_kwargs("openai", base_url="http://192.168.1.9:8000/v1", **dirs)["api_key"] == NO_PROVIDER_KEY
     # No address of its own: unchanged.
     assert configured_provider_request_kwargs("openai", **dirs) == {"api_key": ENV_KEY}
+
+
+# --- Review round (NO-GO 2026-11-07): the PUT edit path, typed-address listings, entity visits -----
+
+SECRETS = (CONFIG_KEY, ENV_KEY, PROFILE_KEY)
+
+
+def _leaked(up: _Upstream) -> list[str]:
+    """The secrets any request to the upstream carried (Authorization or x-api-key)."""
+    return [s for _p, a in up.seen for s in SECRETS if a and s in a]
+
+
+def test_editing_a_connection_by_put_with_a_new_address_drops_its_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    """Both consoles save an edit with PUT. A new Base URL without the key typed again saves no
+    key; the address it was saved with keeps it (a scope move included)."""
+    _configured_key(monkeypatch)
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=HEADERS,
+            json={"id": "office", "display_name": "Office", "provider_family": "openai-compatible",
+                  "base_url": "https://office.example.test/v1", "api_key": PROFILE_KEY, "scope": "gateway"},
+        )
+        assert created.status_code == 200, created.text
+        same = client.put("/api/gateway/config/provider-endpoint-profiles/office", headers=HEADERS,
+                          json={"display_name": "Office (renamed)"})
+        assert same.status_code == 200, same.text
+        assert same.json()["profile"]["api_key_set"] is True
+        moved = client.put("/api/gateway/config/provider-endpoint-profiles/office", headers=HEADERS,
+                           json={"base_url": upstream.url})
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["profile"]["api_key_set"] is False, moved.json()["profile"]
+        listed = client.post("/api/gateway/config/provider-endpoint-profiles/discover-models", headers=HEADERS,
+                             json={"profile_id": "office"})
+        assert listed.status_code == 200, listed.text
+    assert upstream.seen, "the new address was asked"
+    assert upstream.auth() == [None] * len(upstream.seen), upstream.seen
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/gateway/discovery/providers/openai-compatible/models?base_url={url}",
+        "/api/gateway/discovery/providers/openai/models?base_url={url}",
+        "/api/gateway/embeddings/models?provider=openai&base_url={url}",
+        "/api/gateway/vision/provider_models?provider=openai-compatible&base_url={url}",
+    ],
+)
+def test_a_listing_of_a_typed_address_never_carries_a_configured_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream, path: str
+) -> None:
+    """Model listings that take a `base_url` (any signed-in member can call them) ask that
+    address without the gateway's configured keys, through the runtime's real discovery facade."""
+    from types import SimpleNamespace
+
+    from abstractruntime.integrations.abstractcore.discovery_facade import AbstractCoreDiscoveryFacade
+    from abstractruntime.integrations.abstractcore.llm_client import MultiLocalAbstractCoreLLMClient
+    import abstractgateway.routes.gateway as gateway_routes
+
+    # The configured address: a loopback port nothing listens on (the test network guard refuses
+    # any other host).
+    _configured_key(monkeypatch, base_url="http://127.0.0.1:9/v1")
+    client_ = MultiLocalAbstractCoreLLMClient(provider="openai-compatible", model="fake-model",
+                                              llm_kwargs={"base_url": "http://127.0.0.1:9/v1"})
+    facade = AbstractCoreDiscoveryFacade(SimpleNamespace(_abstractcore_llm_client=client_))
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (facade, None))
+    with _app_client(tmp_path, monkeypatch) as client:
+        res = client.get(path.format(url=upstream.url), headers=HEADERS)
+    assert res.status_code in (200, 502), res.text
+    assert upstream.seen, ("the typed address was asked", res.json())
+    assert _leaked(upstream) == [], upstream.seen
+
+
+def test_an_entity_visit_on_a_connection_never_sends_its_key_to_a_caller_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, upstream: _Upstream
+) -> None:
+    """Review question (2026-11-07): a visit's mind on `endpoint:<id>` with a caller-chosen
+    `base_url` (POST /entities/{name}/chat/open) skips the key rule; could the connection's key
+    reach that address? Here the visit's model client is the gateway pool with the gateway's
+    endpoint resolver attached: the pool's direct call does not resolve `endpoint:<id>` at all (no
+    request leaves), so no key reaches the caller's address. Pinned so a later change that makes
+    the call resolve the connection cannot start sending its key there unnoticed."""
+    from types import SimpleNamespace
+
+    from abstractruntime.integrations.abstractcore.llm_client import MultiLocalAbstractCoreLLMClient
+
+    from abstractgateway import entity_chat, generation_pool
+    from abstractgateway.hosts.bundle_host import _attach_provider_endpoint_profile_resolver
+    from abstractgateway.provider_endpoint_profiles import ProviderEndpointProfileStore
+
+    _configured_key(monkeypatch)
+    ProviderEndpointProfileStore(base_dir=tmp_path / "root").upsert_profile(
+        profile_id="office", display_name="Office", provider_family="openai-compatible",
+        base_url="http://127.0.0.1:9/v1", api_key=PROFILE_KEY, scope="gateway",
+    )
+    pool = MultiLocalAbstractCoreLLMClient(provider="openai-compatible", model="fake-model",
+                                           llm_kwargs={"base_url": "http://127.0.0.1:9/v1"})
+    _attach_provider_endpoint_profile_resolver(
+        runtime=SimpleNamespace(_abstractcore_llm_client=pool), data_root=tmp_path / "runtime", catalog_root=tmp_path / "root",
+    )
+    monkeypatch.setattr(generation_pool, "principal_pool", lambda: pool)
+    adapter = entity_chat._RuntimeLLMAdapter("endpoint:office", model="fake-model", base_url=upstream.url)
+    try:
+        adapter.generate(messages=[{"role": "user", "content": "hi"}])
+    except Exception:  # noqa: BLE001 - today: Unknown provider endpoint:office
+        pass
+    assert _leaked(upstream) == [], upstream.seen

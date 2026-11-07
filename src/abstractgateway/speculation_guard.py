@@ -17,6 +17,8 @@ a supported model, or a card the host could not produce (unknown is not "unsuppo
 """
 from __future__ import annotations
 
+import copy
+import dataclasses
 import logging
 from dataclasses import replace
 from typing import Any, Dict, Optional
@@ -131,23 +133,62 @@ def attach_note(result: Any, note: Optional[Dict[str, Any]]) -> Any:
     return result
 
 
+def _run_level_speculation(run: Any) -> Any:
+    """The run's own MTP request (`_runtime.speculation`: automations, `/runs/start`)."""
+    run_vars = getattr(run, "vars", None)
+    runtime_ns = run_vars.get("_runtime") if isinstance(run_vars, dict) else None
+    return runtime_ns.get("speculation") if isinstance(runtime_ns, dict) else None
+
+
+def _without_run_level_speculation(run: Any) -> Any:
+    """A copy of `run` whose `_runtime` has no `speculation`, for one call.
+
+    AbstractRuntime's LLM_CALL handler fills a call's missing `params.speculation` from the run's
+    `_runtime.speculation` (`_maybe_inject_runtime_speculation`, for the call and for its
+    structured-output retries) and only reads `run.vars` there; handing it this copy is how the
+    call runs with no MTP request at all, rather than an explicit Off. The run itself (and its
+    saved `_runtime`) is untouched."""
+    run_vars = dict(getattr(run, "vars", None) or {})
+    runtime_ns = {k: v for k, v in dict(run_vars.get("_runtime") or {}).items() if k != "speculation"}
+    run_vars["_runtime"] = runtime_ns
+    if dataclasses.is_dataclass(run) and not isinstance(run, type):
+        return dataclasses.replace(run, vars=run_vars)
+    out = copy.copy(run)
+    out.vars = run_vars
+    return out
+
+
 def wrap_llm_call_handler(handler: Any, *, client: Any) -> Any:
-    """An LLM_CALL handler that drops an unsupported MTP request before `handler` runs it."""
+    """An LLM_CALL handler that drops an unsupported MTP request before `handler` runs it: the
+    step's own `params.speculation`, or the run-level `_runtime.speculation` the handler would
+    otherwise apply to a step that names none."""
     if getattr(handler, _WRAPPED_MARK, False):
         return handler
 
     def guarded(run: Any, effect: Any, default_next_node: Any = None) -> Any:
         payload = getattr(effect, "payload", None)
-        params = payload.get("params") if isinstance(payload, dict) else None
-        if not isinstance(params, dict) or not requests_mtp(params.get("speculation")):
+        if not isinstance(payload, dict):
+            return handler(run, effect, default_next_node)
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        explicit = params.get("speculation")
+        run_level = _run_level_speculation(run)
+        # The handler's own precedence: a step's request (Off included) wins over the run's.
+        requested = explicit if explicit is not None else run_level
+        if not requests_mtp(requested):
             return handler(run, effect, default_next_node)
         provider = payload.get("provider") or params.get("_provider")
         model = payload.get("model") or params.get("_model")
-        new_params = dict(params)
-        note = drop_unsupported_speculation(client, new_params, provider=provider, model=model)
-        if note is None:
+        card = unsupported_card(client, provider=provider, model=model)
+        if card is None:
             return handler(run, effect, default_next_node)
-        effect = replace(effect, payload={**payload, "params": new_params})
+        note = drop_note(requested, card)
+        logger.warning("speculation guard: %s", note["message"])
+        if "speculation" in params:
+            new_params = dict(params)
+            new_params.pop("speculation", None)
+            effect = replace(effect, payload={**payload, "params": new_params})
+        if requests_mtp(run_level):
+            run = _without_run_level_speculation(run)
         outcome = handler(run, effect, default_next_node)
         attach_note(getattr(outcome, "result", None), note)
         return outcome

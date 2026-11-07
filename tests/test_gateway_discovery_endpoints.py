@@ -244,7 +244,9 @@ def test_discovery_provider_models_accepts_base_url_override(tmp_path: Path, mon
         {
             "provider_name": "lmstudio",
             "base_url": "http://192.168.1.188:1234/v1",
-            "provider_api_key": None,
+            # A typed address that is not the provider's configured one is listed explicitly
+            # keyless (security, 0.21.0): never the configured key or OPENAI_API_KEY.
+            "provider_api_key": "EMPTY",
             "input_type": None,
             "output_type": None,
             "capability_route": None,
