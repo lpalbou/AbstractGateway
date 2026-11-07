@@ -1401,7 +1401,11 @@ def list_entities() -> Dict[str, Any]:
             row["identity"] = list_row_identity(registry, registry.manifest_for(str(row.get("slug") or "")))
         except KeyError:
             row["identity"] = None
-    return {"entities": rows}
+    from ..entity_tile import entity_tile_contract
+
+    # The lean per-entity read (backlog 1012): a client that finds `reads.tile` here draws each tile
+    # from GET /entities/{name}/tile; on an older gateway (no `reads`) it falls back to the card.
+    return {"entities": rows, "reads": {"tile": entity_tile_contract()}}
 
 
 @router.get("/{name}/access")
@@ -1462,6 +1466,111 @@ def entity_card(
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{name}/tile")
+def entity_tile(name: str) -> Dict[str, Any]:
+    """The entity TILE (backlog 1012; operator 2026-11-07: "it is absurd for a tiny card about the
+    entity to request so much data that you will never show"): exactly what one card about an
+    entity shows a person — who (name, look, age, mind), what it is doing now and since when (the
+    ONE composite phase `/cognition` folds, busy, the own-time-failed trouble), its newest
+    interests, its newest open problem or question, its latest lesson, its last meaningful moment
+    and the counts a person reads. Closed kinds and the entity's own texts; the words are the
+    client's (the ui-kit `EntityCard`). See `entity_tile.py` for the fields.
+
+    Cost: the memory half is a projection of the engine card cached per (home directory, journal
+    seq, parameters) — free while the life does not grow; the live half (state, phase, moments,
+    look, mind) is read fresh. Pure read: deposits nothing, writes no marker."""
+    from abstractruntime.identity.life import life_sleep_stats
+
+    from ..entity_chat import read_entity_substrate
+    from ..entity_tile import compose_tile, memory_facts
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    slug = manifest.slug
+    home_dir = registry.entities_dir / slug
+    # A held home answers 409 like every other door (the /cognition rule).
+    registry._refuse_if_held(slug)
+
+    now = _live_now(registry, name, home_dir)
+    warnings: List[str] = list(now["warnings"])
+    if now["rest_warning"]:
+        warnings.append(now["rest_warning"])
+
+    # Each source degrades to a labelled warning (the /cognition contract): a broken store or a
+    # malformed history line costs its facts, never the whole tile.
+    from ..entities import MaintenanceHoldActive
+
+    engine: Dict[str, Any] = {"card": None, "substrate": None, "engine": True, "seq": None}
+    try:
+        engine = registry.get_home(slug).engine_card()
+        if not engine["engine"]:
+            warnings.append("#FALLBACK engine lacks the entity_card read; no memory facts — upgrade abstractmemory")
+    except MaintenanceHoldActive:
+        raise
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK memory facts unavailable: {e}")
+    memory = memory_facts(engine["card"] or {})
+    moments: List[Dict[str, Any]] = []
+    try:
+        moments = registry.life_moments(slug)
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"#FALLBACK moments unavailable: {e}")
+
+    look: Optional[Dict[str, Any]] = None
+    try:
+        from abstractruntime.identity.digital_identity import read_identity
+
+        record = read_identity(home_dir)
+        if record is not None:
+            look = {"style": record.avatar.style, "color": record.avatar.color}
+    except Exception as e:  # noqa: BLE001 - IdentityUnreadable: no look, labeled
+        warnings.append(f"#FALLBACK identity unreadable: {e}")
+    if look is None:
+        from ..entity_appearance import read_entity_appearance
+
+        appearance = read_entity_appearance(home_dir) or {}
+        if appearance.get("color"):
+            look = {"style": None, "color": appearance.get("color")}
+
+    # Its mind: its own model choice, else the model its newest lived record was stamped with (the
+    # card's `mind_substrate`, free from the engine cache). Never the gateway-wide default: that is
+    # not the entity's, and resolving it probes the host (~100 ms of subprocesses per read).
+    mind: Optional[Dict[str, Any]] = None
+    try:
+        stored = read_entity_substrate(home_dir)
+    except Exception as e:  # noqa: BLE001
+        stored = {}
+        warnings.append(f"#FALLBACK model choice unreadable: {e}")
+    lived = engine.get("substrate") if isinstance(engine.get("substrate"), dict) else {}
+    if stored.get("model"):
+        mind = {"model": stored["model"], "source": "entity"}
+    elif lived.get("model"):
+        mind = {"model": str(lived["model"]), "source": "lived"}
+
+    sleeps: Optional[int] = None
+    try:
+        sleeps = int(life_sleep_stats(home_dir).get("sleeps") or 0)
+    except Exception as e:  # noqa: BLE001 - a stat must not break the tile
+        warnings.append(f"#FALLBACK sleep count unavailable: {e}")
+
+    return compose_tile(
+        name=manifest.name,
+        slug=slug,
+        born=manifest.created_at,
+        look=look,
+        mind=mind,
+        now=now,
+        moments=moments,
+        memory=memory,
+        sleeps=sleeps,
+        as_of_seq=engine["seq"],
+        warnings=warnings,
+    )
 
 
 # Communities are recomputed only when the life GREW: cache keyed on the
@@ -2246,45 +2355,12 @@ def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
 _DRIVES_CACHE: Dict[str, Tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]] = {}
 
 
-@router.get("/{name}/cognition")
-def entity_cognition(name: str) -> Dict[str, Any]:
-    """The B3 spend wire (laurent 04:58 "unclear when it's working and
-    consuming credits"; dispatch c1340 2c — observer's board tile and the
-    entity app's meter both consume this): ONE read serving working-now +
-    tick phase + real token spend.
-
-    - working: loop mid-day OR a live visit run executing (never fabricated
-      — both inputs are pid-checked/store-read state).
-    - loop: the pid-cross-checked loop status verbatim (phase/running/
-      stop_requested/stopped_by ride through).
-    - visit: the durable visit status (open/run_id/status/turn_n).
-    - spend: BILLED usage folded from the per-home run ledger's completed
-      llm_call records (result.usage.total_tokens — the entity LLM handler
-      records it on every call), lifetime across the home store + the live
-      visit run tree. HONEST GAP: the own-time loop runs home-direct
-      (ChatSession, no run ledger), so loop cognition is NOT in these
-      numbers yet — labeled #FALLBACK, never estimated here (the entity
-      app's input-side estimate remains its own labeled surface until
-      runtime's loop-usage half lands).
-    - drives: the cognition-health ratios (questions open/resolved,
-      problems open/repaired, interests open/explored) from memory's
-      cognition_health — the same ladder + diary convention the card
-      compositor reads. Render-when-present: absent (with a labeled
-      warning) when the engine predates the read OR the read fails."""
+def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
+    """What the entity is doing NOW, from live reads only (no memory store): the loop status, the
+    durable visit, the chat seat, the operator state and the ONE composite phase folded from them,
+    `working`, `settling`, and the labeled warnings of any source that could not be read.
+    Shared by `/cognition` and `/tile` (one fold, never a second copy). Pure read."""
     from ..entity_loop import loop_status
-
-    registry = _registry()
-    try:
-        manifest = registry.manifest_for(name)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    home_dir = registry.entities_dir / manifest.slug
-
-    # Maintenance window: refuse UP FRONT (this endpoint folds per-source
-    # failures into labeled warnings by design — a held home would degrade
-    # into a half-truthful 200 instead of the honest 409 every other door
-    # answers; the hold outranks the degradation contract).
-    registry._refuse_if_held(manifest.slug)
 
     loop = loop_status(home_dir)
 
@@ -2310,6 +2386,7 @@ def entity_cognition(name: str) -> Dict[str, Any]:
         st = registry.state_of(name) or {}
     except Exception as e:  # noqa: BLE001
         st = {"state": "awake", "warning": f"#FALLBACK state unreadable: {e}"}
+    chat: Dict[str, Any] = {"open": False}
     chat_open = False
     chat_in_flight = False
     try:
@@ -2334,8 +2411,6 @@ def entity_cognition(name: str) -> Dict[str, Any]:
     # RETIRED from the serve; the one derived field is liveness alive|stopped
     # (paused => stopped — the kill switch). Same derivation everywhere:
     # entities.derived_liveness, never a second rule.
-    from ..entities import derived_liveness
-
     stopped = state_word == "paused"
     # PHASE IS TOTAL WHILE ALIVE (laurent c203, 2026-07-20: "awake is NOT a
     # state; the entity at all times must be either visit/work/personal/
@@ -2399,6 +2474,96 @@ def entity_cognition(name: str) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # WORKING = executing right now (adversary P1-2/P1-5): loop mid-day, a
+    # visit turn IN FLIGHT (the stored run status is a last-write claim — a
+    # host crash mid-drive leaves status="running" at rest forever), or a
+    # chat turn in flight. A parked/orphaned run is present, not working.
+    working = bool(loop.get("running") and loop.get("phase") == "day") or visit_in_flight or chat_in_flight
+    # Kept apart from `warnings` so /cognition serves its warnings in their historical order.
+    rest_warning: Optional[str] = None
+    if (
+        bool(visit.get("open"))
+        and str(visit.get("status") or "") == "running"
+        and not visit_in_flight
+    ):
+        rest_warning = (
+            "#FALLBACK visit run rests at status=running with no drive in flight "
+            "(interrupted mid-turn?) — resume it with POST /visit/{run_id}/tick"
+        )
+    return {
+        "loop": loop,
+        "visit": visit,
+        "visit_in_flight": visit_in_flight,
+        "st": st,
+        "chat": chat,
+        "chat_open": chat_open,
+        "chat_in_flight": chat_in_flight,
+        "state_word": state_word,
+        "stopped": stopped,
+        "phase": phase,
+        "phase_source": phase_source,
+        "sleep_detail": sleep_detail,
+        "resting": resting,
+        "settling": settling,
+        "working": working,
+        "warnings": warnings,
+        "rest_warning": rest_warning,
+    }
+
+
+@router.get("/{name}/cognition")
+def entity_cognition(name: str) -> Dict[str, Any]:
+    """The B3 spend wire (laurent 04:58 "unclear when it's working and
+    consuming credits"; dispatch c1340 2c — observer's board tile and the
+    entity app's meter both consume this): ONE read serving working-now +
+    tick phase + real token spend.
+
+    - working: loop mid-day OR a live visit run executing (never fabricated
+      — both inputs are pid-checked/store-read state).
+    - loop: the pid-cross-checked loop status verbatim (phase/running/
+      stop_requested/stopped_by ride through).
+    - visit: the durable visit status (open/run_id/status/turn_n).
+    - spend: BILLED usage folded from the per-home run ledger's completed
+      llm_call records (result.usage.total_tokens — the entity LLM handler
+      records it on every call), lifetime across the home store + the live
+      visit run tree. HONEST GAP: the own-time loop runs home-direct
+      (ChatSession, no run ledger), so loop cognition is NOT in these
+      numbers yet — labeled #FALLBACK, never estimated here (the entity
+      app's input-side estimate remains its own labeled surface until
+      runtime's loop-usage half lands).
+    - drives: the cognition-health ratios (questions open/resolved,
+      problems open/repaired, interests open/explored) from memory's
+      cognition_health — the same ladder + diary convention the card
+      compositor reads. Render-when-present: absent (with a labeled
+      warning) when the engine predates the read OR the read fails."""
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    home_dir = registry.entities_dir / manifest.slug
+
+    # Maintenance window: refuse UP FRONT (this endpoint folds per-source
+    # failures into labeled warnings by design — a held home would degrade
+    # into a half-truthful 200 instead of the honest 409 every other door
+    # answers; the hold outranks the degradation contract).
+    registry._refuse_if_held(manifest.slug)
+
+    from ..entities import derived_liveness
+
+    now = _live_now(registry, name, home_dir)
+    loop = now["loop"]
+    visit = now["visit"]
+    st = now["st"]
+    chat_open = now["chat_open"]
+    state_word = now["state_word"]
+    phase = now["phase"]
+    phase_source = now["phase_source"]
+    sleep_detail = now["sleep_detail"]
+    resting = now["resting"]
+    settling = now["settling"]
+    warnings: List[str] = list(now["warnings"])
+
     lifetime = {"llm_calls": 0, "tool_calls": 0, "tokens_total": 0, "runs": 0}
     live_visit: Optional[Dict[str, Any]] = None
     try:
@@ -2458,20 +2623,9 @@ def entity_cognition(name: str) -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         warnings.append(f"#FALLBACK loop spend unreadable: {e}")
 
-    # WORKING = executing right now (adversary P1-2/P1-5): loop mid-day, a
-    # visit turn IN FLIGHT (the stored run status is a last-write claim — a
-    # host crash mid-drive leaves status="running" at rest forever), or a
-    # chat turn in flight. A parked/orphaned run is present, not working.
-    working = bool(loop.get("running") and loop.get("phase") == "day") or visit_in_flight or chat_in_flight
-    if (
-        bool(visit.get("open"))
-        and str(visit.get("status") or "") == "running"
-        and not visit_in_flight
-    ):
-        warnings.append(
-            "#FALLBACK visit run rests at status=running with no drive in flight "
-            "(interrupted mid-turn?) — resume it with POST /visit/{run_id}/tick"
-        )
+    working = now["working"]
+    if now["rest_warning"]:
+        warnings.append(now["rest_warning"])
     # Drive ratios (G1, cognition-health directive 2026-07-18): memory's
     # cognition_health fold over the home's full ladder — the same ladder,
     # diary convention, and ref-attr set the card compositor reads (the
