@@ -32,16 +32,33 @@ _SPEC_RE = re.compile(
 )
 
 
+def find_abstractuic(repo_root: Optional[Path] = None, *, start: Optional[Path] = None) -> Optional[Path]:
+    """The abstractuic checkout: `<repo_root>/abstractuic` when a root is given, else the nearest
+    `abstractuic/` (with `ui-kit/package.json`) beside this repo or beside any of its parents, so a
+    worktree under `abstractgateway/untracked/<wt>` finds the monorepo's kit too (review F5,
+    2026-11-07). A checkout with no abstractuic above it (CI, a wheel) finds none. `start` stands
+    for this module's path (tests)."""
+    if repo_root is not None:
+        candidate = repo_root / "abstractuic"
+        return candidate if (candidate / "ui-kit" / "package.json").is_file() else None
+    here = (start or Path(__file__)).resolve()
+    for parent in here.parents[3:]:
+        candidate = parent / "abstractuic"
+        if (candidate / "ui-kit" / "package.json").is_file():
+            return candidate
+    return None
+
+
 def locate_kit_src(repo_root: Optional[Path] = None) -> Optional[Path]:
     """The kit's ui-kit/src directory: ABSTRACTUIC_SRC env, else the
-    abstractuic checkout beside this repo (monorepo layout)."""
+    abstractuic checkout beside this repo or one of its parents (monorepo layout)."""
     env = str(os.getenv("ABSTRACTUIC_SRC") or "").strip()
     if env:
         p = Path(env).expanduser()
         return p if p.is_dir() else None
-    root = repo_root if repo_root is not None else Path(__file__).resolve().parents[3]
-    candidate = root / "abstractuic" / "ui-kit" / "src"
-    return candidate if candidate.is_dir() else None
+    uic = find_abstractuic(repo_root)
+    candidate = uic / "ui-kit" / "src" if uic is not None else None
+    return candidate if candidate is not None and candidate.is_dir() else None
 
 
 def parse_theme_specs(theme_ts_text: str) -> List[Dict[str, Any]]:

@@ -32,7 +32,7 @@ import re
 from pathlib import Path
 from typing import Dict, Optional
 
-from .console_theme_sync import parse_theme_css_blocks
+from .console_theme_sync import find_abstractuic, parse_theme_css_blocks
 
 GENERATED_MODULE = "console_islands.py"
 BUNDLE_RELPATH = Path("islands") / "dist" / "af-console-islands.js"
@@ -50,14 +50,13 @@ _PANEL_CHAT_GLOBS = ("src/*.ts", "src/*.tsx", "src/panel_chat.css")
 def locate_kit(repo_root: Optional[Path] = None) -> Optional[Path]:
     """The kit's ui-kit directory: the parent of ABSTRACTUIC_SRC (the same
     ui-kit/src seam console_theme_sync reads), else the abstractuic checkout
-    beside this repo (monorepo layout)."""
+    beside this repo or one of its parents (monorepo layout, worktrees included)."""
     env = str(os.getenv("ABSTRACTUIC_SRC") or "").strip()
     if env:
         p = Path(env).expanduser().parent
         return p if (p / "package.json").is_file() else None
-    root = repo_root if repo_root is not None else Path(__file__).resolve().parents[3]
-    candidate = root / "abstractuic" / "ui-kit"
-    return candidate if (candidate / "package.json").is_file() else None
+    uic = find_abstractuic(repo_root)
+    return uic / "ui-kit" if uic is not None else None
 
 
 def kit_version(kit: Path) -> str:

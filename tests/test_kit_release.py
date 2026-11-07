@@ -93,3 +93,45 @@ def test_the_release_is_the_oldest_repo_tag_whose_ui_kit_carries_the_version(tmp
     _git(repo, "commit", "-q", "-m", "no kit")
     _git(repo, "tag", "v0.0.1")
     assert release_tag(repo, "0.9.16") == "v0.10.3"
+
+
+def test_a_worktree_under_the_gateway_finds_the_monorepo_kit(tmp_path: Path) -> None:
+    """Releases are cut from worktrees (`abstractgateway/untracked/<wt>`): the kit beside the monorepo
+    root is found from there, not only from the main checkout (review F5, 2026-11-07)."""
+    from abstractgateway.console_theme_sync import find_abstractuic
+
+    (tmp_path / "abstractuic" / "ui-kit").mkdir(parents=True)
+    (tmp_path / "abstractuic" / "ui-kit" / "package.json").write_text(json.dumps({"version": "0.9.16"}))
+    main_module = tmp_path / "abstractgateway" / "src" / "abstractgateway" / "console_theme_sync.py"
+    worktree_module = tmp_path / "abstractgateway" / "untracked" / "rel" / "src" / "abstractgateway" / "console_theme_sync.py"
+    for module in (main_module, worktree_module):
+        module.parent.mkdir(parents=True)
+        module.write_text("")
+        assert find_abstractuic(start=module) == (tmp_path / "abstractuic").resolve()
+    lone = tmp_path / "ci" / "abstractgateway" / "src" / "abstractgateway" / "console_theme_sync.py"
+    lone.parent.mkdir(parents=True)
+    lone.write_text("")
+    (tmp_path / "abstractuic" / "ui-kit" / "package.json").unlink()
+    assert find_abstractuic(start=lone) is None  # nothing above: CI and wheels still skip
+
+
+def test_a_toolchain_other_than_the_releases_is_named(tmp_path: Path) -> None:
+    """The bundle is rebuilt with the installed packages; when they are not the release's lockfile
+    versions, the difference is named instead of passed off as drift (review F5)."""
+    from kit_release import toolchain_mismatches
+
+    lock = tmp_path / "package-lock.json"
+    lock.write_text(json.dumps({"packages": {
+        "": {"name": "root"},
+        "node_modules/esbuild": {"version": "0.25.12"},
+        "node_modules/react": {"version": "18.3.1"},
+        "node_modules/@abstractframework/ui-kit": {"link": True},
+        "node_modules/@esbuild/linux-x64": {"version": "0.25.12", "optional": True},
+    }}))
+    nm = tmp_path / "node_modules"
+    for name, version in (("esbuild", "0.25.12"), ("react", "18.3.1")):
+        (nm / name).mkdir(parents=True)
+        (nm / name / "package.json").write_text(json.dumps({"version": version}))
+    assert toolchain_mismatches(lock, nm) == []
+    (nm / "esbuild" / "package.json").write_text(json.dumps({"version": "0.27.0"}))
+    assert toolchain_mismatches(lock, nm) == ["esbuild: installed 0.27.0, release lockfile 0.25.12"]

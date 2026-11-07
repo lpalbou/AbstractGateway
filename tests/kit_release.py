@@ -78,7 +78,9 @@ def released_ui_kit(kit_ui_dir: Path, version: str, dest: Path) -> Optional[Path
     # tsconfig.base.json: ui-kit's tsconfig extends it, and esbuild reads it (its `strict` makes the
     # bundle start with "use strict"); without it the bundle built here differs from the vendored one.
     paths = ["ui-kit"]
-    for optional in ("panel-chat", "tsconfig.base.json"):
+    # package-lock.json: the release's toolchain (esbuild, React), checked against the installed
+    # packages the bundle is built with (`toolchain_mismatches`).
+    for optional in ("panel-chat", "tsconfig.base.json", "package-lock.json"):
         if subprocess.run(["git", "-C", repo, "cat-file", "-e", f"{tag}:{optional}"], capture_output=True).returncode == 0:
             paths.append(optional)
     archive = subprocess.run(["git", "-C", repo, "archive", tag, *paths], capture_output=True)
@@ -101,6 +103,27 @@ def build_islands_bundle(kit: Path, node_modules: Path, node: str) -> Path:
     if proc.returncode != 0 or not bundle.is_file():
         raise RuntimeError(f"building the islands bundle in {kit} failed:\n{proc.stdout}\n{proc.stderr}")
     return bundle
+
+
+def toolchain_mismatches(lockfile: Path, node_modules: Path) -> list:
+    """`name: installed X, release lockfile Y` for every package the release's package-lock.json pins
+    (workspace links aside) that the installed `node_modules` holds at another version, or lacks
+    (optional platform builds aside). Empty = the bundle built here is the release's build."""
+    if not lockfile.is_file():
+        return [f"{lockfile.name}: not in the release"]
+    out = []
+    for key, entry in json.loads(lockfile.read_text(encoding="utf-8")).get("packages", {}).items():
+        if not key.startswith("node_modules/") or entry.get("link") or not entry.get("version"):
+            continue
+        installed = node_modules.parent / key / "package.json"
+        if not installed.is_file():
+            if not entry.get("optional"):
+                out.append(f"{key[len('node_modules/'):]}: not installed, release lockfile {entry['version']}")
+            continue
+        version = str(json.loads(installed.read_text(encoding="utf-8")).get("version") or "")
+        if version != entry["version"]:
+            out.append(f"{key[len('node_modules/'):]}: installed {version}, release lockfile {entry['version']}")
+    return out
 
 
 def no_release_message(found: str, pinned: str) -> str:

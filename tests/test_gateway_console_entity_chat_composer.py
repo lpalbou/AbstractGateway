@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -105,8 +106,18 @@ def test_vendored_bundle_really_exports_mount_chat_composer() -> None:
     kit = console_islands_sync.locate_kit()
     if kit is None:
         pytest.skip("abstractuic ui-kit not present (non-monorepo checkout): kit version pin not checkable")
-    kit_version = json.loads((kit / "package.json").read_text(encoding="utf-8"))["version"]
-    assert ISLANDS_PROVENANCE["kit_version"] == kit_version, (
-        f"console_islands.py vendors kit {ISLANDS_PROVENANCE['kit_version']} but the kit checkout is {kit_version}: "
-        "re-run `python -m abstractgateway.console_islands_sync`"
-    )
+    # The console vendors a RELEASED kit: an abstractuic tag must carry that ui-kit version. The live
+    # checkout may have moved on (abstractuic main at a newer ui-kit) without any drift here; the
+    # drift itself is pinned against that tag in test_gateway_console_islands_sync.py.
+    from kit_release import release_tag
+
+    if os.getenv("ABSTRACTUIC_SRC", "").strip():
+        kit_version = json.loads((kit / "package.json").read_text(encoding="utf-8"))["version"]
+        assert ISLANDS_PROVENANCE["kit_version"] == kit_version, (
+            f"console_islands.py vendors kit {ISLANDS_PROVENANCE['kit_version']} but ABSTRACTUIC_SRC is {kit_version}"
+        )
+    else:
+        assert release_tag(kit.parent, ISLANDS_PROVENANCE["kit_version"]) is not None, (
+            f"no abstractuic tag released the vendored ui-kit {ISLANDS_PROVENANCE['kit_version']}: "
+            "re-sync the console from a released kit"
+        )

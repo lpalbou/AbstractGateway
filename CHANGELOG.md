@@ -104,6 +104,11 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
   holds (a pool of N stuck for good under N identity starts).
 
+- **The console kit sync and its drift pins find abstractuic from a worktree** (`console_theme_sync.find_abstractuic`):
+  the kit is looked up beside the repo or any of its parents, so `abstractgateway/untracked/<worktree>` (where
+  releases are cut) runs the pins instead of skipping them. A bundle rebuilt with packages other than the
+  release lockfile's is named as such, never reported as drift.
+
 ### Security
 
 - **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text),

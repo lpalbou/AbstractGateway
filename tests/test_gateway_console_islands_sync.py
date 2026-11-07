@@ -32,7 +32,7 @@ from abstractgateway import console_islands_sync
 from abstractgateway.console import gateway_console_html
 from abstractgateway.console_islands import ISLANDS_CSS, ISLANDS_JS, ISLANDS_PROVENANCE
 from abstractgateway.console_themes import KIT_THEME_SPECS
-from kit_release import build_islands_bundle, explicit_kit_src, no_release_message, released_ui_kit
+from kit_release import build_islands_bundle, explicit_kit_src, no_release_message, released_ui_kit, toolchain_mismatches
 
 pytestmark = pytest.mark.basic
 
@@ -81,6 +81,18 @@ def test_vendored_islands_match_the_bundle_built_from_the_kit(tmp_path: Path) ->
         node_modules = next((d for d in (checkout / "node_modules", checkout.parent / "node_modules") if (d / "esbuild").is_dir()), None)
         if node_modules is None:
             pytest.fail(f"abstractuic's packages are not installed (no esbuild under {checkout.parent}/node_modules): run `npm ci` in {checkout.parent}", pytrace=False)
+        # The bundle depends on the toolchain as much as on the sources: built with packages other
+        # than the release's (abstractuic main moved esbuild or React on), a byte difference would
+        # be the toolchain, not drift. Then this comparison cannot be made here and says so; the
+        # sources pin above still runs. Run it at the release with a worktree of the tag
+        # (`npm ci`, `node scripts/build_islands.mjs`) and ABSTRACTUIC_SRC=<it>/ui-kit/src.
+        mismatches = toolchain_mismatches(kit.parent / "package-lock.json", node_modules)
+        if mismatches:
+            pytest.skip(
+                "the installed abstractuic packages are not the release's, so a rebuilt bundle would differ by "
+                f"toolchain, not drift ({'; '.join(mismatches[:5])}{' …' if len(mismatches) > 5 else ''}): build a "
+                "worktree of the release tag with `npm ci` and set ABSTRACTUIC_SRC=<it>/ui-kit/src"
+            )
         build_islands_bundle(kit, node_modules, require_node())
     regenerated = console_islands_sync.generate_console_islands_module(kit)
     current = (Path(console_islands_sync.__file__).parent / console_islands_sync.GENERATED_MODULE).read_text(encoding="utf-8")
