@@ -23,6 +23,11 @@ class MentionRequest(BaseModel):
     mention_index: int = Field(default=0, ge=0, description="0, 1, 2... for several mentions in one message, sent in order")
 
 
+def _not_found(detail: str) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": detail, "code": "entity_not_found"},
+                        headers={"X-Gateway-Error-Code": "entity_not_found"})
+
+
 @router.post(
     "/sessions/{session_id}/mentions",
     summary="Mention an entity in a conversation (@entity)",
@@ -46,7 +51,14 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
     if not str(req.text or "").strip():
         raise HTTPException(status_code=422, detail="text is empty: say something to the entity")
     registry = _registry()
-    require_entity_visible(req.entity, registry=registry)
+    try:
+        # A hidden entity answers EXACTLY like a missing one (RBAC ruling 2026-10-01): same 404, same
+        # sentence, same code `entity_not_found` (so a client tells it from a missing route).
+        require_entity_visible(req.entity, registry=registry)
+    except HTTPException as e:
+        if e.status_code == 404:
+            return _not_found(str(e.detail))
+        raise
     try:
         return mention(
             svc=get_gateway_service(),
@@ -59,7 +71,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
             mention_index=int(req.mention_index),
         )
     except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+        return _not_found(str(e).strip("'\""))
     except MentionRefused as e:
         body: Dict[str, Any] = {"detail": e.detail}
         headers = None

@@ -219,6 +219,9 @@ def mention(
             svc, session_id=sid, text=text, reply=reply, principal=principal,
             author=author, prompt_author=person_author(principal), provenance=provenance,
         )
+        mirrors = _mirror_into_bound_visits(
+            registry=registry, visit_host=visit_host, session_id=sid, mentioned=manifest, author=author, reply=reply,
+        )
     return {
         "run_id": str(run.run_id),
         "turn_id": turn_id,
@@ -233,7 +236,49 @@ def mention(
             "entity_id": str(manifest.entity_id),
             "reused": reused,
         },
+        "mirrors": mirrors,
     }
+
+
+def _mirror_into_bound_visits(
+    *, registry: Any, visit_host: Any, session_id: str, mentioned: Any, author: Dict[str, Any], reply: str,
+) -> list:
+    """A VISIT LANE (the conversation is another entity's live visit, e.g. an Entity-app visit with
+    nerin): the mentioned entity's reply is a turn of THAT visit, spoken by the mentioned entity,
+    through the visit door (join the stamped participants, then `turn` with that speaker), so the
+    visited entity hears it and its home's ledger and memory keep it like any visitor's words. The
+    words read `<name> (entity): <reply>` (`speaker_line`, from the author field). The visited
+    entity answers that turn like any other. One row per bound visit:
+    `{entity_id, run_id, turn_id, reply}` or `{entity_id, run_id, error}` (a refusal there never
+    undoes the mention, it is stated)."""
+    from abstractruntime.core.turn_author import speaker_line
+
+    out: list = []
+    entities_dir = registry.entities_dir
+    if not entities_dir.exists():
+        return out
+    for child in sorted(entities_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith(".") or child.name == mentioned.slug:
+            continue
+        if not any(child.glob("runtime_*.sqlite3")):
+            continue  # never had a durable visit
+        er = registry.get_entity_runtime(child.name)
+        live = visit_host._live_visit_run(er)
+        if live is None or str(getattr(live, "session_id", "") or "") != session_id:
+            continue
+        row: Dict[str, Any] = {"entity_id": str(er.home.entity_id), "run_id": str(live.run_id)}
+        try:
+            visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+            turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
+                                     speaker=str(mentioned.entity_id))
+            row["turn_id"] = str(turned.get("turn_id") or "") or None
+            row["reply"] = str(turned.get("reply") or "")
+            if turned.get("status") == "failed":
+                row["error"] = str(turned.get("error") or "the mirrored turn failed")
+        except VisitRefused as e:
+            row["error"] = str(e.detail)
+        out.append(row)
+    return out
 
 
 __all__ = ["CODE_CANNOT_ANSWER", "CODE_ELSEWHERE", "MENTION_WORKFLOW_ID", "MentionRefused", "entity_author", "mention", "person_author"]

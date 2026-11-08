@@ -109,6 +109,7 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
         assert author["identity_ref"] == (str(ref) if ref is not None else None)
         visit_run = body["visit"]["run_id"]
         assert body["visit"]["reused"] is False
+        assert body["mirrors"] == []  # a plain chat session is bound to no visit: nothing mirrored
 
         # THE HOME PROBE: the entity's own runtime holds the visit turn (ledger + its history).
         er = registry.get_entity_runtime("castor")
@@ -162,7 +163,9 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
 
 def test_unknown_entity_is_404_and_an_unresolvable_mind_is_503(monkeypatch):
     with _client() as client:
-        assert _mention(client, "sess-x", "@Nobody hi", entity="Nobody").status_code == 404
+        missing = _mention(client, "sess-x", "@Nobody hi", entity="Nobody")
+        assert missing.status_code == 404 and missing.json()["code"] == "entity_not_found"
+        assert missing.headers["X-Gateway-Error-Code"] == "entity_not_found"
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "", "model": "", "base_url": None, "reasoning": None})
         r = _mention(client, "sess-x", "@Castor hi")
@@ -215,3 +218,51 @@ def test_a_member_cannot_mention_an_entity_they_did_not_create(tmp_path, monkeyp
     missing = c.post("/api/gateway/sessions/sess-alice/mentions", headers=gw["alice"], json={"entity": "nobody", "text": "hi"})
     assert r.status_code == 404 and missing.status_code == 404, r.text
     assert r.json()["detail"] == missing.json()["detail"].replace("nobody", "borea")
+    # Identical shape, nothing else leaks: the same code on both.
+    assert set(r.json()) == set(missing.json()) == {"detail", "code"}
+    assert r.json()["code"] == missing.json()["code"] == "entity_not_found"
+
+
+def test_a_mention_in_a_visit_lane_is_heard_by_the_visited_entity(monkeypatch):
+    """An Entity-app visit with Nerin; the person mentions @Castor in that conversation. Castor's
+    reply is mirrored into Nerin's visit as a turn spoken by entity:castor (door join + turn):
+    Nerin's history carries "Castor (entity): ..." before his reply, his home ledger keeps it."""
+    _install_llm(monkeypatch, [
+        "Nerin: hello.",                 # nerin, the person's first turn
+        "Castor: the bridge holds.",     # castor, the mention
+        "Nerin: thank you, Castor.",     # nerin hears castor (the mirrored turn)
+        "Nerin: and you, again.",        # nerin, the person's next turn
+    ])
+    with _client() as client:
+        for name in ("Nerin", "Castor"):
+            assert client.post("/api/gateway/entities", json={"name": name, "spark": _spark(name)}).status_code == 201
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={}).json()
+        sid, nerin_run = opened["session_id"], opened["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{nerin_run}/turn",
+                           json={"text": "@Castor does the bridge hold?"}).status_code == 200
+        from abstractgateway.routes.entities import _registry
+
+        er = _registry().get_entity_runtime("nerin")
+        ledger_before = len(er.ledger_store.list(nerin_run))
+
+        r = _mention(client, sid, "@Castor does the bridge hold?")
+        assert r.status_code == 200, r.text
+        (mirror,) = r.json()["mirrors"]
+        assert mirror["entity_id"] == "entity:nerin" and mirror["run_id"] == nerin_run
+        assert mirror["reply"] == "Nerin: thank you, Castor." and mirror["turn_id"]
+
+        nxt = client.post(f"/api/gateway/entities/Nerin/visit/{nerin_run}/turn", json={"text": "and now?"})
+        assert nxt.status_code == 200 and nxt.json()["reply"] == "Nerin: and you, again."
+        run = er.run_store.load(nerin_run)
+        history = run.vars["_visit"]["history"]
+        said = [i for i, m in enumerate(history) if m["role"] == "user" and "Castor (entity): Castor: the bridge holds." in m["content"]]
+        assert said and history[said[0] + 1] == {"role": "assistant", "content": "Nerin: thank you, Castor."}
+        # The door join: Castor is a stamped participant (re-signed) and present in the visit.
+        assert "entity:castor" in run.vars["_runtime"]["entity"]["participants"]
+        assert "entity:castor" in run.vars["_visit"]["participants"]
+        # The home ledger keeps the mirrored turn like any visitor's words.
+        records = er.ledger_store.list(nerin_run)
+        assert len(records) > ledger_before
+        assert any("Castor (entity)" in str(rec) for rec in records[ledger_before:])
+        # ... spoken by Castor (the verified speaker on the formed episode), not by the person.
+        assert any("entity:castor:\\n" in str(rec) for rec in records[ledger_before:])

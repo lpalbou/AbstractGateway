@@ -1447,6 +1447,42 @@ class EntityVisitHost:
             self._finalize_terminal(er, manifest, run_id, state)
         return out
 
+    # ------------------------------------------------------------------ join
+    def join_participant(self, name: str, run_id: str, participant: str) -> bool:
+        """A new voice joins a live visit, DOOR-authored (an entity mentioned in this visit's
+        conversation): `participant` is added to the SIGNED stamp (re-signed for this run, the
+        door's own mint authority) and to the run's `_visit.participants`, so the speaker rule
+        honours it from the next turn on and formed records name it as present. Joining is
+        visible, like the chat lane's room join. Returns False when it was already present."""
+        from .entity_gate import finalize_summon_stamp
+
+        voice = str(participant or "").strip()
+        if ":" not in voice:
+            raise ValueError(f"a participant is namespace:name (entity:castor), not {participant!r}")
+        er, _run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
+        lease = self._acquire_lease(er)
+        try:
+            run = er.run_store.load(str(run_id))
+            rt_ns = run.vars.setdefault("_runtime", {})
+            stamp = dict(rt_ns.get("entity") or {})
+            stamped = [str(p) for p in (stamp.get("participants") or [])]
+            visit_ns = run.vars.setdefault("_visit", {})
+            present = [str(p) for p in (visit_ns.get("participants") or stamped)]
+            if voice in stamped and voice in present:
+                return False
+            if voice not in stamped:
+                stamp["participants"] = stamped + [voice]
+                rt_ns["entity"] = finalize_summon_stamp(stamp, data_dir=self._registry.data_dir, run_id=str(run_id))
+            if voice not in present:
+                visit_ns["participants"] = present + [voice]
+            er.run_store.save(run)
+        finally:
+            if lease is not None:
+                lease.release()
+        with self._lock:
+            self._specs.pop(str(run_id), None)  # rebuilt from the re-signed stamp
+        return True
+
     # ----------------------------------------------------------------- close
     def close(
         self,
