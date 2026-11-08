@@ -10081,6 +10081,59 @@ _LIST_RUNS_KNOWN_PARAMS = frozenset({
 })
 
 
+def _session_totals_for_page(
+    rs: Any, items: List[Dict[str, Any]], kinds: Optional[frozenset]
+) -> Optional[Dict[str, Dict[str, int]]]:
+    """`session_totals` for the sessions ONE page names (operator 2026-11-08:
+    Code's sidebar said "≥4 turns" because a page does not hold every run of
+    a session): `{session_id: {"turns": <turn roots in the whole session>,
+    "runs": <all its runs>}}`, read from the file store's session index
+    (`session_id -> {run id: session_kind}`) and children index (a root run
+    is one no children set names) — no run file, no ledger. `kinds` is the
+    page's `session_kind` filter: a conversation listing counts conversation
+    runs; a member outside the filter is not counted. None when the page
+    names no session, or when the store is not the file store (no such
+    indexes — the key is omitted, never guessed). Bounded: the sessions on
+    the page only."""
+    from abstractruntime import JsonFileRunStore
+
+    # The gateway's store is the artifact-offloading wrapper over the file
+    # store (`stores.py`: it warms these very indexes on `inner` at boot).
+    inner = getattr(rs, "inner", None)
+    if isinstance(inner, JsonFileRunStore):
+        rs = inner
+    if not isinstance(rs, JsonFileRunStore):
+        return None
+    session_ids: List[str] = []
+    for it in items:
+        sid = str(it.get("session_id") or "").strip()
+        if sid and sid not in session_ids:
+            session_ids.append(sid)
+    if not session_ids:
+        return None
+    # The store's own lazy builders (one memo scan per process, then
+    # maintained on save/create/delete and synced from the creation journal).
+    rs._ensure_session_index()  # noqa: SLF001 - the index the listing's own rows come from
+    rs._ensure_children_index()  # noqa: SLF001
+    with rs._session_index_lock:  # noqa: SLF001
+        members_by_sid = {sid: dict((rs._session_index or {}).get(sid) or {}) for sid in session_ids}  # noqa: SLF001
+    with rs._index_lock:  # noqa: SLF001
+        run_parent = rs._run_parent_index  # noqa: SLF001 - run id -> parent run id (None = a root)
+        parents = {rid: run_parent.get(rid) for members in members_by_sid.values() for rid in members}
+    totals: Dict[str, Dict[str, int]] = {}
+    for sid, members in members_by_sid.items():
+        runs = 0
+        turns = 0
+        for rid, kind in members.items():
+            if kinds is not None and kind not in kinds:
+                continue
+            runs += 1
+            if parents.get(rid) is None:
+                turns += 1
+        totals[sid] = {"turns": turns, "runs": runs}
+    return totals
+
+
 def _parse_session_kind_filter(value: Optional[str]) -> Optional[frozenset]:
     """`session_kind=chat,discussion` -> {"chat","discussion"}; unknown kinds refused (400)."""
     from abstractruntime.core.run_attribution import SESSION_KINDS, filter_values
@@ -10584,6 +10637,12 @@ async def list_runs(
             "has_more": has_more,
             "archived_sessions": archived_count,
         }
+        # The whole session behind each row on this page (turns = roots,
+        # runs = all), from the store's indexes; absent when the page names
+        # no session or the store has no such index.
+        session_totals = _session_totals_for_page(rs, items, kinds)
+        if session_totals is not None:
+            out_page["session_totals"] = session_totals
         if scan_truncated:
             out_page["warnings"] = [
                 "#TRUNCATION the run scan hit its cost cap — deeper matches may exist beyond this page"
