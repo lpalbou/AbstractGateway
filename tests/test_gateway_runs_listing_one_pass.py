@@ -36,7 +36,9 @@ pytestmark = pytest.mark.basic
 
 DRAFT = {"source": "abstractflow.editor", "purpose": "draft_test", "visibility": "private",
          "retention": {"mode": "ephemeral", "ttl_s": "3600"}, "editor_session_id": "editor-session", "flow_id": "root"}
-ROOT_PAGE = "/api/gateway/runs?limit=200&root_only=true"
+# Conversations AND automation sessions (backlog 1166: the plain default is conversations only,
+# and this store's newest visible turns are the automation occurrences).
+ROOT_PAGE = "/api/gateway/runs?limit=200&root_only=true&kind=conversation,automation"
 OBSERVER_PAGE = "/api/gateway/runs?limit=200&root_only=true&kind=conversation&session_kind=automation,occurrence"
 
 

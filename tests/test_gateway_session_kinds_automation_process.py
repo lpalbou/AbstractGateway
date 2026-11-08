@@ -153,7 +153,10 @@ def test_existing_automation_and_process_sessions_are_migrated_once(client: Test
         assert stored["sessions"][sid] == {**stored["sessions"][sid], "kind": "automation", "by": AUTOMATION_MIGRATION}
     (proc_sid,) = seeded["process"]
     assert stored["sessions"][proc_sid]["kind"] == "process" and stored["sessions"][proc_sid]["by"] == PROCESS_MIGRATION
-    assert stored["sessions"][seeded["drain"]]["kind"] == "notes", "a Note drain occurrence is notes"
+    # A Note drain occurrence is notes by its workflow at read time (it has a parent: the notes
+    # migration marks only door-started roots), so the file never grows by one entry per drain.
+    assert seeded["drain"] not in stored["sessions"]
+    assert seeded["drain"] in _sessions(client, "&kind=notes")
     # Idempotent: a later occurrence is derived at read time, never re-scanned into the file.
     ctl = controller_run(title="Later")
     late = occurrence_run(ctl.run_id, index=1, session_id=f"occ-session:{ctl.run_id}:1")

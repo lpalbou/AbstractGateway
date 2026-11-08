@@ -199,7 +199,9 @@ def test_runs_rows_carry_automation_attribution(client: TestClient) -> None:
 
 def test_root_only_returns_turn_roots(client: TestClient) -> None:
     ctrl, occ1, desc, chat, chat_child, disc, legacy = _seed_runs()
-    rows = _rows(client, "root_only=true")
+    # Turn roots across conversations AND automation sessions (backlog 1166: the plain default
+    # lists conversations only; an automation's occurrences are `kind: automation`).
+    rows = _rows(client, "root_only=true&kind=conversation,automation")
     # Occurrences ARE turns (children of the controller); controllers, descendants, sub-runs are not.
     assert occ1.run_id in rows and chat.run_id in rows and disc.run_id in rows and legacy.run_id in rows
     assert ctrl.run_id not in rows and desc.run_id not in rows and chat_child.run_id not in rows
@@ -345,8 +347,9 @@ def test_run_now_occurrence_rows_and_quiet_attention(live: TestClient) -> None:
     assert last["index"] == 1 and last["excerpt"] == row["answer"][:280]
     # Quiet: no unread.
     assert detail["summary"]["attention"]["unread"] is False
-    # The occurrence is a turn of /runs?root_only=true (it is the controller's child).
-    rows = _rows(live, "root_only=true")
+    # The occurrence is a turn of /runs?root_only=true (it is the controller's child) — an
+    # automation session's turn (backlog 1166), so asked for by kind beside conversations.
+    rows = _rows(live, "root_only=true&kind=conversation,automation")
     assert row["run_id"] in rows and rows[row["run_id"]]["role"] == "occurrence"
     assert aid not in rows
 
@@ -883,7 +886,7 @@ def test_runs_rows_carry_the_folder_turns_execute_in(live: TestClient, tmp_path:
     assert rows[out["run_id"]]["workspace_root"] == out["workspace_root"] != out["mounted_workspace"]
     # The occurrence (a turn, though a child of the controller) carries its folder, on both paths.
     automation_ws = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["workspace_root"]
-    assert _rows(live, "root_only=true")[occ["run_id"]]["workspace_root"] == automation_ws
+    assert _rows(live, "root_only=true&kind=conversation,automation")[occ["run_id"]]["workspace_root"] == automation_ws
     children = live.get(f"/api/gateway/runs?parent_run_id={aid}&include_ledger_len=false", headers=HEADERS).json()["items"]
     assert [c["workspace_root"] for c in children if c["run_id"] == occ["run_id"]] == [automation_ws]
 
