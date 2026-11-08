@@ -1538,7 +1538,16 @@ def entity_tile(name: str) -> Dict[str, Any]:
 
         record = read_identity(home_dir)
         if record is not None:
-            look = {"style": record.avatar.style, "color": record.avatar.color}
+            from ..entity_identity import avatar_catalog, resolve_style
+
+            # The design DRAWN (a retired id resolves to its replacement, an unknown id to the
+            # default) beside the id as stored, like the identity route (b8dff9ee).
+            stored_style = record.avatar.style
+            look = {
+                "style": resolve_style(stored_style, avatar_catalog()),
+                "style_requested": stored_style,
+                "color": record.avatar.color,
+            }
     except Exception as e:  # noqa: BLE001 - IdentityUnreadable: no look, labeled
         warnings.append(f"#FALLBACK identity unreadable: {e}")
     if look is None:
@@ -1546,7 +1555,7 @@ def entity_tile(name: str) -> Dict[str, Any]:
 
         appearance = read_entity_appearance(home_dir) or {}
         if appearance.get("color"):
-            look = {"style": None, "color": appearance.get("color")}
+            look = {"style": None, "style_requested": None, "color": appearance.get("color")}
 
     # Its mind: its own model choice, else the model its newest lived record was stamped with (the
     # card's `mind_substrate`, free from the engine cache). Never the gateway-wide default: that is

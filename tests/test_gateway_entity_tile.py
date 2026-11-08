@@ -107,7 +107,12 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         assert tile["into_lately"] == [] and tile["on_its_mind"] is None and tile["latest_lesson"] is None
         assert tile["counts"] == {"open_questions": 0, "open_problems": 0, "lessons": 0, "interests": 0, "sleeps": tile["counts"]["sleeps"]}
         # Its look comes from its identity record (framework ADR 0052: birth records the default).
-        assert set(tile["look"]) == {"style", "color"} and tile["look"]["style"] and tile["look"]["color"].startswith("#")
+        assert set(tile["look"]) == {"style", "style_requested", "color"} and tile["look"]["style"] and tile["look"]["color"].startswith("#")
+        # the drawn design is an active catalog entry; the stored id rides beside it
+        from abstractgateway.entity_identity import avatar_catalog
+
+        assert avatar_catalog()[tile["look"]["style"]].get("status") != "retired"
+        assert tile["look"]["style_requested"] == tile["look"]["style"] or avatar_catalog()[tile["look"]["style_requested"]].get("status") == "retired"
         assert tile["now"]["state"] == "asleep"
 
         _form("interest", "tides", "what the tide keeps and what it takes back", turn="t1")
