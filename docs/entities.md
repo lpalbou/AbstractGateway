@@ -467,7 +467,9 @@ Where the app reads them:
   `versions`, memory's list of every reading, oldest first (each with
   `version`, `text`, `digest_method`, `author`, `reader`, `cause` as
   `{cause, ...}`, `understood_at`, `seq` and `current`; empty when the
-  record was never rewritten).
+  record was never rewritten). Private non-diary records carry the same
+  understanding fields (`digest`, `digest_method`, `versions`,
+  `authored_by`, ...) as the public ones.
 - **Recall snapshots** in the replay stream (`family: "snapshot"`, with
   `enrich=true`): `display.recalled` holds one block per recalled record
   (`record_id` as the snapshot lists it, `graph_id`, `kind`, then the
