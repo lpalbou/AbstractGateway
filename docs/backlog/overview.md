@@ -22,7 +22,7 @@ can trust without importing local gateway packages.
 ## Counts
 
 - Planned: 25
-- Proposed: 55
+- Proposed: 56
 - Completed: 72
 - Deprecated: 5
 - Recurrent: 0
@@ -34,6 +34,7 @@ can trust without importing local gateway packages.
 2026-11-08: 1153 planned (run listing serves `error`; ledger error stored whole; from the Observer Board review): planned +1.
 2026-11-08: 1147 moved to PROPOSED with the simple seam fix written first (operator: "too long, find a simpler solution"; a pointer stub stays in planned/ until the operator runs `git rm` on it); 1149 planned (keep-awake is a user setting: console, terminal, tray): planned 23 (+1 −1), proposed 55.
 2026-11-07: 1011 proposed (notification emails render the automation's Markdown safely): proposed 55; 1010
+2026-11-08: 1156 proposed (run listing stays fast under load; the long-lived process slowed to >60 s before the 01:20 restart): proposed +1.
 2026-11-08: release/0.21.0 merged into main; counts recounted from the files (topic folders included, README/template excluded).
 
 
@@ -166,6 +167,7 @@ Priority P1: push every registered device (0940) — the phone-first rule leaves
 
 | Item | Promotion criteria |
 | --- | --- |
+| [1156 Run listing stays fast under load](proposed/1156_run_listing_stays_fast_under_load.md) | P1 investigation; the 3-hour-old process answered the listing in >60 s under swap pressure, a fresh one in 0.15 s (2026-11-08). |
 | [0989 Native stack capture](proposed/0989_native_stack_capture_crash.md) | Isolate native exit 139 coinciding with signal dumping before modifying diagnostics; existing supervisor recovered. |
 | [0990 Console startup contention](proposed/0990_console_startup_workflow_contention.md) | Measure workflow compilation/GIL and initial discovery work before choosing cold-start improvements; warm catalog fix delivered in 0986. |
 | [0982 Retained history and serving metrics](proposed/0982_resources_retained_history_and_serving_metrics.md) | Promote after retention/access/overhead and Runtime serving-metric ownership are agreed; browser-local history is insufficient for the operator. |
