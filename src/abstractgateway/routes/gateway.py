@@ -10031,6 +10031,40 @@ async def get_run(run_id: str) -> Dict[str, Any]:
 # it stops us the response says so instead of pretending the list ended.
 _RUNS_SCAN_CAP = 50_000
 
+# Scan depth memory (2026-11-08): per listing shape (`list_runs`' depth key: plane + filters,
+# not the page bounds), how deep the store had to be read last time — store rows per served
+# item when the page filled, or the store's whole answer when it was exhausted. A hint only:
+# the next identical listing STARTS there (never below the default depth) and still widens
+# when the store moved. Bounded; the oldest shape is forgotten first.
+_RUNS_SCAN_DEPTH: Dict[tuple, tuple] = {}
+_RUNS_SCAN_DEPTH_MAX = 256
+_RUNS_SCAN_DEPTH_MARGIN = 1.25
+_RUNS_SCAN_DEPTH_LOCK = threading.Lock()  # listings compute on the heavy pool's threads
+
+
+def _runs_scan_depth(key: tuple, want: int, default: int) -> int:
+    """The first `list_run_index` limit for this listing: the default, or deeper when the
+    last identical listing needed more (with a margin for runs created since)."""
+    with _RUNS_SCAN_DEPTH_LOCK:
+        hint = _RUNS_SCAN_DEPTH.get(key)
+    if hint is None:
+        return default
+    kind, value = hint
+    if kind == "ratio":
+        needed = int(value * want * _RUNS_SCAN_DEPTH_MARGIN) + 64
+    else:  # "exhausted": the whole answer, plus room so a short read still proves exhaustion
+        needed = int(value * _RUNS_SCAN_DEPTH_MARGIN) + 64
+    return max(default, min(_RUNS_SCAN_CAP, needed))
+
+
+def _note_runs_scan_depth(key: tuple, *, rows_per_item: Optional[float] = None, exhausted_at: Optional[int] = None) -> None:
+    hint = ("ratio", float(rows_per_item)) if rows_per_item is not None else ("exhausted", int(exhausted_at or 0))
+    with _RUNS_SCAN_DEPTH_LOCK:
+        _RUNS_SCAN_DEPTH.pop(key, None)
+        _RUNS_SCAN_DEPTH[key] = hint
+        while len(_RUNS_SCAN_DEPTH) > _RUNS_SCAN_DEPTH_MAX:
+            _RUNS_SCAN_DEPTH.pop(next(iter(_RUNS_SCAN_DEPTH)), None)
+
 
 def _is_internal_workflow_id(workflow_id: Any) -> bool:
     """The catalog owns the id scheme, so it owns this question."""
@@ -10311,6 +10345,16 @@ async def list_runs(
                 out["waiting"] = {"reason": reason, **({"until": until} if until else {})}
         return out
 
+    inner = getattr(rs, "_inner", rs)
+    plane = getattr(inner, "_base", None) or getattr(rs, "_base", None) or id(rs)
+    # What this listing asks the store and filters on, minus the page bounds: the key of
+    # the scan depth it needed last time (`_runs_scan_depth`).
+    depth_key = (
+        str(plane), getattr(status_enum, "value", None), wid, sid, bool(root_only),
+        tuple(sorted(kinds)) if kinds is not None else None, qtext, bool(include_drafts),
+        bool(archive_filter), bool(archived_only), want_kind, bool(filter_internal),
+    )
+
     # OFF-LOOP (H7c class, 2026-07-13 connect incident): this listing walks
     # the whole run directory on file-backed stores (~1.6s at the operator's
     # 3k-run scale) and previously ran ON the event loop with zero awaits —
@@ -10344,6 +10388,13 @@ async def list_runs(
                 # exhaustion); only a cost-cap stop is truncation, and that
                 # is reported, never silently swallowed.
                 scan_limit = max(200, _want * 5) if (bool(root_only) or sid or filter_internal or not include_drafts or qtext) else _want
+                # ONE STORE PASS (2026-11-08, the Observer's 30 s refresh deadline): in the
+                # store's `verify` run-index mode every `list_run_index` call globs and stats the
+                # whole run folder, whatever its limit, so each widening below re-paid the whole
+                # folder — a root-only page cost two passes, and under a busy interpreter every
+                # stat waits for the GIL. The depth the last identical listing needed starts
+                # this one there (never shallower than the default): one pass in steady state.
+                scan_limit = _runs_scan_depth(depth_key, _want, scan_limit)
                 while True:
                     items = []
                     # root_only = turn roots, computed by the store (occurrence
@@ -10360,7 +10411,8 @@ async def list_runs(
                     row_count = len(rows or [])
                     if bool(root_only):
                         rows = _drop_superseded_attempts(list(rows or []))
-                    for row in rows or []:
+                    filled_at = 0
+                    for pos, row in enumerate(rows or []):
                         wf_id = str(row.get("workflow_id") or "").strip()
                         # NOT a bare `__` prefix: a catalog-published workflow
                         # runs under `__catalog__v2__…` and is the opposite of
@@ -10374,9 +10426,14 @@ async def list_runs(
                             continue
                         items.append(summary)
                         if len(items) >= _want:
+                            filled_at = pos + 1
                             break
-                    if len(items) >= _want or row_count < scan_limit:
-                        break  # page filled, or the store gave everything it has
+                    if len(items) >= _want:
+                        _note_runs_scan_depth(depth_key, rows_per_item=filled_at / _want)
+                        break  # page filled
+                    if row_count < scan_limit:
+                        _note_runs_scan_depth(depth_key, exhausted_at=row_count)
+                        break  # the store gave everything it has
                     if scan_limit >= _RUNS_SCAN_CAP:
                         scan_truncated = True
                         break
@@ -10541,8 +10598,6 @@ async def list_runs(
     # cancel or a start never joins a computation that began before it. Keyed
     # by the caller's plane and the exact query string, so two accounts or two
     # filters never share a page.
-    inner = getattr(rs, "_inner", rs)
-    plane = getattr(inner, "_base", None) or getattr(rs, "_base", None) or id(rs)
     key = f"{plane}|{http_write_generation()}|{request.url.query}"
     return await _coalesced_runs_listing(key, _collect_items)
 
