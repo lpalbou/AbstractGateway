@@ -47,24 +47,12 @@ sessions). See `entity_gate.mint_summon_stamp` for the convention.
 
 from __future__ import annotations
 
-import logging
 import secrets
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import entity_drain as _entity_drain  # `resolve_drain` is read late-bound (tests replace it)
 from .config import entity_iterations_ceiling
-from .entity_drain import (
-    DRAIN_HOLDER,
-    IDLE_DRAIN_HARD_CAP,
-    SECONDS_PER_TASK,
-    HomeDrainWorker,
-    drain_failure_report,
-    skipped_drain_report,
-)
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["EntityVisitHost", "VisitRefused", "DEFAULT_VISIT_IDLE_S"]
 
@@ -459,10 +447,7 @@ def _visit_attachment_records(home_dir: Any, attachments: Optional[List[Dict[str
     return records
 
 
-def _compose_turn_probe(
-    run_vars: Dict[str, Any], *, tool_details: Optional[List[Dict[str, Any]]] = None,
-    last_drain: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+def _compose_turn_probe(run_vars: Dict[str, Any], *, tool_details: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """The probe payload the hosted chat lane serves per turn, composed from
     the DURABLE run's own vars (cutover gap 1). Field names mirror the hosted
     `ChatSession.turn` report exactly (entity's consumer contract: the drawer
@@ -478,23 +463,9 @@ def _compose_turn_probe(
     - tool_details: folded from the run's LEDGER by the caller (the
       2026-07-18 fix — [] only when the turn genuinely ran no tools or the
       ledger read failed, labeled); files: not captured in this lane.
-    - rebuilt: what the PREVIOUS turn's memory drain rebuilt (understanding
-      drain v1): `[{task_id, kind, record_id, outcome, version, model}]` from
-      the newest drain report — `last_drain` (the host's in-memory copy, the
-      newest) else the durable `_visit.last_drain`. A drain that could not
-      run adds a labeled `#FALLBACK` notice; the list is never silently empty.
     """
     visit_vars = run_vars.get("_visit") or {}
     turn_ns = run_vars.get("_turn") or {}
-    drain_report: Dict[str, Any] = {}
-    if isinstance(last_drain, dict):
-        drain_report = last_drain
-    elif isinstance(visit_vars.get("last_drain"), dict):
-        drain_report = visit_vars["last_drain"]
-    rebuilt = [dict(r) for r in (drain_report.get("rebuilt") or []) if isinstance(r, dict)]
-    notices = list(turn_ns.get("notices") or [])
-    if drain_report.get("error"):
-        notices.append(f"#FALLBACK memory rebuild did not run: {drain_report['error']}")
 
     def _origin_label(h: Dict[str, Any]) -> str:
         try:
@@ -539,9 +510,8 @@ def _compose_turn_probe(
         "memories": memories,
         "memories_in_context": len(memories),
         "records_formed": formed_ids,
-        "rebuilt": rebuilt,
         "diary_entries": list(turn_ns.get("diary_meta") or []),
-        "notices": notices,
+        "notices": list(turn_ns.get("notices") or []),
         "participants": list(visit_vars.get("participants") or []),
         "system_prompt": str(visit_vars.get("system_base") or ""),
         "tool_details": list(tool_details or []),
@@ -714,20 +684,6 @@ class EntityVisitHost:
         # not liveness — a host crash mid-drive leaves it at rest forever.
         # `working` truth = this set, never the stored status.
         self._in_flight: set = set()
-        # THE UNDERSTANDING DRAIN (runtime 0869 / gateway 1013, v1): after a
-        # turn parks, the home's rebuild queue is drained on this worker —
-        # one job per home at a time, never on the request thread, never on
-        # the shared pools. `_turn_seq[run_id]` counts the messages a visit
-        # took (a drain window ends at its next task boundary once a newer
-        # one arrived); `_home_activity[slug]` counts opens/turns/closes (an
-        # idle drain ends when a visit stirs); the reports rest in memory
-        # here (the newest, read by the next probe) and durably in the
-        # run's `_visit.last_drain`.
-        self._drain_worker = HomeDrainWorker()
-        self._turn_seq: Dict[str, int] = {}
-        self._home_activity: Dict[str, int] = {}
-        self._last_drain: Dict[str, Dict[str, Any]] = {}
-        self._home_last_drain: Dict[str, Dict[str, Any]] = {}
         # THE PARKED-VISIT REAPER (entity forensics c2465 ask 1 — the
         # "stranded auto-yield": an abandoned browser visit left
         # state=asleep(auto-yield) FOREVER because the D3 idle deadline only
@@ -1362,10 +1318,6 @@ class EntityVisitHost:
 
         er, run, wf, manifest = self._load_visit(name, run_id)
         self._refuse_if_paused(manifest, verb="take a message")
-        # A message arrived: the drain window the previous turn opened ends
-        # at its next task boundary (its should_continue reads this count),
-        # and an idle drain on this home sees the home stir.
-        turn_seq = self._note_activity(manifest.slug, run_id=run_id)
         # Attachments are validated against the entity's own workspace BEFORE
         # anything moves (a refused attachment costs no turn); the records
         # ride the resume payload as structured data (operator 2026-11-08:
@@ -1472,9 +1424,7 @@ class EntityVisitHost:
                 details = buckets[order[-1]]
         except Exception as e:  # noqa: BLE001 - the probe must not fail the turn
             ledger_notice = f"#FALLBACK tool details unavailable (ledger read failed: {e})"
-        with self._lock:
-            last_drain = self._last_drain.get(run_id)
-        out.update(_compose_turn_probe(state.vars or {}, tool_details=details, last_drain=last_drain))
+        out.update(_compose_turn_probe(state.vars or {}, tool_details=details))
         if ledger_notice:
             out["notices"] = [*out.get("notices", []), ledger_notice]
         if status == "completed":  # timed-out close raced this turn to terminal
@@ -1488,14 +1438,6 @@ class EntityVisitHost:
             # awake, losing a B1 prior sleep (wave adversary P2-4; tick's
             # failed branch already finalizes).
             self._finalize_terminal(er, manifest, run_id, state)
-        elif status == "waiting":
-            # THE TURN'S SHARE OF THE DRAIN (understanding drain v1): the run
-            # is parked and the reply is in hand — the rebuild runs on the
-            # per-home worker, independently of this return (the visitor
-            # never waits for it); its report reaches the NEXT probe.
-            self._schedule_visit_drain(
-                er, manifest, run_id, turn_id=str(out.get("turn_id") or ""), turn_seq=turn_seq,
-            )
         return out
 
     # ----------------------------------------------------------------- close
@@ -1561,112 +1503,6 @@ class EntityVisitHost:
             out["error"] = str(getattr(state, "error", "") or "the drive failed; see the run ledger")
             self._finalize_terminal(er, manifest, run_id, state)
         return out
-
-    # ------------------------------------------------- the understanding drain (v1)
-    def _note_activity(self, slug: str, *, run_id: Optional[str] = None) -> int:
-        """Count a stir on the home (an open, a message, a close). Returns the visit's new
-        message count when `run_id` is given (the window token a turn drain's should_continue
-        compares against), else 0."""
-        with self._lock:
-            self._home_activity[slug] = self._home_activity.get(slug, 0) + 1
-            if run_id is None:
-                return 0
-            self._turn_seq[run_id] = self._turn_seq.get(run_id, 0) + 1
-            return self._turn_seq[run_id]
-
-    @staticmethod
-    def _home_paused(home_dir: Path) -> bool:
-        from abstractruntime.identity.life import read_entity_state
-
-        return str(read_entity_state(Path(home_dir)).get("state") or "") == "paused"
-
-    @staticmethod
-    def _loop_running(home_dir: Path) -> bool:
-        from .entity_loop import loop_status
-
-        return bool(loop_status(Path(home_dir)).get("running"))
-
-    def _run_drain(
-        self, slug: str, home_dir: Path, *, trigger: str, window: str, hard_cap: int, budget_seconds: float,
-        parent: Dict[str, Any], should_continue: Any,
-    ) -> Dict[str, Any]:
-        """One call of the runtime's `drain` with this host's capability clients. Any failure —
-        the runtime lacking `understanding.drain`, a wrong call, an exception inside — is a
-        report with `error`, logged, so the next probe says the rebuild did not run."""
-        try:
-            drain = _entity_drain.resolve_drain()
-            report = drain(
-                Path(home_dir),
-                trigger=trigger,
-                window=window,
-                budget_seconds=float(budget_seconds),
-                hard_cap=int(hard_cap),
-                parent=dict(parent),
-                llm_for_capability=self._registry.capability_llm_factory(slug),
-                should_continue=should_continue,
-                holder=DRAIN_HOLDER,
-            )
-            return dict(report or {})
-        except Exception as e:  # noqa: BLE001 - recorded and labeled, never silent
-            logger.error("understanding drain (%s/%s) did not run for %s: %s: %s", trigger, window, slug, type(e).__name__, e)
-            return drain_failure_report(trigger=trigger, window=window, parent=parent, error=e)
-
-    def _record_visit_drain(self, er: Any, run_id: str, report: Dict[str, Any]) -> None:
-        """Keep the report in memory (the next probe reads it) and durably in the run's
-        `_visit.last_drain` — under the host lock and only while no turn is mid-flight on the
-        run: a turn that starts after this write loads it; a turn already running would save
-        over it, so the in-memory copy carries the report until the next drain writes."""
-        with self._lock:
-            self._last_drain[run_id] = report
-            if run_id in self._in_flight:
-                return
-            try:
-                run = er.run_store.load(run_id)
-                visit_ns = run.vars.get("_visit")
-                if not isinstance(visit_ns, dict):
-                    visit_ns = {}
-                    run.vars["_visit"] = visit_ns
-                visit_ns["last_drain"] = report
-                er.run_store.save(run)
-            except Exception as e:  # noqa: BLE001 - the in-memory copy still serves the probe
-                logger.warning("could not store the drain report on visit %s: %s", run_id, e)
-
-    def _schedule_visit_drain(self, er: Any, manifest: Any, run_id: str, *, turn_id: str, turn_seq: int) -> None:
-        """After a turn parked: drain this turn's share (window `visit`, hard_cap = the profile's
-        `cap_per_turn`, budget = cap x 60 s since a task costs 60 s by default and the cap is the
-        real bound) on the per-home worker. `should_continue` is false once a newer message
-        reached this visit, the home is paused, or the host is shutting down."""
-        slug = manifest.slug
-        home_dir = Path(er.home.home_dir)
-        parent = {"visit_run_id": run_id, "turn_id": turn_id}
-
-        def should_continue() -> bool:
-            with self._lock:
-                same_turn = self._turn_seq.get(run_id) == turn_seq
-            return same_turn and not self._drain_worker.closing and not self._home_paused(home_dir)
-
-        def job() -> None:
-            try:
-                from abstractruntime.identity.cognition_profile import rebuild_policy
-
-                cap = int(rebuild_policy(home_dir)["cap_per_turn"])
-            except Exception as e:  # noqa: BLE001
-                self._record_visit_drain(er, run_id, drain_failure_report(trigger="turn", window="visit", parent=parent, error=e))
-                return
-            if cap <= 0:
-                report = skipped_drain_report(trigger="turn", window="visit", parent=parent, reason="cap_per_turn is 0")
-            else:
-                report = self._run_drain(
-                    slug, home_dir, trigger="turn", window="visit", hard_cap=cap,
-                    budget_seconds=cap * SECONDS_PER_TASK, parent=parent, should_continue=should_continue,
-                )
-            self._record_visit_drain(er, run_id, report)
-
-        self._drain_worker.schedule(slug, job)
-
-    def stop_drains(self, *, wait_s: float = 5.0) -> None:
-        """Shutdown: no new drain windows; running ones end at their next task boundary."""
-        self._drain_worker.shutdown(wait_s=wait_s)
 
     # ---------------------------------------------------------------- status
     def is_visit_run(self, run_id: str) -> bool:

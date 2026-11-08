@@ -1936,11 +1936,6 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
             # run a reflection LLM call — the log line above is what tells
             # the operator this is WORK, not a hang.
             _stage("entity visits close_all (reflections may take a minute)", chat_host.close_all)
-        visit_host = getattr(service, "entity_visit_host", None)
-        if visit_host is not None:
-            # Memory rebuild windows end at their next task boundary (never
-            # mid-task) before the homes close under them.
-            _stage("entity memory drains stop", visit_host.stop_drains)
         registry = getattr(service, "entity_registry", None)
         if registry is not None:
             _stage("entity homes close_all", registry.close_all)
