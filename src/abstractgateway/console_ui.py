@@ -3705,7 +3705,7 @@ CONSOLE_UI_JS = r"""
     // {"default_workflow": {interface: value | ""}}} with the changed rows
     // only; "" goes back to the built-in default. The gateway validates and
     // its sentence is shown verbatim on refusal.
-    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map(), streamSaving: false, streamSaved: null, rowSaved: {} };
+    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map(), streamSaving: false, streamSaved: null, iterSaving: false, iterSaved: null, iterDraft: null, rowSaved: {} };
     function agentDefaultsBody(block, draft) {
       const body = {};
       for (const [iface, r] of Object.entries((block && block.default_workflow) || {})) {
@@ -3808,6 +3808,76 @@ CONSOLE_UI_JS = r"""
       if (st && st.streamSaved) out += `<p class="inline-state${st.streamSaved.tone === "ok" ? " ok" : " error"}" role="status" data-streaming-default-saved>${esc(st.streamSaved.head)}: ${esc(st.streamSaved.text)}</p>`;
       return out + `</div>`;
     }
+    // ---- Iteration limit (agents.max_iterations) ----
+    // GET /api/gateway/admin/runtime-config -> agents.max_iterations {key, value: int|null,
+    // source: stored|default, label, help, warn_above, warning?}. Save POSTs
+    // {"agents": {"max_iterations": n | null}}, then READS the setting back and says what the
+    // gateway kept; a refusal shows the gateway's sentence. Past warn_above a warning line,
+    // never a wall.
+    const ITERATION_LIMIT_LABEL = "Iteration limit";
+    const ITERATION_LIMIT_DESC = "How many cycles an agent run may take when the app does not set its own limit. Empty: each workflow's own limit (20 for the built-in agent).";
+    function iterationLimitMarkup(data, st) {
+      const block = (data && data.agents) || {};
+      const r = block.max_iterations;
+      const head = `<div class="workflows-settings" data-iteration-limit-row>`;
+      if (!r || typeof r !== "object" || !("value" in r) || (r.value !== null && !Number.isInteger(r.value))) {
+        return head + `<p class="ui-field-msg tone-warn" data-iteration-limit-missing>${esc(ITERATION_LIMIT_LABEL)}: not available on this gateway — its settings read has no agents.max_iterations.</p></div>`;
+      }
+      const admin = !!(data && data.writable);
+      const busy = !!(st && st.iterSaving);
+      const draft = st && typeof st.iterDraft === "string" ? st.iterDraft : (r.value === null ? "" : String(r.value));
+      const warnAbove = Number.isInteger(r.warn_above) ? r.warn_above : 200;
+      const n = /^\d+$/.test(draft.trim()) ? Number(draft.trim()) : null;
+      const warn = n !== null && n > warnAbove ? `${n} iterations is a lot: one run can take hours and use many model calls. It is allowed.` : "";
+      const now = r.value === null ? "Not set: each workflow's own limit" : `${r.value} (saved on this gateway)`;
+      let out = head
+        + `<div class="ui-apps-setting" data-iteration-limit><div class="ui-apps-setting__head"><label for="agent-iteration-limit">${esc(ITERATION_LIMIT_LABEL)}</label></div>`
+        + `<div class="ui-toolbar"><input type="number" min="1" step="1" inputmode="numeric" id="agent-iteration-limit" data-iteration-limit-input value="${esc(draft)}" placeholder="Each workflow's own" aria-describedby="agent-iteration-limit-desc"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
+        + `<button type="button" class="ui-btn" data-iteration-limit-save${admin && !busy ? "" : " disabled"}>${busy ? "Saving..." : "Save"}</button>`
+        + (r.value !== null ? `<button type="button" class="ui-btn" data-iteration-limit-clear${admin && !busy ? "" : " disabled"}>Use workflow limits</button>` : "")
+        + `</div>`
+        + `<p class="ui-net-proxy__text" id="agent-iteration-limit-desc">${esc(ITERATION_LIMIT_DESC)} Now: ${esc(now)}.</p>`
+        + (warn ? `<p class="ui-field-msg tone-warn" data-iteration-limit-warning>${esc(warn)}</p>` : "")
+        + (admin ? "" : `<p class="ui-net-proxy__text">Only an admin can change this.</p>`)
+        + `<span class="ui-sub" data-iteration-limit-cli>CLI: <code>abstractgateway config set ${esc(r.key || "agents.max_iterations")} 30</code></span>`;
+      if (st && st.iterSaved) out += `<p class="inline-state${st.iterSaved.tone === "ok" ? " ok" : " error"}" role="status" data-iteration-limit-saved>${esc(st.iterSaved.head)}: ${esc(st.iterSaved.text)}</p>`;
+      return out + `</div></div>`;
+    }
+    // "" = clear (each workflow's own limit); a whole number >= 1; anything else = a sentence, no request.
+    function iterationLimitBody(raw) {
+      const t = String(raw ?? "").trim();
+      if (!t) return { agents: { max_iterations: null } };
+      if (!/^\d+$/.test(t) || Number(t) < 1) return { error: "Enter a whole number of 1 or more, or leave it empty to use each workflow's own limit." };
+      return { agents: { max_iterations: Number(t) } };
+    }
+    async function iterationLimitSave(raw) {
+      const st = agentDefStore;
+      if (!st.data || st.iterSaving) return;
+      const body = iterationLimitBody(raw);
+      st.iterDraft = String(raw ?? "");
+      if (body.error) { st.iterSaved = { tone: "err", head: "Not saved", text: body.error }; agentDefaultsRender(); return; }
+      st.iterSaving = true;
+      st.iterSaved = null;
+      agentDefaultsRender();
+      try {
+        await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(body) });
+        // Verified by a read: the row says what the gateway KEPT, not what was sent.
+        const next = await api("/api/gateway/admin/runtime-config");
+        const prevAgents = (st.data && st.data.agents) || {};
+        st.data = { ...next, agents: { ...prevAgents, ...((next && next.agents) || {}) } };
+        const kept = st.data.agents.max_iterations && st.data.agents.max_iterations.value;
+        const want = body.agents.max_iterations;
+        st.iterDraft = null;
+        st.iterSaved = kept === want
+          ? { tone: "ok", head: "Saved", text: want === null ? "Agent runs use each workflow's own limit unless the app sets one." : `Agent runs get ${want} iterations unless the app sets its own limit.` }
+          : { tone: "err", head: "Not saved", text: `The gateway reports ${kept === null || kept === undefined ? "no limit" : kept} after the save.` };
+      } catch (err) {
+        const data = (err && err.data) || {};
+        st.iterSaved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+      }
+      st.iterSaving = false;
+      agentDefaultsRender();
+    }
     function streamingDefaultBody(on) { return { agents: { streaming_default: !!on } }; }
     async function streamingDefaultSave(on) {
       const st = agentDefStore;
@@ -3833,7 +3903,7 @@ CONSOLE_UI_JS = r"""
       // The streaming switch sits right under the default-workflow block,
       // from the same settings read (it shows even when the workflow rows
       // cannot be read: the switch is a separate setting).
-      for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup() + (agentDefStore.data ? streamingDefaultMarkup(agentDefStore.data, agentDefStore) : "");
+      for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup() + (agentDefStore.data ? streamingDefaultMarkup(agentDefStore.data, agentDefStore) + iterationLimitMarkup(agentDefStore.data, agentDefStore) : "");
       // The Workflows table's "Used by" names come from the same interface table.
       if (agentDefStore.data && state.workflows && state.workflows.length && typeof renderWorkflows === "function") renderWorkflows();
     }
@@ -3894,6 +3964,12 @@ CONSOLE_UI_JS = r"""
           streamingDefaultSave(sw.getAttribute("aria-checked") !== "true");
           return;
         }
+        const it = event && event.target && event.target.closest ? event.target.closest("[data-iteration-limit-save],[data-iteration-limit-clear]") : null;
+        if (it && !it.disabled) {
+          const input = el.querySelector("[data-iteration-limit-input]");
+          iterationLimitSave(it.hasAttribute("data-iteration-limit-clear") ? "" : (input ? input.value : ""));
+          return;
+        }
         const b = event && event.target && event.target.closest ? event.target.closest("[data-agent-defaults-save]") : null;
         if (b && !b.disabled) agentDefaultsSave();
       };
@@ -3901,6 +3977,12 @@ CONSOLE_UI_JS = r"""
         const t = event && event.target && event.target.matches ? event.target : null;
         const i = t && t.matches("[data-agent-default-select]") ? t : null;
         if (i) agentDefaultApply(i.dataset.agentDefaultSelect, i.value);
+        // The iteration field keeps what was typed and shows the >warn_above line on leave.
+        if (t && t.matches("[data-iteration-limit-input]")) { agentDefStore.iterDraft = t.value; agentDefStore.iterSaved = null; agentDefaultsRender(); }
+      };
+      el.onkeydown = (event) => {
+        const t = event && event.target && event.target.matches ? event.target : null;
+        if (t && event.key === "Enter" && t.matches("[data-iteration-limit-input]")) iterationLimitSave(t.value);
       };
       agentDefaultsRender();
       agentDefaultsRefresh();

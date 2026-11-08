@@ -1696,6 +1696,89 @@ def _write_streaming_default(stored: Dict[str, Any], raw: Any, applied: Dict[str
         stored.pop("agents", None)
 
 
+MAX_ITERATIONS_DEFAULT_KEY = "agents.max_iterations"
+# Past this the console shows a warning line; it is never a refusal (operator 2026-11-08: no wall).
+MAX_ITERATIONS_WARN_ABOVE = 200
+
+
+def _max_iterations_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """`agents.max_iterations`: the iteration budget (agent loop cycles) an interactive
+    `POST /runs/start` gets when the client sends none (`input_data._limits.max_iterations`
+    and the flat `max_iterations` pin both absent). Unset = the gateway adds nothing and the
+    workflow's own limit applies (the runtime's 20 when the workflow sets none). The two
+    backlog helper routes take it too, else their built-in 12 / 10."""
+
+    agents = stored.get("agents") if isinstance(stored.get("agents"), dict) else {}
+    raw = agents.get("max_iterations")
+    ok = isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1
+    out: Dict[str, Any] = {
+        "key": MAX_ITERATIONS_DEFAULT_KEY,
+        "value": int(raw) if ok else None,
+        "source": "stored" if ok else "default",
+        "default": None,
+        "label": "Iteration limit",
+        "help": (
+            "How many cycles an agent run may take when the app does not set its own limit "
+            "(input_data._limits.max_iterations). Empty = each workflow's own limit (20 for the built-in agent)."
+        ),
+        "warn_above": MAX_ITERATIONS_WARN_ABOVE,
+    }
+    if ok and int(raw) > MAX_ITERATIONS_WARN_ABOVE:
+        out["warning"] = (
+            f"{int(raw)} iterations is a lot: one run can take hours and use many model calls. It is allowed."
+        )
+    return out
+
+
+def resolve_max_iterations_default(data_dir: Path) -> Optional[int]:
+    """The stored gateway iteration default, or None when none is stored."""
+    return _max_iterations_default_payload(_read_store(Path(data_dir)))["value"]
+
+
+def parse_max_iterations(key: str, raw: Any) -> int:
+    """A whole number of 1 or more; a bool, a float or a word is refused with a sentence.
+    A digit string is accepted (the CLI sends text)."""
+    if isinstance(raw, bool) or isinstance(raw, float):
+        raise RuntimeConfigError(f"{key} is a whole number of 1 or more (got {raw!r})")
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str) and raw.strip().isdigit():
+        value = int(raw.strip())
+    else:
+        raise RuntimeConfigError(f"{key} is a whole number of 1 or more (got {raw!r})")
+    if value < 1:
+        raise RuntimeConfigError(f"{key} is a whole number of 1 or more (got {raw!r})")
+    return value
+
+
+def _write_max_iterations_default(stored: Dict[str, Any], raw: Any, applied: Dict[str, Any]) -> None:
+    agents = dict(stored.get("agents") or {}) if isinstance(stored.get("agents"), dict) else {}
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        agents.pop("max_iterations", None)  # clear = each workflow's own limit
+        applied[MAX_ITERATIONS_DEFAULT_KEY] = None
+    else:
+        agents["max_iterations"] = parse_max_iterations(MAX_ITERATIONS_DEFAULT_KEY, raw)
+        applied[MAX_ITERATIONS_DEFAULT_KEY] = agents["max_iterations"]
+    if agents:
+        stored["agents"] = agents
+    else:
+        stored.pop("agents", None)
+
+
+def resolve_run_iteration_limit(
+    requested: Any, data_dir: Path, *, builtin: Optional[int] = None
+) -> Dict[str, Any]:
+    """THE iteration-limit ladder for a run the gateway starts: the request's value >
+    the stored gateway default > `builtin` (None = the workflow decides). Returns the
+    receipt apps show: {max_iterations, source: request|gateway_default|builtin}."""
+    if isinstance(requested, int) and not isinstance(requested, bool) and requested >= 1:
+        return {"max_iterations": int(requested), "source": "request"}
+    stored = resolve_max_iterations_default(Path(data_dir))
+    if stored is not None:
+        return {"max_iterations": int(stored), "source": "gateway_default"}
+    return {"max_iterations": builtin, "source": "builtin"}
+
+
 def _write_agents_changes(
     stored: Dict[str, Any],
     changes: Dict[str, Any],
@@ -1715,23 +1798,28 @@ def _write_agents_changes(
             pairs.append((k[len(prefix):], v))
         elif k == STREAMING_DEFAULT_KEY:
             _write_streaming_default(stored, v, applied)
+        elif k == MAX_ITERATIONS_DEFAULT_KEY:
+            _write_max_iterations_default(stored, v, applied)
         elif isinstance(k, str) and k.startswith("agents.") and k != "agents":
             raise RuntimeConfigError(
-                f"unknown setting {k!r}; the agents settings are {SETTING_KEY}.<interface> and {STREAMING_DEFAULT_KEY}"
+                f"unknown setting {k!r}; the agents settings are {SETTING_KEY}.<interface>, "
+                f"{STREAMING_DEFAULT_KEY} and {MAX_ITERATIONS_DEFAULT_KEY}"
             )
     if "agents" in changes:
         block = changes["agents"]
         if (
             not isinstance(block, dict)
-            or set(block) - {"default_workflow", "streaming_default"}
+            or set(block) - {"default_workflow", "streaming_default", "max_iterations"}
             or not isinstance(block.get("default_workflow", {}), dict)
         ):
             raise RuntimeConfigError(
                 'agents must be {"default_workflow": {"<interface>": "bundle[@version]:flow" | ""}, '
-                '"streaming_default": true | false | null}'
+                '"streaming_default": true | false | null, "max_iterations": <whole number of 1 or more> | null}'
             )
         if "streaming_default" in block:
             _write_streaming_default(stored, block["streaming_default"], applied)
+        if "max_iterations" in block:
+            _write_max_iterations_default(stored, block["max_iterations"], applied)
         pairs.extend((block.get("default_workflow") or {}).items())
     if not pairs:
         return
@@ -1823,7 +1911,10 @@ def read_runtime_config(
         "apps": _apps_settings_payload(stored),
     }
     # agents.streaming_default is a plain switch: always in the posture.
-    out["agents"] = {"streaming_default": _streaming_default_payload(stored)}
+    out["agents"] = {
+        "streaming_default": _streaming_default_payload(stored),
+        "max_iterations": _max_iterations_default_payload(stored),
+    }
     if agent_index is not None or include_agents:
         # Default agent workflow per agent interface (agent_defaults.py):
         # {default_workflow: {interface: {value, source, available, reason,

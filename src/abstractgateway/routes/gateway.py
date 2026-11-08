@@ -2754,6 +2754,10 @@ class StartRunResponse(BaseModel):
     # {workflow_id, bundle_id, bundle_version, flow_id, registry_scope, name,
     #  source: "gateway_default" | "client"} (+ interface for a @default start).
     resolved_workflow: Optional[Dict[str, Any]] = None
+    # The iteration budget this start applied (agents.max_iterations ladder):
+    # {max_iterations: int | null, source: "request" | "gateway_default" | "builtin"};
+    # builtin = the workflow's own limit (null: the gateway does not know it).
+    limits: Optional[Dict[str, Any]] = None
 
 
 class PurgeDraftRunsRequest(BaseModel):
@@ -4872,6 +4876,31 @@ def _data_dir_workspace_problem(
             "gateway creates a folder of its own for this one"
         )
     return None
+
+
+def _apply_run_iteration_default(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """The iteration budget of an interactive `POST /runs/start` (`agents.max_iterations`).
+
+    The client's own value wins (`input_data._limits.max_iterations`, or the flat
+    `max_iterations` pin older clients send); else the stored gateway default is written to
+    `_limits.max_iterations`; else nothing is added and the workflow's own limit applies
+    (source `builtin`, `max_iterations: null`: the gateway cannot know a node's setting).
+    The receipt is recorded on the run (`input_data._gateway_limits`, server-written only)
+    and returned as `limits` so an app can say "Gateway default (12)"."""
+    from ..runtime_config import resolve_run_iteration_limit
+
+    input_data.pop("_gateway_limits", None)  # server-written only
+    raw_limits = input_data.get("_limits")
+    requested = raw_limits.get("max_iterations") if isinstance(raw_limits, dict) else None
+    if requested is None:
+        requested = input_data.get("max_iterations")
+    receipt = resolve_run_iteration_limit(requested, gateway_data_dir_from_env(), builtin=None)
+    if receipt["source"] == "gateway_default":
+        limits = dict(raw_limits) if isinstance(raw_limits, dict) else {}
+        limits["max_iterations"] = receipt["max_iterations"]
+        input_data["_limits"] = limits
+    input_data["_gateway_limits"] = dict(receipt)
+    return receipt
 
 
 def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -> None:
@@ -9485,6 +9514,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             # The one-off workspaces of this run (round 11); the body field and input_data.workspace are one.
             input_data["workspace"] = dict(req.workspace)
         _apply_run_stream_switch(input_data, interactive=True)
+        run_limits = _apply_run_iteration_default(input_data)
         _strip_client_automation_attribution(input_data)
         # The caller's voices are read HERE, on the loop (the voice route awaits work in the pools:
         # read from a pool thread it holds one worker while waiting for another, review P1); the
@@ -9648,6 +9678,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         run_id=str(run_id),
         runner_warning=_runner_inactive_warning(svc),
         resolved_workflow=resolved_workflow,
+        limits=run_limits,
     )
 
 
@@ -20101,6 +20132,22 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
         "end_reasons": ["completed", "failed", "cancelled", "unavailable"],
     }
 
+    # The gateway iteration default (agents.max_iterations), readable by every client so an
+    # app's "Iteration limit" field can say "Gateway default (12)" without admin rights.
+    from ..runtime_config import resolve_max_iterations_default, MAX_ITERATIONS_WARN_ABOVE
+
+    _iter_default = resolve_max_iterations_default(gateway_data_dir_from_env())
+    caps["agent_limits"] = {
+        "max_iterations": {
+            "default": _iter_default,
+            "source": "stored" if _iter_default is not None else "default",
+            "run_field": "_limits.max_iterations",
+            "min": 1,
+            "warn_above": MAX_ITERATIONS_WARN_ABOVE,
+        },
+        "receipt_field": "limits",
+    }
+
     # A conversation's standing tool decision, applied by the runtime before any approval wait
     # (session_tool_policy.py). Clients feature-gate their server-side "approve all" on it.
     from ..session_tool_policy import capability as _session_tool_policy_capability
@@ -22586,6 +22633,7 @@ class BacklogAssistResponse(BaseModel):
     reply: str
     draft_markdown: str = ""
     history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
+    limits: Optional[Dict[str, Any]] = Field(default=None, description="Iteration budget applied: {max_iterations, source: request|gateway_default|builtin}.")
 
 
 class BacklogMaintainRequest(BaseModel):
@@ -22643,6 +22691,7 @@ class BacklogAdvisorResponse(BaseModel):
     run_id: Optional[str] = None
     tool_trace: Optional[List[Dict[str, Any]]] = None
     history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
+    limits: Optional[Dict[str, Any]] = Field(default=None, description="Iteration budget applied: {max_iterations, source: request|gateway_default|builtin}.")
 
 
 class BacklogExecConfigResponse(BaseModel):
@@ -26576,6 +26625,10 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
     # The gateway default agent (agents.default_workflow, abstractcode.agent.v1).
     host = _require_bundle_host(svc)
     agent_bid, agent_ver, agent_fid = _backlog_agent_target(svc)
+    from ..runtime_config import resolve_run_iteration_limit
+
+    # The request's budget > the gateway default (agents.max_iterations) > the built-in 12.
+    maintain_limits = resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir), builtin=12)
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
     access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
     try:
@@ -26593,7 +26646,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
                 "resp_schema": schema,
                 # Documented, operator-overridable default (was a bare literal
                 # with no way to raise it — a round budget nobody asked for).
-                "max_iterations": int(req.max_iterations) if req.max_iterations else 12,
+                "max_iterations": maintain_limits["max_iterations"],
                 # Defense-in-depth: allow only read/search/network tools.
                 "tools": [
                     "read_file",
@@ -26667,7 +26720,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         raise HTTPException(status_code=500, detail="Maintenance agent produced no output")
     raw_resp = str((run2.output or {}).get("response") or "").strip()
     reply, draft = _parse_backlog_maintain_reply(raw_resp)
-    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history, limits=maintain_limits)
 
 
 @router.post("/backlog/advisor", response_model=BacklogAdvisorResponse)
@@ -26735,6 +26788,10 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
 
     host = _require_bundle_host(svc)
     agent_bid, agent_ver, agent_fid = _backlog_agent_target(svc, override_bundle=agent_override)
+    from ..runtime_config import resolve_run_iteration_limit
+
+    # The request's budget > the gateway default (agents.max_iterations) > the built-in 10.
+    advisor_limits = resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir), builtin=10)
     try:
         run_id = host.start_run(
             flow_id=agent_fid,
@@ -26752,7 +26809,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
                 "prompt": prompt,
                 "resp_schema": schema,
                 # Documented, operator-overridable default (see BacklogAdvisorRequest).
-                "max_iterations": int(req.max_iterations) if req.max_iterations else 10,
+                "max_iterations": advisor_limits["max_iterations"],
                 # Read-only advisor: allow only read/search/list/skim (+ optional web tools).
                 "tools": tools,
                 "system": (
@@ -26823,7 +26880,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
             tool_trace = _collect_tool_trace_for_run_tree(svc=svc, root_run_id=str(run_id))
         except Exception:
             tool_trace = None
-    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace, history=history)
+    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace, history=history, limits=advisor_limits)
 
 
 # ---------------------------------------------------------------------------
