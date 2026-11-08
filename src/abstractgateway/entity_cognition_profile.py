@@ -6,7 +6,9 @@ The profile is `<home>/cognition.yaml` (AbstractRuntime
 write): which model each part of its thinking uses (`summaries`,
 `understanding`, `extraction`; each the mind unless chosen), how many
 memories a turn brings to mind (`recall.shelf_size`), and how readily memory
-work revisits what it understood (`rebuild.sensitivity`, `rebuild.cap_per_turn`).
+work revisits what it understood (`rebuild.sensitivity`, `rebuild.cap_per_turn`), and
+what the end-of-tick look-back of its own time sees (`lookback.context`: "day", the
+default, or "tick").
 
 The PUT follows the substrate door: one write at a time per entity, every
 value checked before anything is recorded, the creator bound to the models
@@ -25,7 +27,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 # A running own-time loop reads the recall width when it starts; the GET says so.
 RECALL_APPLIES_TO_RUNNING_LOOP = "on restart"
 
-_PUT_BLOCKS = ("capabilities", "recall", "rebuild")
+_PUT_BLOCKS = ("capabilities", "recall", "rebuild", "lookback")
 
 
 class CognitionProfileRefused(Exception):
@@ -64,6 +66,7 @@ def cognition_profile_view(home_dir: Path) -> Dict[str, Any]:
          "recall": {"shelf_size": int, "source": "profile" | "default", "applies_to_running_loop": "on restart"},
          "rebuild": {"sensitivity": float, "cap_per_turn": int, "source": "profile" | "default",
                      "sources": {"sensitivity": ..., "cap_per_turn": ...}},
+         "lookback": {"context": "day" | "tick", "source": "profile" | "default"},
          "mind": {provider, model, thinking, "source": "entity" | "gateway" | "unset"[, "note"]}}
 
     `effective` is null only for a capability that inherits a mind the gateway
@@ -109,6 +112,7 @@ def cognition_profile_view(home_dir: Path) -> Dict[str, Any]:
             "source": "profile" if "profile" in rebuild["sources"].values() else "default",
             "sources": dict(rebuild["sources"]),
         },
+        "lookback": {"context": profile["lookback"]["context"], "source": profile["lookback"]["source"]},
         "mind": mind,
     }
 
@@ -148,7 +152,7 @@ def plan_cognition_profile_put(
 
     Body: any subset of `{capabilities: {cap: {"inherit": "mind"} | {provider, model, thinking?,
     max_input_tokens?} | null}, recall: {shelf_size: int | null}, rebuild: {sensitivity: number |
-    null, cap_per_turn: int | null}}`. A field that is absent keeps its value; null returns it to its
+    null, cap_per_turn: int | null}, lookback: {context: "day" | "tick" | null}}`. A field that is absent keeps its value; null returns it to its
     default (for a capability: the mind). A capability sent unchanged is kept as it is; a changed one
     must name an enabled `endpoint:` connection when it uses one, and, for the entity's creator
     (`role == "creator"`), a model the gateway offers (`bound_problem` returns the sentence, else
@@ -162,6 +166,7 @@ def plan_cognition_profile_put(
         validate_cap_per_turn,
         validate_capability_choice,
         validate_cognition_profile,
+        validate_lookback_context,
         validate_sensitivity,
         validate_shelf_size,
     )
@@ -169,10 +174,12 @@ def plan_cognition_profile_put(
     from .entity_settings_access import REASON_NOT_OFFERED
 
     if not isinstance(body, Mapping):
-        raise CognitionProfileRefused(400, "Send an object with capabilities, recall or rebuild.")
+        raise CognitionProfileRefused(400, "Send an object with capabilities, recall, rebuild or lookback.")
     unknown = [str(k) for k in body.keys() if k not in _PUT_BLOCKS]
     if unknown:
-        raise CognitionProfileRefused(400, f"Unknown field {unknown[0]!r}: send capabilities, recall or rebuild.")
+        raise CognitionProfileRefused(
+            400, f"Unknown field {unknown[0]!r}: send capabilities, recall, rebuild or lookback."
+        )
     old = stored_cognition_profile(Path(home_dir))
     new = copy.deepcopy(old)
     try:
@@ -210,11 +217,16 @@ def plan_cognition_profile_put(
         for block, checks in (
             ("recall", {"shelf_size": validate_shelf_size}),
             ("rebuild", {"sensitivity": validate_sensitivity, "cap_per_turn": validate_cap_per_turn}),
+            ("lookback", {"context": validate_lookback_context}),
         ):
             if block not in body:
                 continue
             raw = body[block]
-            example = '{"shelf_size": 50}' if block == "recall" else '{"sensitivity": 0.5, "cap_per_turn": 3}'
+            example = {
+                "recall": '{"shelf_size": 50}',
+                "rebuild": '{"sensitivity": 0.5, "cap_per_turn": 3}',
+                "lookback": '{"context": "day"}',
+            }[block]
             if not isinstance(raw, Mapping):
                 raise CognitionProfileRefused(400, f"{block} must be an object, for example {example}.")
             extra = [str(k) for k in raw.keys() if k not in checks]

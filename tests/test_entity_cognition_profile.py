@@ -111,6 +111,7 @@ def test_get_without_a_file_shows_the_mind_everywhere_and_the_defaults(world) ->
             "sensitivity": 0.5, "cap_per_turn": 3, "source": "default",
             "sources": {"sensitivity": "default", "cap_per_turn": "default"},
         },
+        "lookback": {"context": "day", "source": "default"},
         "mind": {**mind, "source": "gateway"},
     }
     assert not (world["home"] / "cognition.yaml").exists()
@@ -202,6 +203,9 @@ def test_a_marker_that_cannot_be_recorded_writes_nothing(world, monkeypatch) -> 
         ({"capabilities": "mind"}, "capabilities must be an object"),
         ({"recall": {"width": 3}}, "recall has an unknown field 'width'"),
         ({"memories_rebuilt_per_turn": 1}, "Unknown field 'memories_rebuilt_per_turn'"),
+        ({"lookback": {"context": "week"}}, "Look-back context must be day or tick."),
+        ({"lookback": {"context": True}}, "Look-back context must be day or tick."),
+        ({"lookback": "tick"}, "lookback must be an object"),
     ],
 )
 def test_values_outside_the_schema_are_refused_with_a_sentence(world, body, words) -> None:
@@ -267,6 +271,21 @@ def test_the_creator_is_bound_to_the_offered_models_and_others_are_refused(world
     assert r.status_code == 403, r.text
     assert r.json()["detail"]["message"] == "Only an admin or aster's creator can change how it thinks."
     assert c.get(URL, headers=world["admin"]).json()["recall"]["shelf_size"] == 21
+
+
+def test_lookback_context_is_set_kept_and_reset(world) -> None:
+    c, admin = world["c"], world["admin"]
+    body = c.put(URL, headers=admin, json={"lookback": {"context": "tick"}}).json()
+    assert body["lookback"] == {"context": "tick", "source": "profile"}
+    assert yaml.safe_load((world["home"] / "cognition.yaml").read_text(encoding="utf-8"))["lookback"] == {"context": "tick"}
+    assert _markers(world)[-1]["new"]["lookback"] == {"context": "tick"}
+    # Absent keeps it; null returns it to the day.
+    assert c.put(URL, headers=admin, json={"recall": {"shelf_size": 9}}).json()["lookback"]["context"] == "tick"
+    body = c.put(URL, headers=admin, json={"lookback": {"context": None}}).json()
+    assert body["lookback"] == {"context": "day", "source": "default"}
+    from abstractruntime.identity.cognition_profile import lookback_context
+
+    assert lookback_context(world["home"]) == "day"
 
 
 # ------------------------------------------------------------- recall width applied

@@ -6,10 +6,11 @@
   stored `choice` (`{"inherit": "mind"}` by default, or `{provider, model, thinking, max_input_tokens}`), the
   `effective` model and its `source` (`profile` or `mind`); `recall` (`shelf_size`, default 50, `source`,
   `applies_to_running_loop: "on restart"`); `rebuild` (`sensitivity` 0.5, `cap_per_turn` 3, `source`, `sources`);
-  and the `mind`. `PUT` takes any subset of `capabilities`, `recall` and `rebuild`: an absent field keeps its value,
+  `lookback` (`context`: `day` by default or `tick`, what the end-of-tick look-back sees; `source`); and the `mind`. `PUT` takes any subset of `capabilities`, `recall` and `rebuild`: an absent field keeps its value,
   `null` returns it to its default. It is checked like the mind's route: the reasoning-effort words, `max_input_tokens`
   4096 to 140000, `shelf_size` a whole number 1 to 400, `sensitivity` 0 to 1, `cap_per_turn` a whole number 0 to 10
-  (text, decimals and true/false are refused), an `endpoint:` provider that is an enabled connection, and for the
+  (text, decimals and true/false are refused), `lookback.context` `day` or `tick` ("Look-back context must be day or
+  tick."), an `endpoint:` provider that is an enabled connection, and for the
   entity's creator a model the gateway offers (`403 not_offered`; a capability saved unchanged is kept). Refusals are
   sentences such as "Memories per turn must be a whole number from 1 to 400.". Each change records a
   `cognition_profile_changed` marker (old, new, by, as) in the entity's history before the file changes; when the
