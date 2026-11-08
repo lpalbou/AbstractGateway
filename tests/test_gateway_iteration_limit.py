@@ -110,10 +110,14 @@ def test_console_iteration_field_saves_verifies_and_refuses_in_words() -> None:
 
     source = _console_script()
     assert "iterationLimitMarkup(agentDefStore.data, agentDefStore)" in _slice_function(source, "agentDefaultsRender")
-    assert "iterationLimitSave(" in _slice_function(source, "mountAgentDefaults")
+    mount = _slice_function(source, "mountAgentDefaults")
+    assert "iterationLimitSave(" in mount
+    # Typing never re-renders the block (that swallowed the Save click in the screenshot run).
+    assert 'agentDefStore.iterDraft = t.value;\n' in mount and "iterationLimitWarning(t.value" in mount
     harness = _PRELUDE + f"""
 const ITERATION_LIMIT_LABEL = "Iteration limit";
 const ITERATION_LIMIT_DESC = "How many cycles.";
+{_slice_function(source, "iterationLimitWarning")}
 {_slice_function(source, "iterationLimitMarkup")}
 {_slice_function(source, "iterationLimitBody")}
 {_slice_function(source, "iterationLimitSave")}
@@ -152,8 +156,8 @@ console.log(JSON.stringify([out]));
     assert 'type="number"' in out["unset"] and 'min="1"' in out["unset"] and "Iteration limit" in out["unset"]
     assert "Not set: each workflow" in out["unset"] and "data-iteration-limit-clear" not in out["unset"]
     assert 'value="12"' in out["set"] and "data-iteration-limit-clear" in out["set"] and "12 (saved on this gateway)" in out["set"]
-    assert "data-iteration-limit-warning" in out["big"] and "300 iterations is a lot" in out["big"]
-    assert "data-iteration-limit-warning" not in out["set"]
+    assert "data-iteration-limit-warning>" in out["big"] and "300 iterations is a lot" in out["big"]
+    assert "data-iteration-limit-warning hidden>" in out["set"]
     assert "Only an admin can change this." in out["viewer"] and " disabled" in out["viewer"]
     assert "data-iteration-limit-missing" in out["missing"] and "not available on this gateway" in out["missing"]
     assert out["bodies"][0] == {"agents": {"max_iterations": None}} and out["bodies"][1] == {"agents": {"max_iterations": 12}}

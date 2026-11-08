@@ -3827,21 +3827,25 @@ CONSOLE_UI_JS = r"""
       const busy = !!(st && st.iterSaving);
       const draft = st && typeof st.iterDraft === "string" ? st.iterDraft : (r.value === null ? "" : String(r.value));
       const warnAbove = Number.isInteger(r.warn_above) ? r.warn_above : 200;
-      const n = /^\d+$/.test(draft.trim()) ? Number(draft.trim()) : null;
-      const warn = n !== null && n > warnAbove ? `${n} iterations is a lot: one run can take hours and use many model calls. It is allowed.` : "";
+      const warn = iterationLimitWarning(draft, warnAbove);
       const now = r.value === null ? "Not set: each workflow's own limit" : `${r.value} (saved on this gateway)`;
       let out = head
         + `<div class="ui-apps-setting" data-iteration-limit><div class="ui-apps-setting__head"><label for="agent-iteration-limit">${esc(ITERATION_LIMIT_LABEL)}</label></div>`
-        + `<div class="ui-toolbar"><input type="number" min="1" step="1" inputmode="numeric" id="agent-iteration-limit" data-iteration-limit-input value="${esc(draft)}" placeholder="Each workflow's own" aria-describedby="agent-iteration-limit-desc"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
+        + `<div class="ui-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><input type="number" min="1" step="1" inputmode="numeric" id="agent-iteration-limit" data-iteration-limit-input value="${esc(draft)}" placeholder="Each workflow's own" aria-describedby="agent-iteration-limit-desc" style="width:9rem;flex:0 0 auto"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
         + `<button type="button" class="ui-btn" data-iteration-limit-save${admin && !busy ? "" : " disabled"}>${busy ? "Saving..." : "Save"}</button>`
-        + (r.value !== null ? `<button type="button" class="ui-btn" data-iteration-limit-clear${admin && !busy ? "" : " disabled"}>Use workflow limits</button>` : "")
+        + (r.value !== null ? `<button type="button" class="ui-btn secondary" data-iteration-limit-clear${admin && !busy ? "" : " disabled"}>Use workflow limits</button>` : "")
         + `</div>`
         + `<p class="ui-net-proxy__text" id="agent-iteration-limit-desc">${esc(ITERATION_LIMIT_DESC)} Now: ${esc(now)}.</p>`
-        + (warn ? `<p class="ui-field-msg tone-warn" data-iteration-limit-warning>${esc(warn)}</p>` : "")
+        + `<p class="ui-field-msg tone-warn" data-iteration-limit-warning${warn ? "" : " hidden"}>${esc(warn)}</p>`
         + (admin ? "" : `<p class="ui-net-proxy__text">Only an admin can change this.</p>`)
         + `<span class="ui-sub" data-iteration-limit-cli>CLI: <code>abstractgateway config set ${esc(r.key || "agents.max_iterations")} 30</code></span>`;
       if (st && st.iterSaved) out += `<p class="inline-state${st.iterSaved.tone === "ok" ? " ok" : " error"}" role="status" data-iteration-limit-saved>${esc(st.iterSaved.head)}: ${esc(st.iterSaved.text)}</p>`;
       return out + `</div></div>`;
+    }
+    function iterationLimitWarning(raw, warnAbove) {
+      const t = String(raw ?? "").trim();
+      const n = /^\d+$/.test(t) ? Number(t) : null;
+      return n !== null && n > warnAbove ? `${n} iterations is a lot: one run can take hours and use many model calls. It is allowed.` : "";
     }
     // "" = clear (each workflow's own limit); a whole number >= 1; anything else = a sentence, no request.
     function iterationLimitBody(raw) {
@@ -3977,8 +3981,17 @@ CONSOLE_UI_JS = r"""
         const t = event && event.target && event.target.matches ? event.target : null;
         const i = t && t.matches("[data-agent-default-select]") ? t : null;
         if (i) agentDefaultApply(i.dataset.agentDefaultSelect, i.value);
-        // The iteration field keeps what was typed and shows the >warn_above line on leave.
-        if (t && t.matches("[data-iteration-limit-input]")) { agentDefStore.iterDraft = t.value; agentDefStore.iterSaved = null; agentDefaultsRender(); }
+        // The iteration field keeps what was typed WITHOUT a re-render (a re-render on blur would
+        // swallow the Save click that caused the blur).
+        if (t && t.matches("[data-iteration-limit-input]")) agentDefStore.iterDraft = t.value;
+      };
+      el.oninput = (event) => {
+        const t = event && event.target && event.target.matches ? event.target : null;
+        if (!t || !t.matches("[data-iteration-limit-input]")) return;
+        const r = agentDefStore.data && agentDefStore.data.agents && agentDefStore.data.agents.max_iterations;
+        const line = el.querySelector("[data-iteration-limit-warning]");
+        const warn = iterationLimitWarning(t.value, r && Number.isInteger(r.warn_above) ? r.warn_above : 200);
+        if (line) { line.textContent = warn; line.hidden = !warn; }
       };
       el.onkeydown = (event) => {
         const t = event && event.target && event.target.matches ? event.target : null;
