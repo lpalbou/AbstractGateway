@@ -21,6 +21,20 @@ So the listing is fast when the process is fresh and slow after hours under load
 in 48 h), or memory growth that turns into swapping. The gate's own perf job passes, so this is a soak problem, not a
 unit one.
 
+## Measured 2026-11-08 04:00 (worker on a hermetic gateway with a copy of the live store, 14,411 runs)
+
+- The cost is the run store's `--run-index verify` mode (the `serve` default, `cli.py:1101`, `stores.py:64`): every
+  `list_run_index` call globs the whole run folder (`json_files.py:2310`) and stats every file (41,836 stats per
+  request, `json_files.py:2316` + `_scan_fields` :631), whatever the `limit`; the route's widening loop made two such
+  passes for root-only and the Observer query. Under load each stat waits on the GIL: 0.5 s becomes 30 s.
+- Fix landed (gateway main `dca062f4`): the listing remembers the depth a given filter shape needed and reads once when
+  warm (root-only warm 0.31–0.64 s → 0.15–0.29 s; Observer 0.31–0.64 → 0.21–0.44 s; rows identical; test
+  `tests/test_gateway_runs_listing_one_pass.py`, red without the memory). The cold request still reads twice.
+- `--run-index trusted` answers from memory: 38–176 ms for every query. Live health: `mode: verify`, 743 shadow
+  comparisons, 0 mismatches, 165 reconciles, 0 repairs — the evidence backlog 1054 asked for before flipping.
+- AbstractRuntime: `JsonlLedgerStore.count` (`json_files.py:3276`) reads whole ledger files (50–70 MB per page of 200
+  rows) and ignores its `.idx`; cheap while the file cache holds, slow under swap. Runtime-side fix.
+
 ## Scope
 
 1. Measure on the live store: time the listing route with a 3-hour-old process vs a fresh one, with `py-spy dump` (or
