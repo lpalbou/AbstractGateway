@@ -179,3 +179,172 @@ def test_entity_home_opens_its_memory_with_the_task_queue(monkeypatch: pytest.Mo
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _registry().get_home("castor")
         assert home.memory.tasks is not None, "the home's MemorySystem has no task queue (task_queue=True missing)"
+
+
+# ------------------------------------------------------------------- 2. the visit-turn drain
+
+import threading  # noqa: E402
+import time  # noqa: E402
+
+
+class _ScriptedLLM:
+    """Replies in order; raises when exhausted (a silent fallback would hide an extra call)."""
+
+    def __init__(self, replies) -> None:
+        self._replies = list(replies)
+
+    def generate(self, **kwargs):
+        if not self._replies:
+            raise AssertionError("scripted LLM exhausted — an unexpected extra call happened")
+        return SimpleNamespace(content=self._replies.pop(0))
+
+
+def _install_scripted_llm(monkeypatch: pytest.MonkeyPatch, replies) -> None:
+    from abstractgateway import entity_chat
+
+    llm = _ScriptedLLM(replies)
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+
+def _report(*, trigger: str, window: str, rebuilt=(), ended_by: str = "empty") -> dict:
+    """A DrainReport in the contract's shape (DESIGN-drain-v1.md)."""
+    rebuilt = [dict(r) for r in rebuilt]
+    return {
+        "trigger": trigger, "window": window, "run_id": "run-drain-1", "selected": len(rebuilt),
+        "applied": len(rebuilt), "unchanged": 0, "superseded": 0, "deferred": 0, "skipped": 0, "failed": 0,
+        "left_out_counts": {}, "calls": len(rebuilt), "tokens": {"prompt": 10 * len(rebuilt), "completion": 5 * len(rebuilt)},
+        "seconds": 0.5, "rebuilt": rebuilt, "ended_by": ended_by,
+    }
+
+
+ONE_REBUILT = {"task_id": "digest.rewrite:rec-1:v1", "kind": "digest.rewrite", "record_id": "rec-1",
+               "outcome": "applied", "version": 2, "model": "summ-model"}
+
+
+class _FakeDrain:
+    """Stands in for `abstractruntime.identity.understanding.drain` with the contract's exact
+    keyword-only signature (a wrong call from the gateway is a TypeError, which the host records
+    as a failed drain — and the test then sees no `rebuilt`). Blocks on `gate` so a test can prove
+    the reply never waited for it."""
+
+    def __init__(self, reports) -> None:
+        self.reports = list(reports)
+        self.calls: list = []
+        self.gate = threading.Event()
+        self.started = threading.Event()
+
+    def __call__(self, home_dir, *, trigger, window, budget_seconds, hard_cap, parent, llm_for_capability,
+                 should_continue, holder="memory-tasks", now=None):
+        self.calls.append({
+            "home_dir": Path(home_dir), "trigger": trigger, "window": window, "budget_seconds": budget_seconds,
+            "hard_cap": hard_cap, "parent": dict(parent), "llm_for_capability": llm_for_capability,
+            "should_continue": should_continue, "holder": holder, "continue_at_start": bool(should_continue()),
+        })
+        self.started.set()
+        if not self.gate.wait(timeout=15):
+            raise AssertionError("the test never released the fake drain")
+        if self.reports:
+            return self.reports.pop(0)
+        return _report(trigger=trigger, window=window)
+
+
+def _install_fake_drain(monkeypatch: pytest.MonkeyPatch, reports) -> _FakeDrain:
+    from abstractgateway import entity_drain
+
+    fake = _FakeDrain(reports)
+    monkeypatch.setattr(entity_drain, "resolve_drain", lambda: fake)
+    return fake
+
+
+def _visit_host():
+    from abstractgateway.routes.entities import _visit_host
+
+    return _visit_host()
+
+
+def test_visit_turn_drains_after_the_reply_and_the_next_probe_lists_what_was_rebuilt(monkeypatch: pytest.MonkeyPatch):
+    """Acceptance (design §gateway 2, 6): with cap_per_turn 1 the turn schedules exactly one
+    drain(trigger="turn", window="visit", hard_cap=1, budget ≥ 60 s, parent={visit_run_id, turn_id})
+    on the per-home worker; the reply returns while the drain is still blocked (never delayed); the
+    report lands in `_visit.last_drain`; the next turn's probe carries `rebuilt` from it; a newer
+    turn turns `should_continue` false."""
+    fake = _install_fake_drain(monkeypatch, [_report(trigger="turn", window="visit", rebuilt=[ONE_REBUILT], ended_by="cap")])
+    _install_scripted_llm(monkeypatch, ["Hello.", "Second.", "Reflection."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        _write_profile(_home_dir(), {}, rebuild={"cap_per_turn": 1})
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "hello"})
+        assert turned.status_code == 200, turned.text
+        first = turned.json()
+        assert first["reply"] == "Hello."
+        assert first["rebuilt"] == [], "nothing has been rebuilt when the reply returns"
+        assert fake.started.wait(5), "the drain was not scheduled after the park"
+        assert not fake.gate.is_set() and fake.calls, "the reply came back while the drain was still running"
+
+        call = fake.calls[0]
+        assert call["home_dir"] == _home_dir()
+        assert call["trigger"] == "turn" and call["window"] == "visit" and call["hard_cap"] == 1
+        assert call["budget_seconds"] >= 60.0, "a task costs 60 s by default: the budget is at least cap x 60"
+        assert call["parent"] == {"visit_run_id": run_id, "turn_id": first["turn_id"]}
+        assert call["holder"] == "memory-tasks"
+        assert call["continue_at_start"] is True
+        assert callable(call["llm_for_capability"])
+
+        fake.gate.set()
+        assert _visit_host()._drain_worker.wait_idle(timeout=10), "the drain job did not finish"
+        assert len(fake.calls) == 1, "cap 1 = one drain window per turn, never a loop"
+
+        # Durable: the report rests in the run's own _visit namespace.
+        er = _registry().get_entity_runtime("castor")
+        stored = ((er.run_store.load(run_id).vars or {}).get("_visit") or {}).get("last_drain")
+        assert stored and stored["rebuilt"] == [ONE_REBUILT] and stored["ended_by"] == "cap"
+
+        second = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "again"})
+        assert second.status_code == 200, second.text
+        assert second.json()["rebuilt"] == [ONE_REBUILT], "the next probe lists what the previous turn rebuilt"
+        assert call["should_continue"]() is False, "a newer turn ends the earlier window at its boundary"
+        assert _visit_host()._drain_worker.wait_idle(timeout=10)
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+
+
+def test_cap_zero_schedules_no_drain_and_the_probe_says_so(monkeypatch: pytest.MonkeyPatch):
+    """cap_per_turn 0 = rebuilds only while it rests: no drain run is started on a turn, and the
+    probe still reports a fresh empty `rebuilt` (never a stale list from an earlier turn)."""
+    fake = _install_fake_drain(monkeypatch, [])
+    fake.gate.set()
+    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        _write_profile(_home_dir(), {}, rebuild={"cap_per_turn": 0})
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "hello"})
+        assert turned.status_code == 200, turned.text
+        assert _visit_host()._drain_worker.wait_idle(timeout=10)
+        assert fake.calls == [], "cap 0 starts no drain run"
+        er = _registry().get_entity_runtime("castor")
+        stored = ((er.run_store.load(run_id).vars or {}).get("_visit") or {}).get("last_drain")
+        assert stored["rebuilt"] == [] and stored["selected"] == 0 and stored["ended_by"] == "cap"
+        assert turned.json()["rebuilt"] == []
+        assert not any("rebuild" in n for n in turned.json()["notices"])
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+
+
+def test_probe_reads_rebuilt_from_last_drain_and_names_a_failed_drain():
+    from abstractgateway.entity_visits import _compose_turn_probe
+
+    ok = _compose_turn_probe({"_visit": {"last_drain": _report(trigger="turn", window="visit", rebuilt=[ONE_REBUILT])}, "_turn": {}})
+    assert ok["rebuilt"] == [ONE_REBUILT]
+    # An in-memory report (the newest) wins over the durable copy.
+    newer = _compose_turn_probe({"_visit": {"last_drain": _report(trigger="turn", window="visit")}, "_turn": {}},
+                                last_drain=_report(trigger="turn", window="visit", rebuilt=[ONE_REBUILT]))
+    assert newer["rebuilt"] == [ONE_REBUILT]
+    failed = _compose_turn_probe({"_visit": {}, "_turn": {"notices": ["kept"]}},
+                                 last_drain={"trigger": "turn", "window": "visit", "rebuilt": [],
+                                             "error": "ImportError: cannot import name 'drain'"})
+    assert failed["rebuilt"] == []
+    assert failed["notices"][0] == "kept"
+    assert any(n.startswith("#FALLBACK memory rebuild did not run: ImportError") for n in failed["notices"])
+    none = _compose_turn_probe({"_visit": {}, "_turn": {}})
+    assert none["rebuilt"] == [] and none["notices"] == []
