@@ -10945,8 +10945,13 @@ What happens:
 2. **One life, one visit.** The entity's live visit is reused when it belongs to this
    conversation. With none, a visit is opened for this conversation; it closes on its own
    (with the usual reflection) after 5 minutes without a mention.
-3. **The entity lives it at home.** Your text is a turn of that visit: the entity's own
-   ledger, memory and artifacts hold the episode, exactly like a visit from the Entity app.
+3. **The entity reads the conversation and lives it at home.** Your text is a turn of that
+   visit, preceded by the conversation's recent turns quoted with who said them
+   (`Laurent: ...`, `Agent (Basic Agent): ...`, `Castor (entity): ...`; built from each turn's
+   `author`, never from the text): the newest whole turns, at most 12 turns and 8,000 tokens,
+   whichever comes first (the answer's `context` states what was quoted and what was left out).
+   The entity's own ledger, memory and artifacts hold the episode, quote included, exactly like
+   a visit from the Entity app.
 4. **The answer is a turn of your conversation.** The reply is recorded in the session (a
    completed run, workflow `entity-mention`), so session history, `GET /runs/{id}`, the replay
    view and every client show it, and the conversation's agent sees it in the next turn's
@@ -10963,13 +10968,13 @@ answer under them. A `repeat_of` that is not a turn of this conversation answers
 `repeat_of_unknown`. The mention turn is dated when your words arrived (`created_at`) and when
 the reply came (`updated_at`), so the answer always sorts after the question.
 
-**In a visit.** When the conversation is another entity's live visit (an Entity-app visit with
-Nerin, `session_id` = the one `visit/open` returned), the mentioned entity's reply is also a turn
+**In a visit.** When the conversation is the live visit of the entity you are visiting (an
+Entity-app visit with Nerin, `session_id` = the one `visit/open` returned), the mentioned entity's reply is also a turn
 of THAT visit, spoken by the mentioned entity: the door adds `entity:castor` to the visit's signed
 participants, then sends `Castor (entity): <reply>` as a visit turn with that speaker. Nerin hears
 it and answers it like any visitor's words; his home's ledger and memory keep it. The answer lists
 these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`, or `error` when that visit refused;
-`[]` in a plain chat).
+`[]` in a plain chat: two entities mentioned in one chat never mirror into each other).
 
 The answer (200):
 
@@ -10977,7 +10982,10 @@ The answer (200):
 {"run_id": "<the session turn>", "turn_id": "<the turn in the entity's home>",
  "author": {"kind": "entity", "name": "Castor", "entity_id": "entity:castor",
             "identity_ref": "entity:castor#3", "avatar": {"style": "watch-halo", "color": "#336699"}},
- "session_id": "...", "mention_index": 0, "repeat_of": null, "reply": "...",
+ "session_id": "...", "mention_index": 0, "repeat_of": null,
+ "context": {"turns": 3, "tokens": 412, "max_turns": 12, "max_tokens": 8000, "dropped_turns": 0,
+             "older_turns_not_read": false},
+ "reply": "...",
  "visit": {"run_id": "<the visit run in the home>", "turn_id": "...", "visit_id": "visit-...",
            "entity_id": "entity:castor", "reused": false},
  "mirrors": []}
