@@ -101,7 +101,10 @@ console presents them as provider connections.
 - `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
   discover models for a draft or saved profile by calling the configured
   provider family and base URL with the entered or server-side key. The raw key
-  is never returned.
+  is never returned. A server-side key goes only to the address it was saved
+  for: a saved connection's key to its saved base URL, the configured
+  provider key (AbstractCore store or `OPENAI_API_KEY`) only with no base URL
+  or its own; any other typed address is checked without a key.
 - `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
   update or delete a profile.
 
@@ -1244,7 +1247,7 @@ typed waits, attention and operations, is in [automations.md](./automations.md).
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](./automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](./automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](./automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](./automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](./automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -1298,19 +1301,27 @@ session moves it to the top. Apps show that order as served, with archived sessi
 own Archived section (the framework's ADR 0048; automations follow the same rule, see
 [Listing order](./automations.md#listing-order)).
 
-**Session purpose (`kind`).** A session is a `conversation` (the default) or a
-`docs` chat (a Docs assistant conversation). `POST /api/gateway/runs/start`
-takes `kind: "docs"` with a `session_id` (the kit's Docs assistant sends it);
-any other value, or `docs` without a session, is a 400. Turn listings
-(`GET /runs?root_only=true` or `archived_only=true`, without `session_id` /
-`parent_run_id`) take `kind=conversation` (the default), `kind=docs` or
-`kind=all`, so a docs chat never appears in a conversation list while staying
-in the same pool: readable by `session_id`, ledgered, archivable. Every row
-carries `kind`. The mark lives in the plane's `session_kinds.json`; a session
-without one is a conversation. A run of the shipped `docs-qa` workflow marks
-its session `docs` even without `kind`, and the first turn listing runs a
-one-time migration (`docs_qa_bundle_v1`) that marks every existing session
-whose turn root ran `docs-qa` (matched on the workflow's bundle id).
+**Session purpose (`kind`).** A session is a `conversation` (the default), a
+`docs` chat (a Docs assistant conversation) or `notes` (AbstractNote's own
+work: its captures and its background processing). `POST /api/gateway/runs/start`
+takes `kind: "docs"` or `kind: "notes"` with a `session_id` (the kit's Docs
+assistant sends `docs`); any other value, or `docs`/`notes` without a session,
+is a 400. Turn listings (`GET /runs?root_only=true` or `archived_only=true`,
+without `session_id` / `parent_run_id`) take `kind=conversation` (the default),
+`kind=docs`, `kind=notes` or `kind=all`, so a docs chat or a note session never
+appears in a conversation list while staying in the same pool: readable by
+`session_id`, ledgered, archivable. Every row carries `kind`. The mark lives in
+the plane's `session_kinds.json`; a session without one is a conversation.
+
+The purpose follows the workflow's bundle id (matched exactly, whatever client
+starts the run). A run of the shipped `docs-qa` workflow marks its session
+`docs` even without `kind`; a run of an AbstractNote workflow
+(`abstractnote@<version>:<flow>`) marks its session `notes`. The first turn
+listing runs the one-time migrations `docs_qa_bundle_v1` and
+`abstractnote_bundle_v1`, which mark every existing session whose parent-less
+turn root ran that bundle. The sessions AbstractNote's automations open (one
+per occurrence) are never started through `POST /runs/start`: a listed turn
+whose own workflow is an AbstractNote workflow is `notes` without a mark.
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers
@@ -3044,12 +3055,15 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+- `GET /api/gateway/host/runs?limit=25&window_hours=24&kind=` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, session_kind, automation_id, created_at, updated_at,
+  activity, role, session_kind, kind, automation_id, created_at, updated_at,
   ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
   active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `kind` is the session's purpose as in `GET /runs` (`conversation`, `docs`,
+  `notes`): AbstractNote's own work (`notes`) is left out unless `kind=notes`
+  (only it) or `kind=all`, before `limit` applies.
   `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
   automation's run, `chat` / `discussion` = a conversation); the tray lists
   the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's

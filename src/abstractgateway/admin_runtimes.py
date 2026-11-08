@@ -457,7 +457,8 @@ def _turn_root_of(store: Any, row: Dict[str, Any], known: Dict[str, Dict[str, An
     return None
 
 
-def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], plane: str) -> List[Dict[str, Any]]:
+def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], plane: str,
+                     kind_of: Optional[Any] = None, kinds: Optional[Tuple[str, ...]] = None) -> List[Dict[str, Any]]:
     """One plane's rows for the host listing: ACTIVE turn roots (whatever their
     age), then turn roots that finished inside the window.
 
@@ -471,9 +472,13 @@ def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], pl
     known: Dict[str, Dict[str, Any]] = {}
     roots: Dict[str, Dict[str, Any]] = {}
 
+    def _listed(row: Dict[str, Any]) -> bool:
+        """The row's session purpose is one of `kinds` (all purposes when None)."""
+        return kinds is None or kind_of is None or kind_of(row) in kinds
+
     def _keep(row: Dict[str, Any], activity: str) -> None:
         rid = str(row.get("run_id") or "")
-        if not rid or is_internal_workflow_id(row.get("workflow_id")):
+        if not rid or is_internal_workflow_id(row.get("workflow_id")) or not _listed(row):
             return
         prev = roots.get(rid)
         rank = {"running": 0, "waiting": 1, "done": 2}
@@ -511,7 +516,7 @@ def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], pl
             if since_epoch is not None and touched is not None and touched < since_epoch:
                 past_window = True
                 continue
-            if is_internal_workflow_id(row.get("workflow_id")):
+            if is_internal_workflow_id(row.get("workflow_id")) or not _listed(row):
                 continue
             finished += 1
             if finished <= want:
@@ -531,11 +536,28 @@ def _runs_from_store(store: Any, *, limit: int, since_epoch: Optional[float], pl
         summary["automation_id"] = row.get("automation_id")
         summary["activity"] = row["activity"]
         summary["plane"] = plane
+        # What the session is for (session_kinds.py): conversation | docs | notes.
+        summary["kind"] = kind_of(row) if kind_of is not None else "conversation"
         summary["label"] = workflow_display_label(row.get("workflow_id"))
         summary["started_epoch"] = _epoch_or_none(row.get("created_at"))
         summary["updated_epoch"] = _epoch_or_none(row.get("updated_at"))
         out.append(summary)
     return out
+
+
+def _plane_kind_of(plane_dir: Optional[Path], plane: str, warnings: List[str]) -> Any:
+    """`row -> session purpose` for one plane (its `session_kinds.json` marks, else the row's
+    workflow: `session_kinds.kind_of`). An unreadable marks file is said in `warnings` and the
+    rows are classified by their workflow alone (a host view, not the plane's own listing)."""
+    from .session_kinds import SessionKindsUnreadable, kind_of, session_kinds
+
+    marks: Dict[str, str] = {}
+    if plane_dir is not None:
+        try:
+            marks = session_kinds(plane_dir)
+        except SessionKindsUnreadable as e:
+            warnings.append(f"#FALLBACK session kinds unreadable on plane {plane}: {e}")
+    return lambda row: kind_of(marks, row.get("session_id"), row.get("workflow_id"))
 
 
 def _observer_path(run_id: Any) -> Optional[str]:
@@ -865,6 +887,12 @@ def _epoch_or_none(value: Any) -> Optional[float]:
     return parsed.timestamp()
 
 
+#: The session purposes the host listing shows unless asked (`kind=`): every purpose but
+#: AbstractNote's own background work (session_kinds.py), which never shows as a person's
+#: conversation or automation.
+HOST_RUN_KINDS_DEFAULT = ("conversation", "docs")
+
+
 def recent_runs_host_wide(
     *,
     data_dir: Path,
@@ -872,6 +900,7 @@ def recent_runs_host_wide(
     since_epoch: Optional[float] = None,
     default_run_store: Optional[Any] = None,
     default_ledger_store: Optional[Any] = None,
+    kinds: Optional[Tuple[str, ...]] = HOST_RUN_KINDS_DEFAULT,
 ) -> Dict[str, Any]:
     """The runs on this MACHINE, across data planes: every ACTIVE turn root
     first (running, then waiting — whatever their age), then the turn roots
@@ -902,6 +931,7 @@ def recent_runs_host_wide(
     limit = max(1, min(int(limit or 25), 200))
     planes: List[Tuple[str, Any]] = []
     ledgers: Dict[str, Any] = {}
+    plane_dirs: Dict[str, Path] = {"default": Path(data_dir)}
     warnings: List[str] = []
     skipped: List[str] = []
 
@@ -932,6 +962,7 @@ def recent_runs_host_wide(
                         stores = _stores_for_dir(runtime_dir)
                         planes.append((plane, stores.run_store))
                         ledgers[plane] = getattr(stores, "ledger_store", None)
+                        plane_dirs[plane] = runtime_dir
                     except Exception as e:  # noqa: BLE001
                         warnings.append(f"#FALLBACK user plane {tenant_dir.name}/{rt_dir.name} unreadable: {e}")
         except OSError as e:
@@ -947,7 +978,8 @@ def recent_runs_host_wide(
     rows: List[Dict[str, Any]] = []
     for plane, store in planes:
         try:
-            rows.extend(_runs_from_store(store, limit=limit, since_epoch=since_epoch, plane=plane))
+            rows.extend(_runs_from_store(store, limit=limit, since_epoch=since_epoch, plane=plane,
+                                         kind_of=_plane_kind_of(plane_dirs.get(plane), plane, warnings), kinds=kinds))
         except Exception as e:  # noqa: BLE001
             warnings.append(f"#FALLBACK runs unreadable on plane {plane}: {e}")
 

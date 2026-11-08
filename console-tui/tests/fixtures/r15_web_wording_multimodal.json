@@ -101,5 +101,14 @@
       "Voice",
       "Reasoning"
     ]
-  }
+  },
+  "mtp_options": [
+    "inherit (no override)",
+    "off",
+    "depth 2",
+    "depth 3",
+    "depth 4",
+    "depth 5"
+  ],
+  "mtp_custom": "custom (preserve configured value)"
 }

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.20.2"
+version = "0.21.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -129,6 +129,12 @@ dependencies = [
   # Entity homes store the attested spark as YAML (spark.yaml). Previously
   # only transitive via uvicorn[standard]; declared because it is load-bearing.
   "pyyaml>=5.1",
+  # Notification emails render the automation's model-authored Markdown (mail/mail_markdown.py,
+  # backlog 1011): CommonMark with raw HTML off, allowlisted links. 4.0.0: the bound on the table
+  # cells the parser completes (MAX_AUTOCOMPLETED_CELLS); under 3.0.0 a 44 KB table drove one render
+  # past 44 GB of memory. Previously only transitive (rich, which allows 3.0.0); declared because it is
+  # load-bearing, and a floor so an upgrade replaces a 3.x already installed.
+  "markdown-it-py>=4.0.0",
   # The avatar design catalog (framework ADR 0052): an entity's identity names an abstractavatar
   # design; the door refuses a design the loaded catalog does not have or cannot draw on the Watch,
   # and the recorded default is written only with a verifiable design. 0.1.1: the frozen catalog

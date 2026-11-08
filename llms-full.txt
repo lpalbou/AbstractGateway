@@ -2640,7 +2640,7 @@ are user-level; every write is admin-only.
 | `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
 | `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
 | `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
-| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
+| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`, `kind`: AbstractNote's own work only with `kind=notes` or `all`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
 | `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |
 | `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
@@ -2787,7 +2787,11 @@ setup does not ask users to classify models manually.
 
 The console's **Test** action calls the selected provider through
 `POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
-previews model discovery before saving. Leave **Visible models**
+previews model discovery before saving. A stored key is sent only to the
+address it was saved for: Test with another address runs without a key, and
+saving a connection with a new address requires typing its key again (a
+connection with an address and no key calls it with none, never with
+`OPENAI_API_KEY`). Leave **Visible models**
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
 connections and direct providers that are already usable from scoped
@@ -4718,7 +4722,9 @@ automation's occurrence. An automation's run is listed under **Automations ▸ �
 Running (N)** instead, with the same row and submenu: the runtime tags every run
 with a `session_kind` (`chat` / `discussion` = a conversation, `automation` /
 `occurrence` = an automation's run; `GET /host/runs` serves it on each row) and
-the menu sorts by that tag alone. A wake that runs in its caller's conversation
+the menu sorts by that tag alone. AbstractNote's own work (its captures and its
+processing automations, session purpose `notes`) is in neither menu: `GET
+/host/runs` leaves it out. A wake that runs in its caller's conversation
 is tagged `chat` and stays a conversation. A row reads under its **title**: the
 automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as
@@ -5617,7 +5623,10 @@ console presents them as provider connections.
 - `POST /api/gateway/config/provider-endpoint-profiles/discover-models`:
   discover models for a draft or saved profile by calling the configured
   provider family and base URL with the entered or server-side key. The raw key
-  is never returned.
+  is never returned. A server-side key goes only to the address it was saved
+  for: a saved connection's key to its saved base URL, the configured
+  provider key (AbstractCore store or `OPENAI_API_KEY`) only with no base URL
+  or its own; any other typed address is checked without a key.
 - `PUT` or `DELETE /api/gateway/config/provider-endpoint-profiles/{profile_id}`:
   update or delete a profile.
 
@@ -6760,7 +6769,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -6814,19 +6823,27 @@ session moves it to the top. Apps show that order as served, with archived sessi
 own Archived section (the framework's ADR 0048; automations follow the same rule, see
 [Listing order](docs/automations.md#listing-order)).
 
-**Session purpose (`kind`).** A session is a `conversation` (the default) or a
-`docs` chat (a Docs assistant conversation). `POST /api/gateway/runs/start`
-takes `kind: "docs"` with a `session_id` (the kit's Docs assistant sends it);
-any other value, or `docs` without a session, is a 400. Turn listings
-(`GET /runs?root_only=true` or `archived_only=true`, without `session_id` /
-`parent_run_id`) take `kind=conversation` (the default), `kind=docs` or
-`kind=all`, so a docs chat never appears in a conversation list while staying
-in the same pool: readable by `session_id`, ledgered, archivable. Every row
-carries `kind`. The mark lives in the plane's `session_kinds.json`; a session
-without one is a conversation. A run of the shipped `docs-qa` workflow marks
-its session `docs` even without `kind`, and the first turn listing runs a
-one-time migration (`docs_qa_bundle_v1`) that marks every existing session
-whose turn root ran `docs-qa` (matched on the workflow's bundle id).
+**Session purpose (`kind`).** A session is a `conversation` (the default), a
+`docs` chat (a Docs assistant conversation) or `notes` (AbstractNote's own
+work: its captures and its background processing). `POST /api/gateway/runs/start`
+takes `kind: "docs"` or `kind: "notes"` with a `session_id` (the kit's Docs
+assistant sends `docs`); any other value, or `docs`/`notes` without a session,
+is a 400. Turn listings (`GET /runs?root_only=true` or `archived_only=true`,
+without `session_id` / `parent_run_id`) take `kind=conversation` (the default),
+`kind=docs`, `kind=notes` or `kind=all`, so a docs chat or a note session never
+appears in a conversation list while staying in the same pool: readable by
+`session_id`, ledgered, archivable. Every row carries `kind`. The mark lives in
+the plane's `session_kinds.json`; a session without one is a conversation.
+
+The purpose follows the workflow's bundle id (matched exactly, whatever client
+starts the run). A run of the shipped `docs-qa` workflow marks its session
+`docs` even without `kind`; a run of an AbstractNote workflow
+(`abstractnote@<version>:<flow>`) marks its session `notes`. The first turn
+listing runs the one-time migrations `docs_qa_bundle_v1` and
+`abstractnote_bundle_v1`, which mark every existing session whose parent-less
+turn root ran that bundle. The sessions AbstractNote's automations open (one
+per occurrence) are never started through `POST /runs/start`: a listed turn
+whose own workflow is an AbstractNote workflow is `notes` without a mark.
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers
@@ -8560,12 +8577,15 @@ any authenticated principal; writes require an admin principal.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
-- `GET /api/gateway/host/runs?limit=25&window_hours=24` — the runs on this
+- `GET /api/gateway/host/runs?limit=25&window_hours=24&kind=` — the runs on this
   host across every data plane (admin; `/runs` answers only for the calling
   principal's plane). `{ok, items: [{run_id, workflow_id, label, status,
-  activity, role, session_kind, automation_id, created_at, updated_at,
+  activity, role, session_kind, kind, automation_id, created_at, updated_at,
   ledger_len, plane, started_epoch, updated_epoch, observer_path}], count,
   active_count, has_more, planes, skipped_entity_planes?, warnings?}`.
+  `kind` is the session's purpose as in `GET /runs` (`conversation`, `docs`,
+  `notes`): AbstractNote's own work (`notes`) is left out unless `kind=notes`
+  (only it) or `kind=all`, before `limit` applies.
   `session_kind` is the runtime's attribution (`automation` / `occurrence` = an
   automation's run, `chat` / `discussion` = a conversation); the tray lists
   the first two under Automations, never under Conversations. Items are TURN ROOTS (the runtime's
@@ -9046,7 +9066,15 @@ shows the same row ([api.md](docs/api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
-reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+reasoning effort and MTP, and **Test** sends a one-word probe. A Base URL other
+than the provider's configured (or default) address is called without the
+provider's configured key. Reasoning and MTP
+follow the chosen model, here, in the **Sandbox** and in the entity create form:
+changing the provider or the model puts them back on the default (and saving
+does not carry the old model's MTP over), Off and the MTP depths are offered only
+when the gateway says that model supports MTP (otherwise the control is disabled
+and says why), and the entity create form offers only the reasoning levels the
+model serves. For voice output
 (`output.voice`) the provider, model and voice are the shared voice picker of
 every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
 **Engine voices** and **Shared voices**, a language filter when the engine
@@ -10292,7 +10320,7 @@ you can click.
   Row buttons, each with a tooltip: ✎ **Edit** or ⊞ **Configure** (`e`, also `Enter`), ⌀ **Clear** (`x`), ⤓ **Download** (`w`, admin; the tooltip names the artifact and provider) and ⧉ **Copy** (`c`, the install command when there is no download tool). A route that a parent route covers reads "Covered by input.text".
   **Configure capability default** is one dialog with:
   - the choice between use default and override;
-  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice;
+  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice. As on the web, changing the provider or the model puts Reasoning and MTP back on the default (a save then clears the old model's MTP), and MTP (Off included) is offered only when the gateway says that model supports it; otherwise it is disabled and the line under it says why;
   - the buttons **[Cancel] [Clear] [Test] [Save]**.
   Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a **Download** button. When discovery fails, the field takes a typed model id and offers **Retry model discovery**. Clear asks first; downloads ask first and name the size.
 
@@ -10309,7 +10337,7 @@ you can click.
   Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.
 
 - **T Sandbox** tries a model directly. **Output** is a choice: **Text**, **Image**, **Voice**, **Music**, **SFX** or **Video**. Each choice's tooltip names the provider and model it uses, or says "not configured". A line says what the next message generates and which route it comes from.
-  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
+  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. As on the web, changing the provider or the model puts Reasoning and MTP back on the default, and MTP (Off included) is offered only when the gateway says the model supports it; otherwise it is disabled and the line under the row says why. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
   Under the message field, the buttons are **Send** (`g`, or `Enter` in the field), **Attach** (`a`), **Speak** (`v`, speaks a text reply through output.voice), **Play audio** (`p`) and **Stop** (`s`) after a clip, and **Clear chat** (`x`).
   **Attach a file** is a dialog with **[Upload] [Remove all] [Close]**. When Sandbox refuses an action, it says why under the buttons (for example "output.music is not configured — configure it on Multimodal (0) first"). The session's change journal sits below.
 
@@ -10522,6 +10550,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities` | List homes. |
 | GET | `/api/gateway/entities/{name}` | Inspect: the folded identity core, recent diary gists, top standings, and the wake reasons — open questions (curiosity), open problems (something wrong), incubating ideas (direction). Pure reads — inspecting never counts as the entity *using* its memory. |
 | GET | `/api/gateway/entities/{name}/card` | The identity card ("something to know our companion"): the engine compositor's sections — identity, age+context, current state (a window, never a point), likes/dislikes (G+ and G− separate; ambivalence preserved), open/resolved questions (resolution is the entity's own act), key moments, discoveries — each with provenance, plus gateway overlays (name/age, operator state, mind substrate, host moments). `?as_of=<seq>` anchors the card at a journal moment ("who was he at seq 500"). Pure reads. |
+| GET | `/api/gateway/entities/{name}/tile` | What one small card about an entity shows, and nothing more (about 2 KB instead of up to 90 KB): name, look, age, mind (its model); what it is doing now (`now.phase`: sleep, visit, personal, work or stopped; `now.state`, the operator state under it — `awake` under `sleep` is the resting default; `busy`; `since`; `trouble: {kind: "own_time_failed"}` when its own time stopped after repeated failures); its newest interests (`into_lately`), its newest open problem or question (`on_its_mind`), its latest lesson, its last meaningful moment (`last_moment.kind` from a closed set: summon, session_closed, sleep, wake, pause, personal_started, personal_stop_requested, personal_frozen, phase_changed, substrate_changed, night_voice, work_order_changed, task_inbox_changed, identity_changed) and counts. The roster (`GET /entities`) advertises it as `reads.tile`; a client that does not find it there reads the card. Pure read; a source that cannot be read costs its facts with a labelled warning, never the tile; a held home answers 409. |
 | GET | `/api/gateway/entities/{name}/verify` | Verify the book's hash chain, the graph projections against the book, the spark document against the engrammed marker, and the manifest. |
 | POST | `/api/gateway/entities/{name}/summon` | Summon the entity into a work session (below). |
 | POST | `/api/gateway/entities/{name}/chat/open` | Open a hosted conversation (the web chat backend; same turn loop as `entity chat`). Auto-yields the entity's own-time loop like `--pause-loop`; one live session per home; a refused prelude aborts verbatim. The gateway never caps the entity's output: the model works at its full capacity (the former `max_output_tokens` field is ignored and the response then carries a one-line `deprecation`). |
@@ -10540,8 +10569,8 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/access` | May you change its settings? `{entity, can_configure, as: "admin" \| "creator" \| null, reason, admin_only_tools: {tools, reason}, admin_only: {available, reason}}` — `reason` is the sentence to show on a control you can't use. |
 | PUT | `/api/gateway/entities/{name}/substrate` | An admin or its creator (the creator: a model the gateway offers, else `403 not_offered` naming the offered models). `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
 | GET | `/api/gateway/entities/{name}/identity[?rev=N]` | Its digital identity (framework ADR 0052): `{entity_id, identity: {rev, avatar: {style, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}`. `?rev=N` serves an earlier revision from the home's biography. `identity.change` is why that revision was written: `{cause, written_by, at}` from its biography row (`cause`: `recorded_default`, `chosen`; null when the home has no row for it). A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409). |
-| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one this gateway offers (400: "Castor can't speak with zz: it isn't a kokoro voice this gateway offers. Choose one of: …"); its model is not downloaded (409, `error.download`: "Castor's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
-| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the gateway offers, else `403 not_offered`). On a home with an identity record: served from the record (`source: identity`, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and `clear` is refused (409). |
+| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not in this gateway's avatar catalog or cannot be drawn on the Watch (400, the designs listed); the voice is not one the caller's voice picker lists (`GET /voice/voices?provider=` as the caller; 400: "Castor can't speak with zz: it isn't a kokoro voice Castor can use. An entity speaks with this gateway's shared voices and its creator's own voices; another person's own voice stays theirs until an administrator shares it with everyone. Choose one of: …"); its model is not downloaded (409, `error.download`: "Castor's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the caller's picker lists, else `403 not_offered`). On a home with an identity record: served from the record (`source: identity`, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and `clear` is refused (409). |
 | GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list. On a home with an identity record: the record's colour and the shape its design draws (`watch-shape-<shape>`, else `planet`; `source: identity`); a PUT changes the record's look (what is not given keeps its value; the voice is kept), `clear` is refused (409), and a record with no voice yet refuses a look change with its sentence. |
 
 **The digital identity.** Every entity has one record in its home, `identity.json`
@@ -10564,6 +10593,21 @@ meet leg, relay row and status row, each public update row of a visit, and the v
 without a record carries none. The list rows carry `identity` (the record with its
 `watch_code`, or null). Visits, meet legs and summons record who started them
 (`_meta.origin`: kind `person`, actor the same `person:<user>` as the participants).
+
+**Whose voices an entity may speak with.** The voice checks (identity, the legacy
+voice door, the identity at birth, a conversation's identity) list the voices exactly
+as the caller's voice picker does: `GET /voice/voices?provider=` as the caller, in
+their runtime plane. On a gateway with user accounts that is the shared library (the
+built-in voices and the ones an administrator made or shared) plus the voices of the
+account whose plane holds the entity: its creator's own voices, cloned or designed
+(an administrator acting on someone's entity is served by that plane). An entity
+lives and speaks in its creator's plane (every route that makes it speak runs
+there), so a creator's own voice is heard by everyone who meets it; if the creator
+deletes that voice, the entity cannot speak with it any more until another voice is chosen.
+Another person's own voice is not in that plane and is refused with that sentence;
+an administrator can share it with everyone first
+(`POST /api/gateway/voice/clones/{voice_id}/deploy`). A conversation's identity
+speaks with the shared voices and your own.
 
 An entity without its own mind thinks with the gateway's text route (the
 console's text default, with its endpoint and reasoning); a request may still
@@ -12356,7 +12400,7 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
@@ -12367,6 +12411,14 @@ for a trigger with no clock time (manual, email).
   `archived_automations_count` are how many of yours are paused and archived,
   on every page, whatever the filter (`archived_automations` is the same
   count as `archived_automations_count`).
+- `kind` is what the automations are for: `user` (the default: the ones a
+  person creates and manages), `notes` (AbstractNote's own processing, the
+  "Process my notes", "Reflect on my notes" and "Consolidate my notes"
+  automations, recognised by their target's `abstractnote` bundle id) or
+  `all`. A purpose, never the client that created it. Every row carries
+  `kind`; the paused and archived counts count the listed kind. AbstractNote
+  reads its automations by id (`GET /automations/{automation_id}` and its
+  Processing page), so they work while every app's list leaves them out.
 - Read every page, following `next_cursor` until it is `null`.
   `changed_since` is refused (422 `unsupported_feature`); poll complete
   pages instead.
@@ -13417,6 +13469,16 @@ Send an email`, `… asked you a question`, `… finished`, `… failed`. The bo
 - **Footer**: why you receive the email (which switch or option), the note that replying does
   nothing, and a reference line with the run or automation id.
 
+**Model-written text is formatted, never trusted.** An automation's `notify` body and a Notify me
+body are read as Markdown: headings, bold and italic, lists, quotes, code, tables and links show as
+formatted text in the HTML part. The text stays untrusted: HTML written in it shows as text, only
+`http`, `https` and `mailto` addresses become links (anything else stays visible as written), and an
+image is a link to its address, never loaded. Long lines and wide tables wrap or scroll inside the
+email, so it fits a phone screen. A very long text, or one whose formatting would make the email
+very large (over about 200 KB), is shown whole as plain text instead. The plain-text part carries
+the text exactly as it was written, and the title is never formatted. A digest of held-back
+notifications (see the send limits above) shows each notice's plain text as it is.
+
 An approval or question is emailed once per wait: when the same approval is issued again at the
 same step (a retried node, a restart), nothing new is sent; a different tool call or a different
 question at that step is a new wait and a new email. Answering stays in the console (and the
@@ -13969,6 +14031,15 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.21.0** ([CHANGELOG](CHANGELOG.md#0210---2026-11-07)): `GET /entities/{name}/tile` serves
+the few facts an entity card shows (milliseconds instead of a full card), and the card itself is cached until the
+entity's life grows; notification emails show the automation's Markdown formatted and safe. AbstractNote's captures and
+background processing no longer appear among your conversations or automations: they are listed as
+notes (`kind=notes` on `GET /runs` and `GET /automations`), and Note's own Processing page is
+unchanged. Saving an entity's or a conversation's identity with a voice the voice picker shows works
+again; an entity speaks with the shared voices and its creator's own voices, and another person's own
+voice is refused with that sentence.
 
 **What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
 support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated
@@ -15540,6 +15611,178 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.21.0] - 2026-11-07
+
+(0.20.3 was prepared but never published; its changes are part of this release.)
+
+### Added
+
+- **A lean entity tile read: `GET /entities/{name}/tile`** (`entity_tile.py`, backlog 1012). One small card about an entity
+  read the whole identity card (up to 90 KB and 0.5-1 s warm for a long life such as ephemeral). The tile serves exactly what a
+  card shows a person, about 2 KB: name, look, age, its model; what it is doing now and since when (the same phase
+  `/cognition` folds, busy, and a warning when its own time stopped after repeated failures); its newest interests, its newest
+  open problem or question, its latest lesson, its last meaningful moment (a closed set of kinds: visits, sleeps, its own
+  time, phase and model changes, never the operator reading its diary or the birth recording of its identity) and counts.
+  `now.state` tells the resting default (awake, nothing running) from sleep. A source that cannot be read costs its facts
+  with a labelled warning, never the tile.
+  The roster (`GET /entities`) and the discovery contract (`common.entities.tile`) advertise it; clients fall back to the
+  card on older gateways. Measured on a copy of ephemeral: 5-9 ms warm (0.5-1 s on the first read after its life grew).
+
+### Changed
+
+- **The console's kit islands and themes come from the published ui-kit 0.9.19** (`console_islands.py`,
+  `console_themes.py`, synced from the AbstractUIC v0.10.6 release; they were at 0.9.15). The entity Mind
+  picker resets reasoning and MTP on a model change and offers MTP only for capable models; an
+  "OpenAI-compatible endpoint" can be tested and saved without an API key. The console
+  now carries the same kit version as the apps: its voice picker is the kit's rebuilt VoiceSettings
+  (on the shared `useVoiceSample`, `voiceChoices` and `voiceChoicePatch` helpers; the kit says behaviour
+  is unchanged) and the kit's latest component styles.
+- **The identity card is computed once per state of a life** (`EntityHome.engine_card`). The engine compositor's result and
+  the newest model stamp are cached per (home directory, memory file, journal seq, parameters) — the communities rule,
+  tenant-safe, and a home restored from a backup never meets the old life's card —
+  bounded to 64 entries; and the merged host moments per (home, marker and state-history file size and time). A repeated
+  card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (castor, ephemeral); a grown life recomputes once.
+  `/cognition` and `/tile` share one live fold of the phase (`_live_now`). Host-marker moments now carry `details.change`
+  for a work-order change (`set` or `cleared`).
+- **Notification emails show the automation's text formatted, not as raw Markdown** (`mail/mail_markdown.py`,
+  `mail/notifications.py`; backlog 1011). An automation result email showed `**First, the technology story**`
+  with its asterisks. The model-written body of an automation result and of a flow's Notify me step is now
+  rendered by a CommonMark parser (`markdown-it-py`, now a declared dependency, `>=4.0.0`: its parser bounds
+  the table cells it completes): headings, bold and italic, lists, quotes, code, tables and links, each
+  element styled inline in the layout's palette (Gmail and Outlook drop `<style>` blocks). Line breaks inside
+  a paragraph are kept. The plain-text part still carries the text exactly as written, the model's title is
+  never formatted, and the digest of held-back notices keeps its plain lines.
+- **A notification email never grows wider than its layout**: the layout's column is fixed to its width,
+  a wide table scrolls inside its own box and long words, links and code wrap, so a long briefing reads on
+  a 400 px phone screen.
+- **Whose voices an entity may speak with, said in the refusal.** An entity lives and speaks in its
+  creator's plane, so it may speak with the gateway's shared voices (built-in, made or shared by an
+  administrator) and its creator's own voices; another person's own voice, or an unknown id, is
+  refused with "it isn't a qwen3-tts voice Castor can use. An entity speaks with this gateway's shared
+  voices and its creator's own voices; another person's own voice stays theirs until an administrator
+  shares it with everyone." (docs/entities.md, "Whose voices an entity may speak with").
+- **AbstractNote's own work is `notes`, never a conversation or a user automation**
+  (`session_kinds.py`, `routes/automations.py`). Conversation lists showed "Conversation note-wat…"
+  sessions and the turn listing `GET /runs?root_only=true` was mostly `abstractnote@…:note-drain`
+  occurrences; every Automations list showed "Process my notes", "Reflect on my notes" and
+  "Consolidate my notes". A session whose turn root runs an AbstractNote workflow (the
+  `abstractnote` bundle id, matched exactly) is now `kind: "notes"`, like the Docs assistant's
+  `docs`: `POST /runs/start` marks it (a capture from Note, its phone or watch), a one-time
+  migration (`abstractnote_bundle_v1`) marks the existing ones, and the sessions Note's
+  automations open are `notes` by their workflow. Turn listings and `GET /sessions/search` leave
+  them out by default and list them with `kind=notes` (a search runs the migration too). The
+  host-wide `GET /host/runs` (the tray's Conversations and Automations menus) leaves them out unless
+  `kind=notes` or `kind=all`, and each row carries `kind`. `GET /automations` takes `kind=user`
+  (the default), `notes` or `all`, every row carries `kind`, and the paused and archived counts
+  count the listed kind. A purpose, never the creating client. AbstractNote reads its automations
+  by id, so its Processing page is unchanged. A docs-qa run named by a namespaced `flow_id`
+  (without `bundle_id`) is now marked `docs` too.
+
+### Fixed
+
+- **The release's container image build waits for PyPI instead of failing** (`docker/abstractgateway-server/install-gateway.sh`,
+  both Dockerfiles). The v0.20.2 image job failed with "No matching distribution found for
+  abstractgateway==0.20.2" minutes after the publish. The pinned PyPI install inside the image build is
+  now retried with a bounded backoff (5 retries over about 5 minutes) before the build fails.
+- **The model worker never imports from the data directory, whatever `PYTHONPATH` looks like**
+  (`model_host.py`, `CHILD_BOOTSTRAP`). 0.20.2 dropped only the `''` entry from the worker's import
+  path, but Python also puts the working directory (the data directory, which holds cache folders
+  named `abstractcore/embeddings`) on the path for an empty `PYTHONPATH` entry (`:/x`, `/x::`), for
+  `.`, and for the directory or a symlink to it; a cache folder could then shadow AbstractCore again.
+  Every entry that resolves to the working directory is now dropped. The stale
+  `python -m abstractgateway.model_host_child` mentions (module docstrings, ADR 0002, a test) now
+  name the real start command.
+- **Saving an identity with a voice the picker shows works again** (`entity_settings_access.py`,
+  `entity_identity.py`). "Castor can't speak with 250b665e…: this gateway offers no qwen3-tts voice
+  right now" while the signed-in `GET /voice/voices?provider=qwen3-tts` listed 93 voices: the check
+  called the voice route function directly, and the `language` parameter it did not pass arrived as
+  FastAPI's `Query(None)` object, which filtered every voice out. The voice and model checks
+  (identity, `PUT /entities/{name}/voice`, the mind's model, the identity at birth) now ask the route
+  as the caller (their principal and plane, every parameter at its declared default), so the voices
+  the caller's picker lists are the voices a save accepts.
+- **A conversation's identity accepts a voice again** (`POST /runs/start` with `identity`). Its voice
+  check ran on the event loop, where it could not run, and refused every voice ("asyncio.run() cannot
+  be called from a running event loop"). The caller's voices are now read on the loop
+  (`offered_voices_async`) and the rest of the check runs off it; the synchronous check refuses to run
+  in a gateway work-pool thread, where the voice route would wait for a second worker of the pool it
+  holds (a pool of N stuck for good under N identity starts).
+
+- **The console's Runs tab shows every session again** (`console.py`, and the terminal console's Runs tab,
+  `console-tui/src/api.rs`). Since session kinds, a root-runs listing serves conversations only, so AbstractNote's
+  sessions (and Docs assistant chats) were missing from the console's Runs tab. The Runs tab is a technical listing:
+  it now asks `GET /runs` for `kind=all` and lists everything running on the gateway, as before. What apps get by
+  default is unchanged (conversations).
+- **The seat preemption test no longer flakes** (`tests/test_gateway_entities_summon.py`). It rewrote the holder
+  run's stored status to waiting behind the background runner, whose own save could overwrite it (the run then
+  read "completed", not "cancelled"). The holder now runs a small flow that genuinely waits for an event, so the run
+  is waiting through the runtime itself and the human summon cancels it for real.
+
+- **The console kit sync and its drift pins find abstractuic from a worktree** (`console_theme_sync.find_abstractuic`):
+  the kit is looked up beside the repo or any of its parents, so `abstractgateway/untracked/<worktree>` (where
+  releases are cut) runs the pins instead of skipping them. A bundle rebuilt with packages other than the
+  release lockfile's is named as such, never reported as drift.
+- **A saved MTP choice no longer fails runs on a model without MTP** (`speculation_guard.py`, wired in
+  `hosts/bundle_host.py` and the entity chat client in `entity_chat.py`). A flow node, an automation or an entity
+  mind saved with "MTP depth 2, require acceleration" and then pointed at a model without MTP made every run fail
+  ("The openai-compatible provider has no native MTP adapter"). Before each model call the gateway now reads the
+  execution host's capability card for that model (`execution.speculation.supported`, the same card the console and
+  the apps read): when it says the model has no MTP, the MTP request is left out, the step runs without it, and the
+  step's result in the run ledger says so (`metadata.speculation_dropped`: "MTP was not used: <model> does not
+  support MTP, so this ran without it."). That covers the step's own request and the run-level one an automation or
+  `POST /runs/start` sets (`_runtime.speculation`, which AbstractRuntime applies to each step that names none): for
+  that call the runtime sees no run-level request, and the run keeps what it was started with. "Off", no choice, an
+  MTP-capable model and an unknown card are left exactly as asked.
+- **The console's reasoning and MTP controls follow the chosen model** (`console.py`: Sandbox, the route Edit
+  window, the entity create form; operator rule 2026-11-07). Changing the model now puts reasoning and MTP back on
+  the default in all three (the Sandbox kept the reasoning, the route window kept both, the entity form kept the
+  reasoning), and saving a route with another model no longer carries the old model's MTP over. Off and the MTP
+  depths are offered only when the gateway's capability card says the model supports MTP, at the depths it lists;
+  otherwise the control is disabled and says why in words (the kit's: "This model does not support MTP.", the
+  gateway's code under Technical details) instead of a tooltip. The entity create form offers only the reasoning
+  levels the chosen model serves, not a fixed list. The terminal console's Sandbox follows the same rule with the
+  same words (crate `abstractgateway-console` 0.18.1): it kept the reasoning across a model change and sent MTP Off
+  to a model without MTP. So does its route Edit window (Multimodal): it kept both across a model change and saved
+  the old model's MTP with the new one.
+- **The Summon entity form fits a phone** (`console.py`). Its tools-per-phase table kept a 420 px minimum width inside
+  a dialog about 400 px wide, so on a phone the whole form scrolled sideways. The table now fits at 400 px (tighter
+  cells, long tool names wrap); every tool and phase is still shown, and the desktop layout is unchanged.
+
+### Security
+
+- **A provider key goes only to the address it was saved for** (`routes/gateway.py`,
+  `provider_endpoint_profiles.py`, `provider_connections.py`, `entities.py`, `entity_chat.py`,
+  `hosts/bundle_host.py`). The gateway sent its configured key for a provider (the AbstractCore store's, or the
+  environment's, e.g. `OPENAI_API_KEY`) to addresses it was not saved for: a connection's **Test** of a typed
+  address, the model listings that take a `base_url` (any signed-in member can call them), the text route's own
+  **Base URL** (runs, the console Sandbox, an entity's mind), and every call of a saved connection that has an
+  address but no key (AbstractCore fell back to `OPENAI_API_KEY`); a saved connection's own key also went to a new
+  address typed in its edit window. Now:
+  - the configured key of a provider goes only to that provider's configured address (or its default one) or to a
+    request that names no address;
+  - a saved connection's key goes only to its saved address: **Test** with another address runs without it, and
+    saving the connection with a new address (POST or PUT, both consoles) without typing the key again removes it;
+  - every other address is called with AbstractCore's explicit no-key value "EMPTY", never a fallback. The
+    OpenAI-compatible family (OpenAI-compatible endpoints, LM Studio, vLLM, OpenRouter, Portkey…) sends no
+    Authorization header for it; `openai` and `anthropic` send the placeholder itself (`Bearer EMPTY`,
+    `x-api-key: EMPTY`), no secret. So for those providers a Base URL other than the configured one (a proxy that
+    relied on the stored key) now needs its own saved connection with its own key, or it answers 401;
+  - a key you type, or send in the provider-key header, is used as given.
+  Routes covered: `POST /config/provider-endpoint-profiles/discover-models`, `PUT /config/provider-endpoint-profiles/{id}`,
+  `GET /discovery/providers/{p}/models`, `/embeddings/models`, `/vision/provider_models`, `/vision/adapters`,
+  `/voice/voices`, `/audio/speech/models`, `/audio/transcriptions/models`, `/audio/music/providers`,
+  `/audio/music/models` and the `/blocs` routes, each with a `base_url`. Not covered yet: an entity's always-on loop
+  (a separate process started with the mind's address) can still fall back to the environment's key there.
+- **Model text in an email stays inert.** Raw HTML is off (`<script>`, `<img onerror=…>` show as text), only
+  `http`/`https` (with a host) and `mailto` targets become links (`javascript:`, `data:`, `file:`, `tel:`,
+  relative paths stay visible as written, never a link), and an image becomes a link to its address, never a
+  remote load. A link with an empty target (`[x]()`) is its text, never `href=""`. A link's text is its
+  address as written: a look-alike host such as `xn--pple-43d.com` is never decoded to its Unicode spoof
+  (`аpple.com`).
+- **A short model text can never become a huge email.** Every rendered element carries its own style and
+  the parser completes missing table cells, so 5 KB of text could render to 8 MB of HTML (Gmail clips a
+  message above about 100 KB; mail servers refuse 10-25 MB). A text over 100,000 characters, or one whose
+  rendering is over 200 KB, is shown whole as plain text instead, as before Markdown: never truncated.
 
 ## [0.20.2] - 2026-11-07
 

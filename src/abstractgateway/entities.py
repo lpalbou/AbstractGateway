@@ -565,17 +565,11 @@ class EntityHome:
         eid = self.entity_id
         warnings: List[str] = []
 
-        reader = getattr(self.memory, "entity_card", None)
-        if callable(reader):
-            card: Dict[str, Any] = reader(
-                scope_pairs=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
-                owner_id=eid,
-                current_window_events=int(current_window_events),
-                top_n=int(top_n),
-                as_of=as_of,
-            )
-        else:
-            card = {}
+        engine = self.engine_card(current_window_events=current_window_events, top_n=top_n, as_of=as_of)
+        # A shallow copy: the overlays below set top-level keys only; the engine sections are shared
+        # with the cache and are never mutated.
+        card: Dict[str, Any] = dict(engine["card"] or {})
+        if not engine["engine"]:
             warnings.append(
                 "#FALLBACK engine lacks the entity_card read; serving host overlays only — upgrade abstractmemory"
             )
@@ -592,7 +586,7 @@ class EntityHome:
         except Exception:
             card["age_days"] = None
 
-        card["mind_substrate"] = None if as_of is not None else self._newest_substrate()
+        card["mind_substrate"] = None if as_of is not None else copy.deepcopy(engine["substrate"])
         if as_of is not None:
             warnings.append(
                 "mind_substrate omitted on anchored cards: the substrate scan reads current store rows "
@@ -614,6 +608,50 @@ class EntityHome:
         if warnings:
             card["warnings"] = [*card.get("warnings", []), *warnings]
         return card
+
+    def engine_card(
+        self,
+        *,
+        current_window_events: int = 200,
+        top_n: int = 5,
+        as_of: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """The engine compositor's card (and the newest mind-substrate stamp), cached until the life
+        grows (backlog 1012): keyed on the home directory (tenant-safe — the communities F3 rule),
+        the journal high-water seq and the parameters. Both reads are pure functions of the store
+        and journal at that seq, so a repeated read of an unchanged life is free; a read during which
+        the journal moved is served but not kept. `{"card": dict|None, "substrate": dict|None,
+        "engine": bool, "seq": int}` — callers must not mutate the shared `card` sections."""
+        from .entity_tile import ENGINE_CARD_CACHE, home_cache_key, store_identity
+
+        eid = self.entity_id
+        seq_before = int(self.memory.current_seq())
+        key = (
+            "engine_card",
+            home_cache_key(self.home_dir),
+            store_identity(Path(self.home_dir) / MEMORY_FILENAME),
+            seq_before,
+            int(current_window_events),
+            int(top_n),
+            as_of,
+        )
+
+        def _compute() -> Tuple[Dict[str, Any], bool]:
+            reader = getattr(self.memory, "entity_card", None)
+            card: Optional[Dict[str, Any]] = None
+            if callable(reader):
+                card = reader(
+                    scope_pairs=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
+                    owner_id=eid,
+                    current_window_events=int(current_window_events),
+                    top_n=int(top_n),
+                    as_of=as_of,
+                )
+            substrate = None if as_of is not None else self._newest_substrate()
+            value = {"card": card, "substrate": substrate, "engine": callable(reader), "seq": seq_before}
+            return value, int(self.memory.current_seq()) == seq_before
+
+        return ENGINE_CARD_CACHE.get_or_compute(key, _compute)
 
     def _newest_substrate(self) -> Optional[Dict[str, Any]]:
         """The newest `mind_substrate` stamp across lived records ("which
@@ -1679,12 +1717,7 @@ class EntityRegistry:
                 f"provider endpoint profile {raw!r} is not configured or is disabled "
                 "(the entity's substrate names a remote endpoint the gateway cannot resolve)",
             )
-        kwargs: Dict[str, Any] = {}
-        if profile.base_url:
-            kwargs["base_url"] = profile.base_url
-        if profile.api_key:
-            kwargs["api_key"] = profile.api_key
-        return str(profile.provider_family or "").strip().lower(), kwargs
+        return str(profile.provider_family or "").strip().lower(), profile.client_kwargs()
 
     def _entity_llm_handler(self, slug: str) -> Any:
         """The door's LLM_CALL handler for one entity's runtime: substrate
@@ -1746,7 +1779,18 @@ class EntityRegistry:
                 # gateway text route's own endpoint when this is its provider.
                 route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind["base_url"])
                 if route_base_url:
-                    llm_kwargs["base_url"] = route_base_url
+                    # The configured key goes to this address only when it is the
+                    # configured one (security, 0.21.0).
+                    from .provider_connections import configured_provider_request_kwargs
+
+                    llm_kwargs.update(
+                        configured_provider_request_kwargs(
+                            provider,
+                            current_base_dir=self.data_dir,
+                            root_base_dir=self.root_data_dir,
+                            base_url=route_base_url,
+                        )
+                    )
             factory = _ec._default_llm_factory  # late-bound module attribute
             llm = factory(provider, **llm_kwargs)
 
@@ -2467,8 +2511,6 @@ class EntityRegistry:
         host markers filter by their journal-seq base; state-history lines
         are omitted (they carry timestamps, not seqs — a timestamp cannot
         honestly claim a position on the journal axis) with a label."""
-        from .entity_replay import marker_window_end, read_host_markers
-
         home = self.open(name)
         try:
             payload = home.card(as_of=as_of, **kwargs)
@@ -2479,76 +2521,105 @@ class EntityRegistry:
         payload["handle"] = render_handle(slug)  # reachability, not identity (GW-F)
         if as_of is not None:
             payload["state"]["note"] = "state is current — anchored cards do not rewind the operator state"
-
-        moments: List[Dict[str, Any]] = []
-        marker_state_times: List[tuple] = []
-        host_identity_revs: set = set()
-        for m in read_host_markers(self.entities_dir, slug, until_seq=marker_window_end(int(as_of)) if as_of is not None else None):
-            p = m.get("payload") or {}
-            kind = p.get("kind")
-            at = str(m.get("observed_at") or "")
-            if kind in ("sleep", "wake", "pause"):
-                marker_state_times.append((str(kind), str(p.get("reason") or ""), at))
-            if kind == "identity_changed":
-                host_identity_revs.add(p.get("rev"))
-            moments.append(
-                {
-                    "kind": kind,
-                    "at": at,
-                    "seq": m.get("seq"),
-                    "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state", "rev", "by")},
-                }
-            )
-
-        history_path = self.entities_dir / slug / "state_history.jsonl"
-        if as_of is None and history_path.exists():
-            verb_of = {"asleep": "sleep", "awake": "wake", "paused": "pause"}
-            for line in history_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("marker"):
-                    # A marker row of the home's biography (`phase_changed`, `identity_changed`,
-                    # framework ADR 0052 §7): its own kind and time, never a blank "state" moment.
-                    # An identity change the door made is already its host marker (same rev).
-                    marker = str(entry.get("marker"))
-                    if marker == "identity_changed" and entry.get("rev") in host_identity_revs:
-                        continue
-                    details = {k: entry.get(k) for k in ("cause", "written_by", "rev") if entry.get(k) is not None}
-                    if marker == "phase_changed":
-                        details.update({k: entry.get(k) for k in ("from", "to") if entry.get(k) is not None})
-                    moments.append({"kind": marker, "at": str(entry.get("at") or ""), "seq": None, "details": details})
-                    continue
-                kind = verb_of.get(str(entry.get("state") or ""), str(entry.get("state") or "state"))
-                at = str(entry.get("changed_at") or "")
-                # Door transitions appear in BOTH ledgers: the door writes the
-                # state line(s) first (a dream sleep writes up to three), then
-                # the marker, with the same verb and reason. A line is the
-                # door's own when a marker of the same verb and reason follows
-                # it within DOOR_MOMENT_WINDOW_S. (It used to be "same verb in
-                # the same clock minute": a door write across a minute
-                # boundary showed twice, and the entity's birth "asleep" line
-                # vanished whenever a door sleep landed in its minute.)
-                if _is_door_state_line(kind, str(entry.get("reason") or ""), at, marker_state_times):
-                    continue
-                moments.append(
-                    {"kind": kind, "at": at, "seq": None, "details": {"reason": str(entry.get("reason") or "")}}
-                )
-        elif as_of is not None:
             payload["warnings"] = [
                 *payload.get("warnings", []),
                 "state-history moments omitted on anchored cards (timestamp ledger, no journal-seq axis)",
             ]
-
-        moments.sort(key=lambda m: str(m.get("at") or ""))
-        payload["moments"] = moments[-max(0, int(moments_limit)):]
+        moments = self.life_moments(slug, as_of=as_of)
+        # Copies: the rows are shared with the moments cache.
+        payload["moments"] = copy.deepcopy(moments[-max(0, int(moments_limit)):])
         return payload
+
+    def life_moments(self, slug: str, *, as_of: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The life's HOST MOMENTS, oldest first: the gateway's host markers (summons, refusals,
+        diary reads, door-side state changes) merged with the home's `state_history.jsonl`
+        (runtime-side transitions that bypass the door — Ariadne's close of the "his card shows 1
+        moment though he slept twice" gap). A door transition writes both; the marker wins the
+        dedup (it carries seq + richer details). Anchored reads (`as_of`) filter markers by their
+        journal-seq base and omit state-history lines (timestamps, no journal-seq axis).
+
+        Cached per (home, both files' size + mtime) for current reads (backlog 1012: the marker
+        stream of a long life is megabytes); the list is new per call, its rows are shared."""
+        from .entity_replay import HOST_STREAM_DIRNAME, marker_window_end, read_host_markers
+        from .entity_tile import LIFE_MOMENTS_CACHE, home_cache_key
+
+        history_path = self.entities_dir / slug / "state_history.jsonl"
+
+        def _stat(path: Path) -> Tuple[int, int]:
+            try:
+                st = path.stat()
+                return (int(st.st_size), int(st.st_mtime_ns))
+            except OSError:
+                return (-1, -1)
+
+        def _compute() -> Tuple[List[Dict[str, Any]], bool]:
+            moments: List[Dict[str, Any]] = []
+            marker_state_times: List[tuple] = []
+            host_identity_revs: set = set()
+            for m in read_host_markers(self.entities_dir, slug, until_seq=marker_window_end(int(as_of)) if as_of is not None else None):
+                p = m.get("payload") or {}
+                kind = p.get("kind")
+                at = str(m.get("observed_at") or "")
+                if kind in ("sleep", "wake", "pause"):
+                    marker_state_times.append((str(kind), str(p.get("reason") or ""), at))
+                if kind == "identity_changed":
+                    host_identity_revs.add(p.get("rev"))
+                moments.append(
+                    {
+                        "kind": kind,
+                        "at": at,
+                        "seq": m.get("seq"),
+                        "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state", "rev", "by", "change")},
+                    }
+                )
+
+            if as_of is None and history_path.exists():
+                verb_of = {"asleep": "sleep", "awake": "wake", "paused": "pause"}
+                for line in history_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("marker"):
+                        # A marker row of the home's biography (`phase_changed`, `identity_changed`,
+                        # framework ADR 0052 §7): its own kind and time, never a blank "state" moment.
+                        # An identity change the door made is already its host marker (same rev).
+                        marker = str(entry.get("marker"))
+                        if marker == "identity_changed" and entry.get("rev") in host_identity_revs:
+                            continue
+                        details = {k: entry.get(k) for k in ("cause", "written_by", "rev") if entry.get(k) is not None}
+                        if marker == "phase_changed":
+                            details.update({k: entry.get(k) for k in ("from", "to") if entry.get(k) is not None})
+                        moments.append({"kind": marker, "at": str(entry.get("at") or ""), "seq": None, "details": details})
+                        continue
+                    kind = verb_of.get(str(entry.get("state") or ""), str(entry.get("state") or "state"))
+                    at = str(entry.get("changed_at") or "")
+                    # Door transitions appear in BOTH ledgers: the door writes the
+                    # state line(s) first (a dream sleep writes up to three), then
+                    # the marker, with the same verb and reason. A line is the
+                    # door's own when a marker of the same verb and reason follows
+                    # it within DOOR_MOMENT_WINDOW_S. (It used to be "same verb in
+                    # the same clock minute": a door write across a minute
+                    # boundary showed twice, and the entity's birth "asleep" line
+                    # vanished whenever a door sleep landed in its minute.)
+                    if _is_door_state_line(kind, str(entry.get("reason") or ""), at, marker_state_times):
+                        continue
+                    moments.append(
+                        {"kind": kind, "at": at, "seq": None, "details": {"reason": str(entry.get("reason") or "")}}
+                    )
+            moments.sort(key=lambda m: str(m.get("at") or ""))
+            return moments, True
+
+        if as_of is not None:
+            return _compute()[0]
+        marker_path = self.entities_dir / HOST_STREAM_DIRNAME / f"{slug}.jsonl"
+        key = ("life_moments", home_cache_key(self.entities_dir / slug), _stat(marker_path), _stat(history_path))
+        return list(LIFE_MOMENTS_CACHE.get_or_compute(key, _compute))
 
     def verify(self, name: str) -> Dict[str, Any]:
         home = self.open(name)

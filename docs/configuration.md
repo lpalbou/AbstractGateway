@@ -1069,7 +1069,7 @@ are user-level; every write is admin-only.
 | `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
 | `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
 | `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
-| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
+| `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`, `kind`: AbstractNote's own work only with `kind=notes` or `all`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
 | `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |
 | `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
@@ -1216,7 +1216,11 @@ setup does not ask users to classify models manually.
 
 The console's **Test** action calls the selected provider through
 `POST /api/gateway/config/provider-endpoint-profiles/discover-models` and
-previews model discovery before saving. Leave **Visible models**
+previews model discovery before saving. A stored key is sent only to the
+address it was saved for: Test with another address runs without a key, and
+saving a connection with a new address requires typing its key again (a
+connection with an address and no key calls it with none, never with
+`OPENAI_API_KEY`). Leave **Visible models**
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The **Multimodal Capabilities** tab shows configured provider
 connections and direct providers that are already usable from scoped

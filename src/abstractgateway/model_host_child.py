@@ -1,4 +1,7 @@
-"""The model host child process (ADR 0002): `python -m abstractgateway.model_host_child`.
+"""The model host child process (ADR 0002), started as `python -c model_host.CHILD_BOOTSTRAP`.
+
+The bootstrap drops the working directory (the data dir) from the import path and calls `main()`;
+`python -m abstractgateway.model_host_child` would put that directory first on the import path.
 
 Started by `model_host.ModelHostSupervisor`, never by hand. Its stdin carries one JSON handshake
 line (socket address, the per-boot key, the data dir) and then stays open: EOF means the gateway is

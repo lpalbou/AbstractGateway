@@ -883,6 +883,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: var(--font-size-sm); text-align: center; }
 	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
 	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
+	    /* The Summon form's tools-per-phase grid fits a phone (400 px) without sideways scrolling: its
+	       block may shrink inside the grid section, and on a narrow screen the table drops its minimum
+	       width, the cells get tighter and a long tool name wraps. Every tool and phase stays. */
+	    #entity-advanced > .entity-config-block { min-width: 0; }
+	    @media (max-width: 479.98px) {
+	      #entity-new-matrix .entity-matrix-table { min-width: 0; width: 100%; }
+	      #entity-new-matrix .entity-matrix-table th, #entity-new-matrix .entity-matrix-table td { padding: 5px 4px; }
+	      #entity-new-matrix .entity-matrix-table tbody th { text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }
+	    }
 	    .entity-subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
 	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: var(--font-size-sm); }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
@@ -1531,6 +1540,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font-size: var(--font-size-sm);
 	      font-weight: 600;
 	    }
+	    /* A model option the selected model cannot take reads as unavailable, not as a live choice. */
+	    #sandbox-speculation:disabled, #modal-default-speculation:disabled, #entity-new-thinking:disabled { opacity: .55; cursor: not-allowed; }
+	    /* The model notes are sentences, not field labels (the label's capitals do not apply). */
+	    #modal-default-speculation-status, #entity-new-thinking-note { display: block; text-transform: none; letter-spacing: normal; font-weight: 400; }
+	    .model-option-details { display: inline; }
+	    .model-option-details summary { display: inline; cursor: pointer; text-decoration: underline; }
+	    .model-option-details[open] summary { margin-right: 4px; }
 	    .sandbox-field-help {
 	      display: block;
 	      margin: 0;
@@ -2715,7 +2731,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <label id="sandbox-speculation-label" class="sandbox-system-compact">MTP<select id="sandbox-speculation">
 	                  <option value="">inherit</option><option value="off">off</option>
 	                  <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
-	                </select><span class="sandbox-field-help">Per-request speculative decoding; inherit uses the Core default.</span></label>
+	                </select><span class="sandbox-field-help">Per-request speculative decoding; inherit uses the Core default.</span><span id="sandbox-speculation-note" class="sandbox-field-help">MTP is offered when the gateway confirms this model supports it.</span></label>
 	                <label id="sandbox-seconds-label" class="sandbox-system-compact hidden">Length (seconds)<input id="sandbox-seconds" type="number" min="0.5" max="600" step="0.5" inputmode="decimal" value="5"><span class="sandbox-field-help">How long the generated clip is.</span></label>
 	              </div>
 	            </div>
@@ -3879,15 +3895,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           <div class="inline">
             <label>Provider<select id="entity-new-provider" title="LLM provider for this entity's mind — Gateway default inherits the door's substrate"><option value="">Gateway default</option></select></label>
             <label>Model<select id="entity-new-model" disabled title="Model within the chosen provider"><option value="">Gateway default</option></select></label>
-            <label>Reasoning<select id="entity-new-thinking" title="Reasoning effort for reasoning models — optional; 'not set' sends nothing">
-              <option value="">not set</option>
-              <option value="none">none</option>
-              <option value="minimal">minimal</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-            </select></label>
+            <label id="entity-new-thinking-label" class="hidden">Reasoning<select id="entity-new-thinking" disabled title="Reasoning effort: the levels this model offers. Gateway default sends nothing.">
+              <option value="">Gateway default</option>
+            </select><span id="entity-new-thinking-note" class="subtle"></span></label>
           </div>
           <h3 class="entity-config-title">Embedding at birth <span class="entity-config-hint">the M1 pin — the semantic space this life is born into. "Gateway default" pins the door's resolved embedder. Changing it later is the CRITICAL re-embed ceremony.</span></h3>
           <div class="inline">
@@ -5319,6 +5329,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Model dropdown follows the provider selection (cascade); until a
       // provider is picked it stays on Gateway default, disabled.
       await loadModelsForProvider(provSel ? provSel.value : "");
+      await refreshEntityReasoning();
       const bits = [];
       if (degraded) bits.push("#FALLBACK " + degraded + " — leave on Gateway default, or configure a provider in the Providers tab");
       for (const w of (defaults.warnings || [])) bits.push(String(w));
@@ -5344,6 +5355,41 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        }
 	      } catch (e) { opts.push({ value: "", label: "(models unavailable — set on manage)" }); }
 	      _fillSelect(modelSel, opts);
+	    }
+
+	    // Reasoning follows the chosen model (operator rule 2026-11-07): every provider or model change
+	    // puts it back on Gateway default and offers only the levels this model serves (hidden when it
+	    // serves none, as in the kit picker). A level applies only with a provider AND a model.
+	    async function refreshEntityReasoning() {
+	      const label = $("entity-new-thinking-label");
+	      const select = $("entity-new-thinking");
+	      const note = $("entity-new-thinking-note");
+	      if (!label || !select) return;
+	      const provider = ($("entity-new-provider")?.value || "").trim();
+	      const model = ($("entity-new-model")?.value || "").trim();
+	      const target = `${provider}/${model}`;
+	      state.entityReasoningTarget = target;
+	      _fillSelect(select, [{ value: "", label: "Gateway default" }]);
+	      select.value = "";
+	      select.disabled = true;
+	      showModelOptionNote(note, "");
+	      label.classList.add("hidden");
+	      if (!provider || !model) return;
+	      try {
+	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`);
+	        if (state.entityReasoningTarget !== target) return;
+	        if (result?.error) throw new Error(String(result.error));
+	        const levels = modelReasoningLevels(result);
+	        if (!levels.length) return;
+	        _fillSelect(select, [{ value: "", label: "Gateway default" }, ...levels.map((level) => ({ value: level, label: level }))]);
+	        select.value = "";
+	        select.disabled = false;
+	        label.classList.remove("hidden");
+	      } catch (err) {
+	        if (state.entityReasoningTarget !== target) return;
+	        label.classList.remove("hidden");
+	        showModelOptionNote(note, REASONING_UNAVAILABLE, err.message || err);
+	      }
 	    }
 
 	    function _fillTemplateSelect(sel) {
@@ -9011,7 +9057,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const rootOnly = $("runs-root-only").checked;
 	        const runsPageSize = 100;
 	        const runsOffset = Math.max(0, state.runsOffset || 0);
-	        const q = new URLSearchParams({ limit: String(runsPageSize), offset: String(runsOffset), include_ledger_len: "false", root_only: String(rootOnly) });
+	        // kind=all: the Runs tab is a technical listing and shows EVERY
+	        // session on the gateway (operator ruling, 0.21.0). Without it a
+	        // root_only listing serves conversations only and Notes / Docs
+	        // sessions vanish from the console (session_kinds.py).
+	        const q = new URLSearchParams({ limit: String(runsPageSize), offset: String(runsOffset), include_ledger_len: "false", root_only: String(rootOnly), kind: "all" });
 	        if (status) q.set("status", status);
 	        if (search) q.set("query", search);
         const data = await api("/api/gateway/runs?" + q.toString());
@@ -9673,6 +9723,61 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (value.used === true) return `MTP used${value.num_draft_tokens ? ` (depth ${value.num_draft_tokens})` : ""}`;
 	      return `MTP not used${value.message ? `: ${value.message}` : value.reason ? `: ${value.reason}` : ""}`;
 	    }
+	    // MODEL OPTIONS FOLLOW THE SELECTED MODEL (operator rule 2026-11-07), the kit's rule and words
+	    // (ui-kit model_options.ts, speculation_select.tsx): MTP (Off and the depths) is offered only
+	    // when the model's capability card says supported, at the depths it lists; a model change puts
+	    // reasoning and MTP back on the default; reasoning offers only the levels the model serves.
+	    // Served facts only, never the model's name.
+	    const MTP_UNKNOWN = "MTP is offered when the gateway confirms this model supports it.";
+	    const MTP_UNSUPPORTED = "This model does not support MTP.";
+	    const MTP_CHECKING = "Checking whether this model supports MTP…";
+	    const REASONING_UNAVAILABLE = "Reasoning choices appear when the gateway can describe the selected model.";
+	    function mtpCard(result) {
+	      const caps = result?.execution?.speculation;
+	      return caps && typeof caps.supported === "boolean" ? caps : null;
+	    }
+	    function mtpCardNote(caps) {
+	      if (!caps) return MTP_UNKNOWN;
+	      if (!caps.supported) return caps.message || MTP_UNSUPPORTED;
+	      return caps.message || (caps.requires_reload === true ? "Model reload required before MTP can run."
+	        : caps.ready === false ? "MTP is supported but not ready on this instance."
+	        : caps.ready !== true ? "MTP support verified; loaded-instance readiness is unknown." : "");
+	    }
+	    // Enables Off and the card's depths only for a supported card; the whole select is disabled
+	    // otherwise. The value is the caller's: a card still loading must not erase a stored choice.
+	    function gateMtpSelect(select, caps) {
+	      const supported = caps?.supported === true;
+	      const depths = supported && Array.isArray(caps.supported_depths) ? caps.supported_depths.map(String) : [];
+	      for (const option of select.options) {
+	        if (!option.value) continue;
+	        option.disabled = !supported || (option.value !== "off" && option.value !== "custom" && !depths.includes(option.value));
+	      }
+	      select.disabled = !supported;
+	      return supported;
+	    }
+	    // One plain sentence; the gateway's own reason code (or the error) under Technical details.
+	    function showModelOptionNote(el, text, detail) {
+	      if (!el) return;
+	      el.textContent = text || "";
+	      if (!text || !detail) return;
+	      const more = document.createElement("details");
+	      more.className = "model-option-details";
+	      const summary = document.createElement("summary");
+	      summary.textContent = "Technical details";
+	      const body = document.createElement("span");
+	      body.textContent = String(detail);
+	      more.append(summary, " ", body);
+	      el.append(" ", more);
+	    }
+	    // The levels the model serves (kit reasoningFacts): `reasoning_levels`/`thinking_levels`, or
+	    // off/auto for a model whose only control is a prompt switch.
+	    function modelReasoningLevels(payload) {
+	      const caps = payload?.capabilities && typeof payload.capabilities === "object" ? payload.capabilities : (payload || {});
+	      const values = caps.reasoning_levels || caps.thinking_levels;
+	      const levels = Array.isArray(values) ? [...new Set(values.filter((v) => typeof v === "string" && v.trim()))] : [];
+	      if (!levels.length && caps.thinking_support === true && caps.thinking_control?.prompt_disable_token) levels.push("off", "auto");
+	      return levels;
+	    }
 	    // DEVICE of a local embedding model (AbstractCore: route `options.device`, the person's
 	    // choice; operator ruling 2026-10-29) with what the loaded one takes now, in words.
 	    function isEmbeddingDefault(row) { return String(row?.key || "").startsWith("embedding."); }
@@ -9710,34 +9815,51 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!row || !isTextGenerationDefault(row)) return;
 	      const provider = activeDefaultProvider(), model = activeDefaultModel();
 	      const status = $("modal-default-speculation-status");
-	      if (!provider || !model) { status.textContent = "Choose a provider and model to check MTP support."; return; }
+	      const select = $("modal-default-speculation");
+	      gateMtpSelect(select, null);
+	      if (!provider || !model) { showModelOptionNote(status, MTP_UNKNOWN); return; }
+	      showModelOptionNote(status, MTP_CHECKING);
 	      try {
 	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(model)}&provider=${encodeURIComponent(provider)}`);
 	        if (state.activeDefaultRow !== row || provider !== activeDefaultProvider() || model !== activeDefaultModel()) return;
-	        const caps = result.execution?.speculation;
-	        status.textContent = caps ? (caps.ready === true ? "MTP ready; the request reports actual execution." : (caps.message || caps.reason || (caps.supported ? "Compatible backend; loading/reloading may be required." : "MTP is unavailable for this backend/model."))) : "Execution support unknown; saving a default does not enable MTP.";
+	        const caps = mtpCard(result);
+	        // A stored MTP choice this model cannot use is not shown as chosen; saving clears it.
+	        if (caps && !caps.supported) select.value = "";
+	        gateMtpSelect(select, caps);
+	        showModelOptionNote(status, mtpCardNote(caps), caps?.reason || result?.execution?.error);
 	      } catch (err) {
-	        if (state.activeDefaultRow === row) status.textContent = `Execution support unavailable: ${err.message || err}`;
+	        if (state.activeDefaultRow === row) showModelOptionNote(status, MTP_UNKNOWN, err.message || err);
 	      }
+	    }
+	    // A provider or model change in the route window: reasoning and MTP back to "not set" /
+	    // inherit; the save then clears the stored values (saveDefault).
+	    function resetDefaultModelOptions() {
+	      $("modal-default-reasoning").value = "";
+	      const select = $("modal-default-speculation");
+	      select.querySelector?.('option[value="custom"]')?.remove();
+	      select.value = "";
 	    }
 	    async function refreshSandboxSpeculationSupport(row) {
 	      const select = $("sandbox-speculation");
+	      const note = $("sandbox-speculation-note");
 	      const target = `${row?.provider || ""}/${row?.model || ""}`;
-	      if (state.sandboxSpeculationTarget !== target) select.value = "";
+	      if (state.sandboxSpeculationTarget !== target) {
+	        // Another model: reasoning and MTP go back to the default.
+	        select.value = "";
+	        $("sandbox-reasoning").value = "";
+	      }
 	      state.sandboxSpeculationTarget = target;
-	      const label = $("sandbox-speculation-label");
-	      for (const option of select.options) if (/^[2-5]$/.test(option.value)) option.disabled = true;
-	      label.title = "Checking this execution host's MTP support. Off and inherit remain available.";
-	      if (!row?.provider || !row?.model) return;
+	      gateMtpSelect(select, null);
+	      if (!row?.provider || !row?.model) { showModelOptionNote(note, MTP_UNKNOWN); return; }
+	      showModelOptionNote(note, MTP_CHECKING);
 	      try {
 	        const result = await api(`/api/gateway/discovery/models/capabilities?model_name=${encodeURIComponent(row.model)}&provider=${encodeURIComponent(row.provider)}`);
 	        if (state.sandboxSpeculationTarget !== target) return;
-	        const caps = result.execution?.speculation;
-	        const depths = caps?.supported === true && Array.isArray(caps.supported_depths) ? caps.supported_depths.map(String) : [];
-	        for (const option of select.options) if (/^[2-5]$/.test(option.value)) option.disabled = !depths.includes(option.value);
-	        label.title = caps?.message || caps?.reason || (caps?.ready === true ? "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default." : "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.");
+	        const caps = mtpCard(result);
+	        gateMtpSelect(select, caps);
+	        showModelOptionNote(note, mtpCardNote(caps), caps?.reason || result?.execution?.error);
 	      } catch (err) {
-	        if (state.sandboxSpeculationTarget === target) label.title = `MTP support unknown: ${err.message || err}`;
+	        if (state.sandboxSpeculationTarget === target) showModelOptionNote(note, MTP_UNKNOWN, err.message || err);
 	      }
 	    }
 	    function loadDefaultReasoning(row) {
@@ -15026,7 +15148,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          };
 	          const reasoningChoice = ($("sandbox-reasoning")?.value || "").trim();
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
-	          const mtpChoice = $("sandbox-speculation").value;
+	          const mtpChoice = $("sandbox-speculation").disabled ? "" : $("sandbox-speculation").value;
 	          if (mtpChoice) payload.speculation = speculationFromChoice(mtpChoice, undefined, true);
 	          // The speaker is the model (the provider is in the context line above).
 	          pendingId = sandboxPush({ role: "assistant", title: model, content: "", live: { callId: "sandbox", reasoning: "", label: "generating answer" } });
@@ -15227,6 +15349,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function reloadDefaultModalCatalogs() {
 	      const row = state.activeDefaultRow || null;
 	      clearDefaultTest();  // a stale test result must not survive a provider change
+	      resetDefaultModelOptions();
 	      // The loader paints its own terminal state and rethrows.
 	      try {
 	        await loadDefaultModels(activeDefaultProvider(), "", row);
@@ -17355,11 +17478,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (isTextGenerationDefault(row)) {
 	          if (Object.prototype.hasOwnProperty.call(options, "speculation")) throw new Error("Use the MTP selector for speculation; the options box edits the remaining provider settings.");
 	          const choice = $("modal-default-speculation").value;
-	          const changed = choice !== String(prefill.speculation || "");
-	          const value = changed ? speculationFromChoice(choice, row?.options?.speculation) : row?.options?.speculation;
+	          // Another provider or model: the stored MTP belonged to the old model and is never
+	          // kept (operator rule 2026-11-07); only what is chosen now is saved.
+	          const routeChanged = provider !== String(row?.provider || "") || model !== String(row?.model || "");
+	          const stored = routeChanged ? undefined : row?.options?.speculation;
+	          const changed = routeChanged || choice !== String(prefill.speculation || "");
+	          const value = changed ? (choice ? speculationFromChoice(choice, stored) : undefined) : stored;
 	          delete options.speculation;
 	          if (value !== undefined && value !== null) options.speculation = value;
-	          if (changed) optionsEdited = true;
+	          if (changed && (value !== undefined || row?.options?.speculation != null)) optionsEdited = true;
 	        }
 	        if (String(row?.key || "").startsWith("embedding.")) {
 	          if (Object.prototype.hasOwnProperty.call(options, "device")) throw new Error("Use the Device selector; the options box edits the remaining provider settings.");
@@ -17497,7 +17624,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("models-load-model-custom").onchange = () => updateModelsLoadHint();
 	    $("entity-create").onclick = createEntity;
 	    $("entity-template").onchange = renderEntityTemplateDesc;
-	    $("entity-new-provider").onchange = () => loadModelsForProvider($("entity-new-provider").value);
+	    $("entity-new-provider").onchange = () => loadModelsForProvider($("entity-new-provider").value).then(refreshEntityReasoning);
+	    $("entity-new-model").onchange = () => refreshEntityReasoning();
 	    $("tpl-view").onclick = () => tplShowEditor("view");
 	    $("tpl-edit").onclick = () => tplShowEditor("edit");
 	    $("tpl-new").onclick = () => tplShowEditor("new");
@@ -17660,6 +17788,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("modal-default-provider-custom").onchange = reloadDefaultModalCatalogs;
 	    $("modal-default-model").onchange = () => {
 	      clearDefaultTest();
+	      resetDefaultModelOptions();
 	      refreshDefaultSpeculationSupport();
 	    };
 	    $("modal-default-model-custom").onchange = $("modal-default-model").onchange;

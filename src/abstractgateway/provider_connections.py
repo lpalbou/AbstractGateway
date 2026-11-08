@@ -209,12 +209,20 @@ def configured_provider_request_kwargs(
     current_base_dir: Path,
     root_base_dir: Path,
     include_env: bool = True,
+    base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return safe direct-provider kwargs for internal Core calls.
 
     Raw values are for in-process execution only and must not be serialized to a
     browser response.
+
+    `base_url` is a more specific address for this call (the text route's own Base URL, an
+    entity mind's). The configured key goes only to its own address (security, 0.21.0): the
+    configured base URL, else the provider's default one. Any other address gets AbstractCore's
+    explicit no-key value, so neither the configured key nor OPENAI_API_KEY reaches it.
     """
+
+    from .provider_endpoint_profiles import NO_PROVIDER_KEY, same_base_url
 
     out: Dict[str, Any] = {}
     key, _key_source = configured_provider_api_key(
@@ -225,9 +233,16 @@ def configured_provider_request_kwargs(
     )
     if key:
         out["api_key"] = key
-    base_url, _base_source = configured_provider_base_url(provider_id)
-    if base_url:
-        out["base_url"] = base_url
+    configured_base, _base_source = configured_provider_base_url(provider_id)
+    if configured_base:
+        out["base_url"] = configured_base
+    target = str(base_url or "").strip()
+    if target:
+        spec = _spec_for_provider(provider_id)
+        own = configured_base or (spec.default_base_url if spec is not None else "")
+        out["base_url"] = target
+        if not same_base_url(target, own):
+            out["api_key"] = NO_PROVIDER_KEY
     return out
 
 

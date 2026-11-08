@@ -401,6 +401,14 @@ fn the_sandbox_words_are_the_webs() {
     assert_eq!(sandbox::SECONDS_LABEL, s("seconds_label"));
     assert_eq!(sandbox::SECONDS_HELP, s("seconds_help"));
     assert_eq!(sandbox::SECONDS_REFUSAL, s("seconds_refusal"));
+    // The MTP control's notes (operator rule 2026-11-07).
+    assert_eq!(sandbox::MTP_UNKNOWN, s("mtp_unknown"));
+    assert_eq!(sandbox::MTP_UNSUPPORTED, s("mtp_unsupported"));
+    assert_eq!(sandbox::MTP_CHECKING, s("mtp_checking"));
+    assert_eq!(sandbox::MTP_RELOAD, s("mtp_reload"));
+    assert_eq!(sandbox::MTP_NOT_READY, s("mtp_not_ready"));
+    assert_eq!(sandbox::MTP_READINESS_UNKNOWN, s("mtp_readiness_unknown"));
+    assert_eq!(sandbox::TECHNICAL_DETAILS, s("technical_details"));
     let list = |k: &str| -> Vec<String> {
         fx[k]
             .as_array()

@@ -96,7 +96,7 @@ def world(gateway, monkeypatch):
     real_offered_text_models = esa.offered_text_models
     # The lists the pickers show a member (GET /discovery/providers/{p}/models, GET /voice/voices).
     monkeypatch.setattr(esa, "offered_text_models", lambda p: (list(OFFERED_MODELS.get(p, [])), None if p in OFFERED_MODELS else "unknown provider"))
-    monkeypatch.setattr(esa, "offered_voices", lambda p, m: (*OFFERED_VOICES.get(p, ([], [])), None))
+    monkeypatch.setattr(esa, "offered_voices", lambda p, m, *_r: (*OFFERED_VOICES.get(p, ([], [])), None))
     c = TestClient(app)
     users = GatewayUserRegistry()
     _rec, admin_token = users.create_user(user_id="root", roles=["admin", "user"], runtime_id="default")
@@ -219,7 +219,11 @@ def test_creator_voice_is_bounded_by_the_offered_voices(world) -> None:
     c = world["c"]
     r = c.put("/api/gateway/entities/aster/voice", headers=world["alice"], json={"provider": "kokoro", "model": "kokoro-82m", "voice": "zz_nobody"})
     assert r.status_code == 403, r.text
-    assert r.json()["detail"]["message"] == "zz_nobody isn't a kokoro voice this gateway offers. Offered: af_heart, am_adam."
+    assert r.json()["detail"]["message"] == (
+        "zz_nobody isn't a kokoro voice this entity can use. An entity speaks with this gateway's shared voices and its "
+        "creator's own voices; another person's own voice stays theirs until an administrator shares it with everyone. "
+        "Offered: af_heart, am_adam."
+    )
     r = c.put("/api/gateway/entities/aster/voice", headers=world["alice"], json={"provider": "kokoro", "model": "other", "voice": "af_heart"})
     assert r.status_code == 403 and r.json()["detail"]["message"].startswith("other isn't a kokoro speech model"), r.text
     assert c.put("/api/gateway/entities/aster/voice", headers=world["alice"], json={"clear": True}).status_code == 200

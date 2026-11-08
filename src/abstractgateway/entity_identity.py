@@ -250,20 +250,32 @@ def _check_style(style: str, catalog: Mapping[str, Mapping[str, Any]]) -> None:
         )
 
 
-def _check_voice_offered(voice: VoiceChoice, name: str) -> None:
-    """The voice is one this gateway offers (`GET /voice/voices`, what the voice picker lists).
-    The sentence is the identity page's: what is missing, and what to do."""
-    from .entity_settings_access import _listed, offered_voices
+#: Whose voices a conversation may speak with (said in its refusal of any other voice): the
+#: conversation is the caller's own, heard in their plane.
+CONVERSATION_VOICES_SENTENCE = "A conversation speaks with this gateway's shared voices and your own voices."
 
-    voices, models, err = offered_voices(voice.provider, voice.model)
+
+def _check_voice_offered(voice: VoiceChoice, name: str, *, request: Any = None, for_conversation: bool = False,
+                         offered: Optional[Tuple[list, list, Optional[str]]] = None) -> None:
+    """The voice is one this gateway offers THE CALLER (`GET /voice/voices`, what the caller's
+    voice picker lists: `entity_settings_access.offered_voices`). The sentence is the identity
+    page's: what is missing, and what to do; a voice the caller's list lacks (another account's
+    own voice, an unknown id) is refused with whose voices it may be
+    (`entity_settings_access.ENTITY_VOICES_SENTENCE`)."""
+    from .entity_settings_access import ENTITY_VOICES_SENTENCE, _listed, offered_voices
+
+    voices, models, err = offered if offered is not None else offered_voices(voice.provider, voice.model, request)
     if not voices:
         why = f" ({err})" if err else ""
         raise IdentityRefused(
             400, f"{name} can't speak with {voice.voice}: this gateway offers no {voice.provider} voice right now{why}. Choose a voice it offers."
         )
     if not any(v.lower() == voice.voice.lower() for v in voices):
+        whose = CONVERSATION_VOICES_SENTENCE if for_conversation else ENTITY_VOICES_SENTENCE
         raise IdentityRefused(
-            400, f"{name} can't speak with {voice.voice}: it isn't a {voice.provider} voice this gateway offers. Choose one of: {_listed(voices)}."
+            400,
+            f"{name} can't speak with {voice.voice}: it isn't a {voice.provider} voice {name} can use. {whose} "
+            f"Choose one of: {_listed(voices)}.",
         )
     if models and not any(m.lower() == voice.model.lower() for m in models):
         raise IdentityRefused(
@@ -289,13 +301,17 @@ def _check_voice_downloaded(voice: VoiceChoice, name: str) -> None:
         )
 
 
-def check_choice(name: str, avatar: AvatarChoice, voice: Optional[VoiceChoice]) -> None:
-    """The ladder after the hold: the design, then the voice offered, then its model downloaded.
-    Also what `POST /entities` runs before a home exists."""
+def check_choice(name: str, avatar: AvatarChoice, voice: Optional[VoiceChoice], *, request: Any = None,
+                 for_conversation: bool = False, offered: Optional[Tuple[list, list, Optional[str]]] = None) -> None:
+    """The ladder after the hold: the design, then the voice offered (to the caller), then its
+    model downloaded. Also what `POST /entities` runs before a home exists, and a conversation's
+    identity (`for_conversation`). Blocking: call it from a sync handler's thread, never on the
+    loop nor in a work-pool thread, unless async code read the caller's list first
+    (`offered`, from `entity_settings_access.offered_voices_async`)."""
     _check_style(avatar.style, avatar_catalog())
     if voice is None:
         raise IdentityRefused(400, f"{name}'s identity needs a voice: an identity someone chooses always names one.")
-    _check_voice_offered(voice, name)
+    _check_voice_offered(voice, name, request=request, for_conversation=for_conversation, offered=offered)
     _check_voice_downloaded(voice, name)
 
 

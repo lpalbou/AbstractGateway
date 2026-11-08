@@ -83,6 +83,7 @@ from ..provider_defaults import (
     resolve_gateway_provider_model,
 )
 from ..provider_endpoint_profiles import (
+    NO_PROVIDER_KEY,
     ProviderEndpointProfileError,
     ProviderEndpointProfileExistsError,
     ProviderEndpointProfileStore,
@@ -94,6 +95,7 @@ from ..provider_endpoint_profiles import (
     normalize_scope,
     profile_id_from_virtual_provider,
     resolve_effective_endpoint_profile,
+    same_base_url,
 )
 from ..endpoint_vision_catalog import (
     apply_endpoint_evidence,
@@ -2724,8 +2726,10 @@ class StartRunRequest(_SpeculationControlRequest):
     kind: Optional[str] = Field(
         default=None,
         description=(
-            "What the session is for: `conversation` (default) or `docs` (a Docs assistant chat; needs session_id). "
-            "Turn listings (GET /runs?root_only=true) show conversations unless asked for `kind=docs`."
+            "What the session is for: `conversation` (default), `docs` (a Docs assistant chat) or `notes` "
+            "(AbstractNote's own work); `docs` and `notes` need session_id. A run of the docs-qa or abstractnote "
+            "bundle gets that kind without it. Turn listings (GET /runs?root_only=true) show conversations unless "
+            "asked for `kind=docs` or `kind=notes`."
         ),
     )
     identity: Optional[IdentityBody] = Field(
@@ -9342,7 +9346,12 @@ def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, An
 
 
 def _apply_session_identity(
-    req: "StartRunRequest", input_data: Dict[str, Any], *, principal: Optional[GatewayPrincipal], session_id: Optional[str]
+    req: "StartRunRequest",
+    input_data: Dict[str, Any],
+    *,
+    principal: Optional[GatewayPrincipal],
+    session_id: Optional[str],
+    offered_voices: Optional[tuple] = None,
 ) -> Optional[JSONResponse]:
     """The conversation's identity on this run (ADR 0052 §9; session_identity.py): a client-sent
     `_runtime.identity`/`identity_ref` is dropped; `req.identity` goes through the identity ladder
@@ -9362,7 +9371,7 @@ def _apply_session_identity(
     try:
         if req.identity is not None:
             avatar, voice = choice_from_body(req.identity.avatar, req.identity.voice)
-            check_choice("This conversation", avatar, voice)
+            check_choice("This conversation", avatar, voice, for_conversation=True, offered=offered_voices)
         user = str(getattr(principal, "user_id", "") or "").strip() or "operator"
         record = resolve_session_identity(
             Path(get_gateway_service().config.data_dir), session_id, avatar=avatar, voice=voice, actor=f"person:{user}"
@@ -9440,17 +9449,18 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if session_kind_req != "conversation" and not (isinstance(req.session_id, str) and req.session_id.strip()):
             raise HTTPException(status_code=400, detail=f"kind {session_kind_req!r} needs a session_id (the session it describes)")
     if session_kind_req is None and isinstance(req.session_id, str) and req.session_id.strip():
-        # A docs-qa run is a docs chat whichever client starts it (the terminal console too).
-        from ..session_kinds import DOCS_QA_BUNDLE_ID
+        # The purpose follows the workflow's bundle, whichever client starts it: a docs-qa run
+        # is a docs chat (the terminal console too), an AbstractNote run (a capture from Note,
+        # its phone or watch) is a note session.
+        from ..session_kinds import start_kind
 
-        if bundle_id and bundle_id.split("@", 1)[0] == DOCS_QA_BUNDLE_ID:
-            session_kind_req = "docs"
-    if session_kind_req == "docs":
+        session_kind_req = start_kind(bundle_id, flow_id)
+    if session_kind_req in ("docs", "notes"):
         # Marked BEFORE the run starts, so the conversation lists never show it.
         from ..session_kinds import SessionKindsUnreadable, mark_session_kind
 
         try:
-            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), "docs")
+            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
         except SessionKindsUnreadable as exc:
             raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
@@ -9464,7 +9474,18 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data["workspace"] = dict(req.workspace)
         _apply_run_stream_switch(input_data, interactive=True)
         _strip_client_automation_attribution(input_data)
-        identity_refused = _apply_session_identity(req, input_data, principal=principal, session_id=session_id)
+        # The caller's voices are read HERE, on the loop (the voice route awaits work in the pools:
+        # read from a pool thread it holds one worker while waiting for another, review P1); the
+        # rest of the ladder and the record's file write run off the loop.
+        offered = None
+        voice_body = getattr(req.identity, "voice", None) if session_id and req.identity is not None else None
+        if voice_body is not None and str(getattr(voice_body, "provider", "") or "").strip():
+            from ..entity_settings_access import offered_voices_async
+
+            offered = await offered_voices_async(str(voice_body.provider).strip(), str(getattr(voice_body, "model", "") or "").strip() or None, request)
+        identity_refused = await off_loop(
+            "light", _apply_session_identity, req, input_data, principal=principal, session_id=session_id, offered_voices=offered
+        )
         if identity_refused is not None:
             return identity_refused
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
@@ -10065,6 +10086,23 @@ def _drop_superseded_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return [row for row in rows if row.get("role") != "occurrence" or id(row) in keep]
 
 
+async def run_session_kind_migrations(svc: Any) -> None:
+    """The pending one-time session-kind migrations of this plane (session_kinds.MIGRATIONS):
+    one whole-index scan, off the event loop (the heavy pool), shared by concurrent callers.
+    `GET /runs` and `GET /sessions/search` run it first. Raises SessionKindsUnreadable."""
+    from ..session_kinds import pending_migrations, run_pending_migrations
+
+    if not pending_migrations(svc.config.data_dir):
+        return
+    rs = svc.host.run_store
+
+    def _rows() -> List[Dict[str, Any]]:
+        lister = getattr(rs, "list_run_index", None)
+        return lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
+
+    await off_loop("heavy", run_pending_migrations, svc.config.data_dir, _rows)  # a whole-index listing
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -10080,7 +10118,7 @@ async def list_runs(
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, each listed run carries steps / llm_calls / tool_calls / tokens_total: the totals of that run and every sub-run below it, read from the ledger (null when the gateway has no ledger store)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
-    kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats) or `all`. Every row carries `kind`."),
+    kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats), `notes` (AbstractNote's captures and background processing) or `all`. Every row carries `kind`."),
     archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
@@ -10128,24 +10166,18 @@ async def list_runs(
     )
     # Session purpose (session_kinds.py): turn listings show conversations by
     # default, so a Docs assistant chat never reaches a conversation list.
-    from ..session_kinds import SessionKindsUnreadable, docs_qa_migration_done, migrate_docs_qa_sessions, session_kinds as _session_kinds
+    from ..session_kinds import SessionKindsUnreadable, kind_of as _kind_of_row, session_kinds as _session_kinds
 
-    # One-time migration: sessions whose turn root ran docs-qa (before the
-    # kind existed) become docs chats. Off the event loop (it reads the index).
+    # One-time migrations: sessions whose turn root ran docs-qa / an AbstractNote workflow
+    # (before their kind existed) become docs chats / note sessions.
     try:
-        if not docs_qa_migration_done(svc.config.data_dir):
-            def _migrate() -> int:
-                lister = getattr(rs, "list_run_index", None)
-                rows = lister(root_only=True, limit=10_000_000) if callable(lister) else [run_summary(r) for r in rs.list_runs(limit=10_000_000)]
-                return migrate_docs_qa_sessions(svc.config.data_dir, rows)
-
-            await off_loop("heavy", _migrate)  # a whole-index listing: the heavy pool
+        await run_session_kind_migrations(svc)
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
     want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
-    if want_kind not in ("conversation", "docs", "all"):
-        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|all)")
+    if want_kind not in ("conversation", "docs", "notes", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|notes|all)")
     try:
         kinds_map = _session_kinds(svc.config.data_dir)
     except SessionKindsUnreadable as exc:
@@ -10156,7 +10188,9 @@ async def list_runs(
         return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
 
     def _kind_of(summary: Dict[str, Any]) -> str:
-        return kinds_map.get(str(summary.get("session_id") or ""), "conversation")
+        # The mark, else the row's own workflow (an AbstractNote automation's occurrence
+        # sessions are notes without a mark: session_kinds.kind_of).
+        return _kind_of_row(kinds_map, summary.get("session_id"), summary.get("workflow_id"))
 
     def _matches_query(summary: Dict[str, Any]) -> bool:
         """The console query language over the three identity fields shown
@@ -16802,6 +16836,33 @@ def _request_provider_api_key(request: Request) -> Optional[str]:
     return None
 
 
+def _typed_address_api_key(request: Request, provider: Optional[str], base_url: Optional[str]) -> Optional[str]:
+    """THE key of a request that names its own provider address (`base_url` in the query or
+    body): the caller's own provider-key header; else, with no address, None (the usual
+    resolution); else the configured key of `provider` only when `base_url` is that provider's
+    configured (or default) address, and AbstractCore's explicit no-key value for any other
+    address, so neither the configured key nor OPENAI_API_KEY reaches a caller-chosen host."""
+    own = _request_provider_api_key(request)
+    if own:
+        return own
+    target = str(base_url or "").strip()
+    if not target:
+        return None
+    current_base, root_base = _gateway_profile_dirs()
+    kwargs = configured_provider_request_kwargs(
+        str(provider or "").strip(), current_base_dir=current_base, root_base_dir=root_base, base_url=target
+    )
+    return str(kwargs.get("api_key") or "") or NO_PROVIDER_KEY
+
+
+def _profile_discovery_api_key(profile: Any, request: Request) -> Optional[str]:
+    """The key a model listing of a saved connection carries: its stored key, else the caller's
+    own header key, else explicitly none for a connection with an address (never the gateway's
+    configured key or OPENAI_API_KEY)."""
+    stored = str(getattr(profile, "api_key", "") or "").strip()
+    return stored or _request_provider_api_key(request) or profile.call_api_key() or None
+
+
 def _gateway_profile_dirs() -> tuple[Path, Path]:
     svc = get_gateway_service()
     current = Path(svc.config.data_dir).expanduser().resolve()
@@ -19694,6 +19755,11 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         flow_editor=flow_editor,
         assistant=assistant,
     )
+    # The lean entity tile read (backlog 1012); the roster (`GET /entities`) carries the same
+    # descriptor as `reads.tile`.
+    from ..entity_tile import entity_tile_contract
+
+    common["entities"] = {"tile": entity_tile_contract()}
 
     return {
         "version": 1,
@@ -19953,7 +20019,7 @@ async def voice_voices_catalog(
         payload = await _discovery_to_thread(
             discovery.get_voice_catalog,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             voice_openai_api_key=_voice_openai_api_key(),
             provider=provider,
             model=model,
@@ -20020,7 +20086,7 @@ async def audio_speech_models_catalog(
                 _voice_providers_payload = await _discovery_to_thread(
                     discovery.get_voice_catalog,
                     base_url=base_url,
-                    provider_api_key=_request_provider_api_key(request),
+                    provider_api_key=_typed_address_api_key(request, provider, base_url),
                     voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
@@ -20083,7 +20149,7 @@ async def audio_speech_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_tts_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20130,7 +20196,7 @@ async def audio_transcription_models_catalog(
                 _voice_providers_payload = await _discovery_to_thread(
                     discovery.get_voice_catalog,
                     base_url=base_url,
-                    provider_api_key=_request_provider_api_key(request),
+                    provider_api_key=_typed_address_api_key(request, provider, base_url),
                     voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
@@ -20204,7 +20270,7 @@ async def audio_transcription_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_stt_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20264,7 +20330,7 @@ async def audio_music_providers_catalog(
             discovery.list_music_providers,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, None, base_url),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
@@ -20333,7 +20399,7 @@ async def audio_music_models_catalog(
             discovery.list_music_models,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20399,7 +20465,7 @@ async def _endpoint_profile_vision_entries(
                 discovery.list_provider_models,
                 profile.provider_family,
                 base_url=profile.base_url or None,
-                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                provider_api_key=_profile_discovery_api_key(profile, request),
                 timeout_s=_provider_models_timeout_s(),
             )
         except Exception as e:
@@ -20510,7 +20576,7 @@ async def vision_provider_models_catalog(
                     discovery.list_vision_provider_models,
                     task=task_value,
                     base_url=named_profile.base_url or None,
-                    provider_api_key=named_profile.api_key or _request_provider_api_key(request),
+                    provider_api_key=_profile_discovery_api_key(named_profile, request),
                     provider=named_profile.provider_family,
                     providers_only=False,
                 )
@@ -20568,7 +20634,7 @@ async def vision_provider_models_catalog(
             discovery.list_vision_provider_models,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
             providers_only=providers_only,
         )
@@ -20672,7 +20738,7 @@ async def vision_adapters_catalog(
             model=model_value,
             task=task_value,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
         )
     except Exception as e:
@@ -20756,7 +20822,7 @@ async def embedding_models_catalog(
         payload = await _discovery_to_thread(
             discovery.list_embedding_models,
             base_url=base_url,
-            provider_api_key=_request_provider_api_key(request),
+            provider_api_key=_typed_address_api_key(request, provider, base_url),
             provider=provider,
             providers_only=providers_only,
         )
@@ -20886,7 +20952,7 @@ async def discovery_providers(
                     discovery.list_provider_models,
                     prof.provider_family,
                     base_url=prof.base_url or None,
-                    provider_api_key=prof.api_key or _request_provider_api_key(request),
+                    provider_api_key=_profile_discovery_api_key(prof, request),
                     timeout_s=_provider_models_timeout_s(),
                 )
                 models2 = payload2.get("models") if isinstance(payload2, dict) else None
@@ -21009,7 +21075,7 @@ async def discovery_provider_models(
                             discovery.list_provider_models,
                             profile.provider_family,
                             base_url=profile.base_url or None,
-                            provider_api_key=profile.api_key or _request_provider_api_key(request),
+                            provider_api_key=_profile_discovery_api_key(profile, request),
                             input_type=input_type,
                             output_type=output_type,
                             capability_route=capability_route,
@@ -21066,7 +21132,7 @@ async def discovery_provider_models(
                 discovery.list_provider_models,
                 profile.provider_family,
                 base_url=profile.base_url or None,
-                provider_api_key=profile.api_key or _request_provider_api_key(request),
+                provider_api_key=_profile_discovery_api_key(profile, request),
                 input_type=input_type,
                 output_type=output_type,
                 capability_route=capability_route,
@@ -21124,7 +21190,12 @@ async def discovery_provider_models(
             discovery.list_provider_models,
             prov,
             base_url=base_url or direct_kwargs.get("base_url"),
-            provider_api_key=_request_provider_api_key(request) or direct_kwargs.get("api_key"),
+            # A typed address gets the configured key only when it is the configured one.
+            provider_api_key=(
+                _typed_address_api_key(request, prov, base_url)
+                if str(base_url or "").strip()
+                else (_request_provider_api_key(request) or direct_kwargs.get("api_key"))
+            ),
             input_type=input_type,
             output_type=output_type,
             capability_route=capability_route,
@@ -28444,9 +28515,25 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
         current_base_dir=current_base,
         root_base_dir=root_base,
     )
-    provider_api_key = body_api_key or (profile.api_key if profile is not None else "") or _request_provider_api_key(request) or direct_kwargs.get("api_key")
-    if not base_url and isinstance(direct_kwargs.get("base_url"), str):
-        base_url = str(direct_kwargs.get("base_url") or "").strip()
+    configured_base_url = str(direct_kwargs.get("base_url") or "").strip()
+    if not base_url and configured_base_url:
+        base_url = configured_base_url
+    typed_base_url = req.base_url is not None and bool(str(req.base_url or "").strip())
+    # A stored key goes only to the address it was saved for (security, 0.21.0): the tested
+    # connection's key at its own address, the configured connection's key (AbstractCore store,
+    # OPENAI_API_KEY) only with no address or that connection's own address. A key the caller sends
+    # is the caller's choice. Anything else checks the address keyless.
+    provider_api_key = body_api_key or ""
+    if not provider_api_key and profile is not None and str(profile.api_key or "").strip():
+        if not typed_base_url or same_base_url(base_url, profile.base_url):
+            provider_api_key = str(profile.api_key).strip()
+    if not provider_api_key:
+        provider_api_key = _request_provider_api_key(request) or ""
+    if not provider_api_key and direct_kwargs.get("api_key"):
+        if not base_url or same_base_url(base_url, configured_base_url):
+            provider_api_key = str(direct_kwargs.get("api_key"))
+    # No key for this address: say so explicitly, or AbstractCore falls back to OPENAI_API_KEY.
+    call_api_key = provider_api_key or (NO_PROVIDER_KEY if base_url else None)
 
     discovery, err = _gateway_abstractcore_discovery_facade()
     profile_public = profile.public_dict() if profile is not None else None
@@ -28471,7 +28558,7 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
             discovery.list_provider_models,
             provider_family,
             base_url=base_url or None,
-            provider_api_key=provider_api_key,
+            provider_api_key=call_api_key,
             timeout_s=_provider_models_timeout_s(),
         )
     except Exception as e:
@@ -28549,19 +28636,15 @@ def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Op
     except ProviderEndpointProfileError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if profile is not None:
-        kwargs: Dict[str, Any] = {}
-        if profile.base_url:
-            kwargs["base_url"] = profile.base_url
-        if profile.api_key:
-            kwargs["api_key"] = profile.api_key
-        return profile.provider_family, kwargs, profile.public_dict()
+        return profile.provider_family, profile.client_kwargs(), profile.public_dict()
+    # The text route's own endpoint, for the route's provider (as runs do); the configured key
+    # goes to it only when it is the configured address.
     kwargs = configured_provider_request_kwargs(
         provider,
         current_base_dir=current_base,
         root_base_dir=root_base,
+        base_url=default_text_route_connection_kwargs(provider, base_dir=current_base).get("base_url"),
     )
-    # The text route's own endpoint, for the route's provider (as runs do).
-    kwargs.update(default_text_route_connection_kwargs(provider, base_dir=current_base))
     return str(provider or "").strip(), kwargs, None
 
 
@@ -28779,13 +28862,23 @@ async def provider_endpoint_profiles_update(request: Request, profile_id: str, r
         if principal.is_admin():
             requested_scope = "gateway"
         store = _endpoint_profile_store_for_scope(scope=requested_scope, principal=principal, current_base_dir=current_base, root_base_dir=root_base)
+        new_base_url = normalize_base_url(req.base_url if req.base_url is not None else existing.base_url)
+        # The stored key belongs to the address it was saved with (security, 0.21.0): it is carried
+        # over (a scope move lands in another store) only when the address is unchanged; a new
+        # address without a typed key saves no key.
+        if req.api_key is not None:
+            api_key_value: Optional[str] = req.api_key
+        elif req.clear_api_key or not same_base_url(new_base_url, existing.base_url):
+            api_key_value = None
+        else:
+            api_key_value = existing.api_key
         profile = store.upsert_profile(
             profile_id=profile_id,
             display_name=req.display_name if req.display_name is not None else existing.display_name,
             description=req.description if req.description is not None else existing.description,
             provider_family=req.provider_family if req.provider_family is not None else existing.provider_family,
-            base_url=req.base_url if req.base_url is not None else existing.base_url,
-            api_key=req.api_key if req.api_key is not None else (None if req.clear_api_key else existing.api_key),
+            base_url=new_base_url,
+            api_key=api_key_value,
             clear_api_key=req.clear_api_key,
             scope=requested_scope,
             capabilities=req.capabilities if req.capabilities is not None else existing.capabilities,
@@ -29244,7 +29337,8 @@ async def model_context_estimate(
 @router.post("/blocs/upsert_text")
 async def bloc_upsert_text(request: Request, req: _GatewayUpsertTextBlocRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29275,7 +29369,8 @@ async def bloc_record(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29306,7 +29401,8 @@ async def bloc_list(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29319,7 +29415,8 @@ async def bloc_list(
 @router.post("/blocs/delete")
 async def bloc_delete(request: Request, req: _GatewayBlocDeleteRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29352,7 +29449,8 @@ async def bloc_kv_manifest(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29383,7 +29481,8 @@ async def bloc_kv_list(
         "base_url": base_url,
         "timeout_s": timeout_s,
     }
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, payload.get("provider"), payload.get("base_url"))
     if provider_api_key:
         payload["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29396,7 +29495,8 @@ async def bloc_kv_list(
 @router.post("/blocs/kv/ensure")
 async def bloc_kv_ensure(request: Request, req: _GatewayBlocKVEnsureRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29409,7 +29509,8 @@ async def bloc_kv_ensure(request: Request, req: _GatewayBlocKVEnsureRequest) -> 
 @router.post("/blocs/kv/load")
 async def bloc_kv_load(request: Request, req: _GatewayBlocKVLoadRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29422,7 +29523,8 @@ async def bloc_kv_load(request: Request, req: _GatewayBlocKVLoadRequest) -> Dict
 @router.post("/blocs/kv/delete")
 async def bloc_kv_delete(request: Request, req: _GatewayBlocKVDeleteRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -29435,7 +29537,8 @@ async def bloc_kv_delete(request: Request, req: _GatewayBlocKVDeleteRequest) -> 
 @router.post("/blocs/kv/prune")
 async def bloc_kv_prune(request: Request, req: _GatewayBlocKVPruneRequest) -> Dict[str, Any]:
     body = _model_dump_excluding_none(req)
-    provider_api_key = _request_provider_api_key(request)
+    # A typed base_url gets the configured key only at its configured address (security, 0.21.0).
+    provider_api_key = _typed_address_api_key(request, body.get("provider"), body.get("base_url"))
     if provider_api_key:
         body["provider_api_key"] = provider_api_key
     return _gateway_bloc_client_call(
@@ -30428,6 +30531,7 @@ async def host_runs(
     request: Request,
     limit: int = Query(25, ge=1, le=200, description="Maximum runs (most recent first, across planes)."),
     window_hours: float = Query(24.0, gt=0, description="Finished runs updated within this many hours (active runs are always listed)."),
+    kind: Optional[str] = Query(None, description="Session purposes listed: by default every purpose but `notes` (AbstractNote's own background work); `notes` lists only those, `all` everything. Every row carries `kind`."),
 ) -> Dict[str, Any]:
     """Runs on this MACHINE, across data planes. Admin only.
 
@@ -30462,10 +30566,14 @@ async def host_runs(
     Pause / Stop / approve on every other plane's row.
     """
     principal = _require_admin_principal(request)
-    from ..admin_runtimes import recent_runs_host_wide
+    from ..admin_runtimes import HOST_RUN_KINDS_DEFAULT, recent_runs_host_wide
 
+    want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else None
+    if want_kind not in (None, "notes", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected notes|all, or none for every purpose but notes)")
+    kinds = HOST_RUN_KINDS_DEFAULT if want_kind is None else (("notes",) if want_kind == "notes" else None)
     svc = get_gateway_service()
-    key = (int(limit), round(float(window_hours), 3))
+    key = (int(limit), round(float(window_hours), 3), kinds)
     now = time.time()
     cached = _HOST_RUNS_CACHE
     if cached["payload"] is not None and cached["key"] == key and (now - float(cached["at"])) < _HOST_RUNS_TTL_S:
@@ -30479,6 +30587,7 @@ async def host_runs(
             since_epoch=now - (float(window_hours) * 3600.0),
             default_run_store=getattr(getattr(svc, "host", None), "run_store", None),
             default_ledger_store=getattr(getattr(svc, "host", None), "ledger_store", None),
+            kinds=kinds,
         )
         _HOST_RUNS_CACHE.update({"at": now, "key": key, "payload": payload})
     # Per caller, so outside the cache.

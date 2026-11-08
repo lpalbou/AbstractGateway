@@ -65,7 +65,7 @@ async def search_sessions(
     limit: int = Query(20, ge=1, le=50),
     archived: bool = Query(False, description="Search archived conversations (only them) instead of the listed ones."),
     session_kind: Optional[str] = Query("chat,discussion", description="Session kinds, as in GET /runs."),
-    kind: str = Query("conversation", description="conversation (default), docs or all, as in GET /runs."),
+    kind: str = Query("conversation", description="conversation (default), docs, notes or all, as in GET /runs."),
 ) -> Dict[str, Any]:
     from ..service import get_gateway_service
     from ..session_archive import SessionArchiveUnreadable, archived_sessions
@@ -73,11 +73,15 @@ async def search_sessions(
     from .gateway import _parse_session_kind_filter
 
     want_kind = str(kind or "conversation").strip().lower()
-    if want_kind not in ("conversation", "docs", "all"):
-        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|all)")
+    if want_kind not in ("conversation", "docs", "notes", "all"):
+        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|notes|all)")
     kinds = _parse_session_kind_filter(session_kind)
+    from .gateway import run_session_kind_migrations
+
     svc = get_gateway_service()
     try:
+        # The listing's purpose marks, migrations included (a search may come before any listing).
+        await run_session_kind_migrations(svc)
         archived_map = archived_sessions(svc.config.data_dir)
         kinds_map = session_kinds(svc.config.data_dir)
     except (SessionArchiveUnreadable, SessionKindsUnreadable) as exc:

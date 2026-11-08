@@ -201,7 +201,9 @@ automation's occurrence. An automation's run is listed under **Automations â–¸ Â
 Running (N)** instead, with the same row and submenu: the runtime tags every run
 with a `session_kind` (`chat` / `discussion` = a conversation, `automation` /
 `occurrence` = an automation's run; `GET /host/runs` serves it on each row) and
-the menu sorts by that tag alone. A wake that runs in its caller's conversation
+the menu sorts by that tag alone. AbstractNote's own work (its captures and its
+processing automations, session purpose `notes`) is in neither menu: `GET
+/host/runs` leaves it out. A wake that runs in its caller's conversation
 is tagged `chat` and stays a conversation. A row reads under its **title**: the
 automation's name for an occurrence, else the first line of what the person typed (cut at
 60 characters), else the workflow's name (`GET /host/runs` serves it as

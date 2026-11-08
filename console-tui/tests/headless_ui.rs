@@ -1846,6 +1846,15 @@ fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
         "Applies now names the stored effort:\n{s}"
     );
     assert!(s.contains("reasoning"), "the reasoning row renders:\n{s}");
+    // The probe answers (the MTP control takes focus only for an MTP model).
+    abstractgateway_console::ui::sandbox::publish_route_mtp(
+        &h.store,
+        abstractgateway_console::ui::sandbox::mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"speculation": {"supported": true, "supported_depths": [2], "ready": true}}}),
+        ),
+    );
+    h.turns(2);
 
     // Tab: mode → provider → model → base URL → reasoning → options → MTP →
     // [Save]. Only the base URL is edited: the pair the row already
@@ -1938,6 +1947,15 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
             screen.contains("MTP default"),
             "MTP policy control must be visible: {screen}"
         );
+        // An MTP-capable model: the stored choice stays offered and chosen.
+        abstractgateway_console::ui::sandbox::publish_route_mtp(
+            &h.store,
+            abstractgateway_console::ui::sandbox::mtp_support_from(
+                "lmstudio/test-model-a",
+                &json!({"execution": {"speculation": {"supported": true, "supported_depths": [2, 3, 4], "ready": true}}}),
+            ),
+        );
+        h.turns(2);
         // mode -> provider -> model -> URL -> reasoning -> options -> MTP ->
         // [Cancel] -> [Clear] -> [Test] (R15: the web's button order)
         for _ in 0..9 {
@@ -1958,6 +1976,142 @@ fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
             }
             other => panic!("expected MTP audition command, got {other:?}"),
         }
+    }
+}
+
+/// Operator rule 2026-11-07 in the route editor (the web's
+/// resetDefaultModelOptions + saveDefault): another model puts reasoning and
+/// MTP back on "not set" / inherit, and the save never keeps the old
+/// model's stored MTP. The saved pair resolving on open is not a change.
+#[test]
+fn route_editor_model_change_resets_reasoning_and_mtp_and_drops_the_stored_mtp() {
+    use abstractgateway_console::ui::sandbox::{mtp_support_from, publish_route_mtp};
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(2);
+    let mut routes = routes_fixture();
+    routes.rows[0].options = Some(json!({"temperature": 0.2,
+        "speculation": {"mode": "native_mtp", "num_draft_tokens": 4, "require_acceleration": false}}));
+    h.store.routes.set(Loadable::Ready(routes));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Ready(vec!["test-model-a".into(), "test-model-b".into()]),
+        );
+    });
+    h.turns(2);
+    h.type_text("e");
+    h.turns(3);
+    let card = json!({"execution": {"speculation": {"supported": true, "supported_depths": [2, 3, 4], "ready": true}}});
+    match h.find_cmd(|c| matches!(c, Cmd::RouteMtpCaps { .. })) {
+        Some(Cmd::RouteMtpCaps { model, .. }) => assert_eq!(model, "test-model-a"),
+        other => panic!("the saved pair is probed, got {other:?}"),
+    }
+    publish_route_mtp(&h.store, mtp_support_from("lmstudio/test-model-a", &card));
+    h.turns(2);
+    // Model → test-model-b.
+    for _ in 0..2 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    h.key(b"\x1b[B");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::RouteMtpCaps { .. })) {
+        Some(Cmd::RouteMtpCaps { model, .. }) => assert_eq!(model, "test-model-b"),
+        other => panic!("the new model is probed, got {other:?}"),
+    }
+    publish_route_mtp(&h.store, mtp_support_from("lmstudio/test-model-b", &card));
+    h.turns(2);
+    // model → URL → reasoning → options → MTP → [Cancel] [Clear] [Test] → [Save].
+    for _ in 0..8 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::PutRoute { .. })) {
+        Some(Cmd::PutRoute { body, .. }) => {
+            assert_eq!(body["model"], "test-model-b");
+            assert_eq!(
+                body["reasoning"], "",
+                "reasoning back on not set: {:?}",
+                body.0
+            );
+            let options = &body["options"];
+            assert!(
+                options.is_object() && options.get("speculation").is_none(),
+                "the old model's MTP is not kept: {:?}",
+                body.0
+            );
+            assert_eq!(
+                options["temperature"], 0.2,
+                "other options stay: {:?}",
+                body.0
+            );
+        }
+        other => panic!("expected PutRoute, got {other:?}"),
+    }
+}
+
+/// MTP (Off included) is offered in the route editor only when the
+/// model's card says supported; otherwise the editor says why in the web's
+/// words, a stored choice is not shown as chosen, and neither the Test nor
+/// the save sends it.
+#[test]
+fn route_editor_offers_mtp_only_for_a_model_that_supports_it() {
+    use abstractgateway_console::ui::sandbox::{mtp_support_from, publish_route_mtp};
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(2);
+    let mut routes = routes_fixture();
+    routes.rows[0].options = Some(json!({"speculation": false}));
+    h.store.routes.set(Loadable::Ready(routes));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Ready(vec!["test-model-a".into()]),
+        );
+    });
+    h.turns(2);
+    h.type_text("e");
+    h.turns(3);
+    publish_route_mtp(
+        &h.store,
+        mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"speculation": {"supported": false, "reason": "backend_unsupported"}}}),
+        ),
+    );
+    let s = h.turns(3);
+    assert!(
+        s.contains("This model does not support MTP. · Technical")
+            && s.contains("details: backend_unsupported"),
+        "the unsupported card in words:\n{s}"
+    );
+    assert!(
+        s.contains("inherit (no override)") && !s.contains("MTP                       ▐off"),
+        "the stored Off is not shown as chosen:\n{s}"
+    );
+    // mode → provider → model → URL → reasoning → options →
+    // [Cancel] → [Clear] → [Test] (the disabled MTP takes no focus).
+    for _ in 0..8 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::TestRoute { .. })) {
+        Some(Cmd::TestRoute { controls, .. }) => assert!(
+            controls.get("speculation").is_none(),
+            "no MTP for a model without it: {controls}"
+        ),
+        other => panic!("expected TestRoute, got {other:?}"),
     }
 }
 

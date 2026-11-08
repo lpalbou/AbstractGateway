@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "abstractgateway-console"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "abstractcore-console",
  "abstracttui",

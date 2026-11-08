@@ -366,6 +366,8 @@ class _RuntimeLLMAdapter:
         # R2 (2026-10-29): the principal's runtime pool (one resident model shared with the runs);
         # a client of its own only when there is no pool (ADR 0002: in the model host child then).
         self._client = generation_client(provider=provider, model=model, llm_kwargs=dict(llm_kwargs) or None)
+        self._provider = str(provider or "").strip()
+        self._model = str(model or "").strip()
         # The mind's reasoning effort (substrate triple). Injected into each
         # call's params on the one wire name; None sends nothing.
         self._thinking = str(thinking or "").strip() or None
@@ -385,7 +387,23 @@ class _RuntimeLLMAdapter:
             if self._speculation is not None:
                 params.setdefault("speculation", self._speculation)
             kwargs["params"] = params
+        # A saved MTP request the mind's model cannot honour is dropped, never a failed turn
+        # (operator rule 2026-11-07; speculation_guard.py), and the reply's metadata says so.
+        note = None
+        params = kwargs.get("params")
+        if isinstance(params, dict) and "speculation" in params:
+            from .generation_pool import PoolGeneration
+            from .speculation_guard import drop_unsupported_speculation
+
+            source = self._client.pool if isinstance(self._client, PoolGeneration) else self._client
+            params = dict(params)
+            note = drop_unsupported_speculation(source, params, provider=self._provider, model=self._model)
+            kwargs["params"] = params
         out = self._client.generate(**kwargs)
+        if note is not None:
+            from .speculation_guard import attach_note
+
+            out = attach_note(out, note)
         if isinstance(out, dict):
             return SimpleNamespace(**{"content": out.get("content"), **{k: v for k, v in out.items() if k != "content"}})
         return out
@@ -684,6 +702,19 @@ class EntityChatHost:
                 llm_kwargs["speculation"] = speculation
             if base_url:
                 llm_kwargs["base_url"] = base_url
+                if not str(provider).strip().lower().startswith("endpoint:"):
+                    # The configured key goes to this address only when it is the
+                    # configured one (security, 0.21.0).
+                    from .provider_connections import configured_provider_request_kwargs
+
+                    llm_kwargs.update(
+                        configured_provider_request_kwargs(
+                            str(provider).strip().lower(),
+                            current_base_dir=self._registry.data_dir,
+                            root_base_dir=self._registry.root_data_dir,
+                            base_url=base_url,
+                        )
+                    )
             factory = self._llm_factory or _default_llm_factory
             llm = factory(str(provider).strip().lower(), **llm_kwargs)
 

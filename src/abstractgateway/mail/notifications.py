@@ -79,6 +79,7 @@ from .accounts import (
     _write_private_json,
 )
 from .audit import audit_email_event
+from .mail_markdown import render_model_markdown
 
 EVENTS = ("job_failed", "approval_needed")
 # The two notifications are the events that need the user; both ON by default (they only
@@ -503,12 +504,23 @@ def _block_question(prompt: str, choices: List[str]) -> str:
     return quote + listing
 
 
+def _model_body_html(body: str) -> str:
+    """The model's Markdown, rendered by a CommonMark parser with raw HTML off and allowlisted links
+    (mail_markdown, backlog 1011); over its size budget, the whole text escaped as plain text."""
+
+    rendered = render_model_markdown(body)
+    if rendered is None:
+        return f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">{_h(body)}</div>'
+    return f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word">{rendered}</div>'
+
+
 def _block_model(title: str, body: str, *, label: str = "Written by the automation (model-authored text)") -> str:
     return (
         f'<div style="margin:0 0 16px;padding:12px 14px;background:{C_SOFT};border:1px solid {C_LINE};border-radius:6px">'
         f'<p style="margin:0 0 6px;color:{C_MUTED};font-size:12px">{_h(label)}</p>'
+        # The title stays plain text.
         + (f'<p style="margin:0 0 6px;color:{C_TEXT};font-size:15px;font-weight:bold">{_h(title)}</p>' if title else "")
-        + (f'<div style="color:{C_TEXT};font-size:15px;line-height:1.5;white-space:pre-wrap">{_h(body)}</div>' if body else "")
+        + (_model_body_html(body) if body else "")
         + "</div>"
     )
 
@@ -548,7 +560,9 @@ def _layout(*, eyebrow: str, title: str, body_html: str, buttons: List[Tuple[str
         '<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light"></head>'
         f'<body bgcolor="{C_PAGE}" style="margin:0;padding:24px 12px;background:{C_PAGE};color:{C_TEXT};'
         'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="max-width:600px;width:100%;margin:0 auto">'
+        # table-layout:fixed pins the one column to the layout's width: nothing inside (a model's
+        # wide table, a long token) can widen the mail; such content wraps or scrolls in its own box.
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="max-width:600px;width:100%;margin:0 auto;table-layout:fixed">'
         f'<tr><td bgcolor="{C_BAND}" style="background:{C_BAND};padding:18px 28px;border-radius:10px 10px 0 0">'
         f'<span style="color:#ffffff;font-size:20px;font-weight:bold;letter-spacing:0.2px">Abstract</span>'
         f'<span style="color:{C_ACCENT};font-size:20px;font-weight:bold;letter-spacing:0.2px">Framework</span></td></tr>'

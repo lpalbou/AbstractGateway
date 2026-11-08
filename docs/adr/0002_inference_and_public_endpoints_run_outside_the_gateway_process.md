@@ -29,7 +29,9 @@ no MCP endpoint of its own (it is an MCP client).
    run stores and the ledger, run ticking, and supervision. In the `process` model-host mode it
    loads no model and calls no provider.
 2. **The model host** is one child process the gateway starts and supervises
-   (`python -m abstractgateway.model_host_child`). It holds every AbstractCore provider and the
+   (`abstractgateway.model_host_child`, started by `python -c model_host.CHILD_BOOTSTRAP` so the
+   data directory, its working directory, is never on its import path). It holds every AbstractCore
+   provider and the
    shared model pool: the runtime's LLM clients (the pooled client of every bundle runtime and
    the gateway-side clients: run summaries, Ask on a run, the console sandbox, entity chat) and
    Core's serving app. In the gateway each client is a proxy (`model_host.ModelHostClient`) with

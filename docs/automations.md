@@ -413,7 +413,7 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
@@ -424,6 +424,14 @@ for a trigger with no clock time (manual, email).
   `archived_automations_count` are how many of yours are paused and archived,
   on every page, whatever the filter (`archived_automations` is the same
   count as `archived_automations_count`).
+- `kind` is what the automations are for: `user` (the default: the ones a
+  person creates and manages), `notes` (AbstractNote's own processing, the
+  "Process my notes", "Reflect on my notes" and "Consolidate my notes"
+  automations, recognised by their target's `abstractnote` bundle id) or
+  `all`. A purpose, never the client that created it. Every row carries
+  `kind`; the paused and archived counts count the listed kind. AbstractNote
+  reads its automations by id (`GET /automations/{automation_id}` and its
+  Processing page), so they work while every app's list leaves them out.
 - Read every page, following `next_cursor` until it is `null`.
   `changed_since` is refused (422 `unsupported_feature`); poll complete
   pages instead.

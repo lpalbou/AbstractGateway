@@ -91,6 +91,7 @@ def test_list_entities_is_scoped_by_creator(world) -> None:
     [
         "/api/gateway/entities/{n}",
         "/api/gateway/entities/{n}/card",
+        "/api/gateway/entities/{n}/tile",
         "/api/gateway/entities/{n}/state",
         "/api/gateway/entities/{n}/verify",
         "/api/gateway/entities/{n}/communities",

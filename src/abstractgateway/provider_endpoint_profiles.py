@@ -20,6 +20,21 @@ _SAFE_PROVIDER_FAMILY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _DEFAULT_CAPABILITIES = ("text",)
 _MAX_SECRET_BYTES = 64 * 1024
 
+# The key a call carries to an address that has no stored key of its own: AbstractCore sends no
+# Authorization header for it (the openai-compatible "EMPTY" convention). Not sending a key at all
+# is not the same: AbstractCore then falls back to OPENAI_API_KEY or the configured key, and the
+# runtime's discovery and endpoint-profile paths drop an empty string before AbstractCore sees it,
+# so the gateway's own secret would go to whatever address the connection names.
+NO_PROVIDER_KEY = "EMPTY"
+
+
+def same_base_url(a: Any, b: Any) -> bool:
+    """True when two provider addresses are the same endpoint (trailing slashes and case aside).
+    A stored key may go only to the address it was saved for."""
+    left = str(a or "").strip().rstrip("/").lower()
+    right = str(b or "").strip().rstrip("/").lower()
+    return left == right
+
 
 @dataclass(frozen=True)
 class ProviderEndpointProfile:
@@ -66,10 +81,30 @@ class ProviderEndpointProfile:
             "updated_at": self.updated_at,
         }
 
+    def call_api_key(self) -> str:
+        """The key a call to this connection's own address carries: its stored key; for an
+        address with no stored key, NO_PROVIDER_KEY (explicitly keyless, never the configured key
+        or OPENAI_API_KEY); "" for a connection without an address (the provider's own API)."""
+        key = str(self.api_key or "").strip()
+        if key:
+            return key
+        return NO_PROVIDER_KEY if str(self.base_url or "").strip() else ""
+
+    def client_kwargs(self) -> Dict[str, Any]:
+        """THE in-process client kwargs of this connection (every place a profile becomes a
+        provider client): its address, and the key `call_api_key` decides."""
+        out: Dict[str, Any] = {}
+        if self.base_url:
+            out["base_url"] = self.base_url
+        key = self.call_api_key()
+        if key:
+            out["api_key"] = key
+        return out
+
     def private_resolution(self) -> Dict[str, Any]:
         out = self.public_dict()
         out["provider"] = self.provider_family
-        out["api_key"] = self.api_key
+        out["api_key"] = self.call_api_key()
         return out
 
 
@@ -170,6 +205,15 @@ class ProviderEndpointProfileStore:
             if api_key is not None:
                 api_key_value = normalize_api_key(api_key)
             elif clear_api_key:
+                api_key_value = ""
+            elif (
+                existing is not None
+                and base_url is not None
+                and current_key
+                and not same_base_url(normalize_base_url(base_url), existing.base_url)
+            ):
+                # The stored key belongs to the address it was saved with: a new address needs
+                # the key typed again (it is never sent to another host).
                 api_key_value = ""
             else:
                 api_key_value = current_key

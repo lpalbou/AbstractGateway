@@ -91,7 +91,15 @@ shows the same row ([api.md](./api.md#decisions)).
 
 **Edit multimodal capability** (a route's **Edit**) sets the route's provider
 and model, an optional **Base URL** and **Options** (JSON); text routes add the
-reasoning effort and MTP, and **Test** sends a one-word probe. For voice output
+reasoning effort and MTP, and **Test** sends a one-word probe. A Base URL other
+than the provider's configured (or default) address is called without the
+provider's configured key. Reasoning and MTP
+follow the chosen model, here, in the **Sandbox** and in the entity create form:
+changing the provider or the model puts them back on the default (and saving
+does not carry the old model's MTP over), Off and the MTP depths are offered only
+when the gateway says that model supports MTP (otherwise the control is disabled
+and says why), and the entity create form offers only the reasoning levels the
+model serves. For voice output
 (`output.voice`) the provider, model and voice are the shared voice picker of
 every app (abstractuic `VoiceSettings`): voices by name under **Your voices**,
 **Engine voices** and **Shared voices**, a language filter when the engine
@@ -1337,7 +1345,7 @@ you can click.
   Row buttons, each with a tooltip: ✎ **Edit** or ⊞ **Configure** (`e`, also `Enter`), ⌀ **Clear** (`x`), ⤓ **Download** (`w`, admin; the tooltip names the artifact and provider) and ⧉ **Copy** (`c`, the install command when there is no download tool). A route that a parent route covers reads "Covered by input.text".
   **Configure capability default** is one dialog with:
   - the choice between use default and override;
-  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice;
+  - **Provider**, **Model**, **Base URL (optional)**, **Reasoning** (text route), **Options (JSON, optional)**, **MTP**, and **Voice** on output.voice. As on the web, changing the provider or the model puts Reasoning and MTP back on the default (a save then clears the old model's MTP), and MTP (Off included) is offered only when the gateway says that model supports it; otherwise it is disabled and the line under it says why;
   - the buttons **[Cancel] [Clear] [Test] [Save]**.
   Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a **Download** button. When discovery fails, the field takes a typed model id and offers **Retry model discovery**. Clear asks first; downloads ask first and name the size.
 
@@ -1354,7 +1362,7 @@ you can click.
   Every confirm opens with the focus on Cancel. Everything except Estimate is admin-only; for anyone else these buttons stay faint with the reason.
 
 - **T Sandbox** tries a model directly. **Output** is a choice: **Text**, **Image**, **Voice**, **Music**, **SFX** or **Video**. Each choice's tooltip names the provider and model it uses, or says "not configured". A line says what the next message generates and which route it comes from.
-  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
+  **System prompt**, **Reasoning** and **MTP** sit on one row, with the web's help sentences as tooltips. As on the web, changing the provider or the model puts Reasoning and MTP back on the default, and MTP (Off included) is offered only when the gateway says the model supports it; otherwise it is disabled and the line under the row says why. **Length (seconds)** appears for Music and SFX: 0.5 to 600, remembered per mode.
   Under the message field, the buttons are **Send** (`g`, or `Enter` in the field), **Attach** (`a`), **Speak** (`v`, speaks a text reply through output.voice), **Play audio** (`p`) and **Stop** (`s`) after a clip, and **Clear chat** (`x`).
   **Attach a file** is a dialog with **[Upload] [Remove all] [Close]**. When Sandbox refuses an action, it says why under the buttons (for example "output.music is not configured — configure it on Multimodal (0) first"). The session's change journal sits below.
 

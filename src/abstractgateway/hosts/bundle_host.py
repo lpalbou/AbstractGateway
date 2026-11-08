@@ -214,23 +214,19 @@ def _resolve_gateway_default_endpoint_profile(
             raise WorkflowBundleError(
                 reason or f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled."
             )
+        # The text route's own endpoint wins over the provider connection's:
+        # it is the more specific setting, made for this default (backlog 0994
+        # item 64 -- runs ignored it). Absent -> unchanged. The configured key
+        # goes to it only when it is the configured address (security, 0.21.0).
         kwargs = configured_provider_request_kwargs(
             provider_s,
             current_base_dir=data_root,
             root_base_dir=catalog_root,
+            base_url=default_text_route_connection_kwargs(provider_s, base_dir=data_root).get("base_url"),
         )
-        # The text route's own endpoint wins over the provider connection's:
-        # it is the more specific setting, made for this default (backlog 0994
-        # item 64 -- runs ignored it). Absent -> unchanged.
-        kwargs.update(default_text_route_connection_kwargs(provider_s, base_dir=data_root))
         return provider_s, kwargs, None
 
-    llm_kwargs: Dict[str, Any] = {}
-    if profile.base_url:
-        llm_kwargs["base_url"] = profile.base_url
-    if profile.api_key:
-        llm_kwargs["api_key"] = profile.api_key
-    return profile.provider_family, llm_kwargs, profile.virtual_provider_id
+    return profile.provider_family, profile.client_kwargs(), profile.virtual_provider_id
 
 
 def personal_voice_stores_supported() -> bool:
@@ -2125,6 +2121,12 @@ class WorkflowBundleGatewayHost:
                         pass
                 setattr(runtime, "_gateway_default_route_error", default_route_error)
                 _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
+                # A saved MTP request (a flow node, an automation, an entity mind) that the selected
+                # model cannot honour is dropped before the call and recorded on the step, instead of
+                # failing every run (operator rule 2026-11-07; speculation_guard.py).
+                from ..speculation_guard import install_speculation_guard
+
+                install_speculation_guard(runtime)
                 runtime.set_workflow_registry(wf_reg)
                 capabilities.update({"llm", "tools"})
             else:

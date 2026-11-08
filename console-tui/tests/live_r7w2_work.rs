@@ -310,10 +310,11 @@ fn runtimes_runs_root_switch_and_cancel_live() {
         })
     });
     assert!(s.contains("[x] Root runs only (t)"), "{s}");
-    // The table shows what GET /runs?root_only=true lists.
+    // The table shows what GET /runs?root_only=true&kind=all lists (every
+    // session kind: the Runs tab is a technical listing).
     let listed = http(
         "GET",
-        "/runs?limit=100&root_only=true&include_ledger_len=false",
+        "/runs?limit=100&root_only=true&include_ledger_len=false&kind=all",
         None,
     );
     let n = listed["items"].as_array().unwrap().len();

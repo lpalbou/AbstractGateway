@@ -36,7 +36,8 @@ permissions:
 jobs:
   perf:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The install has its own bound (below); the job's leaves the load test its own 15 minutes after it.
+    timeout-minutes: 25
     env:
       CPU_MAX: ${{ github.event.inputs.cpu_max || '10' }}
       RUNTIME_REF: ${{ github.event.inputs.runtime_ref || 'main' }}
@@ -47,12 +48,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          # The pip cache (restored by setup-python, keyed on pyproject.toml like the ci jobs) holds
+          # the large wheels (lancedb, ~66 MiB): a 0.20.0 gate run timed out downloading it with the
+          # cache bypassed (--no-cache-dir). Backlog 1128 item 3.
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
+        # Its own bound: a slow download fails here, as a download, never as the load test.
+        timeout-minutes: 10
         run: |
           python -m pip install -U pip
-          python -m pip install --no-cache-dir -e .
-          python -m pip install --no-cache-dir "abstractruntime @ git+https://github.com/lpalbou/AbstractRuntime.git@${RUNTIME_REF}"
+          python -m pip install --timeout 60 --retries 5 -e .
+          python -m pip install --timeout 60 --retries 5 "abstractruntime @ git+https://github.com/lpalbou/AbstractRuntime.git@${RUNTIME_REF}"
           command -v lsof >/dev/null || (sudo apt-get update && sudo apt-get install -y lsof)
       - name: Load test
         run: scripts/perf/ci.sh $ENFORCE_FLAG --python "$(command -v python)" --runtime-src installed --cpu-max "$CPU_MAX" --work "$RUNNER_TEMP/perf"

@@ -200,3 +200,15 @@ def test_sandbox_card_never_clips_its_composer() -> None:
     css = _styles(gateway_console_html())
     rule = re.search(r"\n\t    \.sandbox-chat \{([^}]*)\}", css)
     assert rule and "overflow: hidden" not in rule.group(1) and "overflow-y: auto" in rule.group(1)
+
+
+def test_summon_entity_tools_grid_fits_a_phone() -> None:
+    """The Summon form's tools-per-phase grid (a 420 px minimum) pushed the ~400 px dialog sideways
+    on a phone: its block may shrink inside the grid section, and below 480 px the table drops its
+    minimum width and tightens its cells. Screenshots: untracked/release-2026-11-07/shots/
+    model-controls-gateway/entity-create-{before,after}-400-*.png (root workspace)."""
+    css = re.sub(r"/\*.*?\*/", "", _styles(gateway_console_html()), flags=re.S)
+    assert re.search(r"#entity-advanced > \.entity-config-block \{ min-width: 0; \}", css)
+    phone = re.search(r"@media \(max-width: 479\.98px\) \{\s*#entity-new-matrix \.entity-matrix-table \{([^}]*)\}", css)
+    assert phone, "the Summon grid's phone rule is missing"
+    assert "min-width: 0" in phone.group(1) and "width: 100%" in phone.group(1)
