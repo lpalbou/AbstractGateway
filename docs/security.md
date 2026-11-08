@@ -257,6 +257,7 @@ see it at all), and the entity itself never changes its own settings.
 | Setting | Route | Creator's bound |
 |---|---|---|
 | Mind (model) | `PUT /entities/{name}/substrate` | a model the gateway offers for that provider (the list `GET /discovery/providers/{provider}/models` shows a member); **Gateway default** always |
+| Thinking settings | `PUT /entities/{name}/cognition-profile` | each capability it changes: a model the gateway offers for that provider; **the same as the mind** always; memory settings within their ranges |
 | Voice | `PUT /entities/{name}/voice` | a voice (and speech model) the gateway offers (`GET /voice/voices`); the gateway default voice always |
 | Tools per phase | `PUT /entities/{name}/tool-policy` | the tier-1 and workspace tools; a tier-2 tool (`execute_command`) is given only by an admin (keeping or removing it is fine) |
 | Instructions | `PUT /entities/{name}/prompt` | — |

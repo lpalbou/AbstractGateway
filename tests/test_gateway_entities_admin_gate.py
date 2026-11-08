@@ -226,6 +226,8 @@ def test_policy_rows_cover_the_live_mutation_route_table() -> None:
 # stay admin-only.
 _CREATOR_SETTINGS_ROUTES = {
     ("PUT", "/api/gateway/entities/{name}/substrate"),
+    # The cognition profile (what each part of its thinking uses, its memory settings).
+    ("PUT", "/api/gateway/entities/{name}/cognition-profile"),
     ("PUT", "/api/gateway/entities/{name}/voice"),
     ("PUT", "/api/gateway/entities/{name}/appearance"),
     # The digital identity (framework ADR 0052 §8): its look and voice, admin or its creator.
