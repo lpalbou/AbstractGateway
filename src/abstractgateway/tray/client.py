@@ -102,6 +102,10 @@ class GatewayClient:
     def runner(self) -> Result:
         return self._request("GET", "/host/runner", timeout=2.0)
 
+    def keep_awake_set(self, enabled: bool) -> Result:
+        """PUT /host/keep-awake (backlog 1149): stored and applied live by the gateway."""
+        return self._request("PUT", "/host/keep-awake", body={"enabled": bool(enabled)}, timeout=4.0)
+
     def live(self) -> Result:
         """GPU + memory + execution state in one call (older gateways answer 404)."""
         return self._request("GET", "/host/metrics/live", timeout=2.5)

@@ -30596,7 +30596,16 @@ def _host_runner_payload() -> Dict[str, Any]:
         "runners": runners,
         "degraded": bool(snap.get("degraded")),
         "capabilities": host_control.control_capabilities(),
+        # Keep the Mac awake while the gateway runs (backlog 1149): the user's
+        # setting beside the live fact of this process; PUT /host/keep-awake changes it.
+        "keep_awake": _keep_awake_status(),
     }
+
+
+def _keep_awake_status() -> Dict[str, Any]:
+    from .. import keep_awake
+
+    return keep_awake.status(gateway_data_dir_from_env())
 
 
 @router.get("/host/runner")

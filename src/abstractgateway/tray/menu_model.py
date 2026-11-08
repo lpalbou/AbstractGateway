@@ -377,6 +377,48 @@ class AutostartView:
     experimental: bool = False
 
 
+KEEP_AWAKE_LABEL = "Keep the Mac awake while the gateway runs"
+
+
+@dataclass(frozen=True)
+class KeepAwakeView:
+    """`GET /host/runner` `keep_awake` (backlog 1149): the user's setting and
+    the live fact. `available` False = an older gateway without the field."""
+
+    value: bool = True
+    source: str = "default"  # flag | stored | default
+    held: bool = False
+    platform_supported: bool = True
+    available: bool = True
+    busy: bool = False
+
+
+def parse_keep_awake(runner_payload: Any) -> KeepAwakeView:
+    ka = runner_payload.get("keep_awake") if isinstance(runner_payload, dict) else None
+    if not isinstance(ka, dict):
+        return KeepAwakeView(available=False)
+    return KeepAwakeView(
+        value=bool(ka.get("value")),
+        source=str(ka.get("source") or "default"),
+        held=bool(ka.get("held")),
+        platform_supported=bool(ka.get("platform_supported")),
+    )
+
+
+def keep_awake_node(view: Optional[KeepAwakeView]) -> Node:
+    """The Settings check item, right under Start at login: checked = on.
+    Greyed while the change is in flight, pinned by a launch flag, or on an
+    older gateway without the setting."""
+    if view is None or not view.available:
+        return Node(KEEP_AWAKE_LABEL, None, enabled=False, checked=False)
+    if view.busy:
+        return Node(KEEP_AWAKE_LABEL + "…", None, enabled=False, checked=view.value)
+    if view.source == "flag":
+        return Node(KEEP_AWAKE_LABEL + " (set by --keep-awake for this run)", None, enabled=False, checked=view.value)
+    label = KEEP_AWAKE_LABEL if view.platform_supported else KEEP_AWAKE_LABEL + " (no such assertion on this system)"
+    return Node(label, ("toggle_keep_awake",), checked=view.value)
+
+
 NETWORK_MODES: Tuple[Tuple[str, str], ...] = (
     ("localhost", "Localhost only"),
     ("lan", "Local network"),
@@ -466,6 +508,7 @@ class MenuInputs:
     tk_available: bool = False
     memory_warn: bool = True
     autostart: Optional[AutostartView] = None
+    keep_awake: Optional[KeepAwakeView] = None
     apps: Tuple[AppEntry, ...] = ()
     apps_fetched: bool = False
     models: ModelsView = field(default_factory=ModelsView)

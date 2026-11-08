@@ -302,11 +302,13 @@ def test_connect_merges_addresses_and_who_can_reach_it() -> None:
 
 
 def test_settings_holds_the_switches_with_short_labels() -> None:
-    nodes = v2.build_menu(_inputs(autostart=mm.AutostartView("on"), memory_warn=False))
+    nodes = v2.build_menu(_inputs(autostart=mm.AutostartView("on"), memory_warn=False, keep_awake=mm.KeepAwakeView(value=True, source="stored", held=True)))
     settings = _sub(nodes, "Settings")
     by = {n.label: n for n in settings if not n.separator}
-    assert list(by) == ["Start at login", "Warn when memory is almost full", "Classic menu"]
+    assert list(by) == ["Start at login", "Keep the Mac awake while the gateway runs", "Warn when memory is almost full", "Classic menu"]
     assert by["Start at login"].checked is True and by["Start at login"].action == ("toggle_autostart",)
+    assert by["Keep the Mac awake while the gateway runs"].checked is True
+    assert by["Keep the Mac awake while the gateway runs"].action == ("toggle_keep_awake",)
     assert by["Warn when memory is almost full"].checked is False
     assert by["Classic menu"].action == ("set_menu_style", "classic") and by["Classic menu"].checked is False
     # A broken login item keeps its repair wording and its reason line.
@@ -314,6 +316,33 @@ def test_settings_holds_the_switches_with_short_labels() -> None:
     assert broken[0] == "Start at login — needs repair" and "the program it starts is gone" in broken[1]
     # The classic label is not used anywhere in the redesign.
     assert not any(mm.AUTOSTART_LABEL in n.label for n in mm.iter_nodes(nodes))
+
+
+def test_keep_awake_item_follows_the_gateway_state_under_start_at_login() -> None:
+    """Backlog 1149: the check item reads GET /host/runner `keep_awake` — checked = on; a change in
+    flight greys it; a launch flag pins it and says so; another system names the missing assertion;
+    an older gateway without the field offers a greyed item, never a guess."""
+    def labels_and_checks(view):
+        settings = _sub(v2.build_menu(_inputs(autostart=mm.AutostartView("on"), keep_awake=view)), "Settings")
+        rows = [n for n in settings if not n.separator]
+        return rows[0].label, rows[1]
+
+    first, item = labels_and_checks(mm.KeepAwakeView(value=False, source="stored"))
+    assert first == "Start at login", "right under Start at login"
+    assert item.label == "Keep the Mac awake while the gateway runs" and item.checked is False and item.enabled
+    _, busy = labels_and_checks(mm.KeepAwakeView(value=True, busy=True))
+    assert busy.label.endswith("…") and busy.enabled is False and busy.checked is True
+    _, pinned = labels_and_checks(mm.KeepAwakeView(value=False, source="flag"))
+    assert "set by --keep-awake for this run" in pinned.label and pinned.enabled is False and pinned.action is None
+    _, linux = labels_and_checks(mm.KeepAwakeView(value=True, platform_supported=False))
+    assert "no such assertion on this system" in linux.label and linux.checked is True and linux.action == ("toggle_keep_awake",)
+    _, older = labels_and_checks(mm.KeepAwakeView(available=False))
+    assert older.enabled is False and older.checked is False and older.action is None
+    _, absent = labels_and_checks(None)
+    assert absent.enabled is False
+    # Parsing the runner payload: the field, or an older gateway.
+    assert mm.parse_keep_awake({"keep_awake": {"value": True, "source": "flag", "held": True, "platform_supported": True}}) == mm.KeepAwakeView(True, "flag", True, True)
+    assert mm.parse_keep_awake({"paused": False}) == mm.KeepAwakeView(available=False)
 
 
 def test_updates_live_in_help_until_one_is_known_then_at_the_top() -> None:

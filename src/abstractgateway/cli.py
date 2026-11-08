@@ -687,10 +687,14 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             _previous_sigterm = signal.signal(signal.SIGTERM, lambda _s, _f: None)
         except (ValueError, OSError):
             _previous_sigterm = None
-    # While the gateway runs, the Mac does not idle-sleep (keep_awake.py).
+    # Keep the Mac awake while the gateway runs — the user's setting (backlog 1149:
+    # `--keep-awake` for this run > stored `host.keep_awake` > on); the route
+    # changes it live, this is the start and the stop.
     from . import keep_awake
+    from .runtime_config import resolve_keep_awake
+    from .users import gateway_data_dir_from_env
 
-    awake = keep_awake.hold()
+    keep_awake.apply(bool(resolve_keep_awake(gateway_data_dir_from_env())["value"]))
     try:
         server.run()
         # A normal return: uvicorn drained and (when a signal arrived) is
@@ -707,7 +711,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         if _previous_sigterm is not None:
             with contextlib.suppress(ValueError, OSError):
                 signal.signal(signal.SIGTERM, _previous_sigterm)
-        keep_awake.release(awake)
+        keep_awake.apply(False)
         tray.stop()
         ts_https_stop.set()
         ts_https.stop()
@@ -799,6 +803,12 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
         minutes = values[MODEL_IDLE_UNLOAD_LAUNCH_KEY]
         _stderr("Idle unload: " + ("off for this run (--model-idle-unload 0)" if not minutes
                                    else f"models unused for {minutes} min are unloaded (--model-idle-unload, for this run)"))
+    raw_awake = getattr(args, "keep_awake", None)
+    if raw_awake:
+        from .runtime_config import KEEP_AWAKE_LAUNCH_KEY
+
+        values[KEEP_AWAKE_LAUNCH_KEY] = str(raw_awake).strip().lower() == "on"
+        _stderr("Keep awake: " + ("on" if values[KEEP_AWAKE_LAUNCH_KEY] else "off") + " for this run (--keep-awake)")
     record_launch_settings(data_dir, values)
 
 
@@ -991,6 +1001,14 @@ def main(argv: list[str] | None = None) -> None:
         "the token always stays in <data dir>/auth/bootstrap-admin-token)",
     )
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+    serve.add_argument(
+        "--keep-awake",
+        choices=["on", "off"],
+        default=None,
+        dest="keep_awake",
+        help="Keep the Mac awake while the gateway runs, for this run only (wins over the saved setting "
+        "`host.keep_awake`; default: the saved setting, else on). Other systems have no such assertion.",
+    )
     serve.add_argument(
         "--no-tray",
         action="store_true",

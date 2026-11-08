@@ -1075,6 +1075,22 @@ are user-level; every write is admin-only.
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
 | `GET /api/gateway/host/update` | How the gateway was installed (`install.kind`, `upgradable`, the command), the last update check, the upgrade job, `restart_pending`. |
 | `POST /api/gateway/host/update/check` / `start` | Check for a newer release (an AbstractFramework installer install: the newest AbstractFramework release; otherwise PyPI; offline is an in-band answer) / run the update in the background (the installer, or the package manager's upgrade). See [tray.md](./tray.md#restart-and-update). |
+| `PUT /api/gateway/host/keep-awake` | Body `{"enabled": true|false}` (admin). Stores the setting `host.keep_awake` and applies it now; answers `{keep_awake: {value, source, held, platform_supported}}`, the same shape `GET /host/runner` carries. |
+
+**Keep the Mac awake while the gateway runs.** On macOS the gateway holds the
+`PreventUserIdleSystemSleep` assertion (what `caffeinate -i` holds), named `AbstractGateway`,
+while the setting `host.keep_awake` is on — the default, so nothing changes for an existing
+install. Closing the lid or choosing Sleep still sleeps the Mac; the display still turns off.
+The setting is the user's: switch it in the web console (the Gateway card, beside *Start at
+login*), in the tray's *Settings ▸* submenu (the check item right under *Start at login*), with
+`abstractgateway config set host.keep_awake on|off`, or `PUT /host/keep-awake`. Turning it off
+releases the assertion at once; turning it on holds it again; no restart. `serve --keep-awake
+on|off` sets it for one run and wins over the saved value (`source: "flag"`; the saved value
+applies at the next start). `GET /host/runner` reports `keep_awake: {value, source: flag|stored|
+default, held, platform_supported}` — `held` is the live fact of this process. Other systems have
+no such assertion: `platform_supported` is false, nothing is held, the setting still stores. The
+independent check on a Mac is `pmset -g assertions`: `AbstractGateway` is listed under
+PreventUserIdleSystemSleep while held and absent otherwise.
 
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
@@ -1725,13 +1741,16 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
   `--unsandboxed-commands`, `--push-relay`, `--pool-*`, `--run-index` and `--gc-tuning` have no
   environment variable.
-  While the gateway runs, the Mac does not idle-sleep; closing the lid or choosing Sleep still sleeps it.
+  While the gateway runs, the Mac does not idle-sleep unless the setting *Keep the Mac awake while the
+  gateway runs* is off; closing the lid or choosing Sleep still sleeps it.
+  - `--keep-awake on|off`: that setting for this run only (default: the saved `host.keep_awake`, else on);
+    see [Host control](#host-control-pause-desktop-tray-restart-update).
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,

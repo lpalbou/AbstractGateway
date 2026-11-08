@@ -1109,7 +1109,7 @@ BACKLOG_DEFAULT_DIRNAME = "backlog"
 BACKLOG_SUBPATH = ("docs", "backlog")
 BACKLOG_FOLDERS = ("planned", "proposed", "completed")
 _LAUNCH_SETTINGS_RELPATH = ("run", "launch-settings.json")
-_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner", "model_idle_unload_minutes")
+_LAUNCH_KEYS = ("triage_repo_root", "backlog_exec_runner", "model_idle_unload_minutes", "keep_awake")
 
 # Labels and help for the settings surfaces (console, Continuum, CLI) — one
 # row per knob so every door says the same thing.
@@ -1211,6 +1211,55 @@ def resolve_model_idle_unload(
 def _model_idle_unload_payload(data_dir: Path, stored: Dict[str, Any], launch: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(resolve_model_idle_unload(data_dir, stored=stored, launch=launch))
     out.update({k: v for k, v in MODEL_IDLE_UNLOAD_SETTING.items()})
+    return out
+
+
+# ---- Keep the Mac awake while the gateway runs (backlog 1149) -----------------
+#
+# Operator ruling 2026-11-08: the idle-sleep assertion `keep_awake.py` holds is governed by the
+# user. `serve --keep-awake on|off` > stored `host.keep_awake` > on (unchanged behaviour for
+# existing installs). No environment variable. Changing the stored value LIVE releases or holds
+# the assertion at once (routes/keep_awake.py); a launch flag pins the live state for its run
+# and the stored value applies at the next start.
+KEEP_AWAKE_KEY = "host.keep_awake"
+KEEP_AWAKE_LAUNCH_KEY = "keep_awake"
+KEEP_AWAKE_DEFAULT = True
+KEEP_AWAKE_LABEL = "Keep the Mac awake while the gateway runs"
+KEEP_AWAKE_SETTING: Dict[str, Any] = {
+    "key": KEEP_AWAKE_KEY,
+    "label": KEEP_AWAKE_LABEL,
+    "help": "While on, this Mac does not idle-sleep while the gateway runs (closing the lid or choosing Sleep "
+            "still sleeps it). Off: the Mac may sleep. Other systems have no such assertion; the setting still stores.",
+    "flag": "--keep-awake on|off",
+    "cli": "abstractgateway config set host.keep_awake on|off",
+    "default": KEEP_AWAKE_DEFAULT,
+}
+
+
+def resolve_keep_awake(
+    data_dir: Path, *, stored: Optional[Dict[str, Any]] = None, launch: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """{value: bool, source: flag|stored|default[, stored_value]}: flag > stored > on."""
+    if stored is None:
+        stored = _read_store(Path(data_dir))
+    if launch is None:
+        launch = read_launch_settings(Path(data_dir))
+    saved = stored.get(KEEP_AWAKE_KEY)
+    out: Dict[str, Any]
+    if launch.get(KEEP_AWAKE_LAUNCH_KEY) is not None:
+        out = {"value": bool(launch[KEEP_AWAKE_LAUNCH_KEY]), "source": "flag"}
+        if saved is not None:
+            out["stored_value"] = bool(saved)  # saved, applies once the flag is gone
+    elif saved is not None:
+        out = {"value": bool(saved), "source": "stored"}
+    else:
+        out = {"value": KEEP_AWAKE_DEFAULT, "source": "default"}
+    return out
+
+
+def _keep_awake_payload(data_dir: Path, stored: Dict[str, Any], launch: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(resolve_keep_awake(data_dir, stored=stored, launch=launch))
+    out.update({k: v for k, v in KEEP_AWAKE_SETTING.items()})
     return out
 
 
@@ -1764,6 +1813,7 @@ def read_runtime_config(
         "operator_email": operator_email,
         "stop_kill_switch_s": _stop_kill_switch_seconds_payload(stored),
         MODEL_IDLE_UNLOAD_KEY: _model_idle_unload_payload(data_dir, stored, launch),
+        KEEP_AWAKE_KEY: _keep_awake_payload(data_dir, stored, launch),
         "allow_engine_install": _allow_engine_install_payload(stored),
         # Read-only here: GET/POST /api/gateway/network is the door (auth and
         # acknowledgement refusals, addresses, restart story).
@@ -1921,6 +1971,7 @@ class RuntimeConfigError(ValueError):
 _WRITE_KEYS = frozenset({
     "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "executor", "operator_email", "stop_kill_switch_s",
     "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny", MODEL_IDLE_UNLOAD_KEY,
+    KEEP_AWAKE_KEY,
 })
 
 
@@ -2067,6 +2118,15 @@ def write_runtime_config(
             stored[MODEL_IDLE_UNLOAD_KEY] = parse_idle_unload_minutes(raw_m)
             applied[MODEL_IDLE_UNLOAD_KEY] = stored[MODEL_IDLE_UNLOAD_KEY]
 
+    if KEEP_AWAKE_KEY in changes:
+        raw_k = changes[KEEP_AWAKE_KEY]
+        if raw_k is None or (isinstance(raw_k, str) and not raw_k.strip()):
+            stored.pop(KEEP_AWAKE_KEY, None)  # clear = the default (on)
+            applied[KEEP_AWAKE_KEY] = None
+        else:
+            stored[KEEP_AWAKE_KEY] = _strict_bool(KEEP_AWAKE_KEY, raw_k)
+            applied[KEEP_AWAKE_KEY] = stored[KEEP_AWAKE_KEY]
+
     if "workspace_builtin_deny" in changes:
         raw_bd = changes["workspace_builtin_deny"]
         if raw_bd is None or (isinstance(raw_bd, str) and not raw_bd.strip()):
@@ -2093,7 +2153,7 @@ def write_runtime_config(
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
             "backlog_exec_runner, triage_repo_root, executor, operator_email, "
-            "stop_kill_switch_s, allow_engine_install, models.idle_unload_minutes, "
+            "stop_kill_switch_s, allow_engine_install, models.idle_unload_minutes, host.keep_awake, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
             + ", agents.default_workflow.<interface>, agents.streaming_default, skills.shelf)"
         )

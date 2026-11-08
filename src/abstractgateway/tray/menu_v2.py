@@ -503,6 +503,9 @@ def settings_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     items: List[Node] = []
     for n in mm.autostart_nodes(inputs.autostart):
         items.append(replace(n, label=n.label.replace(mm.AUTOSTART_LABEL, AUTOSTART_SHORT, 1)))
+    # Keep the Mac awake while the gateway runs (backlog 1149): the same words
+    # as the web console's switch, right under Start at login.
+    items.append(mm.keep_awake_node(inputs.keep_awake))
     items.append(Node("Warn when memory is almost full", ("toggle_memory_warn",), checked=bool(inputs.memory_warn)))
     items.append(SEP)
     items.append(Node("Classic menu", ("set_menu_style", CLASSIC), checked=False))

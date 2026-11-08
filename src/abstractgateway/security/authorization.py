@@ -127,6 +127,9 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             # Start at login: the READ names host files and programs, the
             # write registers a login item for the gateway's account.
             "/api/gateway/host/start-at-login",
+            # Keep the Mac awake while the gateway runs: a power assertion of
+            # the gateway's process, the operator's to govern (backlog 1149).
+            "/api/gateway/host/keep-awake",
         ),
     ),
     # Network exposure (routes/network.py): changing who can reach this host

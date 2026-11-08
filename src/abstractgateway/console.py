@@ -2779,6 +2779,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div id="gateway-host-hang-row" class="entity-kv hidden"><span class="entity-kv-key">Last restart</span><span class="entity-kv-val"><span id="gateway-host-hang" tabindex="0" data-af-tip=""></span><span id="gateway-host-hang-dump" class="muted" style="display:block; overflow-wrap:anywhere"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
 	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button></span></div>
+	                <!-- Keep awake (backlog 1149): a real switch (admin), the same words as the tray's Settings item, verified by GET /host/runner. -->
+	                <div id="gateway-host-awake-row" class="entity-kv hidden"><span class="entity-kv-key">Keep awake</span><span class="entity-kv-val"><span id="gateway-host-awake-text" class="muted">…</span> <button id="gateway-host-awake-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Keep the Mac awake while the gateway runs"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Keep the Mac awake while the gateway runs</span></span></button></span></div>
 	              </div>
 	              <div class="actions">
 	                <button id="gateway-host-restart" class="secondary hidden" type="button">Restart gateway…</button>
@@ -12735,9 +12737,53 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("paused-banner-resume").classList.toggle("hidden", !(state.principal && state.principal.admin));
 	      }
 	    }
+	    // KEEP AWAKE (backlog 1149): the switch beside Start at login. State comes
+	    // from GET /host/runner `keep_awake` {value, source, held, platform_supported};
+	    // a click PUTs /host/keep-awake and the row re-renders from the READ-BACK
+	    // (never the wish). Pressed = on. A launch flag pins the run: the switch is
+	    // disabled and the text says so.
+	    function renderKeepAwake(ka, error) {
+	      const text = $("gateway-host-awake-text"); const btn = $("gateway-host-awake-toggle");
+	      if (!text || !btn) return;
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      if (!ka) {
+	        text.textContent = error ? `unavailable — ${error}` : "…";
+	        btn.classList.add("hidden");
+	        return;
+	      }
+	      const on = Boolean(ka.value);
+	      let lead;
+	      if (!ka.platform_supported) lead = `${on ? "On" : "Off"} — this system has no such assertion; the setting is stored and applies on a Mac`;
+	      else if (on && ka.held) lead = "On — this Mac does not idle-sleep while the gateway runs (closing the lid or choosing Sleep still sleeps it)";
+	      else if (on) lead = "On — but macOS did not grant the assertion; this Mac may sleep";
+	      else lead = "Off — this Mac may sleep while the gateway runs";
+	      if (ka.source === "flag") lead += ` · set by --keep-awake for this run${ka.stored_value === undefined ? "" : `; saved: ${ka.stored_value ? "on" : "off"}`}`;
+	      text.textContent = lead;
+	      btn.setAttribute("aria-checked", on ? "true" : "false");
+	      btn.removeAttribute("aria-busy");
+	      btn.classList.toggle("hidden", !admin);
+	      btn.disabled = ka.source === "flag";
+	      btn.title = ka.source === "flag" ? "Pinned by --keep-awake for this run; change the saved setting after a start without the flag" : (on ? "On: this Mac does not idle-sleep while the gateway runs" : "Off: this Mac may sleep while the gateway runs");
+	    }
+	    async function toggleKeepAwake() {
+	      const ka = state.hostRunner && state.hostRunner.keep_awake; const btn = $("gateway-host-awake-toggle");
+	      if (!ka || !btn || btn.disabled || btn.getAttribute("aria-busy") === "true") return;
+	      const turnOn = !ka.value;
+	      btn.setAttribute("aria-busy", "true");
+	      let err = "";
+	      try { await api("/api/gateway/host/keep-awake", { method: "PUT", body: JSON.stringify({ enabled: turnOn }) }); }
+	      catch (e) { err = String(e.message || e); }
+	      // Verify by GET: the row shows what the gateway reads back.
+	      try { const runner = await api("/api/gateway/host/runner"); state.hostRunner = runner; renderKeepAwake(runner.keep_awake || null); }
+	      catch (e) { renderKeepAwake(null, String(e.message || e)); }
+	      const now = state.hostRunner && state.hostRunner.keep_awake;
+	      const msg = err ? `Keep awake was not changed: ${err}` : (now && Boolean(now.value) === turnOn ? "" : `Keep awake did not read back as ${turnOn ? "on" : "off"}`);
+	      _gwMsg(msg, msg ? "error" : "");
+	    }
 	    function renderGatewayHost(runner, tray) {
 	      if (runner) state.hostRunner = runner;
 	      if (tray) state.hostTray = tray;
+	      if (runner) renderKeepAwake(runner.keep_awake || null);
 	      renderPausedBanner(state.hostRunner);
 	      const admin = Boolean(state.principal && state.principal.admin);
 	      const badge = $("gateway-host-state");
@@ -12882,6 +12928,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      if (state.principal && state.principal.admin) {
 	        $("gateway-host-login-row").classList.remove("hidden");
+	        $("gateway-host-awake-row").classList.remove("hidden");
 	        loadStartAtLogin("gateway-host");
 	        try { renderGatewayUpdate(await api("/api/gateway/host/update")); } catch {}
 	      }
@@ -17603,6 +17650,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;
 	    $("gateway-host-login-toggle").onclick = () => toggleStartAtLogin("gateway-host");
+	    $("gateway-host-awake-toggle").onclick = toggleKeepAwake;
 	    $("gateway-host-quit").onclick = quitGateway;
 	    $("gateway-host-update-check").onclick = checkGatewayUpdate;
 	    $("gateway-host-update-start").onclick = startGatewayUpdate;

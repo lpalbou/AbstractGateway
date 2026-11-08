@@ -335,6 +335,9 @@ class TrayApp:
         # Extras: Apps / Models / Start at login (see _extras_loop).
         self._extras_wake = threading.Event()
         self._autostart: Optional[AutostartView] = None
+        # Keep the Mac awake while the gateway runs (backlog 1149): GET /host/runner `keep_awake`.
+        self._keep_awake: Optional[Any] = None
+        self._keep_awake_busy = False
         self._autostart_busy = False
         self._apps: tuple = ()
         self._apps_fetched = False
@@ -775,6 +778,7 @@ class TrayApp:
             tk_available=self._tk,
             memory_warn=bool(self.prefs.data.get("memory_warn", True)),
             autostart=(dataclasses.replace(self._autostart, busy=True) if (self._autostart is not None and self._autostart_busy) else self._autostart),
+            keep_awake=(dataclasses.replace(self._keep_awake, busy=True) if (self._keep_awake is not None and self._keep_awake_busy) else self._keep_awake),
             apps=tuple(self._apps),
             apps_fetched=self._apps_fetched,
             models=ModelsView(
@@ -878,6 +882,7 @@ class TrayApp:
             "open_url": plat.open_url,
             "copy_console_link": self.copy_console_link,
             "toggle_memory_warn": self.toggle_memory_warn,
+            "toggle_keep_awake": self.toggle_keep_awake,
             "set_menu_style": self.set_menu_style,
             "about": self.about,
             "quit": self.quit_gateway,
@@ -921,13 +926,17 @@ class TrayApp:
     def _extras_loop(self) -> None:
         """Slow, independent refreshes of what the Apps / Models / Start-at-login
         rows show. A failed read keeps the last good data and records why."""
-        last = {"apps": 0.0, "models": 0.0, "autostart": 0.0, "network": 0.0}
+        last = {"apps": 0.0, "models": 0.0, "autostart": 0.0, "network": 0.0, "keep_awake": 0.0}
+        keep_awake_every_s = 5.0  # the Settings item follows a change made in the console within seconds
         while not self._stopping:
             now = time.monotonic()
             changed = False
             if now - last["autostart"] >= EXTRAS_AUTOSTART_EVERY_S:
                 last["autostart"] = now
                 changed |= self._refresh_autostart()
+            if now - last["keep_awake"] >= keep_awake_every_s and (self._snap is None or self._snap.reachable):
+                last["keep_awake"] = now
+                changed |= self._refresh_keep_awake()
             if now - last["network"] >= EXTRAS_NETWORK_EVERY_S:
                 last["network"] = now
                 changed |= self._refresh_network()
@@ -1662,6 +1671,50 @@ class TrayApp:
             self._notify("Console link copied", url)
         else:
             self._info("Console link", url)
+
+    def _refresh_keep_awake(self) -> bool:
+        """`GET /host/runner` `keep_awake` → the Settings item's state (backlog 1149).
+        Unreachable gateway: keep the last view (the item greys with the menu)."""
+        from . import menu_model
+
+        r = self.client.runner()
+        if not (r.ok and isinstance(r.data, dict)):
+            return False
+        view = menu_model.parse_keep_awake(r.data)
+        before = self._keep_awake
+        self._keep_awake = view
+        return before != view
+
+    def toggle_keep_awake(self) -> None:
+        """The check item: on → off releases the idle-sleep assertion at once; off → on holds it again."""
+        view = self._keep_awake
+        if view is None or not view.available:
+            self._info("Keep awake is unavailable", "This gateway does not offer the setting (update the gateway).", style="warning")
+            return
+        turning_on = not view.value
+
+        def _do() -> None:
+            self._keep_awake_busy = True
+            self._force_menu_rebuild()
+            try:
+                r = self.client.keep_awake_set(turning_on)
+            finally:
+                self._keep_awake_busy = False
+            self._refresh_keep_awake()
+            self._force_menu_rebuild()
+            if r.ok and isinstance(r.data, dict):
+                ka = (r.data.get("keep_awake") or {}) if isinstance(r.data.get("keep_awake"), dict) else {}
+                if not ka.get("platform_supported", True):
+                    self._notify("Keep awake", f"Saved: {'on' if turning_on else 'off'}. This system has no such assertion; it applies on a Mac.")
+                elif turning_on:
+                    self._notify("Keeps the Mac awake", "This Mac does not idle-sleep while the gateway runs (closing the lid or choosing Sleep still sleeps it)."
+                                 if ka.get("held") else "Saved on, but macOS did not grant the assertion; this Mac may sleep.")
+                else:
+                    self._notify("No longer keeps the Mac awake", "This Mac may sleep while the gateway runs.")
+            else:
+                self._info("Keep awake was not changed", str(getattr(r, "error", None) or (r.data if isinstance(r.data, dict) else "") or f"HTTP {r.status}"), style="warning")
+
+        threading.Thread(target=_do, name="tray-keep-awake", daemon=True).start()
 
     def toggle_memory_warn(self) -> None:
         self.prefs.data["memory_warn"] = not bool(self.prefs.data.get("memory_warn", True))

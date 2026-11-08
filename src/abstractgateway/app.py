@@ -285,8 +285,12 @@ app.mount("/core", LegacyCoreRedirect(), name="core-endpoint-legacy")
 # Start at login (routes/start_at_login.py): literal /gateway/host/start-at-login
 # (gateway_start_at_login_v1), admin-only; the tray's and CLI's same switch.
 from .routes.start_at_login import router as start_at_login_router  # noqa: E402
+# Keep the Mac awake while the gateway runs (routes/keep_awake.py): PUT /gateway/host/keep-awake,
+# admin-only; the state rides GET /host/runner (backlog 1149).
+from .routes.keep_awake import router as keep_awake_router  # noqa: E402
 
 app.include_router(start_at_login_router, prefix="/api")
+app.include_router(keep_awake_router, prefix="/api")
 # Automations v1 façade (routes/automations.py): literal /gateway/automations...
 # and /gateway/trigger-sources paths, before the parametrized gateway router.
 app.include_router(automations_router, prefix="/api")
