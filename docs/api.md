@@ -208,6 +208,22 @@ the run's inputs as `input_data.workflow_selection` (written by the gateway;
 a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
 tells a restored conversation how its workflow was chosen.
 
+`limits` is the iteration budget the start applied:
+`{max_iterations, source: "request" | "gateway_default" | "builtin"}`. The
+app's own value wins (`input_data._limits.max_iterations`, or the flat
+`max_iterations` older apps send); else the gateway default
+`agents.max_iterations` is written to `_limits.max_iterations`; else
+`source: "builtin"` with `max_iterations: null`: the workflow's own limit
+applies (20 for the built-in agent). The same receipt is kept on the run as
+`input_data._gateway_limits` (written by the gateway; a value sent by the
+client is replaced). Every app reads the default from
+`GET /api/gateway/discovery/capabilities` →
+`capabilities.agent_limits.max_iterations` `{default: int | null, source:
+"stored" | "default", run_field: "_limits.max_iterations", min: 1,
+warn_above: 200}`. The backlog helpers `POST /backlog/maintain` and
+`POST /backlog/advisor` follow the same ladder with their built-in 12 and 10
+and return the same `limits`.
+
 Every run also records who started it, in the run's inputs as
 `input_data._meta.origin` and on `GET /runs/{run_id}` as `origin`:
 `{kind, actor, client, ref}`. A run started through `POST /runs/start` is

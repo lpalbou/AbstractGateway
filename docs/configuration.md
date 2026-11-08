@@ -935,6 +935,27 @@ effective default from `GET /api/gateway/discovery/capabilities`
 | Read | Workflows → *Settings* → *Streamed replies* | Runtimes → *Runtime knobs* | `abstractgateway config get agents.streaming_default` |
 | Change | the switch | the switch | `abstractgateway config set agents.streaming_default on`, `config unset agents.streaming_default`; `POST /api/gateway/admin/runtime-config {"agents": {"streaming_default": true}}` |
 
+### Iteration limit
+
+`agents.max_iterations` (a whole number of 1 or more; unset by default) is how
+many cycles an agent run may take when the app that started it sets no limit
+of its own. It applies to `POST /runs/start` (written to
+`input_data._limits.max_iterations`) and to the backlog helpers, whose
+built-in budgets are 12 (maintain) and 10 (advisor). Unset, the gateway adds
+nothing and each workflow's own limit applies (20 for the built-in agent). A
+bool, a decimal or a word is refused with a sentence; there is no upper
+limit, and past 200 the read carries a `warning` line. Every start answers
+which rung applied (`limits: {max_iterations, source: request |
+gateway_default | builtin}`, see [API](api.md#2-start-a-run)); apps without
+admin rights read the default from `capabilities.agent_limits.max_iterations`.
+
+| | Web console | CLI / API |
+|---|---|---|
+| Read | Workflows → *Settings* → *Iteration limit* | `abstractgateway config get agents.max_iterations` |
+| Change | the number field, *Save* (*Use workflow limits* clears it) | `abstractgateway config set agents.max_iterations 30`, `config unset agents.max_iterations`; `POST /api/gateway/admin/runtime-config {"agents": {"max_iterations": 30}}` |
+
+The console TUI does not show this setting yet.
+
 ### Skills shelf
 
 `skills.shelf` is the folder the gateway reads skills from (it holds
