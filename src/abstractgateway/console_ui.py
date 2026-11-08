@@ -3815,7 +3815,7 @@ CONSOLE_UI_JS = r"""
     // gateway kept; a refusal shows the gateway's sentence. Past warn_above a warning line,
     // never a wall.
     const ITERATION_LIMIT_LABEL = "Iteration limit";
-    const ITERATION_LIMIT_DESC = "How many cycles an agent run may take when the app does not set its own limit. Empty: each workflow's own limit (20 for the built-in agent).";
+    const ITERATION_LIMIT_DESC = "How many cycles an agent run may take when the app does not set its own limit. Empty: the framework default.";
     function iterationLimitMarkup(data, st) {
       const block = (data && data.agents) || {};
       const r = block.max_iterations;
@@ -3828,12 +3828,13 @@ CONSOLE_UI_JS = r"""
       const draft = st && typeof st.iterDraft === "string" ? st.iterDraft : (r.value === null ? "" : String(r.value));
       const warnAbove = Number.isInteger(r.warn_above) ? r.warn_above : 200;
       const warn = iterationLimitWarning(draft, warnAbove);
-      const now = r.value === null ? "Not set: each workflow's own limit" : `${r.value} (saved on this gateway)`;
+      const fallback = Number.isInteger(r.default) ? `the framework default (${r.default})` : "the framework default";
+      const now = r.value === null ? `Not set: ${fallback}` : `${r.value} (saved on this gateway)`;
       let out = head
         + `<div class="ui-apps-setting" data-iteration-limit><div class="ui-apps-setting__head"><label for="agent-iteration-limit">${esc(ITERATION_LIMIT_LABEL)}</label></div>`
-        + `<div class="ui-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><input type="number" min="1" step="1" inputmode="numeric" id="agent-iteration-limit" data-iteration-limit-input value="${esc(draft)}" placeholder="Each workflow's own" aria-describedby="agent-iteration-limit-desc" style="width:9rem;flex:0 0 auto"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
+        + `<div class="ui-toolbar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center"><input type="number" min="1" step="1" inputmode="numeric" id="agent-iteration-limit" data-iteration-limit-input value="${esc(draft)}" placeholder="${Number.isInteger(r.default) ? `Default (${r.default})` : "Default"}" aria-describedby="agent-iteration-limit-desc" style="width:9rem;flex:0 0 auto"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
         + `<button type="button" class="ui-btn" data-iteration-limit-save${admin && !busy ? "" : " disabled"}>${busy ? "Saving..." : "Save"}</button>`
-        + (r.value !== null ? `<button type="button" class="ui-btn secondary" data-iteration-limit-clear${admin && !busy ? "" : " disabled"}>Use workflow limits</button>` : "")
+        + (r.value !== null ? `<button type="button" class="ui-btn secondary" data-iteration-limit-clear${admin && !busy ? "" : " disabled"}>Use the default</button>` : "")
         + `</div>`
         + `<p class="ui-net-proxy__text" id="agent-iteration-limit-desc">${esc(ITERATION_LIMIT_DESC)} Now: ${esc(now)}.</p>`
         + `<p class="ui-field-msg tone-warn" data-iteration-limit-warning${warn ? "" : " hidden"}>${esc(warn)}</p>`
@@ -3847,11 +3848,11 @@ CONSOLE_UI_JS = r"""
       const n = /^\d+$/.test(t) ? Number(t) : null;
       return n !== null && n > warnAbove ? `${n} iterations is a lot: one run can take hours and use many model calls. It is allowed.` : "";
     }
-    // "" = clear (each workflow's own limit); a whole number >= 1; anything else = a sentence, no request.
+    // "" = clear (the framework default); a whole number >= 1; anything else = a sentence, no request.
     function iterationLimitBody(raw) {
       const t = String(raw ?? "").trim();
       if (!t) return { agents: { max_iterations: null } };
-      if (!/^\d+$/.test(t) || Number(t) < 1) return { error: "Enter a whole number of 1 or more, or leave it empty to use each workflow's own limit." };
+      if (!/^\d+$/.test(t) || Number(t) < 1) return { error: "Enter a whole number of 1 or more, or leave it empty to use the default." };
       return { agents: { max_iterations: Number(t) } };
     }
     async function iterationLimitSave(raw) {
@@ -3873,7 +3874,7 @@ CONSOLE_UI_JS = r"""
         const want = body.agents.max_iterations;
         st.iterDraft = null;
         st.iterSaved = kept === want
-          ? { tone: "ok", head: "Saved", text: want === null ? "Agent runs use each workflow's own limit unless the app sets one." : `Agent runs get ${want} iterations unless the app sets its own limit.` }
+          ? { tone: "ok", head: "Saved", text: want === null ? "Agent runs use the framework default unless the app sets their own limit." : `Agent runs get ${want} iterations unless the app sets its own limit.` }
           : { tone: "err", head: "Not saved", text: `The gateway reports ${kept === null || kept === undefined ? "no limit" : kept} after the save.` };
       } catch (err) {
         const data = (err && err.data) || {};

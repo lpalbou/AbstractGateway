@@ -3,7 +3,9 @@ the number of iterations allowed for an agent"): the runtime-config door (read w
 write validated with a sentence, a warning past 200 but never a refusal), the CLI row, the
 `/capabilities` descriptor every app reads, the `/runs/start` ladder (request > gateway default >
 the workflow's own) with its `limits` receipt on the response and the run, the two backlog helper
-routes' ladder (request > gateway default > 12 / 10), and the console field."""
+routes' ladder (request > gateway default > the framework default), and the console field. Unset = the
+framework default, AbstractRuntime's DEFAULT_MAX_ITERATIONS (50; operator 2026-11-08: "By default, set it to 50
+everywhere"), served by name and never copied."""
 
 from __future__ import annotations
 
@@ -30,8 +32,9 @@ def test_the_setting_reads_with_its_source_and_refuses_non_integers_in_words(gw,
     client, runtime_dir = gw
     row = client.get(CFG, headers=HEADERS).json()["agents"]["max_iterations"]
     assert row["key"] == "agents.max_iterations" and row["value"] is None and row["source"] == "default"
+    assert row["default"] == 50, "unset shows the framework default"
     caps = client.get("/api/gateway/discovery/capabilities", headers=HEADERS).json()["capabilities"]
-    assert caps["agent_limits"]["max_iterations"]["default"] is None
+    assert caps["agent_limits"]["max_iterations"]["default"] == 50
     assert caps["agent_limits"]["max_iterations"]["source"] == "default"
 
     for bad in (True, 12.0, 0, -3, "twelve", "1.5"):
@@ -63,8 +66,10 @@ def test_run_start_ladder_and_receipt(gw) -> None:  # noqa: F811
     client, _ = gw
     _Ctl.reset(hold=False)
     none = _start(client, prompt="a")
-    assert none["limits"] == {"max_iterations": None, "source": "builtin"}
-    assert _run_vars(none["run_id"])["_gateway_limits"] == {"max_iterations": None, "source": "builtin"}
+    assert none["limits"] == {"max_iterations": 50, "source": "builtin"}
+    none_vars = _run_vars(none["run_id"])
+    assert none_vars["_gateway_limits"] == {"max_iterations": 50, "source": "builtin"}
+    assert none_vars["_limits"]["max_iterations"] == 50, "the receipt is the budget the run holds"
 
     assert client.post(CFG, headers=HEADERS, json={"agents": {"max_iterations": 12}}).status_code == 200
     gd = _start(client, prompt="b")
@@ -83,19 +88,21 @@ def test_run_start_ladder_and_receipt(gw) -> None:  # noqa: F811
     assert _run_vars(forged["run_id"])["_gateway_limits"] == {"max_iterations": 12, "source": "gateway_default"}
 
 
-def test_backlog_helpers_use_the_ladder_with_their_former_literals(tmp_path) -> None:
+def test_backlog_helpers_use_the_one_ladder_and_the_framework_default(tmp_path) -> None:
     from abstractgateway.routes import gateway as gw_routes
     from abstractgateway.runtime_config import resolve_run_iteration_limit, write_runtime_config
+    from abstractruntime import DEFAULT_MAX_ITERATIONS
 
-    assert resolve_run_iteration_limit(None, tmp_path, builtin=12) == {"max_iterations": 12, "source": "builtin"}
-    assert resolve_run_iteration_limit(5, tmp_path, builtin=12) == {"max_iterations": 5, "source": "request"}
+    assert DEFAULT_MAX_ITERATIONS == 50
+    assert resolve_run_iteration_limit(None, tmp_path) == {"max_iterations": 50, "source": "builtin"}
+    assert resolve_run_iteration_limit(5, tmp_path) == {"max_iterations": 5, "source": "request"}
     write_runtime_config(tmp_path, {"agents": {"max_iterations": 30}}, actor="test")
-    assert resolve_run_iteration_limit(None, tmp_path, builtin=10) == {"max_iterations": 30, "source": "gateway_default"}
+    assert resolve_run_iteration_limit(None, tmp_path) == {"max_iterations": 30, "source": "gateway_default"}
     maintain = inspect.getsource(gw_routes.backlog_maintain)
     advisor = inspect.getsource(gw_routes.backlog_advisor)
-    assert "resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir), builtin=12)" in maintain
+    assert "resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir))" in maintain
     assert '"max_iterations": maintain_limits["max_iterations"]' in maintain and "limits=maintain_limits" in maintain
-    assert "resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir), builtin=10)" in advisor
+    assert "resolve_run_iteration_limit(req.max_iterations, Path(svc.config.data_dir))" in advisor
     assert '"max_iterations": advisor_limits["max_iterations"]' in advisor and "limits=advisor_limits" in advisor
 
 
@@ -129,7 +136,7 @@ async function api(path, opts) {{
   return {{ writable: true, agents: {{ max_iterations: row(kept, kept === null ? "default" : "stored") }} }};
 }}
 function agentDefaultsRender() {{}}
-const row = (value, source) => ({{ key: "agents.max_iterations", value, source, warn_above: 200 }});
+const row = (value, source) => ({{ key: "agents.max_iterations", value, source, default: 50, warn_above: 200 }});
 const agentDefStore = {{ data: {{ writable: true, agents: {{ streaming_default: {{ value: false }}, max_iterations: row(null, "default") }} }}, iterSaving: false, iterSaved: null, iterDraft: null }};
 const out = {{}};
 out.unset = iterationLimitMarkup(agentDefStore.data, {{}});
@@ -154,7 +161,8 @@ console.log(JSON.stringify([out]));
 """
     out = _node(harness)[0]
     assert 'type="number"' in out["unset"] and 'min="1"' in out["unset"] and "Iteration limit" in out["unset"]
-    assert "Not set: each workflow" in out["unset"] and "data-iteration-limit-clear" not in out["unset"]
+    assert "Not set: the framework default (50)" in out["unset"] and "data-iteration-limit-clear" not in out["unset"]
+    assert 'placeholder="Default (50)"' in out["unset"]
     assert 'value="12"' in out["set"] and "data-iteration-limit-clear" in out["set"] and "12 (saved on this gateway)" in out["set"]
     assert "data-iteration-limit-warning>" in out["big"] and "300 iterations is a lot" in out["big"]
     assert "data-iteration-limit-warning hidden>" in out["set"]

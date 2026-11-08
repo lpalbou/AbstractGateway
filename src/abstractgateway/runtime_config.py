@@ -1697,6 +1697,9 @@ def _write_streaming_default(stored: Dict[str, Any], raw: Any, applied: Dict[str
 
 
 MAX_ITERATIONS_DEFAULT_KEY = "agents.max_iterations"
+# Unset = the framework default, AbstractRuntime's DEFAULT_MAX_ITERATIONS (50): the one constant every
+# reader imports (operator 2026-11-08: "By default, set it to 50 everywhere"). Never copy the number.
+from abstractruntime import DEFAULT_MAX_ITERATIONS as BUILTIN_MAX_ITERATIONS  # noqa: E402
 # Past this the console shows a warning line; it is never a refusal (operator 2026-11-08: no wall).
 MAX_ITERATIONS_WARN_ABOVE = 200
 
@@ -1704,9 +1707,9 @@ MAX_ITERATIONS_WARN_ABOVE = 200
 def _max_iterations_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     """`agents.max_iterations`: the iteration budget (agent loop cycles) an interactive
     `POST /runs/start` gets when the client sends none (`input_data._limits.max_iterations`
-    and the flat `max_iterations` pin both absent). Unset = the gateway adds nothing and the
-    workflow's own limit applies (the runtime's 20 when the workflow sets none). The two
-    backlog helper routes take it too, else their built-in 12 / 10."""
+    and the flat `max_iterations` pin both absent). Unset = the framework default
+    (AbstractRuntime DEFAULT_MAX_ITERATIONS, 50), reported with source `default`. The two
+    backlog helper routes take it too."""
 
     agents = stored.get("agents") if isinstance(stored.get("agents"), dict) else {}
     raw = agents.get("max_iterations")
@@ -1715,11 +1718,11 @@ def _max_iterations_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
         "key": MAX_ITERATIONS_DEFAULT_KEY,
         "value": int(raw) if ok else None,
         "source": "stored" if ok else "default",
-        "default": None,
+        "default": BUILTIN_MAX_ITERATIONS,
         "label": "Iteration limit",
         "help": (
             "How many cycles an agent run may take when the app does not set its own limit "
-            "(input_data._limits.max_iterations). Empty = each workflow's own limit (20 for the built-in agent)."
+            f"(input_data._limits.max_iterations). Empty = the framework default ({BUILTIN_MAX_ITERATIONS})."
         ),
         "warn_above": MAX_ITERATIONS_WARN_ABOVE,
     }
@@ -1754,7 +1757,7 @@ def parse_max_iterations(key: str, raw: Any) -> int:
 def _write_max_iterations_default(stored: Dict[str, Any], raw: Any, applied: Dict[str, Any]) -> None:
     agents = dict(stored.get("agents") or {}) if isinstance(stored.get("agents"), dict) else {}
     if raw is None or (isinstance(raw, str) and not raw.strip()):
-        agents.pop("max_iterations", None)  # clear = each workflow's own limit
+        agents.pop("max_iterations", None)  # clear = the framework default
         applied[MAX_ITERATIONS_DEFAULT_KEY] = None
     else:
         agents["max_iterations"] = parse_max_iterations(MAX_ITERATIONS_DEFAULT_KEY, raw)
@@ -1765,18 +1768,17 @@ def _write_max_iterations_default(stored: Dict[str, Any], raw: Any, applied: Dic
         stored.pop("agents", None)
 
 
-def resolve_run_iteration_limit(
-    requested: Any, data_dir: Path, *, builtin: Optional[int] = None
-) -> Dict[str, Any]:
+def resolve_run_iteration_limit(requested: Any, data_dir: Path) -> Dict[str, Any]:
     """THE iteration-limit ladder for a run the gateway starts: the request's value >
-    the stored gateway default > `builtin` (None = the workflow decides). Returns the
-    receipt apps show: {max_iterations, source: request|gateway_default|builtin}."""
+    the stored gateway default > the framework default (AbstractRuntime
+    DEFAULT_MAX_ITERATIONS, 50). Returns the receipt apps show:
+    {max_iterations, source: request|gateway_default|builtin}."""
     if isinstance(requested, int) and not isinstance(requested, bool) and requested >= 1:
         return {"max_iterations": int(requested), "source": "request"}
     stored = resolve_max_iterations_default(Path(data_dir))
     if stored is not None:
         return {"max_iterations": int(stored), "source": "gateway_default"}
-    return {"max_iterations": builtin, "source": "builtin"}
+    return {"max_iterations": BUILTIN_MAX_ITERATIONS, "source": "builtin"}
 
 
 def _write_agents_changes(
