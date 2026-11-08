@@ -2059,6 +2059,9 @@ class EntityRegistry:
                     diary_read_effect=_diary_read_effect,
                     workspace=workspace,
                     **memory_fns,
+                    # This handler folds `tool_result_media` below, so read_file
+                    # may say an image is attached to the next model call.
+                    results_carry_media=True,
                 )
                 notices.extend(exec_notices)
                 output: Any = str(election.result or "")

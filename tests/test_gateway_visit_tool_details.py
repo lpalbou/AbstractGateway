@@ -117,7 +117,7 @@ def test_sight_lane_dict_output_serves_the_rendered_text() -> None:
     """A read_file on an image serves `{"rendered", "media"}` (the shape
     abstractagent's sight lane reads, 2026-11-08); the operator sees the
     text the entity saw, never the dict's repr."""
-    rendered = "--- shared/pic.png (69 bytes) ---\n[#IMAGE: a PNG image; it is attached to your next look as an image]"
+    rendered = "--- shared/pic.png (69 bytes) ---\n[#IMAGE: a PNG image; it is attached to your next model call as an image]"
     records = [
         {"effect": {"type": "resume"}},
         _tool_record(

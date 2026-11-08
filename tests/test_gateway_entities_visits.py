@@ -913,6 +913,37 @@ def test_turn_attachments_are_validated_before_any_turn_moves(monkeypatch: pytes
         assert client.post(url, json={"text": "x", "attachments": [{"path": ""}]}).status_code == 422
         assert client.post(url, json={"text": "x", "attachments": [{"nope": "shared/pic.png"}]}).status_code == 422
 
+        # Review finding 1: paths the host cannot read are a 400 in the door's
+        # words, never a 500 — an embedded NUL, a name too long, a symlink loop.
+        import os
+
+        shared = _home_dir() / "workspace" / "shared"
+        os.symlink("loop_b", shared / "loop_a")
+        os.symlink("loop_a", shared / "loop_b")
+        for unreadable in ("shared/pic.png\x00.txt", "shared/" + "a" * 300, "shared/loop_a"):
+            r = post([unreadable])
+            assert r.status_code == 400 and r.json()["code"] == "attachment_unreadable", (unreadable, r.text)
+            assert "not a readable file path" in r.json()["detail"]
+        # Review finding 3: the 403 never enumerates the operator's mount whitelist.
+        from abstractruntime.identity.tools import write_workspace_mounts
+
+        granted = _home_dir().parent / "_granted_mount"  # a mount must sit OUTSIDE the home
+        granted.mkdir(parents=True, exist_ok=True)
+        write_workspace_mounts(_home_dir(), [{"name": "granted", "path": str(granted), "mode": "ro"}])
+        r = post(["mounts/nowhere/pic.png"])
+        assert r.status_code == 403 and r.json()["code"] == "attachment_outside_workspace", r.text
+        assert r.json()["detail"] == "attachment 'mounts/nowhere/pic.png': the path is outside this entity's workspace"
+        assert "granted" not in r.text and "your mounts" not in r.text
+        # Review note 8: a per-turn total beside the per-file cap.
+        from abstractgateway import entity_visits
+
+        (shared / "notes.txt").write_text("a few notes\n", encoding="utf-8")  # 12 bytes
+        png_size = (shared / "pic.png").stat().st_size
+        monkeypatch.setattr(entity_visits, "VISIT_ATTACHMENT_TOTAL_CAP_BYTES", png_size + 5)
+        r = post(["shared/pic.png", "shared/notes.txt"])  # the first fits, the second tips the total
+        assert r.status_code == 413 and r.json()["code"] == "attachment_too_large", r.text
+        assert f"attachments total {png_size + 12} bytes, over the {png_size + 5}-byte per-turn cap" in r.json()["detail"]
+
         assert llm.saw_media == [] and llm.saw_tools == [], "a refused attachment must cost no model call"
         assert client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()["turn_n"] == 0
 
@@ -1050,8 +1081,22 @@ def test_read_file_on_an_image_shows_it_on_the_next_call(monkeypatch: pytest.Mon
         assert isinstance(outputs["r1"], dict), outputs
         assert outputs["r1"]["media"] == [png_abs]
         assert "#IMAGE" in outputs["r1"]["rendered"] and "a PNG image" in outputs["r1"]["rendered"]
+        assert "attached to your next model call as an image" in outputs["r1"]["rendered"]
         assert "�" not in outputs["r1"]["rendered"]
         assert isinstance(outputs["r2"], str) and "a few notes" in outputs["r2"]
+
+        # Review note 4: the served ledger carries the media path
+        # workspace-relative, never host-absolute; the store keeps the record.
+        ledger = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/ledger").json()
+        served = {}
+        for entry in ledger["records"]:
+            rec = entry["record"]
+            if ((rec.get("effect") or {}).get("type")) == "tool_calls" and isinstance(rec.get("result"), dict):
+                for row in rec["result"].get("results") or []:
+                    served[row.get("call_id")] = row.get("output")
+        assert served["r1"]["media"] == ["shared/pic.png"], served["r1"]
+        assert served["r1"]["rendered"] == outputs["r1"]["rendered"]
+        assert png_abs not in json.dumps(ledger), "no host-absolute path on the wire"
 
         transcript = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
         details = transcript["turns"][1]["tool_details"]

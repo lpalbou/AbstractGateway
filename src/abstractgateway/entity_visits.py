@@ -295,15 +295,91 @@ def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[
     return buckets, order, pending
 
 
+def _workspace_relative_media(home_dir: Any, media: Any) -> List[str]:
+    """Media paths as a visit client may keep them: `<home>/workspace/x` ->
+    `x`, a file under a mount root -> `mounts/<name>/…`, anything else the
+    bare file name (never a host-absolute path on the wire)."""
+    from pathlib import Path
+
+    from abstractruntime.identity.tools import WorkspaceRoot
+
+    ws = WorkspaceRoot(home_dir)
+    mounts = [(str(m.get("name") or ""), Path(str(m.get("path") or "")).resolve()) for m in ws.mounts()]
+    out: List[str] = []
+    for item in media if isinstance(media, list) else []:
+        if not isinstance(item, str):
+            continue
+        p = Path(item)
+        try:
+            out.append(p.relative_to(ws.root).as_posix())
+            continue
+        except ValueError:
+            pass
+        for name, root in mounts:
+            try:
+                out.append(f"mounts/{name}/{p.relative_to(root).as_posix()}")
+                break
+            except ValueError:
+                continue
+        else:
+            out.append(p.name)
+    return out
+
+
+def _ledger_record_view(home_dir: Any, rec: Any) -> Any:
+    """One served ledger record: a `tool_calls` result row whose `output` is
+    the sight-lane dict, and an `llm_call` payload that carried `media`, get
+    workspace-relative `media`; every other record and row is served
+    verbatim (same object, no copy)."""
+    if not isinstance(rec, dict):
+        return rec
+    effect = rec.get("effect") if isinstance(rec.get("effect"), dict) else {}
+    kind = str(effect.get("type") or "")
+    if kind == "llm_call":
+        payload = effect.get("payload")
+        if isinstance(payload, dict) and isinstance(payload.get("media"), list) and payload["media"]:
+            served_payload = {**payload, "media": _workspace_relative_media(home_dir, payload["media"])}
+            return {**rec, "effect": {**effect, "payload": served_payload}}
+        return rec
+    if kind != "tool_calls":
+        return rec
+    result = rec.get("result")
+    rows = result.get("results") if isinstance(result, dict) else None
+    if not isinstance(rows, list):
+        return rec
+
+    def _sight(row: Any) -> bool:
+        return isinstance(row, dict) and isinstance(row.get("output"), dict) and "media" in row["output"]
+
+    if not any(_sight(r) for r in rows):
+        return rec
+    served_rows = [
+        {**r, "output": {**r["output"], "media": _workspace_relative_media(home_dir, r["output"].get("media"))}}
+        if _sight(r) else r
+        for r in rows
+    ]
+    return {**rec, "result": {**result, "results": served_rows}}
+
+
+# One visit turn's attachments, all files together (review 2026-11-08 note 8:
+# 64 files x the 20 MB per-file cap would ride one model call and be read
+# whole in the request thread). Read at call time, like the per-file cap.
+VISIT_ATTACHMENT_TOTAL_CAP_BYTES = 64 * 1024 * 1024
+
+
 def _visit_attachment_records(home_dir: Any, attachments: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """Validate a turn's attachments against the entity's own workspace and
     record what the door can say about each file: `{path, bytes, sha256,
     content_type}` (content type from the bytes for PNG/JPEG/GIF/WEBP, else
     from the name). Refusals in the door's own words, before any state moves:
-    404 unknown path, 403 outside the workspace or a refused mount, 400 no
-    path or a directory, 413 over the workspace acceptance cap. The same
-    containment rule the entity's tools use (`WorkspaceRoot`): the door
-    never opens a file the entity itself could not read."""
+    404 unknown path; 403 outside the workspace or an unknown/refused mount
+    (one fixed sentence — the runtime's own text names the mount whitelist,
+    which is the entity's view, not a visitor's); 400 no path, a directory,
+    or a path the host cannot read (an embedded NUL, a name too long, a
+    symlink loop — a 400, never a 500); 413 over the per-file workspace cap
+    or the per-turn total. The same containment rule the entity's tools use
+    (`WorkspaceRoot`): the door never opens a file the entity itself could
+    not read."""
     import hashlib
     import mimetypes
 
@@ -315,27 +391,47 @@ def _visit_attachment_records(home_dir: Any, attachments: Optional[List[Dict[str
         return records
     ws = WorkspaceRoot(home_dir)
     cap = int(_tools.WORKSPACE_FILE_CAP_BYTES)
+    total_cap = int(VISIT_ATTACHMENT_TOTAL_CAP_BYTES)
+    total = 0
     for item in attachments:
         rel = str(item.get("path") or "").strip() if isinstance(item, dict) else ""
         if not rel:
             raise VisitRefused(400, "an attachment needs a workspace-relative path", code="attachment_path_required")
         try:
             resolved = ws.resolve(rel)
-        except PermissionError as e:
-            raise VisitRefused(403, f"attachment {rel!r}: {e}", code="attachment_outside_workspace")
+            is_dir = resolved.is_dir()
+            is_file = resolved.is_file()
+            size = int(resolved.stat().st_size) if is_file else 0
+        except PermissionError:
+            raise VisitRefused(
+                403, f"attachment {rel!r}: the path is outside this entity's workspace",
+                code="attachment_outside_workspace",
+            )
         except FileNotFoundError as e:
             raise VisitRefused(404, f"attachment {rel!r}: {e}", code="attachment_not_found")
-        if resolved.is_dir():
+        except (OSError, ValueError, RuntimeError):
+            # ValueError: embedded NUL; OSError: ENAMETOOLONG at stat (and
+            # ELOOP on Python 3.13); RuntimeError: a symlink loop before 3.13.
+            raise VisitRefused(400, f"attachment {rel!r} is not a readable file path", code="attachment_unreadable")
+        if is_dir:
             raise VisitRefused(400, f"attachment {rel!r} is a directory - attach a file", code="attachment_is_directory")
-        if not resolved.is_file():
+        if not is_file:
             raise VisitRefused(404, f"attachment {rel!r}: no file at this path in the workspace", code="attachment_not_found")
-        size = int(resolved.stat().st_size)
         if size > cap:
             raise VisitRefused(
                 413, f"attachment {rel!r} is {size} bytes, over the {cap}-byte workspace cap",
                 code="attachment_too_large",
             )
-        data = resolved.read_bytes()
+        total += size
+        if total > total_cap:
+            raise VisitRefused(
+                413, f"attachments total {total} bytes, over the {total_cap}-byte per-turn cap",
+                code="attachment_too_large",
+            )
+        try:
+            data = resolved.read_bytes()
+        except (OSError, ValueError, RuntimeError):
+            raise VisitRefused(400, f"attachment {rel!r} is not a readable file path", code="attachment_unreadable")
         image = sniff_image(data)
         content_type = image[1] if image is not None else (mimetypes.guess_type(rel)[0] or "application/octet-stream")
         records.append({
@@ -1524,7 +1620,11 @@ class EntityVisitHost:
         # limit=0 the minimum page, not the default (F3).
         start = min(max(0, int(after or 0)), len(records))
         lim = max(1, min(int(limit) if limit is not None else 500, 2000))
-        page = records[start : start + lim]
+        # Served view (review 2026-11-08 note 4): a read_file result that
+        # showed an image carries host-absolute paths in `output.media` (what
+        # the adapter handed the provider); on the wire they are served
+        # workspace-relative. The home store keeps the record as written.
+        page = [_ledger_record_view(er.home.home_dir, rec) for rec in records[start : start + lim]]
         status = str(getattr(run.status, "value", run.status))
         return {
             "run_id": run.run_id,
