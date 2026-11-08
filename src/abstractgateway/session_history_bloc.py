@@ -143,6 +143,7 @@ def assemble_session_history_bloc(
             run_section = bundle.get("run") if isinstance(bundle.get("run"), dict) else {}
             row["prompt_author"] = run_section.get("prompt_author")
             row["author"] = run_section.get("author")
+            row["repeat_of"] = run_section.get("repeat_of")
             bundle_warnings = bundle.get("warnings")
             if isinstance(bundle_warnings, list) and bundle_warnings:
                 for w in bundle_warnings:

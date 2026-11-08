@@ -215,6 +215,25 @@ class RootResolver:
         self._run_store = run_store
         self._lock = threading.Lock()
         self._chains: Dict[str, Tuple[str, ...]] = {}
+        self._authors: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    def author(self, root_run_id: str) -> Optional[Dict[str, Any]]:
+        """Who answers the ROOT run's turn (AbstractRuntime `core.turn_author.answer_author`), read
+        once per root and cached until it ends; None when the root run is not in the store."""
+        rid = str(root_run_id or "")
+        with self._lock:
+            if rid in self._authors:
+                return self._authors[rid]
+        from abstractruntime.core.turn_author import answer_author
+
+        run = self._run_store.load(rid) if rid else None
+        author = None
+        if run is not None:
+            vars_obj = getattr(run, "vars", None)
+            author = answer_author(vars_obj if isinstance(vars_obj, dict) else {}, workflow_id=getattr(run, "workflow_id", None))
+        with self._lock:
+            self._authors[rid] = author
+        return author
 
     def chain(self, run_id: str, parent_run_id: Optional[str] = None, *, known_parent: bool = False) -> Tuple[str, ...]:
         rid = str(run_id or "").strip()
@@ -252,6 +271,7 @@ class RootResolver:
 
     def forget_root(self, root_run_id: str) -> None:
         with self._lock:
+            self._authors.pop(str(root_run_id or ""), None)
             for k in [k for k, v in self._chains.items() if v and v[-1] == root_run_id]:
                 del self._chains[k]
 
@@ -290,7 +310,8 @@ def validate_event(event: Any) -> Dict[str, Any]:
 
 
 class _Call:
-    __slots__ = ("run_id", "call_id", "node_id", "parent_run_id", "root_run_id", "chain", "frames", "last_seq", "ended")
+    __slots__ = ("run_id", "call_id", "node_id", "parent_run_id", "root_run_id", "chain", "frames", "last_seq", "ended",
+                 "author")
 
     def __init__(self, *, event: Dict[str, Any], chain: Tuple[str, ...]) -> None:
         self.run_id = str(event["run_id"])
@@ -302,6 +323,7 @@ class _Call:
         self.frames: List[Dict[str, Any]] = []
         self.last_seq = -1
         self.ended = False
+        self.author = event.get("author")
 
     def snapshot_frames(self) -> List[Dict[str, Any]]:
         """One frame per channel that has text, the accumulated text, in the
@@ -328,6 +350,7 @@ class _Call:
                     "text": "".join(parts),
                     "channel": channel,
                     "snapshot": True,
+                    "author": self.author,
                 }
             )
         return out
@@ -482,6 +505,7 @@ class LiveDeltaHub:
                     "reason": reason,
                     "synthetic": True,
                     "snapshot": False,
+                    "author": call.author,
                 }
                 call.frames.append(frame)
                 call.last_seq += 1
@@ -987,6 +1011,9 @@ def install_live_delta_sink(runtime: Any, *, data_dir: Any, run_store: Any) -> N
     def _sink(event: Dict[str, Any]) -> None:
         validate_event(event)
         chain = resolver.chain(event["run_id"], event.get("parent_run_id"), known_parent=True)
+        # Who speaks, on every live frame (entity mentions, 2026-11-08): the root turn's author, so a
+        # live bubble is labelled before the saved message replaces it (it rides the file sink too).
+        event = {**event, "author": resolver.author(chain[-1])}
         backend.publish(scope, event, chain)
 
     runtime.set_live_delta_sink(_sink)

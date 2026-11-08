@@ -125,11 +125,26 @@ def _from_visit_refusal(e: VisitRefused, manifest: Any) -> MentionRefused:
     return MentionRefused(int(e.status), str(e.detail), code=code)
 
 
+def _check_repeat_of(svc: Any, session_id: str, repeat_of: Optional[str]) -> Optional[str]:
+    """`repeat_of` names the person's OWN turn of this session whose words the mention repeats
+    (a root run of this session in the caller's plane); anything else refuses 422."""
+    rid = str(repeat_of or "").strip()
+    if not rid:
+        return None
+    run = svc.host.run_store.load(rid)
+    if run is None or str(getattr(run, "session_id", "") or "") != session_id or getattr(run, "parent_run_id", None):
+        raise MentionRefused(422, f"repeat_of {rid!r} is not a turn of this conversation", code="repeat_of_unknown")
+    return rid
+
+
 def _record_session_turn(
     svc: Any, *, session_id: str, text: str, reply: str, principal: Any,
     author: Dict[str, Any], prompt_author: Dict[str, Any], provenance: Dict[str, Any],
+    asked_at: str, repeat_of: Optional[str] = None,
 ) -> Any:
-    """The entity's reply as a turn of the session: one completed root run in the caller's plane."""
+    """The entity's reply as a turn of the session: one completed root run in the caller's plane.
+    `created_at` is when the person's words arrived (`asked_at`), `updated_at` when the reply did,
+    so the question always sorts before its answer."""
     from abstractruntime.core.models import RunState, RunStatus
     from abstractruntime.core.run_origin import ORIGIN_KEY, origin_for
     from abstractruntime.core.turn_author import stamp_turn_authors
@@ -142,6 +157,11 @@ def _record_session_turn(
         "_meta": {ORIGIN_KEY: origin_for("person", actor=f"{tenant}:{user}", client=MENTION_CHANNEL), "mention": provenance},
     }
     stamp_turn_authors(vars_obj, author=author, prompt_author=prompt_author)
+    if repeat_of:
+        from abstractruntime.core.turn_author import REPEAT_OF_KEY
+
+        vars_obj["_meta"][REPEAT_OF_KEY] = repeat_of
+    from abstractruntime.core.models import utc_now
     run = RunState(
         run_id=str(uuid.uuid4()),
         workflow_id=MENTION_WORKFLOW_ID,
@@ -151,6 +171,8 @@ def _record_session_turn(
         output={"answer": reply},
         actor_id="gateway",
         session_id=session_id,
+        created_at=asked_at,
+        updated_at=utc_now().isoformat(),
     )
     svc.host.run_store.save(run)
     # run.started / run.finished on the account's event stream (every client of this person
@@ -165,14 +187,19 @@ def _record_session_turn(
 
 def mention(
     *, svc: Any, registry: Any, visit_host: Any, principal: Any,
-    session_id: str, entity: str, text: str, mention_index: int,
+    session_id: str, entity: str, text: str, mention_index: int, repeat_of: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run one mention (see the module doc). Raises MentionRefused, KeyError (unknown entity)."""
+    from abstractruntime.core.models import utc_now
+
     from .entity_seat import SEAT_IDLE_TTL_S
+
+    asked_at = utc_now().isoformat()  # the person's words arrive now; the answer comes later
 
     sid = str(session_id or "").strip()
     manifest = registry.manifest_for(entity)  # KeyError -> 404
     visitor = f"person:{str(getattr(principal, 'user_id', '') or '').strip() or 'operator'}"
+    repeated = _check_repeat_of(svc, sid, repeat_of)
     with _session_lock(sid):
         er = registry.get_entity_runtime(manifest.slug)
         live = visit_host._live_visit_run(er)
@@ -218,6 +245,7 @@ def mention(
         run = _record_session_turn(
             svc, session_id=sid, text=text, reply=reply, principal=principal,
             author=author, prompt_author=person_author(principal), provenance=provenance,
+            asked_at=asked_at, repeat_of=repeated,
         )
         mirrors = _mirror_into_bound_visits(
             registry=registry, visit_host=visit_host, session_id=sid, mentioned=manifest, author=author, reply=reply,
@@ -228,6 +256,7 @@ def mention(
         "author": author,
         "session_id": sid,
         "mention_index": int(mention_index),
+        "repeat_of": repeated,
         "reply": reply,
         "visit": {
             "run_id": run_id,

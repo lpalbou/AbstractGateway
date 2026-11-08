@@ -8,7 +8,7 @@ answers 404 exactly like a missing one) and maps refusals to `{detail, code}` (p
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -21,6 +21,12 @@ class MentionRequest(BaseModel):
     entity: str = Field(..., min_length=1, max_length=200, description="The entity's name (as `GET /entities` lists it)")
     text: str = Field(..., description="The message as typed (the entity receives it as the visit turn)")
     mention_index: int = Field(default=0, ge=0, description="0, 1, 2... for several mentions in one message, sent in order")
+    repeat_of: Optional[str] = Field(
+        default=None, max_length=200,
+        description="The run id of the person's own turn of this conversation that already carries these words "
+                    "(the agent turn the same message started); the mention turn is then marked repeat_of so "
+                    "clients show the words once",
+    )
 
 
 def _not_found(detail: str) -> JSONResponse:
@@ -69,6 +75,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
             entity=req.entity,
             text=req.text,
             mention_index=int(req.mention_index),
+            repeat_of=req.repeat_of,
         )
     except KeyError as e:
         return _not_found(str(e).strip("'\""))

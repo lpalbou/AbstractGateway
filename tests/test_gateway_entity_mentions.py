@@ -83,8 +83,9 @@ def _seed_agent_turn(session_id: str) -> str:
     return run.run_id
 
 
-def _mention(client, sid, text, *, entity="Castor", index=0):
-    return client.post(f"/api/gateway/sessions/{sid}/mentions", json={"entity": entity, "text": text, "mention_index": index})
+def _mention(client, sid, text, *, entity="Castor", index=0, **extra):
+    return client.post(f"/api/gateway/sessions/{sid}/mentions",
+                       json={"entity": entity, "text": text, "mention_index": index, **extra})
 
 
 def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypatch):
@@ -94,10 +95,13 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
         sid = "sess-mention-a"
         agent_rid = _seed_agent_turn(sid)
 
-        r = _mention(client, sid, "@Castor does the bridge hold?")
+        # The same message started the agent turn: the mention repeats its words (repeat_of).
+        assert _mention(client, sid, "@Castor hi", repeat_of="not-a-turn").status_code == 422
+        r = _mention(client, sid, "@Castor does the bridge hold?", repeat_of=agent_rid)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["run_id"] and body["turn_id"] and body["session_id"] == sid
+        assert body["repeat_of"] == agent_rid
         author = body["author"]
         assert set(author) == KEYS and author["kind"] == "entity" and author["name"] == "Castor"
         assert author["entity_id"] == "entity:castor"
@@ -131,10 +135,22 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
         # GET /runs/{id} and the replay view name the speaker.
         run = client.get(f"/api/gateway/runs/{body['run_id']}").json()
         assert run["author"] == author and run["status"] == "completed"
+        assert run["repeat_of"] == agent_rid and rows[body["run_id"]]["repeat_of"] == agent_rid
+        # The question was observed when it arrived, the answer when it came: the answer sorts after.
+        from abstractruntime import session_chat_messages
+
+        from abstractgateway.service import get_gateway_service
+
+        assert run["created_at"] < run["updated_at"]
+        assert run["created_at"] < er.run_store.load(visit_run).updated_at  # observed BEFORE the entity answered
+        replayed_ts = [m["metadata"]["ts"] for m in session_chat_messages(
+            run_store=get_gateway_service().host.run_store, session_id=sid)[-2:]]
+        assert replayed_ts == [run["created_at"], run["updated_at"]]
         view = client.get(f"/api/gateway/runs/{body['run_id']}/view").json()
         by_role = {m["role"]: m for m in view["messages"]}
         assert by_role["assistant"]["author"] == author and by_role["assistant"]["text"] == "Castor here: the bridge holds."
-        assert by_role["user"]["author"]["kind"] == "person"
+        assert by_role["user"]["author"]["kind"] == "person" and by_role["user"]["repeat_of"] == agent_rid
+        assert [m["role"] for m in view["messages"]] == ["user", "assistant"]
         agent_view = client.get(f"/api/gateway/runs/{agent_rid}/view").json()
         assert {m["role"]: m["author"]["kind"] for m in agent_view["messages"]} == {"user": "person", "assistant": "agent"}
 
@@ -266,3 +282,45 @@ def test_a_mention_in_a_visit_lane_is_heard_by_the_visited_entity(monkeypatch):
         assert any("Castor (entity)" in str(rec) for rec in records[ledger_before:])
         # ... spoken by Castor (the verified speaker on the formed episode), not by the person.
         assert any("entity:castor:\\n" in str(rec) for rec in records[ledger_before:])
+
+
+def test_live_reply_frames_carry_the_turns_author(tmp_path):
+    """Live token deltas (`/runs/{id}/ledger/stream`) are labelled before the saved message replaces
+    them: the sink stamps the ROOT run's author on every frame, snapshot and live."""
+    import asyncio
+    from types import SimpleNamespace as NS
+
+    from abstractruntime.core.turn_author import author_for
+
+    from abstractgateway import live_deltas as ld
+
+    entity = author_for("entity", "Castor", entity_id="entity:castor")
+    runs = {
+        "root": NS(run_id="root", parent_run_id=None, workflow_id="basic-agent@1:x",
+                   vars={"workflow_selection": {"name": "Basic Agent"}}, status=NS(value="running")),
+        "summon": NS(run_id="summon", parent_run_id=None, workflow_id="w", vars={"_meta": {"author": entity}},
+                     status=NS(value="running")),
+    }
+    store = NS(load=lambda rid: runs.get(rid))
+    sinks = []
+    noop = lambda *a, **k: None  # noqa: E731 - the runtime features the host build probes for
+    rt = NS(set_live_delta_sink=sinks.append, add_terminal_hook=noop, set_email_context_resolver=noop,
+            set_event_inbox=noop, set_session_tool_policy_store=noop)
+    ld.install_live_delta_sink(rt, data_dir=tmp_path, run_store=store)
+    (sink,) = sinks
+    delta = {"kind": "llm.delta", "parent_run_id": None, "node_id": "n", "channel": "content"}
+    sink({**delta, "run_id": "root", "call_id": "c1", "seq": 0, "text": "Hel"})
+    sink({**delta, "run_id": "summon", "call_id": "c2", "seq": 0, "text": "I am"})
+    loop = asyncio.new_event_loop()
+    try:
+        hub, scope = ld.get_hub(), ld.scope_key(tmp_path)
+        sub = hub.subscribe(scope, ("root",), loop=loop)
+        assert sub.snapshot[0]["author"] == author_for("agent", "Basic Agent")
+        sink({**delta, "run_id": "root", "call_id": "c1", "seq": 1, "text": "lo"})
+        assert [f["author"]["name"] for f in sub.drain()] == ["Basic Agent"]
+        sub.close()
+        sub2 = hub.subscribe(scope, ("summon",), loop=loop)
+        assert sub2.snapshot[0]["author"] == entity
+        sub2.close()
+    finally:
+        loop.close()

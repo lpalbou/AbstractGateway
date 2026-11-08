@@ -2049,6 +2049,9 @@ def run_summary(run: Any) -> Dict[str, Any]:
     authors = turn_authors(vars_obj if isinstance(vars_obj, dict) else {}, workflow_id=getattr(run, "workflow_id", None))
     out["prompt_author"] = authors["prompt"]
     out["author"] = authors["answer"]
+    from abstractruntime.core.turn_author import prompt_repeat_of
+
+    out["repeat_of"] = prompt_repeat_of(vars_obj)
 
     try:
         vars_obj = getattr(run, "vars", None)
