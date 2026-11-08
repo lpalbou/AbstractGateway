@@ -5594,6 +5594,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](docs/maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
+| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author`; 404 unknown or hidden entity, 409 `in_another_conversation`, 503 `entity_cannot_answer` | [entities.md](docs/entities.md#mentioning-an-entity-from-any-chat) |
 | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
@@ -7812,7 +7813,14 @@ Query parameters:
 
 Response fields: `session_id`, `cursor_before` (echo of `before`), `cursor_after`
 (oldest turn returned — pass as the next `before`), `older_remaining`, `warnings`,
-and `turns[]` (`run_id`, `created_at`, `status`, `bundle` or `error`).
+and `turns[]` (`run_id`, `created_at`, `status`, `prompt_author`, `author`, `bundle` or `error`).
+`author` (who answered) and `prompt_author` (who asked) are
+`{kind: "entity"|"agent"|"person", name, entity_id, identity_ref, avatar: {style, color}|null}`, every key
+present; the bundle's `run` section carries the same two. An entity's mention
+([entities.md](docs/entities.md#mentioning-an-entity-from-any-chat)) is a turn whose `author.kind` is `entity`; an
+agent's turn is named by its workflow (`workflow_selection.name`), a person's by the account's display name.
+`GET /runs/{run_id}`, the replay view's user and assistant messages and the `run.started`/`run.finished`
+events of `/me/events` carry them too.
 
 The editor observes runs with the core lifecycle endpoints above:
 `/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
@@ -10881,6 +10889,62 @@ curl -X POST http://localhost:8080/api/gateway/entities/castor/summon \
 
 The response carries the `run_id`, the session id, and the rendered prelude.
 The run behaves like any other gateway run (ledger stream, waits, cancel).
+
+## Mentioning an entity from any chat
+
+Any chat window (TUI, web, an app) can bring an entity into its conversation with `@name`. The
+client picks the entity from `GET /entities` (a structured choice: the gateway never looks for
+`@` in text) and sends the message:
+
+```bash
+curl -X POST http://localhost:8080/api/gateway/sessions/$SESSION_ID/mentions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0}'
+```
+
+What happens:
+
+1. **You are the visitor.** The speaker is the signed-in person, never a name the client sends.
+2. **One life, one visit.** The entity's live visit is reused when it belongs to this
+   conversation. With none, a visit is opened for this conversation; it closes on its own
+   (with the usual reflection) after 5 minutes without a mention.
+3. **The entity lives it at home.** Your text is a turn of that visit: the entity's own
+   ledger, memory and artifacts hold the episode, exactly like a visit from the Entity app.
+4. **The answer is a turn of your conversation.** The reply is recorded in the session (a
+   completed run, workflow `entity-mention`), so session history, `GET /runs/{id}`, the replay
+   view and every client show it, and the conversation's agent sees it in the next turn's
+   history as `castor (entity): ...`, never as its own words.
+
+Several mentions in one message are separate requests, in order (`mention_index` 0, 1, 2...),
+each its own turn.
+
+The answer (200):
+
+```json
+{"run_id": "<the session turn>", "turn_id": "<the turn in the entity's home>",
+ "author": {"kind": "entity", "name": "Castor", "entity_id": "entity:castor",
+            "identity_ref": "entity:castor#3", "avatar": {"style": "watch-halo", "color": "#336699"}},
+ "session_id": "...", "mention_index": 0, "reply": "...",
+ "visit": {"run_id": "<the visit run in the home>", "turn_id": "...", "visit_id": "visit-...",
+           "entity_id": "entity:castor", "reused": false}}
+```
+
+Errors (`{detail, code}` plus the `X-Gateway-Error-Code` header):
+
+| Status | `code` | When |
+|---|---|---|
+| 404 | | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
+| 409 | `in_another_conversation` | The entity's visit belongs to another conversation; `session_id` and the sentence name it. It is free again when that conversation ends or after 5 idle minutes |
+| 409 | `entity_paused`, `entity_asleep`, `loop_busy`, `home_lease_held` | The visit door's own refusals |
+| 503 | `entity_cannot_answer` | Its mind cannot be resolved (no model chosen), or the turn gave no reply |
+
+**Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each
+bundle's `run`), `GET /runs/{id}`, the replay view's user and assistant messages, and the
+`run.started`/`run.finished` events carry `author` (the answer) and, where a prompt is shown,
+`prompt_author`: `{kind: "entity"|"agent"|"person", name, entity_id, identity_ref,
+avatar: {style, color}|null}`, every key present. An agent's turn is named by its workflow
+(`workflow_selection.name`, never a model name); a person's by the account's display name; a
+summon's answer is the entity's.
 
 ## The deposit gate (actor by channel, never by payload)
 
