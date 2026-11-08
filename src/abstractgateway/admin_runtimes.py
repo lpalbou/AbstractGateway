@@ -628,7 +628,10 @@ def _ledger_len(ledger_store: Any, run_id: str) -> Optional[int]:
 # structure, never from its text.
 # ---------------------------------------------------------------------------
 
-TITLE_MAX = 60  # a menu row; the Observer's card clamps the same text at 80
+# A DISPLAY FOLD, not a stored-text cap (root ADR 0054): the menu row's `title` is the first line
+# folded at 60 characters with a visible "…", and the row carries the whole first line beside it
+# as `title_whole`, so nothing is cut silently. (The Observer's card folds the same text at 80.)
+TITLE_MAX = 60
 WAIT_SUMMARY_MAX = 120
 #: The wait kinds a person must act on; every other kind stays "running".
 ATTENTION_WAIT_KINDS = ("tool_approval", "ask_user")
@@ -671,12 +674,20 @@ def _automation_title(store: Any, automation_id: str, cache: Dict[str, Optional[
     return cache[automation_id]
 
 
-def run_title(run: Any, row: Dict[str, Any], *, store: Any, controllers: Dict[str, Optional[str]]) -> Tuple[str, str]:
-    """(title, title_source): the automation's title for an occurrence
-    ("automation"); else the first line of the prompt a person typed, cut at
-    `TITLE_MAX` ("prompt"); else the workflow's display label ("workflow").
-    An occurrence's own prompt is never used: it carries the trigger's framing
-    header, not what the person asked (the Observer's rule)."""
+def _whole_first_line(text: Any) -> str:
+    s = str(text or "").strip()
+    return s.splitlines()[0].strip() if s else ""
+
+
+def run_title(run: Any, row: Dict[str, Any], *, store: Any, controllers: Dict[str, Optional[str]]) -> Tuple[str, str, str]:
+    """(title, title_source, title_whole): the automation's title for an
+    occurrence ("automation"); else the first line of the prompt a person
+    typed ("prompt"); else the workflow's display label ("workflow"). `title`
+    is folded at `TITLE_MAX` with a visible "…" (a menu row); `title_whole` is
+    the same first line whole — a fold is a display choice, never a cut of
+    what is served (root ADR 0054). An occurrence's own prompt is never used:
+    it carries the trigger's framing header, not what the person asked (the
+    Observer's rule)."""
     meta = _run_vars(run).get("_meta")
     meta = meta if isinstance(meta, dict) else {}
     occurrence = meta.get("occurrence") if isinstance(meta.get("occurrence"), dict) else None
@@ -684,7 +695,7 @@ def run_title(run: Any, row: Dict[str, Any], *, store: Any, controllers: Dict[st
         automation_id = str(occurrence.get("automation_id") or "").strip()
         title = _automation_title(store, automation_id, controllers) if automation_id else None
         if title:
-            return _first_line(title, TITLE_MAX), "automation"
+            return _first_line(title, TITLE_MAX), "automation", _whole_first_line(title)
     else:
         vars_obj = _run_vars(run)
         for key in _PROMPT_KEYS:
@@ -692,9 +703,10 @@ def run_title(run: Any, row: Dict[str, Any], *, store: Any, controllers: Dict[st
             if isinstance(value, str) and value.strip():
                 line = _first_line(value, TITLE_MAX)
                 if line:
-                    return line, "prompt"
+                    return line, "prompt", _whole_first_line(value)
     label = str(row.get("label") or workflow_display_label(row.get("workflow_id")) or row.get("workflow_id") or "").strip()
-    return (label or str(row.get("run_id") or "")), "workflow"
+    label = label or str(row.get("run_id") or "")
+    return label, "workflow", label
 
 
 def _wait_reason(run: Any) -> Optional[str]:
@@ -807,7 +819,7 @@ def enrich_host_rows(rows: List[Dict[str, Any]], stores: Dict[str, Any]) -> None
         plane = str(row.get("plane") or "")
         store = stores.get(plane)
         run = _load_run(store, str(row.get("run_id") or ""))
-        row["title"], row["title_source"] = run_title(run, row, store=store, controllers=controllers.setdefault(plane, {}))
+        row["title"], row["title_source"], row["title_whole"] = run_title(run, row, store=store, controllers=controllers.setdefault(plane, {}))
         if row.get("activity") == "waiting" and run is not None and getattr(run, "waiting", None) is not None:
             row["wait"] = wait_of_run(_wait_holder(store, run))
 

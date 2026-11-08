@@ -35,7 +35,9 @@ from typing import Any, Dict, Mapping, Optional
 
 AUTOMATION_DEFAULTS_SCHEMA_VERSION = 1
 CONTEXT_MODES = ("independent", "growing")
-TITLE_MAX = 120
+# No length cap on the title (root ADR 0054, operator 2026-11-08: stored text is never cut or
+# refused for its length; the runtime removed its own caps the same day). A title is a
+# non-empty, trimmed string; what is long is shown folded by the surfaces, never refused here.
 
 _TOP_KEYS = frozenset({"schema_version", "title", "trigger", "context", "input_data"})
 _TRIGGER_KEYS = frozenset({"source_id", "source_version", "config", "connection_id"})
@@ -97,8 +99,6 @@ def _structural(raw: Any) -> Dict[str, Any]:
     if title is not None:
         if not isinstance(title, str):
             raise AutomationDefaultsError("title must be a string", field="automation_defaults.title")
-        if len(title.strip()) > TITLE_MAX:
-            raise AutomationDefaultsError(f"title must be at most {TITLE_MAX} characters", field="automation_defaults.title")
         if title.strip():
             out["title"] = title.strip()
 

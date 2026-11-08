@@ -115,6 +115,10 @@ def test_rows_carry_the_sessions_title_and_what_it_waits_for(kind: str, tmp_path
     assert (rows["occ-a"]["title"], rows["occ-a"]["title_source"]) == ("Daily digest", "automation")
     assert rows["chat-1"]["title_source"] == "prompt"
     assert rows["chat-1"]["title"] == "Compare the three vector stores we evaluated last quarter a…" and len(rows["chat-1"]["title"]) == 60
+    # The fold is labelled ("…") and the whole first line rides the same row (root ADR 0054:
+    # a display fold, never a silent cut).
+    assert rows["chat-1"]["title_whole"] == LONG_PROMPT.splitlines()[0]
+    assert rows["occ-a"]["title_whole"] == "Daily digest" and rows["plain-1"]["title_whole"] == "coding-agent:coder"
     assert (rows["plain-1"]["title"], rows["plain-1"]["title_source"]) == ("coding-agent:coder", "workflow")
     assert (rows["done-1"]["title"], rows["done-1"]["title_source"]) == ("Write the changelog", "prompt")
     assert (rows["until-1"]["title"], rows["until-1"]["title_source"]) == ("Timer one", "prompt")

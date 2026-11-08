@@ -67,7 +67,7 @@ TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ATTENTION_CHANNEL = "attention"
 CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 PUBLISHED_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
-PUBLISH_TITLE_MAX = 200
+# (No PUBLISH_TITLE_MAX: a published title is stored whole, root ADR 0054.)
 # Where a published alert can reach its recipient (Notify me's "Where"; AbstractRuntime
 # `core/publish.DELIVERY_CHANNELS`): absent on the record = every channel.
 ALERT_CHANNELS = ("tray", "watch", "phone", "email", "console")
@@ -720,8 +720,10 @@ def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payl
     if typ in EVENT_TYPES or not PUBLISHED_TYPE_RE.match(typ):
         raise ValueError("type must be your own name (lowercase letters, digits, '.', '_' or '-'), not one of the gateway's event types")
     title = payload.get("title")
-    if not isinstance(title, str) or not title.strip() or len(title) > PUBLISH_TITLE_MAX:
-        raise ValueError(f"title must be a non-empty text of at most {PUBLISH_TITLE_MAX} characters")
+    # No length cap (root ADR 0054, operator 2026-11-08): a published title is stored whole; the
+    # surfaces fold what is long. Non-empty text is the only rule.
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError("title must be a non-empty text")
     body = payload.get("body")
     if body is not None and (not isinstance(body, str) or len(body) > PUBLISH_BODY_MAX):
         raise ValueError(f"body must be a text of at most {PUBLISH_BODY_MAX} characters")

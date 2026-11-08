@@ -4760,9 +4760,10 @@ the menu sorts by that tag alone. AbstractNote's own work (its captures and its
 processing automations, session purpose `notes`) is in neither menu: `GET
 /host/runs` leaves it out. A wake that runs in its caller's conversation
 is tagged `chat` and stays a conversation. A row reads under its **title**: the
-automation's name for an occurrence, else the first line of what the person typed (cut at
-60 characters), else the workflow's name (`GET /host/runs` serves it as
-`title` with `title_source`; the Observer's cards use the same text). The list
+automation's name for an occurrence, else the first line of what the person typed (folded at
+60 characters with a visible "…"), else the workflow's name (`GET /host/runs` serves it as
+`title` with `title_source`, and the whole first line as `title_whole`; the Observer's cards use
+the same text). The list
 is **host-wide**, not per-principal: memory, GPU and loaded models on this menu
 describe the machine, and the conversation list has to describe the same machine.
 Catalog-published workflows are shown under the name you know them by and are
