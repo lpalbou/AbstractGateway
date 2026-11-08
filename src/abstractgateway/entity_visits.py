@@ -916,6 +916,7 @@ class EntityVisitHost:
         channel_label: str,
         session_tools: Optional[Dict[str, Any]] = None,
         conversation: Optional[bool] = None,
+        idle_seconds: Optional[float] = None,
     ) -> Any:
         """Preflight + start ONE visit leg atomically against concurrent
         opens on the same home (the check->create window closes under a
@@ -932,6 +933,7 @@ class EntityVisitHost:
                 channel_label=channel_label,
                 session_tools=session_tools,
                 conversation=conversation,
+                idle_seconds=idle_seconds,
             )
         return pre, leg
 
@@ -1012,7 +1014,9 @@ class EntityVisitHost:
         try:
             provider, model, thinking = resolve_substrate(None, None, home_dir=home_dir)
         except ChatOpenRefused as e:
-            raise VisitRefused(e.status, e.detail)
+            # The mind cannot be resolved (no model chosen, a half-filled pair): the entity
+            # cannot answer. Coded so a door can say so (the mention door answers 503).
+            raise VisitRefused(e.status, e.detail, code="mind_unresolved")
 
         er = registry.get_entity_runtime(slug)
 
@@ -1152,6 +1156,7 @@ class EntityVisitHost:
         channel_label: str,
         session_tools: Optional[Dict[str, Any]] = None,
         conversation: Optional[bool] = None,
+        idle_seconds: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Mint -> start -> stamp -> seed -> drive-to-park for ONE visit leg
         (shared by the operator visit and each side of a two-entity meet).
@@ -1261,7 +1266,9 @@ class EntityVisitHost:
             if not isinstance(visit_ns, dict):
                 visit_ns = {}
                 run.vars["_visit"] = visit_ns
-            visit_ns["idle_seconds"] = float(self._idle_timeout_s)
+            # The leg's own idle window when its door names one (a mention visit closes after the
+            # seat's idle TTL), else the host's ~1 h.
+            visit_ns["idle_seconds"] = float(self._idle_timeout_s if idle_seconds is None else idle_seconds)
             # The previous summon's time, for the identity cue (ADR 0052 §7): the prelude tells a
             # look or voice change made since then. None known: the runtime tells the latest change.
             since = previous_summon_at(registry.entities_dir, slug)

@@ -397,10 +397,14 @@ def run_origin(run: Any) -> Optional[Dict[str, Any]]:
 
 
 def _pointer_data(run: Any) -> Dict[str, Any]:
+    from abstractruntime.core.turn_author import answer_author
+
     return {
         "run_id": str(getattr(run, "run_id", "") or ""),
         "session_id": getattr(run, "session_id", None),
         "origin": run_origin(run),
+        # Who answers this turn (an entity's mention, an agent): {kind, name, entity_id, identity_ref, avatar}.
+        "author": answer_author(_vars(run), workflow_id=getattr(run, "workflow_id", None)),
     }
 
 

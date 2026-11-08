@@ -76,7 +76,11 @@ def test_tick_writes_run_started_then_finished_after_the_save(tmp_path: Path) ->
     events = stream.read(after=0, limit=10)
     assert [e["type"] for e in events] == ["run.started", "run.finished"]
     assert events[0]["id"] == f"run.started:{rid}"
-    assert events[0]["data"] == {"run_id": rid, "session_id": "s1", "origin": {"kind": "person", "actor": "alice", "client": None, "ref": {}}}
+    assert events[0]["data"] == {
+        "run_id": rid, "session_id": "s1", "origin": {"kind": "person", "actor": "alice", "client": None, "ref": {}},
+        # Who answers this turn (entity mentions, 2026-11-08): the agent, by its workflow's name.
+        "author": {"kind": "agent", "name": wf.workflow_id, "entity_id": None, "identity_ref": None, "avatar": None},
+    }
     assert events[1]["data"]["status"] == "completed"
     # Nothing that is a step: no answer, no output in any pointer.
     assert all("answer" not in str(e["data"]) for e in events)

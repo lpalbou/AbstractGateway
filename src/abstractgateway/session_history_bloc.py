@@ -139,6 +139,10 @@ def assemble_session_history_bloc(
             if not isinstance(bundle, dict):
                 raise RuntimeError("export_run_history_bundle returned non-dict")
             row["bundle"] = bundle
+            # Who asked and who answered (the bundle's run section, AbstractRuntime core.turn_author).
+            run_section = bundle.get("run") if isinstance(bundle.get("run"), dict) else {}
+            row["prompt_author"] = run_section.get("prompt_author")
+            row["author"] = run_section.get("author")
             bundle_warnings = bundle.get("warnings")
             if isinstance(bundle_warnings, list) and bundle_warnings:
                 for w in bundle_warnings:

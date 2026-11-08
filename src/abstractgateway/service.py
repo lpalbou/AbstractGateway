@@ -2043,6 +2043,12 @@ def run_summary(run: Any) -> Dict[str, Any]:
     runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
     session_history = runtime_ns.get("session_history") if isinstance(runtime_ns, dict) else None
     out["session_history"] = dict(session_history) if isinstance(session_history, dict) else None
+    # Who asked and who answered this turn (AbstractRuntime core.turn_author; every key present).
+    from abstractruntime.core.turn_author import turn_authors
+
+    authors = turn_authors(vars_obj if isinstance(vars_obj, dict) else {}, workflow_id=getattr(run, "workflow_id", None))
+    out["prompt_author"] = authors["prompt"]
+    out["author"] = authors["answer"]
 
     try:
         vars_obj = getattr(run, "vars", None)

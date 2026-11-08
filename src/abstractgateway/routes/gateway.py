@@ -9397,6 +9397,17 @@ def _stamp_run_origin(input_data: Dict[str, Any], *, kind: str, principal: Gatew
     tenant = str(principal.tenant_id or "").strip() or "default"
     user = str(principal.user_id or "").strip() or "local"
     meta[ORIGIN_KEY] = origin_for(kind, actor=f"{tenant}:{user}", client=iface)
+    # Turn authors are host-written too (entity mentions, 2026-11-08): a client-sent author is
+    # dropped (a client never labels a reply as an entity's), and a person's prompt is theirs,
+    # under the account's display name.
+    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY
+
+    meta.pop(AUTHOR_KEY, None)
+    meta.pop(PROMPT_AUTHOR_KEY, None)
+    if kind == "person":
+        from ..entity_mentions import person_author
+
+        meta[PROMPT_AUTHOR_KEY] = person_author(principal)
     input_data["_meta"] = meta
 
 

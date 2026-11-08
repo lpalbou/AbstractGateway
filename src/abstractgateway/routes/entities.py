@@ -3639,6 +3639,14 @@ def _summon_core(
         **(meta_in if isinstance(meta_in, dict) else {}),
         ORIGIN_KEY: person_origin(actor=f"person:{caller_id}", client="summon"),
     }
+    # Who speaks (entity mentions, 2026-11-08): the summoned entity answers; host-written, a
+    # client-sent author is replaced.
+    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY
+
+    from ..entity_mentions import entity_author
+
+    input_data["_meta"].pop(PROMPT_AUTHOR_KEY, None)
+    input_data["_meta"][AUTHOR_KEY] = entity_author(registry, home.manifest)
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")
 
