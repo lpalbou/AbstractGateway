@@ -60,6 +60,17 @@ def test_a_500_char_published_title_is_stored_whole(tmp_path: Path) -> None:
     stored = [e for e in stream.read(after=0, limit=50) if e.get("id") == out["event_id"] or e.get("event_id") == out["event_id"]]
     assert stored, stream.read(after=0, limit=50)
     assert stored[0]["data"]["title"] == title, "stored whole, not cut, not refused"
+    # Body (was 4,000) and subject (was 200): whole as well; text is the only rule.
+    body = ("Every line of a long report that the flow wants the person to read later.\n" * 140).rstrip()
+    subject = ("a long subject that names the whole matter " * 12).strip()
+    assert len(body) >= 10_000 and len(subject) >= 500
+    out2 = record_published(stream, run_id="r1", step_id="long", payload={"channel": "me", "title": "t", "body": body, "subject": subject})
+    kept = [e for e in stream.read(after=0, limit=50) if e.get("id") == out2["event_id"] or e.get("event_id") == out2["event_id"]]
+    assert kept and kept[0]["data"]["body"] == body and kept[0]["subject"] == subject
+    with pytest.raises(ValueError, match="body must be a text"):
+        record_published(stream, run_id="r1", step_id="b1", payload={"channel": "me", "title": "t", "body": 5})
+    with pytest.raises(ValueError, match="subject must be a text"):
+        record_published(stream, run_id="r1", step_id="b2", payload={"channel": "me", "title": "t", "subject": ["x"]})
     # Non-empty text is the one rule that stays.
     with pytest.raises(ValueError, match="non-empty"):
         record_published(stream, run_id="r1", step_id="s2", payload={"channel": "me", "title": "   "})

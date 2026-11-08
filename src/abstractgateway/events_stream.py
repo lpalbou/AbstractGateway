@@ -73,7 +73,7 @@ PUBLISHED_TYPE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
 ALERT_CHANNELS = ("tray", "watch", "phone", "email", "console")
 # Whom a published alert reaches: the run's owner. Another account is a later feature.
 ALERT_RECIPIENT = "me"
-PUBLISH_BODY_MAX = 4000
+# (No PUBLISH_BODY_MAX and no subject cap either: stored text has no length caps, ADR 0026/0054.)
 # Boot repair window: runs updated this long before the newest stream event are re-checked.
 REBUILD_MARGIN_S = 600.0
 
@@ -725,14 +725,14 @@ def record_published(stream: UserEventStream, *, run_id: str, step_id: str, payl
     if not isinstance(title, str) or not title.strip():
         raise ValueError("title must be a non-empty text")
     body = payload.get("body")
-    if body is not None and (not isinstance(body, str) or len(body) > PUBLISH_BODY_MAX):
-        raise ValueError(f"body must be a text of at most {PUBLISH_BODY_MAX} characters")
+    if body is not None and not isinstance(body, str):
+        raise ValueError("body must be a text")
     extra = payload.get("data") or {}
     if not isinstance(extra, Mapping):
         raise ValueError("data must be an object")
     subject = payload.get("subject")
-    if subject is not None and (not isinstance(subject, str) or len(subject) > 200):
-        raise ValueError("subject must be a text of at most 200 characters")
+    if subject is not None and not isinstance(subject, str):
+        raise ValueError("subject must be a text")
     alert = payload.get("alert", False)
     if not isinstance(alert, bool):
         raise ValueError("alert must be true or false")
