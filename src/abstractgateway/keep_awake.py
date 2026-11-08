@@ -118,8 +118,10 @@ def apply(enabled: bool, *, platform: Optional[str] = None) -> bool:
     global _assertion_id
     with _lock:
         if enabled:
-            if _assertion_id is None and platform_supported(platform):
-                _assertion_id = hold(platform)
+            if _assertion_id is None:
+                # `hold` itself is the off-macOS no-op (it says so once); called
+                # with no argument when none is named, as `serve` always did.
+                _assertion_id = hold() if platform is None else hold(platform)
         elif _assertion_id is not None:
             release(_assertion_id)
             _assertion_id = None
