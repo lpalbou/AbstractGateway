@@ -42,3 +42,8 @@ now wants it governed by the user; the 2026-11-02 ruling is superseded by this o
 - [ ] Toggle off in the web console: within 1 s `pmset -g assertions` no longer lists AbstractGateway; toggle on: listed.
 - [ ] Terminal console and tray show the same state as the web console after each change (and after a restart).
 - [ ] Tests: setting store round-trip, live release/hold on change, the route's three fields, tray item state.
+
+## Status 2026-11-08 14:10
+
+Gateway setting, web console switch (beside Start at login) and tray checkmark DONE and live since 13:30 (gateway
+9e1947b5, 0d740059). Remaining, next release: the terminal console row (a separate Rust crate re-release).

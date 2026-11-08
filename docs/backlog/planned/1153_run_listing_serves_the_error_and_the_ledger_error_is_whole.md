@@ -34,3 +34,7 @@ Two findings from the Board review, both on the gateway side:
 
 - Observer's own display (fixed in Observer 0.13.0 after the review); the Assistant's stored automation titles (its
   own item, 1154).
+
+## Release
+
+Next release (operator 2026-11-08 14:00: credits; the stored halves are done, this is the display reveal).
