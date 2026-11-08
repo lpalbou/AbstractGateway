@@ -163,8 +163,8 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
       digest_method, digest_version, version_count, authored_by, reader,
       understood_at, cause, target, target_type, card_revision,
       source_count, narrated, narration_version, replaced_by; null when the
-      store holds none) and `versions` (memory's `versions`, oldest first).
-      Diary-shaped answers are unchanged.
+      store holds none) and `versions` (memory's `versions`, oldest first),
+      private records included. Diary answers are unchanged.
     """
     registry = _registry()
     home = await _home_or_404_offloop(registry, name)
@@ -172,7 +172,12 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery, resolve_digest_assertion
     from abstractruntime.storage.artifacts import FileArtifactStore
 
-    from ..entity_understanding import RecordUnderstandings, is_diary_shaped as _is_diary_shaped, understanding_fields
+    from ..entity_understanding import (
+        RecordUnderstandings,
+        is_diary_record,
+        is_diary_shaped as _is_diary_shaped,
+        understanding_fields,
+    )
 
     gid = str(graph_id or "").strip()
     if not gid:
@@ -216,10 +221,12 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
         }
 
     # The record's stored understanding (memory 0059), on every non-diary
-    # answer below. A diary-shaped record without a book entry keeps its
-    # former answer exactly: no digest or provenance of it leaves here.
+    # answer below, whatever the record's visibility (a private lesson
+    # included). A diary record (kind or scope diary) without a book entry
+    # keeps its former answer exactly: no digest or provenance leaves here.
+    is_diary = is_diary_record(assertion)
     understanding: Dict[str, Any] = {}
-    if not is_diary_shaped:
+    if not is_diary:
         understood = RecordUnderstandings(home).read(gid)
         understanding = {
             **understanding_fields(understood),
@@ -227,7 +234,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
         }
 
     payload_ref = str(attrs.get("payload_ref") or "").strip()
-    if not payload_ref and not is_diary_shaped and str(attrs.get("record_kind") or "") == "summary":
+    if not payload_ref and not is_diary and str(attrs.get("record_kind") or "") == "summary":
         # A summary formed without its verbatim (older session reflections,
         # the mechanical floor) answers with its words and the records it
         # summarizes, never a 404 the app shows as an empty card.

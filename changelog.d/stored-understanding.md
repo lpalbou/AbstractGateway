@@ -9,8 +9,9 @@
   `replaced_by`. `GET /api/gateway/entities/{name}/records/{graph_id}/verbatim` carries the current reading and
   `versions` (every reading, oldest first). Replay `snapshot` envelopes carry `display.recalled`, one block per recalled
   record, describing the reading that entered that context (the payload is unchanged; with `enrich=false` nothing is
-  added). `GET .../card` interest, lesson and key-moment briefs carry the current reading. Diary records gain nothing:
-  their words still leave only through the diary door. Requires the AbstractMemory release with
+  added). `GET .../card` interest, lesson and key-moment briefs carry the current reading. Every non-diary record carries them whatever its
+  visibility (a private lesson included). Diary records gain nothing: their words still leave only through the diary
+  door. Requires the AbstractMemory release with
   `MemorySystem.record_understanding` and `versions` (memory 0059).
 
 ### Fixed

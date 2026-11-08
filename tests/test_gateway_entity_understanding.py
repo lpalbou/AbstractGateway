@@ -13,9 +13,11 @@ MUTATION LIST (each applied to the source, the named test went red, the source r
 - M2 `understanding_fields` keeps only keys memory returned (`if key in source`) -> the null-when-absent asserts;
 - M3 remove the summary branch in the verbatim route -> test_summary_without_verbatim_answers_with_its_digest;
 - M4 `_reading_at` returns the newest row -> test_recall_snapshots_carry_the_reading_that_was_recalled;
-- M5 drop `not is_diary_shaped(assertion)` from `RecordUnderstandings.read` -> the snapshot and card tests;
+- M5 drop `not is_diary_record(assertion)` from `RecordUnderstandings.read` -> the snapshot and card tests;
 - M6 `card_with_understanding` returns the card unchanged -> test_card_briefs_carry_the_current_reading;
-- M7 the verbatim route reads the understanding of diary-shaped records too -> test_diary_record_read_is_unchanged.
+- M7 the verbatim route reads the understanding of diary records too -> test_diary_record_read_is_unchanged;
+- M8 the understanding gate counts the private flag as diary (`is_diary_shaped` in `read` and the route) ->
+  test_private_non_diary_record_read_carries_the_understanding.
 """
 
 from __future__ import annotations
@@ -328,9 +330,25 @@ def test_diary_record_read_is_unchanged():
                  if e["payload"].get("kind") == "diary_read"]
         assert reads, "the diary read is still recorded in the entity's history"
 
-        # Diary-shaped without a book entry (the private flag): the former answer exactly, nothing added.
-        private = _form(home, registry.manifest_for("quill").entity_id, "private-1", "lesson", "Kept to myself.",
-                        attributes={"private": True})
-        body = client.get(f"/api/gateway/entities/Quill/records/{private}/verbatim").json()
+        # A diary-scope record without a book entry: the former answer exactly, nothing added.
+        sealed = _form(home, registry.manifest_for("quill").entity_id, "sealed-1", "lesson", "Kept in the book scope.",
+                       scope="diary")
+        body = client.get(f"/api/gateway/entities/Quill/records/{sealed}/verbatim").json()
         assert set(body) == {"record_id", "title", "text", "content_type", "born_digest", "turn_id", "run_id",
                              "created_at"}
+
+
+
+def test_private_non_diary_record_read_carries_the_understanding():
+    """Visibility is not the diary: a private lesson's read carries every field and its versions."""
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Vesper", "spark": _spark("Vesper")}).status_code == 201
+        home, owner = _home("vesper")
+        private = _form(home, owner, "private-1", "lesson", "Kept to myself.", attributes={"private": True})
+        _rewrite(home, private, "Kept to myself, and why.")
+        body = client.get(f"/api/gateway/entities/Vesper/records/{private}/verbatim").json()
+        _carries_every_field(body)
+        assert body["text"] == body["digest"] == "Kept to myself, and why."
+        assert body["digest_version"] == 1 and body["authored_by"] == MIND and body["reader"] == READER
+        assert [v["version"] for v in body["versions"]] == [0, 1]
+        assert body["versions"] == home.memory.versions(private)

@@ -13,8 +13,9 @@ copies memory's fields, one to one and never renamed, onto the three surfaces th
 Rules:
 - every block carries every key of `UNDERSTANDING_KEYS`; a value memory does not hold for the record is `null`, never
   an absent key;
-- diary-shaped records get nothing here: their words leave only through the diary door (the book read that is
-  recorded in the entity's history), exactly as before;
+- diary records (kind or scope `diary`) get nothing here: their words leave only through the diary door (the book
+  read that is recorded in the entity's history), exactly as before. Any other record carries the fields whatever its
+  visibility (a private lesson included);
 - the gateway never imports AbstractMemory: the home's `MemorySystem` methods are the read.
 """
 
@@ -46,6 +47,15 @@ UNDERSTANDING_KEYS = (
 #: The card sections whose record briefs carry the fields (`(section, list key)`). Questions and problems are diary
 #: rows and stay as they are.
 CARD_RECORD_LISTS = (("discoveries", "interests"), ("lessons", "lessons"), ("key_moments", "moments"))
+
+
+def is_diary_record(assertion: Any) -> bool:
+    """A diary record (kind or scope `diary`): the only records whose understanding is never served."""
+    attrs = assertion.attributes if isinstance(getattr(assertion, "attributes", None), dict) else {}
+    return (
+        str(attrs.get("record_kind") or "") == "diary"
+        or str(getattr(assertion, "scope", "") or "").strip().lower() == "diary"
+    )
 
 
 def is_diary_shaped(assertion: Any) -> bool:
@@ -88,8 +98,8 @@ class RecordUnderstandings:
         self._versions: Dict[str, List[Dict[str, Any]]] = {}
 
     def read(self, record_id: Any) -> Optional[Dict[str, Any]]:
-        """Memory's `record_understanding` for a formed, non-diary record; None for a diary-shaped record, an edge
-        row, a plain triple or an unknown id."""
+        """Memory's `record_understanding` for a formed, non-diary record (private ones included); None for a diary
+        record, an edge row, a plain triple or an unknown id."""
         rid = str(record_id or "").strip()
         if not rid:
             return None
@@ -99,7 +109,7 @@ class RecordUnderstandings:
 
         assertion = resolve_digest_assertion(self._home.store, rid)
         out: Optional[Dict[str, Any]] = None
-        if assertion is not None and not is_diary_shaped(assertion):
+        if assertion is not None and not is_diary_record(assertion):
             attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}
             if attrs.get("record_kind"):
                 out = self._home.memory.record_understanding(rid)
