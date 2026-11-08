@@ -321,6 +321,23 @@ continuation. Late recognized replies are retained under Runtime's question cont
 cannot answer a newer question. Essential questions have no deadline; timed clarifications
 apply only their predeclared safe fallback. See [api.md](api.md#conversational-updates-questions-and-corrections).
 
+Attach files to a turn: `POST .../visit/{run_id}/turn` takes `attachments: [{"path": "..."}]`
+beside `text` and `speaker`. `path` is workspace-relative — the string `POST .../workspace/file`
+returned when the file was placed (`mounts/<name>/…` is allowed). The gateway resolves each path
+through the entity's own workspace rules and records `{path, bytes, sha256, content_type}` on the
+turn (the content type comes from the bytes for PNG, JPEG, GIF and WEBP, else from the name).
+Refusals, before any state moves, each with a `code`: an unknown path is 404
+(`attachment_not_found`), a path outside the workspace or a refused mount 403
+(`attachment_outside_workspace`), a directory 400 (`attachment_is_directory`), an empty path 400
+(`attachment_path_required`), a file over the 20 MB workspace cap 413 (`attachment_too_large`).
+Images are shown to the entity's model with the message, on every model call of that turn; other
+files are recorded and named in the message, and the entity reads them with `read_file`. The
+message the entity sees gains one line per file, for example `(attached: shared/x.png — a PNG
+image, 1,204,113 bytes; shown to you with this message; read_file re-opens it)`; the visitor's
+words are not rewritten and nothing is parsed from them. `GET .../visit/{run_id}/transcript`
+carries the records on the user turn as `attachments`. When the entity itself reads an image with
+`read_file`, the result is a short `#IMAGE` label and the image is shown on its next model call.
+
 Tool approvals keep their existing `/decision` route and exact pending key; they never time
 out into approval. A managed visit's authenticated owner is checked before these routes;
 wrong-owner requests do not disclose it. Generic run steering remains refused for these

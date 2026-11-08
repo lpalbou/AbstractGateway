@@ -113,6 +113,24 @@ def test_results_serve_verbatim_never_truncated() -> None:
     assert buckets["t-0001"][0]["result"] == big
 
 
+def test_sight_lane_dict_output_serves_the_rendered_text() -> None:
+    """A read_file on an image serves `{"rendered", "media"}` (the shape
+    abstractagent's sight lane reads, 2026-11-08); the operator sees the
+    text the entity saw, never the dict's repr."""
+    rendered = "--- shared/pic.png (69 bytes) ---\n[#IMAGE: a PNG image; it is attached to your next look as an image]"
+    records = [
+        {"effect": {"type": "resume"}},
+        _tool_record(
+            [{"name": "read_file", "arguments": {"path": "shared/pic.png"}, "call_id": "c1"}],
+            [{"call_id": "c1", "name": "read_file", "success": True,
+              "output": {"rendered": rendered, "media": ["/home/castor/workspace/shared/pic.png"]}}],
+        ),
+        _answer("t-0001"),
+    ]
+    buckets, _, _ = _ledger_tool_details(records)
+    assert buckets["t-0001"][0]["result"] == rendered
+
+
 def test_slimmed_completed_payload_args_come_from_the_started_twin() -> None:
     """Adversary F5: $slim replaces >4KB payload fields on COMPLETED records
     with a marker — args must be harvested from the STARTED twin."""

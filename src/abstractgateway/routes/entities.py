@@ -1948,9 +1948,24 @@ class OpenVisitRequest(BaseModel):
     )
 
 
+class VisitTurnAttachment(BaseModel):
+    path: str = Field(
+        ..., min_length=1, max_length=4096,
+        description="Workspace-relative path of a file already placed in the entity's workspace "
+                    "(the string POST /workspace/file returned; mounts/<name>/… allowed)",
+    )
+
+
 class VisitTurnRequest(BaseModel):
     text: str = Field(..., description="What you say this turn")
     speaker: Optional[str] = Field(default=None, description="namespace:name of the voice (default: first participant)")
+    # Attachments are STRUCTURED (never parsed from `text`): images are shown
+    # to the entity's model with this turn; other files are recorded and
+    # named in the message (the entity reads them with read_file).
+    attachments: Optional[List[VisitTurnAttachment]] = Field(
+        default=None, max_length=64,
+        description="Files attached to this turn, by workspace-relative path",
+    )
 
 
 class VisitCloseTask(BaseModel):
@@ -2013,7 +2028,10 @@ def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
     try:
-        return _visit_host().turn(name, run_id, text=req.text, speaker=req.speaker)
+        return _visit_host().turn(
+            name, run_id, text=req.text, speaker=req.speaker,
+            attachments=[{"path": a.path} for a in (req.attachments or [])] or None,
+        )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except VisitRefused as e:

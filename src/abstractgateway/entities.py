@@ -1805,6 +1805,15 @@ class EntityRegistry:
             params = payload.get("params")
             if isinstance(params, dict) and params:
                 gen_kwargs["params"] = dict(params)
+            # MEDIA PASSES THROUGH (operator 2026-11-08): the adapter puts this
+            # turn's attachments (`context.attachments`) and the sight lane's
+            # one-shot tool media (a read_file on an image) on every LLM_CALL
+            # as `media` — absolute file paths; abstractcore takes them like
+            # every other client's. A vision failure stays loud: no try/except
+            # here turns it into prose.
+            media = payload.get("media")
+            if isinstance(media, list) and media:
+                gen_kwargs["media"] = list(media)
             out = llm.generate(**gen_kwargs)
 
             def _field(name: str) -> Any:
@@ -1869,6 +1878,7 @@ class EntityRegistry:
                 WorkspaceRoot,
                 execute_tool_elections,
                 native_tool_elections,
+                tool_result_media,
             )
 
             # ONE per-turn tool budget, from runtime's ruled constant (20,
@@ -2051,6 +2061,15 @@ class EntityRegistry:
                     **memory_fns,
                 )
                 notices.extend(exec_notices)
+                output: Any = str(election.result or "")
+                media = tool_result_media(election, workspace)
+                if media:
+                    # SIGHT LANE (runtime declares beside the executor; the
+                    # adapter folds a successful result's dict `output.media`
+                    # into the next model call, one-shot): `rendered` is what
+                    # abstractagent's `_display` shows the model as the tool
+                    # text; `media` the absolute paths it is shown as images.
+                    output = {"rendered": output, "media": list(media)}
                 results.append(
                     {
                         "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
@@ -2059,7 +2078,7 @@ class EntityRegistry:
                         # still an EXECUTED tool (driver semantics: a failed
                         # lookup is information, not an aborted turn).
                         "success": True,
-                        "output": str(election.result or ""),
+                        "output": output,
                         "error": None,
                     }
                 )

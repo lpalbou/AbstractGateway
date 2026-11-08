@@ -835,13 +835,232 @@ class _NativeToolLLM:
     def __init__(self, script) -> None:
         self._script = list(script)
         self.saw_tools: list = []
+        self.saw_media: list = []  # the `media` kwarg of every generate call (None when absent)
 
     def generate(self, **kwargs):
         self.saw_tools.append(kwargs.get("tools"))
+        self.saw_media.append(kwargs.get("media"))
         if not self._script:
             raise AssertionError("scripted LLM exhausted — an unexpected extra call happened")
         step = self._script.pop(0)
         return self._Reply(step.get("content", ""), step.get("tool_calls"))
+
+
+def _plant_png(rel: str = "shared/pic.png") -> tuple:
+    """A structurally real, tiny PNG placed in the home workspace (the drag
+    and drop's landing spot); returns (bytes, absolute path)."""
+    import struct
+    import zlib
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">I", 13) + b"IHDR" + struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0) + b"\x00\x00\x00\x00"
+    payload = zlib.compress(b"\x00\x00\x00\x00\x00")
+    idat = struct.pack(">I", len(payload)) + b"IDAT" + payload + b"\x00\x00\x00\x00"
+    iend = struct.pack(">I", 0) + b"IEND" + b"\xaeB`\x82"
+    data = sig + ihdr + idat + iend
+    target = _home_dir() / "workspace" / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return data, str(target.resolve())
+
+
+def test_turn_attachments_are_validated_before_any_turn_moves(monkeypatch: pytest.MonkeyPatch):
+    """Attachments are STRUCTURED data validated against the entity's own
+    workspace rules, in the door's words and before anything moves: 404 an
+    unknown path, 403 outside the workspace or an unknown mount, 400 a
+    directory or an empty path, 413 over the workspace cap. No model call
+    happens and no turn is counted for a refused attachment."""
+    pytest.importorskip("abstractagent.adapters.react_runtime")
+    from abstractgateway import entity_chat
+
+    llm = _NativeToolLLM([{"content": "never reached"}])
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        _plant_png("shared/pic.png")
+        (_home_dir() / "workspace" / "shared" / "folder").mkdir(parents=True, exist_ok=True)
+        url = f"/api/gateway/entities/Castor/visit/{run_id}/turn"
+
+        def post(paths):
+            return client.post(url, json={"text": "see this?", "attachments": [{"path": p} for p in paths]})
+
+        r = post(["shared/ghost.png"])
+        assert r.status_code == 404 and r.json()["code"] == "attachment_not_found", r.text
+        assert r.headers.get("X-Gateway-Error-Code") == "attachment_not_found"
+        assert "shared/ghost.png" in r.json()["detail"]
+        r = post(["../../etc/hosts"])
+        assert r.status_code == 403 and r.json()["code"] == "attachment_outside_workspace", r.text
+        r = post(["mounts/nowhere/pic.png"])
+        assert r.status_code == 403 and r.json()["code"] == "attachment_outside_workspace", r.text
+        r = post(["shared/folder"])
+        assert r.status_code == 400 and r.json()["code"] == "attachment_is_directory", r.text
+        r = post(["   "])
+        assert r.status_code == 400 and r.json()["code"] == "attachment_path_required", r.text
+        # One bad path behind a good one still refuses the whole turn.
+        r = post(["shared/pic.png", "shared/ghost.png"])
+        assert r.status_code == 404 and r.json()["code"] == "attachment_not_found", r.text
+        # Over the workspace acceptance cap (the door reads runtime's constant).
+        import abstractruntime.identity.tools as tools_mod
+
+        real_cap = tools_mod.WORKSPACE_FILE_CAP_BYTES
+        monkeypatch.setattr(tools_mod, "WORKSPACE_FILE_CAP_BYTES", 10)
+        r = post(["shared/pic.png"])
+        assert r.status_code == 413 and r.json()["code"] == "attachment_too_large", r.text
+        monkeypatch.setattr(tools_mod, "WORKSPACE_FILE_CAP_BYTES", real_cap)
+        # The request shape itself is checked too (an empty path never reaches the door).
+        assert client.post(url, json={"text": "x", "attachments": [{"path": ""}]}).status_code == 422
+        assert client.post(url, json={"text": "x", "attachments": [{"nope": "shared/pic.png"}]}).status_code == 422
+
+        assert llm.saw_media == [] and llm.saw_tools == [], "a refused attachment must cost no model call"
+        assert client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()["turn_n"] == 0
+
+        llm._script.append({"content": "Reflection: nothing happened."})
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
+
+
+def test_turn_image_attachment_reaches_the_model_and_the_transcript(monkeypatch: pytest.MonkeyPatch):
+    """The operator's 2026-11-08 case end-to-end at the door: a screenshot
+    attached to a visit turn reaches the entity's model AS AN IMAGE (the
+    LLM handler forwards `media`), the message names both files, the
+    transcript keeps the records (path, bytes, sha256, type), and the next
+    turn re-sends nothing."""
+    pytest.importorskip("abstractagent.adapters.react_runtime")
+    import hashlib
+
+    from abstractgateway import entity_chat
+
+    llm = _NativeToolLLM([
+        {"content": "I see a tiny square image, and a note beside it."},
+        {"content": "Nothing attached this time."},
+        {"content": "Only the image this time, no words."},
+        {"content": "Reflection: I was shown something."},
+    ])
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        png, png_abs = _plant_png("shared/pic.png")
+        notes = _home_dir() / "workspace" / "shared" / "notes.txt"
+        notes.write_text("a few notes\n", encoding="utf-8")
+
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "what do you see?",
+                  "attachments": [{"path": "shared/pic.png"}, {"path": "shared/notes.txt"}]},
+        )
+        assert turned.status_code == 200, turned.text
+        assert "tiny square" in turned.json()["reply"]
+        # The model call carried the image — and only the image — as media.
+        assert llm.saw_media == [[png_abs]], llm.saw_media
+
+        transcript = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
+        user_turn = transcript["turns"][0]
+        assert user_turn["role"] == "user"
+        assert "(attached: shared/pic.png — a PNG image" in user_turn["content"]
+        assert "(attached: shared/notes.txt — a text file, 12 bytes; read_file opens it)" in user_turn["content"]
+        assert user_turn["content"].endswith("what do you see?")
+        records = user_turn["attachments"]
+        assert [a["path"] for a in records] == ["shared/pic.png", "shared/notes.txt"]
+        assert records[0] == {"path": "shared/pic.png", "bytes": len(png),
+                              "sha256": hashlib.sha256(png).hexdigest(), "content_type": "image/png"}
+        assert records[1]["content_type"] == "text/plain" and records[1]["bytes"] == 12
+        assert "attachments" not in transcript["turns"][1]
+
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "and now?"})
+        assert turned.status_code == 200, turned.text
+        assert llm.saw_media[1] is None, "the next turn must not re-send the image"
+        assert "attachments" not in client.get(
+            f"/api/gateway/entities/Castor/visit/{run_id}/transcript"
+        ).json()["turns"][2]
+
+        # An image-only turn (files, no words) is a turn: the image rides the
+        # call; the stored user message is the decoration alone.
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "", "attachments": [{"path": "shared/pic.png"}]},
+        )
+        assert turned.status_code == 200, turned.text
+        assert turned.json()["turn_n"] == 3 and "no words" in turned.json()["reply"]
+        assert llm.saw_media[2] == [png_abs]
+        silent = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()["turns"][4]
+        assert silent["role"] == "user" and silent["content"].startswith("(")
+        assert silent["content"].endswith("read_file re-opens it)")
+        assert [a["path"] for a in silent["attachments"]] == ["shared/pic.png"]
+
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
+        assert closed.status_code == 200, closed.text
+
+
+def test_read_file_on_an_image_shows_it_on_the_next_call(monkeypatch: pytest.MonkeyPatch):
+    """The sight lane at the door: the entity's own read_file on an image
+    serves `{"rendered", "media"}` (runtime's tool_result_media beside the
+    executor), the adapter folds the path into the NEXT model call's media,
+    one-shot; a text read stays a plain string; the transcript's tool
+    details serve the rendered text, never the dict's repr."""
+    pytest.importorskip("abstractagent.adapters.react_runtime")
+    from abstractgateway import entity_chat
+
+    llm = _NativeToolLLM([
+        {"content": "", "tool_calls": [
+            {"call_id": "r1", "name": "read_file", "arguments": {"path": "shared/pic.png"}},
+        ]},
+        {"content": "", "tool_calls": [
+            {"call_id": "r2", "name": "read_file", "arguments": {"path": "shared/notes.txt"}},
+        ]},
+        {"content": "A tiny square image, and a note."},
+        {"content": "Reflection: I looked."},
+    ])
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        from abstractruntime.identity.tool_policy import write_policy_file
+
+        write_policy_file(_home_dir(), {"visit": ["read_file", "list_files"]})
+        _png, png_abs = _plant_png("shared/pic.png")
+        (_home_dir() / "workspace" / "shared" / "notes.txt").write_text("a few notes\n", encoding="utf-8")
+
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        turned = client.post(
+            f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+            json={"text": "Look at shared/pic.png, then at the notes."},
+        )
+        assert turned.status_code == 200, turned.text
+        assert "tiny square" in turned.json()["reply"]
+        # Call 1: nothing attached. Call 2, after the image read: the image.
+        # Call 3, after the text read: nothing (one-shot, never re-sent).
+        assert llm.saw_media[:3] == [None, [png_abs], None], llm.saw_media
+
+        # The ledger holds the served shapes: the image read is the sight-lane
+        # dict, the text read a plain string.
+        from abstractgateway.service import get_gateway_service
+
+        er = get_gateway_service().entity_registry.get_entity_runtime("castor")
+        outputs = {}
+        for rec in er.ledger_store.list(run_id):
+            effect = rec.get("effect") or {}
+            result = rec.get("result")
+            if effect.get("type") == "tool_calls" and isinstance(result, dict):
+                for row in result.get("results") or []:
+                    outputs[row.get("call_id")] = row.get("output")
+        assert isinstance(outputs["r1"], dict), outputs
+        assert outputs["r1"]["media"] == [png_abs]
+        assert "#IMAGE" in outputs["r1"]["rendered"] and "a PNG image" in outputs["r1"]["rendered"]
+        assert "�" not in outputs["r1"]["rendered"]
+        assert isinstance(outputs["r2"], str) and "a few notes" in outputs["r2"]
+
+        transcript = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
+        details = transcript["turns"][1]["tool_details"]
+        results = [d["result"] for d in details]
+        assert any("#IMAGE" in r for r in results), results
+        assert not any("'rendered'" in r or '"rendered"' in r for r in results), results
+
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
+        assert closed.status_code == 200, closed.text
 
 
 def test_native_tool_calls_execute_through_the_grant(monkeypatch: pytest.MonkeyPatch):

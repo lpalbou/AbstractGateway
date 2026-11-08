@@ -279,6 +279,11 @@ def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[
             if "success" in res:
                 detail["success"] = bool(success)
             output = res.get("output")
+            if isinstance(output, dict) and isinstance(output.get("rendered"), str):
+                # The sight lane's dict output (a read_file on an image): the
+                # text the entity saw is `rendered`; `media` named the file
+                # shown on its next call. Serve the text, as the model saw it.
+                output = output["rendered"]
             if success is False:
                 # A failed call serves its error — a real reach that failed
                 # loudly, never a blank.
@@ -288,6 +293,58 @@ def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[
                 detail["result"] = text if text else "(the tool returned empty output)"
             pending.append(detail)
     return buckets, order, pending
+
+
+def _visit_attachment_records(home_dir: Any, attachments: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Validate a turn's attachments against the entity's own workspace and
+    record what the door can say about each file: `{path, bytes, sha256,
+    content_type}` (content type from the bytes for PNG/JPEG/GIF/WEBP, else
+    from the name). Refusals in the door's own words, before any state moves:
+    404 unknown path, 403 outside the workspace or a refused mount, 400 no
+    path or a directory, 413 over the workspace acceptance cap. The same
+    containment rule the entity's tools use (`WorkspaceRoot`): the door
+    never opens a file the entity itself could not read."""
+    import hashlib
+    import mimetypes
+
+    import abstractruntime.identity.tools as _tools
+    from abstractruntime.identity.tools import WorkspaceRoot, sniff_image
+
+    records: List[Dict[str, Any]] = []
+    if not attachments:
+        return records
+    ws = WorkspaceRoot(home_dir)
+    cap = int(_tools.WORKSPACE_FILE_CAP_BYTES)
+    for item in attachments:
+        rel = str(item.get("path") or "").strip() if isinstance(item, dict) else ""
+        if not rel:
+            raise VisitRefused(400, "an attachment needs a workspace-relative path", code="attachment_path_required")
+        try:
+            resolved = ws.resolve(rel)
+        except PermissionError as e:
+            raise VisitRefused(403, f"attachment {rel!r}: {e}", code="attachment_outside_workspace")
+        except FileNotFoundError as e:
+            raise VisitRefused(404, f"attachment {rel!r}: {e}", code="attachment_not_found")
+        if resolved.is_dir():
+            raise VisitRefused(400, f"attachment {rel!r} is a directory - attach a file", code="attachment_is_directory")
+        if not resolved.is_file():
+            raise VisitRefused(404, f"attachment {rel!r}: no file at this path in the workspace", code="attachment_not_found")
+        size = int(resolved.stat().st_size)
+        if size > cap:
+            raise VisitRefused(
+                413, f"attachment {rel!r} is {size} bytes, over the {cap}-byte workspace cap",
+                code="attachment_too_large",
+            )
+        data = resolved.read_bytes()
+        image = sniff_image(data)
+        content_type = image[1] if image is not None else (mimetypes.guess_type(rel)[0] or "application/octet-stream")
+        records.append({
+            "path": rel,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "content_type": content_type,
+        })
+    return records
 
 
 def _compose_turn_probe(run_vars: Dict[str, Any], *, tool_details: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -1153,11 +1210,22 @@ class EntityVisitHost:
         }
 
     # ------------------------------------------------------------------ turn
-    def turn(self, name: str, run_id: str, *, text: str, speaker: Optional[str] = None) -> Dict[str, Any]:
+    def turn(
+        self, name: str, run_id: str, *, text: str, speaker: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         from abstractruntime.identity.visit_workflow import VISITOR_WAIT_KEY
 
         er, run, wf, manifest = self._load_visit(name, run_id)
         self._refuse_if_paused(manifest, verb="take a message")
+        # Attachments are validated against the entity's own workspace BEFORE
+        # anything moves (a refused attachment costs no turn); the records
+        # ride the resume payload as structured data (operator 2026-11-08:
+        # an attached image reaches the entity as an image, like every
+        # other client).
+        attachment_records = _visit_attachment_records(
+            self._registry.entities_dir / manifest.slug, attachments,
+        )
 
         # CRASH-ORPHAN RECOVERY (agency c505, ask 2): a SIGKILL that landed
         # mid-tick (e.g. post-ANSWER pre-park) leaves the run non-terminal
@@ -1183,6 +1251,8 @@ class EntityVisitHost:
                 return out
 
         payload: Dict[str, Any] = {"text": str(text or "")}
+        if attachment_records:
+            payload["attachments"] = attachment_records
         if speaker:
             # SPEAKER IS A CLAIM, THE STAMP IS THE TRUTH (deep-check P2,
             # entity c5901): the workflow engraves this string into digest
@@ -1387,11 +1457,17 @@ class EntityVisitHost:
         er, run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
         visit_vars = (run.vars or {}).get("_visit") or {}
         stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
-        turns = [
-            {"role": str(m.get("role") or ""), "content": str(m.get("content") or "")}
-            for m in list(visit_vars.get("history") or [])
-            if isinstance(m, dict)
-        ]
+        turns: List[Dict[str, Any]] = []
+        for m in list(visit_vars.get("history") or []):
+            if not isinstance(m, dict):
+                continue
+            t: Dict[str, Any] = {"role": str(m.get("role") or ""), "content": str(m.get("content") or "")}
+            attached = m.get("attachments")
+            if isinstance(attached, list) and attached:
+                # The runtime's durable record of what the visitor attached
+                # to this turn ({path, bytes, sha256, content_type}).
+                t["attachments"] = [dict(a) for a in attached if isinstance(a, dict)]
+            turns.append(t)
         warnings: List[str] = []
         try:
             buckets, order, _tail = _ledger_tool_details(er.ledger_store.list(run_id))
