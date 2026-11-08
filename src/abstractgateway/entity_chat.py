@@ -359,13 +359,17 @@ class _RuntimeLLMAdapter:
     attribute shape the chat driver expects."""
 
     def __init__(
-        self, provider: str, *, model: str, thinking: Optional[str] = None, speculation: Any = None, **llm_kwargs: Any
+        self, provider: str, *, model: str, thinking: Optional[str] = None, speculation: Any = None,
+        patience: Optional[Dict[str, Any]] = None, **llm_kwargs: Any
     ) -> None:
         from .generation_pool import generation_client
 
         # R2 (2026-10-29): the principal's runtime pool (one resident model shared with the runs);
         # a client of its own only when there is no pool (ADR 0002: in the model host child then).
-        self._client = generation_client(provider=provider, model=model, llm_kwargs=dict(llm_kwargs) or None)
+        # `patience` (the entity lanes' timeout window) shapes a client of its own; the pool keeps its own.
+        self._client = generation_client(
+            provider=provider, model=model, llm_kwargs=dict(llm_kwargs) or None, patience=patience,
+        )
         self._provider = str(provider or "").strip()
         self._model = str(model or "").strip()
         # The mind's reasoning effort (substrate triple). Injected into each
@@ -413,7 +417,10 @@ def _default_llm_factory(provider: str, **kwargs: Any) -> Any:
     model = str(kwargs.pop("model", "") or "")
     thinking = kwargs.pop("thinking", None)
     speculation = kwargs.pop("speculation", None)
-    return _RuntimeLLMAdapter(provider, model=model, thinking=thinking, speculation=speculation, **kwargs)
+    patience = kwargs.pop("patience", None)
+    return _RuntimeLLMAdapter(
+        provider, model=model, thinking=thinking, speculation=speculation, patience=patience, **kwargs
+    )
 
 
 def _woken_reason() -> str:

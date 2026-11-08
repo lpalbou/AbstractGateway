@@ -51,7 +51,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +256,53 @@ class EntityManifest:
         )
 
 
+def _llm_effect_generate(llm: Any, effect: Any, *, empty_message: str) -> Any:
+    """One LLM_CALL effect through a built client — shared by the mind handler and the capability
+    handlers so both forward the same payload fields and return the same outcome shape.
+
+    NATIVE TOOLS PASS THROUGH (G5): the payload's `tools` + `params` reach the provider and the
+    outcome carries `tool_calls`/`finish_reason`/`usage` beside `content`; empty content is NOT a
+    failure when tool calls arrived. MEDIA PASSES THROUGH (operator 2026-11-08): the adapter puts
+    this turn's attachments and the sight lane's one-shot tool media on the LLM_CALL as `media`
+    (absolute file paths); a vision failure stays loud — nothing here turns it into prose."""
+    from abstractruntime.core.runtime import EffectOutcome
+
+    payload = dict(effect.payload or {})
+    gen_kwargs: Dict[str, Any] = {
+        "messages": payload.get("messages"),
+        "system_prompt": payload.get("system_prompt"),
+    }
+    tools = payload.get("tools")
+    if isinstance(tools, list) and tools:
+        gen_kwargs["tools"] = list(tools)
+    params = payload.get("params")
+    if isinstance(params, dict) and params:
+        gen_kwargs["params"] = dict(params)
+    media = payload.get("media")
+    if isinstance(media, list) and media:
+        gen_kwargs["media"] = list(media)
+    out = llm.generate(**gen_kwargs)
+
+    def _field(name: str) -> Any:
+        value = getattr(out, name, None)
+        if value is None and isinstance(out, dict):
+            value = out.get(name)
+        return value
+
+    content = _field("content")
+    tool_calls = _field("tool_calls")
+    result: Dict[str, Any] = {"content": content if isinstance(content, str) else ""}
+    if isinstance(tool_calls, list) and tool_calls:
+        result["tool_calls"] = tool_calls
+    for key in ("finish_reason", "usage", "model"):
+        value = _field(key)
+        if value is not None:
+            result[key] = value
+    if not result["content"].strip() and not result.get("tool_calls"):
+        return EffectOutcome.failed(empty_message)
+    return EffectOutcome.completed(result)
+
+
 def _creator_from(raw: Any) -> Optional[Dict[str, str]]:
     """A manifest's `created_by`, or None when absent or malformed (never guessed)."""
     if not isinstance(raw, Mapping):
@@ -324,7 +371,11 @@ class EntityHome:
             except TypeError:
                 self.store = SQLiteTripleStore(memory_path)
         self.journal = SQLiteJournal(memory_path)
-        self.memory = MemorySystem(store=self.store, journal=self.journal, embedder=embedder)
+        # task_queue=True (understanding drain v1, memory owner's correction 1): a record that forms
+        # in a home opened WITHOUT the queue enqueues no rebuild task, so nothing would ever be
+        # rebuilt. Every home the door opens has its queue; the visit runtime's home (the runtime's
+        # `open_home`) opens the same way on the runtime side.
+        self.memory = MemorySystem(store=self.store, journal=self.journal, embedder=embedder, task_queue=True)
         self._book_db = SqliteDatabase(str(self.home_dir / BOOK_FILENAME))
         self._book_ledger = SqliteLedgerStore(self._book_db)
         self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger)
@@ -1793,47 +1844,91 @@ class EntityRegistry:
                     )
             factory = _ec._default_llm_factory  # late-bound module attribute
             llm = factory(provider, **llm_kwargs)
+            return _llm_effect_generate(llm, effect, empty_message="LLM returned no content for the visit turn")
 
-            payload = dict(effect.payload or {})
-            gen_kwargs: Dict[str, Any] = {
-                "messages": payload.get("messages"),
-                "system_prompt": payload.get("system_prompt"),
-            }
-            tools = payload.get("tools")
-            if isinstance(tools, list) and tools:
-                gen_kwargs["tools"] = list(tools)
-            params = payload.get("params")
-            if isinstance(params, dict) and params:
-                gen_kwargs["params"] = dict(params)
-            # MEDIA PASSES THROUGH (operator 2026-11-08): the adapter puts this
-            # turn's attachments (`context.attachments`) and the sight lane's
-            # one-shot tool media (a read_file on an image) on every LLM_CALL
-            # as `media` — absolute file paths; abstractcore takes them like
-            # every other client's. A vision failure stays loud: no try/except
-            # here turns it into prose.
-            media = payload.get("media")
-            if isinstance(media, list) and media:
-                gen_kwargs["media"] = list(media)
-            out = llm.generate(**gen_kwargs)
+        return handler
 
-            def _field(name: str) -> Any:
-                value = getattr(out, name, None)
-                if value is None and isinstance(out, dict):
-                    value = out.get(name)
-                return value
+    # ------------------------------------------------ capability clients (understanding drain v1)
+    def capability_llm(self, slug: str, capability: str) -> Any:
+        """The client one CAPABILITY of this entity's thinking runs on — `summaries`, `understanding`
+        or `extraction` (runtime `identity.cognition_profile`): its own choice in `cognition.yaml`,
+        else the mind the visits resolve (`resolve_capability(home, cap, mind=<resolved mind>)`),
+        through the door's endpoint resolution and the same late-bound factory as the mind handler.
+        Built per call so a profile PUT between drains takes effect on the next call.
 
-            content = _field("content")
-            tool_calls = _field("tool_calls")
-            result: Dict[str, Any] = {"content": content if isinstance(content, str) else ""}
-            if isinstance(tool_calls, list) and tool_calls:
-                result["tool_calls"] = tool_calls
-            for key in ("finish_reason", "usage", "model"):
-                value = _field(key)
-                if value is not None:
-                    result[key] = value
-            if not result["content"].strip() and not result.get("tool_calls"):
-                return EffectOutcome.failed("LLM returned no content for the visit turn")
-            return EffectOutcome.completed(result)
+        Differences from the mind's client, both deliberate: the entity PATIENCE kwargs ride along
+        (a memory rebuild on a slow remote model must not be cut at a client default — the same
+        window the own-time loop names for its day client), and the mind's MTP `speculation` is
+        NEVER applied (no speculation on capability calls). Resolution failures raise (an unknown
+        capability, an unset mind, an endpoint profile the gateway cannot resolve): a capability
+        client is built by a host that reports, never a silent substitute."""
+        from abstractruntime.identity.chat import ENTITY_LLM_READ_IDLE_TIMEOUT_S, _entity_patience_window
+        from abstractruntime.identity.cognition_profile import resolve_capability
+
+        from . import entity_chat as _ec
+
+        home_dir = self.entities_dir / slug
+        mind = _ec.resolve_entity_mind(None, None, home_dir=home_dir)
+        resolved = resolve_capability(
+            home_dir, capability,
+            mind={"provider": mind["provider"], "model": mind["model"], "thinking": mind["thinking"]},
+        )
+        provider, endpoint_kwargs = self._resolve_entity_provider(str(resolved["provider"]).strip())
+        llm_kwargs: Dict[str, Any] = {"model": str(resolved["model"])}
+        if resolved.get("thinking"):
+            llm_kwargs["thinking"] = str(resolved["thinking"])
+        timeout, retry_budget = _entity_patience_window()
+        llm_kwargs["patience"] = {
+            "timeout": timeout,
+            "retry_wall_clock_budget_s": retry_budget,
+            "read_idle_timeout_s": ENTITY_LLM_READ_IDLE_TIMEOUT_S,
+        }
+        llm_kwargs.update(endpoint_kwargs)
+        if "base_url" not in llm_kwargs:
+            # A capability inheriting a gateway-route mind reaches the route's own address (the
+            # mind handler's rule); a profile's own plain family reaches that provider's route.
+            mind_base_url = mind["base_url"] if resolved.get("source") == "mind" else None
+            route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind_base_url)
+            if route_base_url:
+                from .provider_connections import configured_provider_request_kwargs
+
+                llm_kwargs.update(
+                    configured_provider_request_kwargs(
+                        provider,
+                        current_base_dir=self.data_dir,
+                        root_base_dir=self.root_data_dir,
+                        base_url=route_base_url,
+                    )
+                )
+        factory = _ec._default_llm_factory  # late-bound module attribute (tests patch it)
+        return factory(provider, **llm_kwargs)
+
+    def capability_llm_factory(self, slug: str) -> Callable[[str], Any]:
+        """`llm_for_capability` for the runtime's `understanding.drain(...)`: capability name -> client."""
+
+        def llm_for_capability(capability: str) -> Any:
+            return self.capability_llm(slug, capability)
+
+        return llm_for_capability
+
+    def _entity_capability_llm_handler(self, slug: str, capability: str) -> Any:
+        """An LLM_CALL-shaped handler on one capability's client (the mind handler's twin): the
+        payload's `messages`, `system_prompt`, `tools`, `params` and `media` are forwarded as the
+        mind handler forwards them; the outcome carries content, tool calls, finish_reason, usage
+        and model. A resolution refusal is a failed outcome naming the capability."""
+
+        def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
+            from abstractruntime.core.runtime import EffectOutcome
+
+            from . import entity_chat as _ec
+
+            try:
+                llm = self.capability_llm(slug, capability)
+            except _ec.ChatOpenRefused as e:
+                return EffectOutcome.failed(f"LLM_CALL ({capability}) refused: {e.detail}")
+            return _llm_effect_generate(
+                llm, effect, empty_message=f"LLM returned no content for the {capability} call",
+            )
 
         return handler
 

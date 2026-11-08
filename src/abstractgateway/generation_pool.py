@@ -73,14 +73,23 @@ def principal_pool() -> Optional[Any]:
 
 
 def generation_client(*, provider: str, model: str, llm_kwargs: Optional[Dict[str, Any]] = None,
-                      local_ctor: Optional[Dict[str, Any]] = None) -> Any:
+                      local_ctor: Optional[Dict[str, Any]] = None,
+                      patience: Optional[Dict[str, Any]] = None) -> Any:
     """The client a gateway-side generation calls: the principal's pool when there is one, else a
-    client of its own (`model_host.local_client(**local_ctor)`, or provider/model/llm_kwargs)."""
+    client of its own (`model_host.local_client(**local_ctor)`, or provider/model/llm_kwargs).
+
+    `patience` (`timeout`, `retry_wall_clock_budget_s`, `read_idle_timeout_s` for AbstractCore's
+    `create_llm`) applies to a client built of its own; a borrowed pool keeps the account's own
+    patience (the pool takes only a connection per call, never client construction kwargs)."""
     pool = principal_pool()
     if pool is not None:
         return PoolGeneration(pool, provider=provider, model=model, llm_kwargs=llm_kwargs)
     from . import model_host
 
     ctor = dict(local_ctor or {"provider": provider, "model": model, "llm_kwargs": dict(llm_kwargs or {}) or None})
+    if patience:
+        own_kwargs = dict(ctor.get("llm_kwargs") or {})
+        own_kwargs.update({k: v for k, v in patience.items() if v is not None})
+        ctor["llm_kwargs"] = own_kwargs
     logger.info("no runtime pool for this principal: %s/%s gets a client of its own", provider, model)
     return model_host.local_client(**ctor)
