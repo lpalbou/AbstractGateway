@@ -117,11 +117,11 @@ class RecordUnderstandings:
         return out
 
     def versions(self, understood: Mapping[str, Any]) -> List[Dict[str, Any]]:
-        """Memory's `versions` of a record, oldest first (empty when it was never rewritten)."""
+        """Memory's `versions` of a record, oldest first (empty when it was never rewritten: one reading, no rows)."""
         gid = str(understood.get("graph_id") or "")
         if gid not in self._versions:
             count = understood.get("version_count")
-            self._versions[gid] = self._home.memory.versions(gid) if count else []
+            self._versions[gid] = self._home.memory.versions(gid) if int(count or 0) > 1 else []
         return self._versions[gid]
 
     def recalled_block(self, record_id: str, seq: int) -> Optional[Dict[str, Any]]:

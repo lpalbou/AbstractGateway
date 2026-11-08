@@ -160,15 +160,15 @@ def test_record_read_serves_the_stored_understanding_and_versions():
                     "replaced_by"):
             assert body[key] is None, key
 
-        # A never-rewritten card: target, type, revision and source count; no reader or cause recorded.
+        # A never-rewritten card: target, type, revision and source count; one reading, formed mechanically.
         card_body = client.get(f"/api/gateway/entities/Lumen/records/{card}/verbatim").json()
         _carries_every_field(card_body)
         assert card_body["born_digest"] is True and card_body["text"] == "Ada keeps the archive."
         assert card_body["target"] == "person:ada" and card_body["target_type"] == "person"
         assert card_body["card_revision"] == 2 and card_body["source_count"] == 3
         assert card_body["authored_by"] == {"kind": "mechanical", "id": "mechanical-card-v2"}
-        assert card_body["digest_version"] == 0 and card_body["version_count"] == 0 and card_body["versions"] == []
-        assert card_body["reader"] is None and card_body["cause"] is None and card_body["replaced_by"] is None
+        assert card_body["digest_version"] == 0 and card_body["version_count"] == 1 and card_body["versions"] == []
+        assert card_body["reader"] is None and card_body["cause"] == "formation" and card_body["replaced_by"] is None
 
         # A dream: narrated or not.
         dream_body = client.get(f"/api/gateway/entities/Lumen/records/{dream}/verbatim").json()
@@ -249,7 +249,8 @@ def test_recall_snapshots_carry_the_reading_that_was_recalled():
         assert ep["authored_by"] == {"kind": "mechanical", "id": "mechanical-v2"}
         assert ep["reader"] is None and ep["digest_method"] == "mechanical-v2"
         never = blocks[lesson]
-        assert never["version_count"] == 0 and never["cause"] is None and never["replaced_by"] is None
+        assert never["version_count"] == 1 and never["cause"] == "formation" and never["replaced_by"] is None
+        assert never["authored_by"] == {"kind": "mechanical", "id": "mechanical-v2"}, "its stamped digest method"
         assert never["target"] is None and never["narrated"] is None
 
         (now,) = after["display"]["recalled"]
@@ -301,11 +302,14 @@ def test_card_briefs_carry_the_current_reading():
         firsts = [m for m in card["key_moments"]["moments"] if m.get("record_id") == interest]
         assert firsts and all(set(FIELDS) <= set(m) for m in firsts)
 
-        # Diary briefs are untouched: no digest, no provenance (a book lesson sits in the walked lessons list).
+        # Diary briefs (a book lesson sits in the walked lessons list) keep memory's own brief: who wrote the entry,
+        # when and why, and never the gateway's `digest` or the entry's words.
         diary_briefs = [b for b in card["questions"]["open"] if b.get("record_id") == question]
         diary_briefs += [b for b in card["lessons"]["lessons"] if b.get("record_id") == book_lesson]
         assert len(diary_briefs) == 2, "the diary question and the book lesson must be on the card"
-        assert not any(set(FIELDS) & set(b) for b in diary_briefs)
+        for b in diary_briefs:
+            assert "digest" not in b, b
+            assert b["authored_by"] == {"kind": "entity-mind", "id": owner} and b["cause"] == "formation", b
         assert "privately" not in json.dumps(card) and "private words" not in json.dumps(card)
 
         assert home.memory.current_seq() == seq_before

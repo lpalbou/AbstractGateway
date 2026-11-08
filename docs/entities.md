@@ -474,8 +474,8 @@ hold for the record is `null`, never a missing key:
 | `digest` | The words of the reading |
 | `digest_method` | How they were made (`mechanical-v2`, `mechanical-card-v2`, `authored-v1`, ...) |
 | `digest_version` | Which reading (0 = the original) |
-| `version_count` | How many readings memory keeps (0 = never rewritten) |
-| `authored_by` | `{kind, id}`: `mechanical`, `entity-mind`, `capability-model`, `operator` (or `unrecorded` for an old label) |
+| `version_count` | How many readings the record has (1 = never rewritten) |
+| `authored_by` | `{kind, id}`: `mechanical` (id = the digest method), `entity-mind` (id = the entity, for the words it wrote itself), `capability-model`, `operator` (a spark record: `spark-v<N>`), or `unrecorded` when nothing says who wrote them |
 | `reader` | `{provider, model, thinking}` of the model that wrote the words (null for mechanical and operator text) |
 | `understood_at` | When this reading was formed |
 | `cause` | Why it was written: `formation`, `backfill`, `ripple`, `evidence`, `operator`, `revert` |
@@ -507,10 +507,12 @@ Where the app reads them:
   carries the fields of the current reading (its `statement` is the same
   words as `digest`).
 
-Diary records get none of this: their record read is the book entry as
-before (a recorded `diary_read`), recall snapshots do not list them in
-`display.recalled`, and the card's questions, problems and book lessons are
-unchanged. The reads deposit nothing in the entity's memory.
+Diary records get none of the gateway's additions: their record read is
+the book entry as before (a recorded `diary_read`) and recall snapshots do
+not list them in `display.recalled`. On the card, memory's own diary briefs
+(questions, problems, book lessons) carry who wrote the entry, when and why
+(`authored_by`, `understood_at`, `cause`, ...), never more of its words than
+before. The reads deposit nothing in the entity's memory.
 
 ### The operator diary door (reads are visible events)
 
