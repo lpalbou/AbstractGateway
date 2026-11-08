@@ -1001,6 +1001,7 @@ class EntityVisitHost:
         The stamp lands BEFORE the first tick (this driver is the only
         ticker of the store — request-driven — so nothing executes in the
         mint->finalize window)."""
+        from .entity_chat import entity_recall_shelf_size
         from .entity_gate import (
             CHANNEL_WORKPLACE,
             finalize_summon_stamp,
@@ -1018,7 +1019,8 @@ class EntityVisitHost:
         stamp_participants = [str(p) for p in participants]
         if manifest.entity_id not in stamp_participants:
             stamp_participants.append(manifest.entity_id)  # explicit co-presence (a2a 0007)
-        budget_profile = summon_budget_profile(None)
+        # The recall width: the home's cognition profile, else the wide default.
+        budget_profile = summon_budget_profile(None, shelf_size=entity_recall_shelf_size(home_dir))
 
         try:
             # INSIDE the restore window (adversary find): the spec build can

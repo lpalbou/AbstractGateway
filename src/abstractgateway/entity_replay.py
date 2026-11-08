@@ -124,6 +124,11 @@ HOST_MARKER_KINDS = (
     # file moves (marker-then-write: a crash between leaves a recorded
     # intent, never an unrecorded change).
     "substrate_changed",
+    # Cognition-profile change (runtime identity.cognition_profile): which
+    # model each part of its thinking uses, its recall width and its rebuild
+    # policy are the mind's class — marker-first like substrate; old/new
+    # carry the stored profiles (operator vocabulary, never secrets).
+    "cognition_profile_changed",
     # Capability-map (teaching) change (laurent c2710, skill's
     # entity-self-knowledge install lane): what a mind is TAUGHT changing
     # between sessions is the same class as a substrate swap — marker-first

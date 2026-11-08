@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from ..work_pools import off_loop
@@ -3215,6 +3215,7 @@ def _summon_core(
     """
     from abstractruntime.identity import render_summon_prelude
 
+    from ..entity_chat import entity_recall_shelf_size
     from ..entity_gate import (
         CHANNEL_WORKPLACE,
         finalize_summon_stamp,
@@ -3562,7 +3563,7 @@ def _summon_core(
     # The session's default recall budget: memory's context-scaled profile
     # with the reserved-seats posture applied; every in-session recall that
     # omits a budget runs on it (the gate injects from the stamp).
-    budget_profile = summon_budget_profile(declared_window)
+    budget_profile = summon_budget_profile(declared_window, shelf_size=entity_recall_shelf_size(home.home_dir))
 
     # ONE LIFE, ONE CONVERSATION — the seat (conversation-seat plan, slice 2;
     # foundation flow c5260 P1-B). The per-slug lock spans check -> preempt
@@ -5371,6 +5372,72 @@ def _clear_entity_substrate_locked(name: str, *, registry, manifest, prior: Dict
     return get_entity_substrate(name)
 
 
+# -------------------------------------------------------- cognition profile
+# Which model each part of its thinking uses, how many memories a turn brings
+# to mind, and how readily memory work revisits what it understood
+# (<home>/cognition.yaml, runtime identity.cognition_profile). The logic is
+# entity_cognition_profile.py; the door rules are the substrate's: one write
+# per slug at a time, validation before the marker, the creator bound, the
+# `cognition_profile_changed` marker before the file moves.
+
+
+@router.get("/{name}/cognition-profile")
+def get_entity_cognition_profile(name: str) -> Dict[str, Any]:
+    from ..entity_cognition_profile import cognition_profile_view
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    return cognition_profile_view(registry.entities_dir / manifest.slug)
+
+
+@router.put("/{name}/cognition-profile")
+def put_entity_cognition_profile(name: str, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    from ..entity_cognition_profile import CognitionProfileRefused, put_cognition_profile
+    from ..entity_replay import record_host_marker
+    from ..entity_seat import summon_guard_lock
+    from ..entity_settings_access import mind_bound_problem
+
+    registry = _registry()
+    try:
+        manifest = registry.manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    role = _settings_role(registry, manifest)
+
+    def _record(details: Dict[str, Any]) -> None:
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="cognition_profile_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details=details,
+        )
+
+    lock = summon_guard_lock(manifest.slug)
+    if not lock.acquire(timeout=10.0):
+        raise HTTPException(status_code=503, detail="Thinking settings are being saved already. Try again.")
+    try:
+        return put_cognition_profile(
+            home_dir=registry.entities_dir / manifest.slug,
+            body=body,
+            role=role,
+            actor=_task_actor(),
+            data_dir=registry.data_dir,
+            root_data_dir=registry.root_data_dir,
+            bound_problem=mind_bound_problem,
+            record_marker=_record,
+        )
+    except CognitionProfileRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    finally:
+        lock.release()
+
+
 # ----------------------------------------------------------------- identity
 # The entity's digital identity (framework ADR 0052, backlog 1119): its look (an abstractavatar
 # design and a colour) and its voice, ONE record in the home (`identity.json`, AbstractRuntime's
@@ -6343,7 +6410,6 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     # choice as visits. Attention geometry keeps its shared code floors.
     from ..entity_chat import (
         DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW,
-        DEFAULT_ENTITY_CHAT_SHELF_SIZE,
         ChatOpenRefused,
         entity_base_url,
         resolve_entity_mind,
@@ -6356,7 +6422,8 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
     base_url = entity_base_url(provider, req.base_url, mind_base_url=mind["base_url"])
 
-    shelf_size = req.shelf_size if req.shelf_size is not None else DEFAULT_ENTITY_CHAT_SHELF_SIZE
+    # None = the home's cognition profile, else the wide default (start_loop resolves it).
+    shelf_size = req.shelf_size
     context_window = req.context_window if req.context_window is not None else DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
     # SOFT context recommendation + soft acceptable ceiling (operator
@@ -6395,7 +6462,7 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             tick_seconds=req.tick_seconds,
             ticks_per_day=req.ticks_per_day,
             rest_minutes=req.rest_minutes,
-            shelf_size=int(shelf_size),
+            shelf_size=(int(shelf_size) if shelf_size is not None else None),
             context_window=int(context_window),
         )
     except RuntimeError as e:

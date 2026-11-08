@@ -289,7 +289,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         methods=("POST", "PUT", "PATCH", "DELETE"),
     ),
     # An entity's SETTINGS (operator ruling 2026-10-08, R16.5 "the creator configures their
-    # entity"): its mind (substrate), identity (ADR 0052), voice, appearance, tools per phase, instructions (prompt) and skills are
+    # entity"): its mind (substrate), its cognition profile, identity (ADR 0052), voice, appearance, tools per phase, instructions (prompt) and skills are
     # changed by an admin OR the entity's creator, within what the admin authorised; never by
     # another member nor by the entity itself. The middleware lets admins through; everyone else
     # is decided by `entity_settings_access.entity_settings_guard` (a dependency of both entity
@@ -297,7 +297,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_or_creator_required",
-        pattern=r"^/api/gateway/entities/[^/]+/(tool-policy|prompt|substrate|skills|voice|appearance|identity)$",
+        pattern=r"^/api/gateway/entities/[^/]+/(tool-policy|prompt|substrate|cognition-profile|skills|voice|appearance|identity)$",
         methods=("POST", "PUT", "PATCH", "DELETE"),
         admin_required=False,
         required_role="admin_or_creator",

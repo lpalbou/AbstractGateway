@@ -199,6 +199,10 @@ def summon_budget_profile(
     scaled profile (`entity_recall_budget`) with the reserved-seats posture
     applied on top.
 
+    `shelf_size` is the caller's: the request's width, else the home's
+    cognition profile (`entity_chat.entity_recall_shelf_size`); None falls
+    back to the wide default.
+
     Defaults follow the maintainer's WIDE ruling (2026-07-08: "wide
     attention is the default, not a tuning trick" — request > env > code
     default, the SAME resolution as the chat and loop doors): an undeclared
@@ -766,7 +770,12 @@ def _gate_recall(payload: Dict[str, Any], *, home: EntityHome, stamp: Dict[str, 
         # profile existed derive the WIDE default profile at recall time —
         # never the static starved constants (Ariadne's flow-summon review).
         profile = stamp.get("budget_profile")
-        payload["budget"] = dict(profile) if isinstance(profile, dict) else summon_budget_profile(None)
+        if isinstance(profile, dict):
+            payload["budget"] = dict(profile)
+        else:
+            from .entity_chat import entity_recall_shelf_size
+
+            payload["budget"] = summon_budget_profile(None, shelf_size=entity_recall_shelf_size(home.home_dir))
     else:
         if "self_fraction" not in budget:
             budget = dict(budget)

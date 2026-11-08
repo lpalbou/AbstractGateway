@@ -5983,6 +5983,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      awake: "Woke up", paused: "Stopped", pause: "Stopped", close: "Visit closed", crashed: "Crashed",
 	      skills_selection_changed: "Skills changed", capability_map_changed: "Capabilities changed",
 	      tool_policy_changed: "Tools per phase changed", substrate_changed: "Mind changed", voice_changed: "Voice changed",
+	      cognition_profile_changed: "Thinking settings changed",
 	      prompt_overlay_changed: "Instructions changed", work_order_changed: "Work order changed", task_inbox_changed: "Tasks changed",
 	      reembed: "Memory index rebuilt", blueprint_edited: "Blueprint edited",
 	      personal_started: "Personal time started", personal_stop_requested: "Personal time asked to stop",

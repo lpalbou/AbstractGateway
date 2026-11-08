@@ -57,10 +57,15 @@ def start_loop(
 
     # One source for the wide-posture defaults (entity_chat) — a second
     # hardcoded copy here drifted once already (24 vs the ruled 36).
-    from .entity_chat import DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW, DEFAULT_ENTITY_CHAT_SHELF_SIZE
+    from .entity_chat import DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW, entity_recall_shelf_size
 
+    # The recall width: an explicit value (the start request, or a repair
+    # replaying one) wins; else the home's cognition profile, else the wide
+    # default. Only an explicit value is recorded below, so a respawn reads
+    # the profile again: a running loop picks up a new width at its next start.
+    explicit_shelf_size = shelf_size
     if shelf_size is None:
-        shelf_size = DEFAULT_ENTITY_CHAT_SHELF_SIZE
+        shelf_size = entity_recall_shelf_size(home_dir)
     if context_window is None:
         context_window = DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
@@ -78,7 +83,7 @@ def start_loop(
     record_spawn_params(Path(home_dir), {
         "provider": provider, "model": model, "base_url": base_url,
         "tick_seconds": tick_seconds, "ticks_per_day": ticks_per_day,
-        "rest_minutes": rest_minutes, "shelf_size": shelf_size,
+        "rest_minutes": rest_minutes, "shelf_size": explicit_shelf_size,
         "context_window": context_window,
     })
 

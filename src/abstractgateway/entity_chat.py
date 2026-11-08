@@ -69,6 +69,18 @@ DEFAULT_YIELD_WAIT_S = 55.0
 DEFAULT_ENTITY_CHAT_SHELF_SIZE = 50
 DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW = 65536
 
+
+def entity_recall_shelf_size(home_dir: Any) -> int:
+    """Memories retrieved per turn for this entity when a request names no width:
+    its cognition profile's `recall.shelf_size` (`<home>/cognition.yaml`, runtime
+    `identity.cognition_profile`), else DEFAULT_ENTITY_CHAT_SHELF_SIZE. Visits,
+    summons and the own-time loop all read it; a request's explicit width wins."""
+    from pathlib import Path
+
+    from abstractruntime.identity.cognition_profile import recall_shelf_size
+
+    return recall_shelf_size(Path(home_dir), DEFAULT_ENTITY_CHAT_SHELF_SIZE)
+
 # Output headroom: NONE, ever (operator 2026-10-02: "we should never use that
 # parameter; by default models work at their full capacity"). The gateway never
 # sends an output-token cap for an entity -- no code default, no env knob, no
@@ -486,12 +498,12 @@ class EntityChatHost:
     ) -> Dict[str, Any]:
         # Attention geometry (maintainer ruling 2026-07-08, after the live A/B
         # on Castor): the wide posture IS the default. Resolution order:
-        # request body > these code defaults. No environment variable (round 3).
+        # request body > the home's cognition profile (shelf only, read below
+        # once the home is known) > these code defaults. No environment
+        # variable (round 3).
         env_warnings: List[str] = []
         if context_window is None:
             context_window = DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
-        if shelf_size is None:
-            shelf_size = DEFAULT_ENTITY_CHAT_SHELF_SIZE
         import time as _time
 
         from abstractruntime.identity.chat import ChatSession, open_home
@@ -512,6 +524,8 @@ class EntityChatHost:
             raise ChatOpenRefused(409, e.message) from None
         slug = manifest.slug
         home_dir = self._registry.entities_dir / slug
+        if shelf_size is None:
+            shelf_size = entity_recall_shelf_size(home_dir)
 
         # Maintenance window: refuse BEFORE any provider probe or state
         # read — a held home must answer 409 first, never 502 on an

@@ -21,7 +21,7 @@ The settings routes are ONE row of the route table (`security/authorization.py`,
 forgotten. Every decision through the guard is recorded on the request's audit line
 (`entity_settings: {entity, setting, actor, as: admin|creator|null, outcome}`).
 
-Settings (creator-editable): mind (`substrate`), identity (its look and voice, ADR 0052), voice, appearance (colour and shape in apps),
+Settings (creator-editable): mind (`substrate`), cognition profile (`cognition-profile`), identity (its look and voice, ADR 0052), voice, appearance (colour and shape in apps),
 tools per phase (`tool-policy`),
 instructions (`prompt`), skills, workspaces (`/workspace/policy/{account}`), preferences
 (`/accounts/{account}/preferences`), archive / unarchive and the Active switch
@@ -48,6 +48,7 @@ REASON_CODE = "admin_or_creator_required"
 # The last path segment of a settings route -> what the refusal sentence says the caller can't do.
 SETTING_VERBS: dict[str, str] = {
     "substrate": "change its mind",
+    "cognition-profile": "change how it thinks",
     "voice": "change its voice",
     "appearance": "change its appearance",
     "identity": "change its identity",
