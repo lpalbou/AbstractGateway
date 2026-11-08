@@ -383,7 +383,7 @@ client picks the entity from `GET /entities` (a structured choice: the gateway n
 ```bash
 curl -X POST http://localhost:8080/api/gateway/sessions/$SESSION_ID/mentions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0}'
+  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0, "repeat_of": "<the agent turn run id, optional>"}'
 ```
 
 What happens:
@@ -402,29 +402,47 @@ What happens:
 Several mentions in one message are separate requests, in order (`mention_index` 0, 1, 2...),
 each its own turn.
 
+**The same words, once.** When the message also started the conversation's agent turn, send
+that turn's run id as `repeat_of`: the mention turn keeps the words as its prompt (history and
+replay stay whole user/answer pairs, so the agent still hears the entity's reply) and is marked
+`repeat_of` on every surface, so a client shows the person's words once and folds the entity's
+answer under them. A `repeat_of` that is not a turn of this conversation answers 422
+`repeat_of_unknown`. The mention turn is dated when your words arrived (`created_at`) and when
+the reply came (`updated_at`), so the answer always sorts after the question.
+
+**In a visit.** When the conversation is another entity's live visit (an Entity-app visit with
+Nerin, `session_id` = the one `visit/open` returned), the mentioned entity's reply is also a turn
+of THAT visit, spoken by the mentioned entity: the door adds `entity:castor` to the visit's signed
+participants, then sends `Castor (entity): <reply>` as a visit turn with that speaker. Nerin hears
+it and answers it like any visitor's words; his home's ledger and memory keep it. The answer lists
+these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`, or `error` when that visit refused;
+`[]` in a plain chat).
+
 The answer (200):
 
 ```json
 {"run_id": "<the session turn>", "turn_id": "<the turn in the entity's home>",
  "author": {"kind": "entity", "name": "Castor", "entity_id": "entity:castor",
             "identity_ref": "entity:castor#3", "avatar": {"style": "watch-halo", "color": "#336699"}},
- "session_id": "...", "mention_index": 0, "reply": "...",
+ "session_id": "...", "mention_index": 0, "repeat_of": null, "reply": "...",
  "visit": {"run_id": "<the visit run in the home>", "turn_id": "...", "visit_id": "visit-...",
-           "entity_id": "entity:castor", "reused": false}}
+           "entity_id": "entity:castor", "reused": false},
+ "mirrors": []}
 ```
 
 Errors (`{detail, code}` plus the `X-Gateway-Error-Code` header):
 
 | Status | `code` | When |
 |---|---|---|
-| 404 | | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
+| 404 | `entity_not_found` | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
 | 409 | `in_another_conversation` | The entity's visit belongs to another conversation; `session_id` and the sentence name it. It is free again when that conversation ends or after 5 idle minutes |
 | 409 | `entity_paused`, `entity_asleep`, `loop_busy`, `home_lease_held` | The visit door's own refusals |
 | 503 | `entity_cannot_answer` | Its mind cannot be resolved (no model chosen), or the turn gave no reply |
 
 **Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each
 bundle's `run`), `GET /runs/{id}`, the replay view's user and assistant messages, and the
-`run.started`/`run.finished` events carry `author` (the answer) and, where a prompt is shown,
+`run.started`/`run.finished` events and every live reply frame (`llm.delta`, `llm.delta_end` on
+`/runs/{id}/ledger/stream`) carry `author` (the answer) and, where a prompt is shown,
 `prompt_author`: `{kind: "entity"|"agent"|"person", name, entity_id, identity_ref,
 avatar: {style, color}|null}`, every key present. An agent's turn is named by its workflow
 (`workflow_selection.name`, never a model name); a person's by the account's display name; a

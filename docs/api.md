@@ -37,7 +37,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
-| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author`; 404 unknown or hidden entity, 409 `in_another_conversation`, 503 `entity_cannot_answer` | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
+| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt); 404 `entity_not_found` (unknown or hidden entity, identical answers), 409 `in_another_conversation`, 503 `entity_cannot_answer` | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
 | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
@@ -2272,14 +2272,14 @@ Query parameters:
 
 Response fields: `session_id`, `cursor_before` (echo of `before`), `cursor_after`
 (oldest turn returned — pass as the next `before`), `older_remaining`, `warnings`,
-and `turns[]` (`run_id`, `created_at`, `status`, `prompt_author`, `author`, `bundle` or `error`).
+and `turns[]` (`run_id`, `created_at`, `status`, `prompt_author`, `author`, `repeat_of`, `bundle` or `error`).
 `author` (who answered) and `prompt_author` (who asked) are
 `{kind: "entity"|"agent"|"person", name, entity_id, identity_ref, avatar: {style, color}|null}`, every key
 present; the bundle's `run` section carries the same two. An entity's mention
 ([entities.md](./entities.md#mentioning-an-entity-from-any-chat)) is a turn whose `author.kind` is `entity`; an
 agent's turn is named by its workflow (`workflow_selection.name`), a person's by the account's display name.
 `GET /runs/{run_id}`, the replay view's user and assistant messages and the `run.started`/`run.finished`
-events of `/me/events` carry them too.
+events of `/me/events` carry them too; every live reply frame (`llm.delta`, `llm.delta_end`) carries `author`.
 
 The editor observes runs with the core lifecycle endpoints above:
 `/runs/start`, `/runs/{run_id}`, `/runs/{run_id}/ledger`,
