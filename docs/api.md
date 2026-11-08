@@ -1281,11 +1281,13 @@ below it, read from the ledger on either store backend (null when the gateway
 has no ledger store). AbstractCode's conversation card shows the sum of its
 turns' `tool_calls`.
 A page also carries `session_totals`: for each `session_id` on the page,
-`{turns, runs}` for the whole session — its turn roots (runs no other run is the
-parent of) and all of its runs — under the page's `session_kind` filter, read
-from the file store's session index (a page of three turns can say the session
-has twelve). The key is absent when the page names no session or the run store
-is not the file-backed one.
+`{turns, runs}` for the whole session — `turns` is what a turn listing shows for
+it (parent-less runs that are not automation controllers, plus occurrences),
+`runs` its runs; the session's internal `session_memory_<id>` bookkeeping run
+counts in neither, so a one-turn conversation reads as 1 — under the page's
+`session_kind` filter, read from the file store's session index (a page of
+three turns can say the session has twelve). The key is absent when the page
+names no session or the run store is not the file-backed one.
 
 ### Archived sessions
 

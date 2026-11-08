@@ -33,10 +33,20 @@ def _boot(client: TestClient) -> None:
         time.sleep(0.05)
 
 
+def _memory_run(session_id: str) -> Any:
+    """The session's bookkeeping run (`session_memory_<sid>`, an internal workflow):
+    the listing never shows it, so the totals must not count it."""
+    from abstractgateway.artifact_scope import session_memory_run_id
+    from automations_fixtures import _run
+
+    return _run(run_id=session_memory_run_id(session_id), workflow_id="__session_memory__@0.0.0:root", vars={}, session_id=session_id)
+
+
 def _seed(data_dir: Path) -> List[str]:
     """Session chat-A: 7 turn roots, 2 chat children (follow-ups of the first two
-    roots) and one occurrence run of an automation that woke into this session
-    (a child of its controller, session_kind occurrence). Session chat-B: 2 roots."""
+    roots), one occurrence run of an automation that woke into this session
+    (a child of its controller, session_kind occurrence) and its session-memory
+    run. Session chat-B: 2 roots. Session chat-C: one turn and its memory run."""
     from abstractruntime import JsonFileRunStore
 
     store = JsonFileRunStore(data_dir)
@@ -56,8 +66,11 @@ def _seed(data_dir: Path) -> List[str]:
     save(chat_run(session_id="chat-A", parent_run_id=roots[1]))
     controller = save(controller_run(title="Monitor"))
     save(occurrence_run(controller.run_id, index=1, session_id="chat-A"))
+    save(_memory_run("chat-A"))
     for _ in range(2):
         save(chat_run(session_id="chat-B"))
+    save(chat_run(session_id="chat-C"))
+    save(_memory_run("chat-C"))
     return roots
 
 
@@ -76,16 +89,21 @@ def test_session_totals_count_the_whole_session_behind_the_page(tmp_path: Path, 
         assert page["session_totals"] == {"chat-A": {"turns": 7, "runs": 9}}, page.get("session_totals")
 
         # Without the kind filter the occurrence run that woke into the session counts as a
-        # run (it is a child of its controller, so never a turn).
+        # run AND as a turn — exactly what the listing itself shows (an occurrence is a turn
+        # root, `_is_turn_root_summary`); the session-memory run still counts in neither.
         page = client.get("/api/gateway/runs?limit=3&root_only=true&session_id=chat-A", headers=HEADERS).json()
-        assert page["session_totals"] == {"chat-A": {"turns": 7, "runs": 10}}, page.get("session_totals")
+        assert page["session_totals"] == {"chat-A": {"turns": 8, "runs": 10}}, page.get("session_totals")
 
         # A page across sessions: one entry per session on the page, those only.
         page = client.get("/api/gateway/runs?limit=50&root_only=true&session_kind=chat", headers=HEADERS).json()
         on_page = {str(it.get("session_id")) for it in page["items"] if it.get("session_id")}
-        assert on_page == {"chat-A", "chat-B"}, on_page
+        assert on_page == {"chat-A", "chat-B", "chat-C"}, on_page
         assert set(page["session_totals"]) == on_page
         assert page["session_totals"]["chat-B"] == {"turns": 2, "runs": 2}
+        # A one-turn conversation reads as ONE turn: its session-memory run (the internal
+        # `session_memory_<sid>` workflow the listing never shows) is neither a turn nor a run here.
+        assert page["session_totals"]["chat-C"] == {"turns": 1, "runs": 1}, page["session_totals"]["chat-C"]
+        assert page["session_totals"]["chat-A"] == {"turns": 7, "runs": 9}
 
         # A page that names no session carries no key (never an empty guess).
         page = client.get("/api/gateway/runs?limit=3&query=nothing-matches-this", headers=HEADERS).json()

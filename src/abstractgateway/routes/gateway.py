@@ -10087,12 +10087,16 @@ def _session_totals_for_page(
 ) -> Optional[Dict[str, Dict[str, int]]]:
     """`session_totals` for the sessions ONE page names (operator 2026-11-08:
     Code's sidebar said "≥4 turns" because a page does not hold every run of
-    a session): `{session_id: {"turns": <turn roots in the whole session>,
-    "runs": <all its runs>}}`, read from the file store's session index
-    (`session_id -> {run id: session_kind}`) and children index (a root run
-    is one no children set names) — no run file, no ledger. `kinds` is the
-    page's `session_kind` filter: a conversation listing counts conversation
-    runs; a member outside the filter is not counted. None when the page
+    a session): `{session_id: {"turns": <what the listing shows as turns of
+    the whole session>, "runs": <its runs, the session-memory bookkeeping
+    run excluded>}}`, read from the file store's session index
+    (`session_id -> {run id: session_kind}`) and children index — no run
+    file, no ledger. `kinds` is the page's `session_kind` filter: a
+    conversation listing counts conversation runs; a member outside the
+    filter is not counted. Honest limit: the index knows ids, kinds and
+    parents, not workflow ids — the session-memory run is excluded by its
+    exact id; any other `__`-internal or draft workflow in a session (rare:
+    drafts have their own sessions) would still count. None when the page
     names no session, or when the store is not the file store (no such
     indexes — the key is omitted, never guessed). Bounded: the sessions on
     the page only."""
@@ -10121,15 +10125,33 @@ def _session_totals_for_page(
     with rs._index_lock:  # noqa: SLF001
         run_parent = rs._run_parent_index  # noqa: SLF001 - run id -> parent run id (None = a root)
         parents = {rid: run_parent.get(rid) for members in members_by_sid.values() for rid in members}
+    from ..artifact_scope import session_memory_run_id
+
     totals: Dict[str, Dict[str, int]] = {}
     for sid, members in members_by_sid.items():
+        # The session's bookkeeping run (`session_memory_<sid>`, where uploads
+        # live) is machinery: never a turn, never a run of the session here —
+        # the listing's internal-workflow rule drops it, and a one-turn chat
+        # must read as 1, not 2. Its id is the framework's own naming, exact.
+        memory_run = session_memory_run_id(sid)
         runs = 0
         turns = 0
         for rid, kind in members.items():
+            if rid == memory_run:
+                continue
             if kinds is not None and kind not in kinds:
                 continue
             runs += 1
-            if parents.get(rid) is None:
+            parent = parents.get(rid)
+            # The listing's own turn rule (`_is_turn_root_summary`) as the
+            # index knows it: a parent-less run that is not an automation
+            # controller (a parent-less `automation` row IS the controller),
+            # plus occurrence runs (a child whose kind is occurrence, or
+            # automation for a growing automation's occurrences).
+            if parent is None:
+                if kind != "automation":
+                    turns += 1
+            elif kind in ("occurrence", "automation"):
                 turns += 1
         totals[sid] = {"turns": turns, "runs": runs}
     return totals
