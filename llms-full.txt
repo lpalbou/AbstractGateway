@@ -6863,27 +6863,38 @@ session moves it to the top. Apps show that order as served, with archived sessi
 own Archived section (the framework's ADR 0048; automations follow the same rule, see
 [Listing order](docs/automations.md#listing-order)).
 
-**Session purpose (`kind`).** A session is a `conversation` (the default), a
-`docs` chat (a Docs assistant conversation) or `notes` (AbstractNote's own
-work: its captures and its background processing). `POST /api/gateway/runs/start`
-takes `kind: "docs"` or `kind: "notes"` with a `session_id` (the kit's Docs
-assistant sends `docs`); any other value, or `docs`/`notes` without a session,
-is a 400. Turn listings (`GET /runs?root_only=true` or `archived_only=true`,
-without `session_id` / `parent_run_id`) take `kind=conversation` (the default),
-`kind=docs`, `kind=notes` or `kind=all`, so a docs chat or a note session never
-appears in a conversation list while staying in the same pool: readable by
-`session_id`, ledgered, archivable. Every row carries `kind`. The mark lives in
-the plane's `session_kinds.json`; a session without one is a conversation.
+**Session purpose (`kind`).** A session is a `conversation` (the default; an
+entity visit is a conversation with an entity), a `docs` chat (a Docs assistant
+conversation), `notes` (AbstractNote's captures and drains), `automation` (an
+occurrence of an automation a person created: the controller's and its
+occurrences' sessions) or `process` (work the framework runs for its own
+treatments: AbstractNote's `note-process`, `note-reflect` and
+`note-consolidate` occurrences, the phone and watch voice probes, model-host
+verifications). `POST /api/gateway/runs/start` takes `kind` with a `session_id`
+(the kit's Docs assistant sends `docs`, the Assistant's probes send `process`);
+any other value, or a non-conversation kind without a session, is a 400. Turn
+listings (`GET /runs?root_only=true` or `archived_only=true`, without
+`session_id` / `parent_run_id`) take `kind=conversation` (the default), one
+kind, a comma list (`kind=conversation,automation`) or `kind=all`, so a docs
+chat, a note session, an automation's occurrence or a process never appears in
+a conversation list while staying in the same pool: readable by `session_id`,
+ledgered, archivable. A listing that asks for the automation attribution
+(`session_kind=automation,occurrence`) lists those sessions whatever `kind`
+says — that attribution is what makes them automation sessions. Every row
+carries `kind` and `session_kind`. The mark lives in the plane's
+`session_kinds.json`; a session without one is classified by its own workflow
+and attribution, else it is a conversation.
 
-The purpose follows the workflow's bundle id (matched exactly, whatever client
-starts the run). A run of the shipped `docs-qa` workflow marks its session
-`docs` even without `kind`; a run of an AbstractNote workflow
-(`abstractnote@<version>:<flow>`) marks its session `notes`. The first turn
-listing runs the one-time migrations `docs_qa_bundle_v1` and
-`abstractnote_bundle_v1`, which mark every existing session whose parent-less
-turn root ran that bundle. The sessions AbstractNote's automations open (one
-per occurrence) are never started through `POST /runs/start`: a listed turn
-whose own workflow is an AbstractNote workflow is `notes` without a mark.
+The purpose follows the workflow's bundle id and the run's attribution (matched
+exactly, whatever client starts the run). A run of the shipped `docs-qa`
+workflow marks its session `docs` even without `kind`; a run of an AbstractNote
+workflow (`abstractnote@<version>:<flow>`) marks its session `notes`, or
+`process` for the three process flows. The first turn listing runs the one-time
+migrations `docs_qa_bundle_v1`, `abstractnote_bundle_v1`, `process_sessions_v1`
+and `automation_sessions_v1`, which mark the existing sessions once. The
+sessions automations open (one per occurrence) are never started through
+`POST /runs/start`: a listed turn is `automation`, `notes` or `process` by its
+own workflow and attribution, without a mark.
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers
@@ -10968,8 +10979,8 @@ hold for the record is `null`, never a missing key:
 | `digest` | The words of the reading |
 | `digest_method` | How they were made (`mechanical-v2`, `mechanical-card-v2`, `authored-v1`, ...) |
 | `digest_version` | Which reading (0 = the original) |
-| `version_count` | How many readings memory keeps (0 = never rewritten) |
-| `authored_by` | `{kind, id}`: `mechanical`, `entity-mind`, `capability-model`, `operator` (or `unrecorded` for an old label) |
+| `version_count` | How many readings the record has (1 = never rewritten) |
+| `authored_by` | `{kind, id}`: `mechanical` (id = the digest method), `entity-mind` (id = the entity, for the words it wrote itself), `capability-model`, `operator` (a spark record: `spark-v<N>`), or `unrecorded` when nothing says who wrote them |
 | `reader` | `{provider, model, thinking}` of the model that wrote the words (null for mechanical and operator text) |
 | `understood_at` | When this reading was formed |
 | `cause` | Why it was written: `formation`, `backfill`, `ripple`, `evidence`, `operator`, `revert` |
@@ -11001,10 +11012,12 @@ Where the app reads them:
   carries the fields of the current reading (its `statement` is the same
   words as `digest`).
 
-Diary records get none of this: their record read is the book entry as
-before (a recorded `diary_read`), recall snapshots do not list them in
-`display.recalled`, and the card's questions, problems and book lessons are
-unchanged. The reads deposit nothing in the entity's memory.
+Diary records get none of the gateway's additions: their record read is
+the book entry as before (a recorded `diary_read`) and recall snapshots do
+not list them in `display.recalled`. On the card, memory's own diary briefs
+(questions, problems, book lessons) carry who wrote the entry, when and why
+(`authored_by`, `understood_at`, `cause`, ...), never more of its words than
+before. The reads deposit nothing in the entity's memory.
 
 ### The operator diary door (reads are visible events)
 
@@ -12928,6 +12941,13 @@ automation:
 
 A growing automation's occurrences have `session_kind: "automation"`; an
 independent automation's occurrences have `session_kind: "occurrence"`.
+
+Every row also carries `kind`, the session's purpose
+([api.md](docs/api.md#listing-behaviour)): an automation's occurrence sessions are
+`kind: "automation"` and leave the default conversation list (`kind=automation`,
+`kind=conversation,automation` or `session_kind=automation,occurrence` list
+them); AbstractNote's `note-process`, `note-reflect` and `note-consolidate`
+occurrences are `kind: "process"`, its captures and drains `notes`.
 
 - **`session_kind` filter.** A comma-separated subset, for example
   `session_kind=chat,discussion`. An unknown kind answers 400.

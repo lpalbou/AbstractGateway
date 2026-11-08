@@ -47,17 +47,72 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 SCHEMA = "gateway_session_kinds_v1"
 FILENAME = "session_kinds.json"
-KINDS = ("conversation", "docs", "notes")
+# Backlog 1166 (operator 2026-11-08 11:45): `automation` = an occurrence of an automation the
+# user created; `process` = internal work the framework runs for its own treatments (Note's
+# processor/reflect/consolidate occurrences, model-host verifications, the phone and watch
+# voice probes — a probe is a process, never a kind of its own). An entity visit is a
+# conversation with an entity: no `visit` kind.
+KINDS = ("conversation", "docs", "notes", "automation", "process")
 DEFAULT_KIND = "conversation"
 DOCS_QA_BUNDLE_ID = "docs-qa"
 DOCS_QA_MIGRATION = "docs_qa_bundle_v1"
 #: AbstractNote's workflows (`abstractnote.flows.build.BUNDLE_ID`, loaded by abstractnote_seam.py).
 NOTES_BUNDLE_ID = "abstractnote"
 NOTES_MIGRATION = "abstractnote_bundle_v1"
-#: The bundle a session's purpose follows.
+#: AbstractNote's flows that are the framework's own treatments (exact flow ids,
+#: `abstractnote.flows.build.BUILDERS`): processes, not notes a person captured.
+PROCESS_NOTE_FLOWS = ("note-process", "note-reflect", "note-consolidate")
+PROCESS_MIGRATION = "process_sessions_v1"
+#: The run-index attribution (`abstractruntime.core.run_attribution`) that makes a row an
+#: automation session: the controller and its occurrences. A `discussion` is a conversation.
+AUTOMATION_SESSION_KINDS = ("automation", "occurrence")
+AUTOMATION_MIGRATION = "automation_sessions_v1"
+#: The bundle a session's purpose follows (Note's process flows are refined by `workflow_kind`).
 BUNDLE_KINDS = {DOCS_QA_BUNDLE_ID: "docs", NOTES_BUNDLE_ID: "notes"}
-#: The one-time migrations, in order: (name, bundle id, kind).
-MIGRATIONS = ((DOCS_QA_MIGRATION, DOCS_QA_BUNDLE_ID, "docs"), (NOTES_MIGRATION, NOTES_BUNDLE_ID, "notes"))
+
+
+def workflow_flow_id(workflow_id: Any) -> Optional[str]:
+    """The flow id of a run's workflow id (`<bundle>@<version>:<flow>` -> `<flow>`), or None."""
+    wid = str(workflow_id or "").strip()
+    if ":" not in wid:
+        return None
+    return wid.split(":", 1)[1].strip() or None
+
+
+def workflow_kind(workflow_id: Any, session_kind: Any = None) -> Optional[str]:
+    """The purpose a row's OWN workflow and attribution imply, None for a conversation:
+    `docs-qa` -> docs; an AbstractNote process flow (PROCESS_NOTE_FLOWS) -> process, any other
+    AbstractNote flow -> notes; an automation controller or occurrence (`session_kind`) ->
+    automation. Exact ids, never text."""
+    bid = workflow_bundle_id(workflow_id)
+    if bid == NOTES_BUNDLE_ID:
+        return "process" if workflow_flow_id(workflow_id) in PROCESS_NOTE_FLOWS else "notes"
+    if bid in BUNDLE_KINDS:
+        return BUNDLE_KINDS[bid]
+    if str(session_kind or "") in AUTOMATION_SESSION_KINDS:
+        return "automation"
+    return None
+
+
+def _migration_matchers():
+    def by_root_bundle(kind: str):
+        # Sessions started through the door: their PARENT-LESS turn root ran the bundle.
+        return lambda row: kind if not row.get("parent_run_id") and workflow_kind(row.get("workflow_id")) == kind else None
+
+    def by_row(kind: str):
+        # Occurrence sessions have a parent (their controller): every turn row counts.
+        return lambda row: kind if workflow_kind(row.get("workflow_id"), row.get("session_kind")) == kind else None
+
+    return (
+        (DOCS_QA_MIGRATION, by_root_bundle("docs")),
+        (NOTES_MIGRATION, by_root_bundle("notes")),
+        (PROCESS_MIGRATION, by_row("process")),
+        (AUTOMATION_MIGRATION, by_row("automation")),
+    )
+
+
+#: The one-time migrations, in order: (name, matcher(row) -> kind | None).
+MIGRATIONS = _migration_matchers()
 
 _LOCK = threading.RLock()
 
@@ -120,6 +175,9 @@ def start_kind(bundle_id: Any, flow_id: Any) -> Optional[str]:
     """The purpose a run start implies (`POST /runs/start`): the kind of the requested bundle
     (`bundle_id`, else the bundle of a namespaced `flow_id`), None for a conversation."""
     bid = bundle_base_id(bundle_id) or workflow_bundle_id(flow_id)
+    if bid == NOTES_BUNDLE_ID:
+        flow = workflow_flow_id(flow_id) or str(flow_id or "").strip()
+        return "process" if flow in PROCESS_NOTE_FLOWS else "notes"
     return BUNDLE_KINDS.get(bid or "")
 
 
@@ -128,14 +186,15 @@ def is_notes_workflow(workflow_id: Any) -> bool:
     return workflow_bundle_id(workflow_id) == NOTES_BUNDLE_ID
 
 
-def kind_of(kinds_map: Dict[str, str], session_id: Any, workflow_id: Any = None) -> str:
-    """The purpose of a listed row: the session's mark, else `notes` when the row runs an
-    AbstractNote workflow (the sessions Note's automations open are never marked, module doc),
-    else a conversation."""
+def kind_of(kinds_map: Dict[str, str], session_id: Any, workflow_id: Any = None, session_kind: Any = None) -> str:
+    """The purpose of a listed row: the session's mark, else what its own workflow and
+    attribution imply (`workflow_kind`: Note's flows, docs-qa, an automation's controller or
+    occurrence — the sessions automations open are never marked, module doc), else a
+    conversation."""
     mark = kinds_map.get(str(session_id or ""))
     if mark:
         return mark
-    return "notes" if is_notes_workflow(workflow_id) else DEFAULT_KIND
+    return workflow_kind(workflow_id, session_kind) or DEFAULT_KIND
 
 
 # Read cache (gateway load 2026-10-26): `GET /runs` read this file on every call, on the event
@@ -188,28 +247,31 @@ def pending_migrations(data_dir: Any) -> Tuple[str, ...]:
     """The one-time migrations (MIGRATIONS) this plane has not run yet."""
     with _LOCK:
         done = _load_cached(data_dir).get("migrations") or {}
-        return tuple(name for name, _bundle, _kind in MIGRATIONS if name not in done)
+        return tuple(name for name, _matcher in MIGRATIONS if name not in done)
 
 
 def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: Optional[Iterable[str]] = None) -> Dict[str, int]:
-    """Run (once each) the pending migrations among `names` (all by default) over the turn roots
-    `root_rows`: every session whose PARENT-LESS turn root ran the migration's bundle gets its
-    kind, unless the session already has one. Returns `{migration: sessions marked}` for the
-    migrations that ran now; a second call changes nothing. One read, one write."""
+    """Run (once each) the pending migrations among `names` (all by default) over the turn rows
+    `root_rows`: every session one of the migration's matcher names (docs-qa / Note roots by
+    their parent-less turn root's bundle; process and automation sessions by any turn row's
+    workflow and attribution) gets its kind, unless the session already has one. Returns
+    `{migration: sessions marked}` for the migrations that ran now; a second call changes
+    nothing. One read, one write."""
     rows = list(root_rows)
     with _LOCK:
         data = _load(data_dir)
         migrations = data.setdefault("migrations", {})
-        wanted = set(names) if names is not None else {name for name, _b, _k in MIGRATIONS}
+        wanted = set(names) if names is not None else {name for name, _m in MIGRATIONS}
         now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
         out: Dict[str, int] = {}
-        for name, bundle, kind in MIGRATIONS:
+        for name, matcher in MIGRATIONS:
             if name not in wanted or name in migrations:
                 continue
             marked = 0
             for row in rows:
                 sid = str(row.get("session_id") or "").strip()
-                if not sid or row.get("parent_run_id") or workflow_bundle_id(row.get("workflow_id")) != bundle:
+                kind = matcher(row) if sid else None
+                if not kind:
                     continue
                 if (data["sessions"].get(sid) or {}).get("kind") in (None, DEFAULT_KIND):
                     data["sessions"][sid] = {"kind": kind, "marked_at": now, "by": name}

@@ -801,6 +801,13 @@ automation:
 A growing automation's occurrences have `session_kind: "automation"`; an
 independent automation's occurrences have `session_kind: "occurrence"`.
 
+Every row also carries `kind`, the session's purpose
+([api.md](./api.md#listing-behaviour)): an automation's occurrence sessions are
+`kind: "automation"` and leave the default conversation list (`kind=automation`,
+`kind=conversation,automation` or `session_kind=automation,occurrence` list
+them); AbstractNote's `note-process`, `note-reflect` and `note-consolidate`
+occurrences are `kind: "process"`, its captures and drains `notes`.
+
 - **`session_kind` filter.** A comma-separated subset, for example
   `session_kind=chat,discussion`. An unknown kind answers 400.
 - **`root_only=true` returns turns:** runs without a parent, except automation

@@ -9455,8 +9455,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         from ..session_kinds import start_kind
 
         session_kind_req = start_kind(bundle_id, flow_id)
-    if session_kind_req in ("docs", "notes"):
-        # Marked BEFORE the run starts, so the conversation lists never show it.
+    if session_kind_req and session_kind_req != "conversation":
+        # Marked BEFORE the run starts, so the conversation lists never show it (docs, notes,
+        # a process such as a phone or watch probe, an automation session).
         from ..session_kinds import SessionKindsUnreadable, mark_session_kind
 
         try:
@@ -10262,9 +10263,19 @@ async def list_runs(
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
 
-    want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
-    if want_kind not in ("conversation", "docs", "notes", "all"):
-        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected conversation|docs|notes|all)")
+    # The session PURPOSE (session_kinds.KINDS; backlog 1166: automation and process joined):
+    # the default is conversations; a comma list names several; `all` lists every purpose.
+    from ..session_kinds import KINDS as _SESSION_PURPOSES
+
+    raw_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else "conversation"
+    want_kinds = frozenset(k.strip() for k in raw_kind.split(",") if k.strip())
+    if not want_kinds or any(k not in (*_SESSION_PURPOSES, "all") for k in want_kinds):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid kind {kind!r} (expected conversation|docs|notes|all, automation or process; a comma-separated list is accepted)",
+        )
+    want_all = "all" in want_kinds
+    want_kind = ",".join(sorted(want_kinds))  # the depth-memory key below
     try:
         kinds_map = _session_kinds(svc.config.data_dir)
     except SessionKindsUnreadable as exc:
@@ -10275,9 +10286,22 @@ async def list_runs(
         return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
 
     def _kind_of(summary: Dict[str, Any]) -> str:
-        # The mark, else the row's own workflow (an AbstractNote automation's occurrence
-        # sessions are notes without a mark: session_kinds.kind_of).
-        return _kind_of_row(kinds_map, summary.get("session_id"), summary.get("workflow_id"))
+        # The mark, else the row's own workflow and attribution (an AbstractNote automation's
+        # occurrence sessions are notes or processes, an automation's occurrences are
+        # automation sessions, without a mark: session_kinds.kind_of).
+        return _kind_of_row(kinds_map, summary.get("session_id"), summary.get("workflow_id"), summary.get("session_kind"))
+
+    def _purpose_listed(summary: Dict[str, Any]) -> bool:
+        """The row's purpose is one the caller asked for. A caller that filters by the
+        automation ATTRIBUTION (`session_kind=automation,occurrence` — the Observer's and
+        Code's automation lists) has asked for automation sessions by their own name: those
+        rows pass whatever `kind` says (an automation session IS that attribution)."""
+        if want_all:
+            return True
+        purpose = _kind_of(summary)
+        if purpose in want_kinds:
+            return True
+        return purpose == "automation" and kinds is not None and summary.get("session_kind") in kinds
 
     def _matches_query(summary: Dict[str, Any]) -> bool:
         """The console query language over the three identity fields shown
@@ -10286,7 +10310,7 @@ async def list_runs(
             return False
         if archive_filter and (str(summary.get("session_id") or "") in archived_map) != bool(archived_only):
             return False
-        if archive_filter and want_kind != "all" and _kind_of(summary) != want_kind:
+        if archive_filter and not _purpose_listed(summary):
             return False
         if qtext is None:
             return True
@@ -10627,8 +10651,8 @@ async def list_runs(
                 item["archived"] = True
                 item["archived_at"] = rec.get("archived_at")
         # "Archived · N" counts the sessions of the listed purpose.
-        archived_count = len(archived_map) if want_kind == "all" else sum(
-            1 for sid in archived_map if kinds_map.get(str(sid), "conversation") == want_kind
+        archived_count = len(archived_map) if want_all else sum(
+            1 for sid in archived_map if kinds_map.get(str(sid), "conversation") in want_kinds
         )
         out_page: Dict[str, Any] = {
             "items": items,
@@ -30691,10 +30715,15 @@ async def host_runs(
     principal = _require_admin_principal(request)
     from ..admin_runtimes import HOST_RUN_KINDS_DEFAULT, recent_runs_host_wide
 
+    from ..session_kinds import KINDS as _SESSION_PURPOSES
+
     want_kind = str(kind).strip().lower() if isinstance(kind, str) and kind.strip() else None
-    if want_kind not in (None, "notes", "all"):
-        raise HTTPException(status_code=400, detail=f"Invalid kind {kind!r} (expected notes|all, or none for every purpose but notes)")
-    kinds = HOST_RUN_KINDS_DEFAULT if want_kind is None else (("notes",) if want_kind == "notes" else None)
+    if want_kind not in (None, "all", *_SESSION_PURPOSES):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid kind {kind!r} (expected {'|'.join(_SESSION_PURPOSES)}|all, or none for every purpose but notes and processes)",
+        )
+    kinds = HOST_RUN_KINDS_DEFAULT if want_kind is None else (None if want_kind == "all" else (want_kind,))
     svc = get_gateway_service()
     key = (int(limit), round(float(window_hours), 3), kinds)
     now = time.time()

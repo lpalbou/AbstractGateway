@@ -1307,27 +1307,38 @@ session moves it to the top. Apps show that order as served, with archived sessi
 own Archived section (the framework's ADR 0048; automations follow the same rule, see
 [Listing order](./automations.md#listing-order)).
 
-**Session purpose (`kind`).** A session is a `conversation` (the default), a
-`docs` chat (a Docs assistant conversation) or `notes` (AbstractNote's own
-work: its captures and its background processing). `POST /api/gateway/runs/start`
-takes `kind: "docs"` or `kind: "notes"` with a `session_id` (the kit's Docs
-assistant sends `docs`); any other value, or `docs`/`notes` without a session,
-is a 400. Turn listings (`GET /runs?root_only=true` or `archived_only=true`,
-without `session_id` / `parent_run_id`) take `kind=conversation` (the default),
-`kind=docs`, `kind=notes` or `kind=all`, so a docs chat or a note session never
-appears in a conversation list while staying in the same pool: readable by
-`session_id`, ledgered, archivable. Every row carries `kind`. The mark lives in
-the plane's `session_kinds.json`; a session without one is a conversation.
+**Session purpose (`kind`).** A session is a `conversation` (the default; an
+entity visit is a conversation with an entity), a `docs` chat (a Docs assistant
+conversation), `notes` (AbstractNote's captures and drains), `automation` (an
+occurrence of an automation a person created: the controller's and its
+occurrences' sessions) or `process` (work the framework runs for its own
+treatments: AbstractNote's `note-process`, `note-reflect` and
+`note-consolidate` occurrences, the phone and watch voice probes, model-host
+verifications). `POST /api/gateway/runs/start` takes `kind` with a `session_id`
+(the kit's Docs assistant sends `docs`, the Assistant's probes send `process`);
+any other value, or a non-conversation kind without a session, is a 400. Turn
+listings (`GET /runs?root_only=true` or `archived_only=true`, without
+`session_id` / `parent_run_id`) take `kind=conversation` (the default), one
+kind, a comma list (`kind=conversation,automation`) or `kind=all`, so a docs
+chat, a note session, an automation's occurrence or a process never appears in
+a conversation list while staying in the same pool: readable by `session_id`,
+ledgered, archivable. A listing that asks for the automation attribution
+(`session_kind=automation,occurrence`) lists those sessions whatever `kind`
+says — that attribution is what makes them automation sessions. Every row
+carries `kind` and `session_kind`. The mark lives in the plane's
+`session_kinds.json`; a session without one is classified by its own workflow
+and attribution, else it is a conversation.
 
-The purpose follows the workflow's bundle id (matched exactly, whatever client
-starts the run). A run of the shipped `docs-qa` workflow marks its session
-`docs` even without `kind`; a run of an AbstractNote workflow
-(`abstractnote@<version>:<flow>`) marks its session `notes`. The first turn
-listing runs the one-time migrations `docs_qa_bundle_v1` and
-`abstractnote_bundle_v1`, which mark every existing session whose parent-less
-turn root ran that bundle. The sessions AbstractNote's automations open (one
-per occurrence) are never started through `POST /runs/start`: a listed turn
-whose own workflow is an AbstractNote workflow is `notes` without a mark.
+The purpose follows the workflow's bundle id and the run's attribution (matched
+exactly, whatever client starts the run). A run of the shipped `docs-qa`
+workflow marks its session `docs` even without `kind`; a run of an AbstractNote
+workflow (`abstractnote@<version>:<flow>`) marks its session `notes`, or
+`process` for the three process flows. The first turn listing runs the one-time
+migrations `docs_qa_bundle_v1`, `abstractnote_bundle_v1`, `process_sessions_v1`
+and `automation_sessions_v1`, which mark the existing sessions once. The
+sessions automations open (one per occurrence) are never started through
+`POST /runs/start`: a listed turn is `automation`, `notes` or `process` by its
+own workflow and attribution, without a mark.
 
 The session's owner or an admin may archive it. Each account works in its own
 runtime plane, so a session that belongs to another account answers

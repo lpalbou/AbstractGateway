@@ -557,7 +557,7 @@ def _plane_kind_of(plane_dir: Optional[Path], plane: str, warnings: List[str]) -
             marks = session_kinds(plane_dir)
         except SessionKindsUnreadable as e:
             warnings.append(f"#FALLBACK session kinds unreadable on plane {plane}: {e}")
-    return lambda row: kind_of(marks, row.get("session_id"), row.get("workflow_id"))
+    return lambda row: kind_of(marks, row.get("session_id"), row.get("workflow_id"), row.get("session_kind"))
 
 
 def _observer_path(run_id: Any) -> Optional[str]:
@@ -888,9 +888,10 @@ def _epoch_or_none(value: Any) -> Optional[float]:
 
 
 #: The session purposes the host listing shows unless asked (`kind=`): every purpose but
-#: AbstractNote's own background work (session_kinds.py), which never shows as a person's
-#: conversation or automation.
-HOST_RUN_KINDS_DEFAULT = ("conversation", "docs")
+#: AbstractNote's own background work and the framework's processes (session_kinds.py), which
+#: never show as a person's conversation or automation. Automation sessions (backlog 1166)
+#: stay in: the tray's Automations menu reads this list.
+HOST_RUN_KINDS_DEFAULT = ("conversation", "docs", "automation")
 
 
 def recent_runs_host_wide(
