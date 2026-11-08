@@ -136,14 +136,18 @@ def test_only_the_owner_plane_can_archive_a_session(two_users) -> None:
     aid = c.post("/api/gateway/automations", headers=alice, json=body).json()["automation_id"]
     assert c.post(f"/api/gateway/automations/{aid}/commands", headers=alice, json={"command_id": "go", "type": "automation.run_now"}).status_code == 200
 
+    # The occurrence is an automation session (backlog 1166): the plain default lists
+    # conversations only, so the turn listing asks for both purposes.
+    listing = "/api/gateway/runs?root_only=true&include_ledger_len=false&kind=conversation,automation"
+
     def a_turn():
-        items = c.get("/api/gateway/runs?root_only=true&include_ledger_len=false", headers=alice).json()["items"]
+        items = c.get(listing, headers=alice).json()["items"]
         return items[0] if items else None
 
     sid = wait_until(a_turn, timeout_s=20)["session_id"]
     r = c.post(f"/api/gateway/sessions/{sid}/archive", headers=bob)
     assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "session_not_found"
-    assert c.get("/api/gateway/runs?root_only=true&include_ledger_len=false", headers=bob).json()["archived_sessions"] == 0
+    assert c.get(listing, headers=bob).json()["archived_sessions"] == 0
     assert c.post(f"/api/gateway/sessions/{sid}/archive", headers=alice).status_code == 200
-    mine = c.get("/api/gateway/runs?root_only=true&include_ledger_len=false", headers=alice).json()
+    mine = c.get(listing, headers=alice).json()
     assert mine["items"] == [] and mine["archived_sessions"] == 1
