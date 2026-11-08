@@ -1454,18 +1454,29 @@ def entity_card(
     provenance) plus the gateway overlays (manifest name/age, operator
     state, mind substrate, host moments). Pure reads only — knowing
     someone must not fake their memory usage. `as_of` anchors the engine
-    sections at a journal seq (the observer's timeline card)."""
+    sections at a journal seq (the observer's timeline card).
+
+    Each record brief in `discoveries.interests`, `lessons.lessons` and
+    `key_moments.moments` carries its stored understanding under memory's
+    names, null where the store holds none (`entity_understanding`): the
+    current reading, the one its `statement` shows. Diary briefs (questions,
+    problems, book lessons) are unchanged."""
+    from ..entity_understanding import RecordUnderstandings, card_with_understanding
+
+    registry = _registry()
     try:
-        return _registry().card(
+        card = registry.card(
             name,
             top_n=int(top_n),
             current_window_events=int(current_window_events),
             as_of=int(as_of) if as_of is not None else None,
         )
+        home = registry.get_home(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return card_with_understanding(card, RecordUnderstandings(home))
 
 
 @router.get("/{name}/tile")

@@ -116,7 +116,12 @@ async def replay_entity_stream(
 
         await off_loop("heavy", sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
 
+    from ..entity_understanding import RecordUnderstandings, with_recalled
+
     def _lines():
+        # Recall snapshots carry each recalled record's stored understanding
+        # (`display.recalled`), read once per record for this response.
+        reads = RecordUnderstandings(home) if enrich else None
         for envelope in merged_replay(
             home,
             entities_dir=registry.entities_dir,
@@ -126,6 +131,8 @@ async def replay_entity_stream(
             families=family_list,
             enrich=bool(enrich),
         ):
+            if reads is not None:
+                envelope = with_recalled(envelope, reads)
             yield (json.dumps(envelope, ensure_ascii=False) + "\n").encode("utf-8")
 
     return StreamingResponse(_batch_bytes(_lines()), media_type="application/x-ndjson")
@@ -149,12 +156,23 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
       into the stream (kind="diary_read") so the entity's biography
       still shows it was read — visibility preserved, friction removed.
     - Honest absence is 404: no payload_ref, or the artifact is gone.
+    - A SUMMARY with no payload_ref answers 200 with its digest as the text
+      (`born_digest: false`, `summarizes`: the records it summarizes).
+    - STORED UNDERSTANDING (every non-diary answer): memory's fields under
+      memory's names (`entity_understanding.UNDERSTANDING_KEYS`: digest,
+      digest_method, digest_version, version_count, authored_by, reader,
+      understood_at, cause, target, target_type, card_revision,
+      source_count, narrated, narration_version, replaced_by; null when the
+      store holds none) and `versions` (memory's `versions`, oldest first).
+      Diary-shaped answers are unchanged.
     """
     registry = _registry()
     home = await _home_or_404_offloop(registry, name)
 
-    from abstractruntime.integrations.abstractmemory.memory_facade import resolve_digest_assertion
+    from abstractruntime.integrations.abstractmemory.memory_facade import TripleQuery, resolve_digest_assertion
     from abstractruntime.storage.artifacts import FileArtifactStore
+
+    from ..entity_understanding import RecordUnderstandings, is_diary_shaped as _is_diary_shaped, understanding_fields
 
     gid = str(graph_id or "").strip()
     if not gid:
@@ -166,12 +184,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}
 
     entry_id = str(attrs.get("entry_id") or "").strip()
-    is_diary_shaped = (
-        str(attrs.get("record_kind") or "") == "diary"
-        or str(getattr(assertion, "scope", "") or "").strip().lower() == "diary"
-        or bool(attrs.get("private"))
-        or bool(entry_id)
-    )
+    is_diary_shaped = _is_diary_shaped(assertion)
     if is_diary_shaped and entry_id:
         entry = home.diary.get_entry(entry_id)
         if entry is None:
@@ -202,7 +215,39 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
             "created_at": entry.get("written_at"),
         }
 
+    # The record's stored understanding (memory 0059), on every non-diary
+    # answer below. A diary-shaped record without a book entry keeps its
+    # former answer exactly: no digest or provenance of it leaves here.
+    understanding: Dict[str, Any] = {}
+    if not is_diary_shaped:
+        understood = RecordUnderstandings(home).read(gid)
+        understanding = {
+            **understanding_fields(understood),
+            "versions": home.memory.versions(gid) if understood is not None else [],
+        }
+
     payload_ref = str(attrs.get("payload_ref") or "").strip()
+    if not payload_ref and not is_diary_shaped and str(attrs.get("record_kind") or "") == "summary":
+        # A summary formed without its verbatim (older session reflections,
+        # the mechanical floor) answers with its words and the records it
+        # summarizes, never a 404 the app shows as an empty card.
+        summarizes = [
+            str(e.object)
+            for e in home.store.query(TripleQuery(subject=assertion.subject, predicate="summarizes", limit=0))
+            if e.object and isinstance(e.attributes, dict) and e.attributes.get("record_edge")
+        ]
+        return {
+            "record_id": gid,
+            "title": str(attrs.get("title") or ""),
+            "text": str(getattr(assertion, "object", "") or ""),
+            "content_type": "text/plain",
+            "born_digest": False,
+            "summarizes": summarizes,
+            "turn_id": None,
+            "run_id": None,
+            "created_at": assertion.observed_at,
+            **understanding,
+        }
     if not payload_ref:
         # Born-digest kinds (a2a 0007 round 2; widened c2529 on laurent's
         # "we should be able to view the world model cards"): interests,
@@ -225,6 +270,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
                 "turn_id": None,
                 "run_id": None,
                 "created_at": assertion.observed_at,
+                **understanding,
             }
         raise HTTPException(status_code=404, detail=f"record {gid!r} carries no verbatim (no payload_ref)")
 
@@ -243,6 +289,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
             "turn_id": None,
             "run_id": None,
             "created_at": assertion.observed_at,
+            **understanding,
         }
 
     try:
@@ -273,6 +320,7 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
         "turn_id": provenance.get("turn_id"),
         "run_id": provenance.get("run_id"),
         "created_at": assertion.observed_at,
+        **understanding,
     }
 
 
@@ -410,9 +458,14 @@ def _collect_replay_chunk(
     bounded chunk, so poll re-entry is a cursored continuation, never a
     full-journal walk on the loop. Returns (envelopes, new_cursor,
     exhausted)."""
+    from ..entity_understanding import RecordUnderstandings, with_recalled
+
     out: List[Dict[str, Any]] = []
     pos = float(cursor)
     exhausted = True
+    # Recall snapshots carry `display.recalled`; the record reads are kept
+    # for this chunk only (memory's per-export rule), never across chunks.
+    reads = RecordUnderstandings(home) if enrich else None
     it = merged_replay(
         home,
         entities_dir=entities_dir,
@@ -427,7 +480,7 @@ def _collect_replay_chunk(
             if str(envelope.get("family") or "") == "host":
                 continue  # the host lane owns marker delivery
             seq = float(envelope.get("seq") or 0.0)
-            out.append(envelope)
+            out.append(with_recalled(envelope, reads) if reads is not None else envelope)
             pos = max(pos, seq)
             if len(out) >= int(limit):
                 exhausted = False

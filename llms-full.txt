@@ -10561,7 +10561,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | POST | `/api/gateway/entities` | Create: lint the spark, store it verbatim, plant the identity core (`engram`), write the manifest. Idempotent for the same spark; a changed document is **refused** (409) — identity does not silently drift. |
 | GET | `/api/gateway/entities` | List homes. |
 | GET | `/api/gateway/entities/{name}` | Inspect: the folded identity core, recent diary gists, top standings, and the wake reasons — open questions (curiosity), open problems (something wrong), incubating ideas (direction). Pure reads — inspecting never counts as the entity *using* its memory. |
-| GET | `/api/gateway/entities/{name}/card` | The identity card ("something to know our companion"): the engine compositor's sections — identity, age+context, current state (a window, never a point), likes/dislikes (G+ and G− separate; ambivalence preserved), open/resolved questions (resolution is the entity's own act), key moments, discoveries — each with provenance, plus gateway overlays (name/age, operator state, mind substrate, host moments). `?as_of=<seq>` anchors the card at a journal moment ("who was he at seq 500"). Pure reads. |
+| GET | `/api/gateway/entities/{name}/card` | The identity card ("something to know our companion"): the engine compositor's sections — identity, age+context, current state (a window, never a point), likes/dislikes (G+ and G− separate; ambivalence preserved), open/resolved questions (resolution is the entity's own act), key moments, discoveries — each with provenance, plus gateway overlays (name/age, operator state, mind substrate, host moments). `?as_of=<seq>` anchors the card at a journal moment ("who was he at seq 500"). Interest, lesson and key-moment briefs carry their [stored understanding](#a-records-stored-understanding-who-wrote-these-words). Pure reads. |
 | GET | `/api/gateway/entities/{name}/tile` | What one small card about an entity shows, and nothing more (about 2 KB instead of up to 90 KB): name, look, age, mind (its model); what it is doing now (`now.phase`: sleep, visit, personal, work or stopped; `now.state`, the operator state under it — `awake` under `sleep` is the resting default; `busy`; `since`; `trouble: {kind: "own_time_failed"}` when its own time stopped after repeated failures); its newest interests (`into_lately`), its newest open problem or question (`on_its_mind`), its latest lesson, its last meaningful moment (`last_moment.kind` from a closed set: summon, session_closed, sleep, wake, pause, personal_started, personal_stop_requested, personal_frozen, phase_changed, substrate_changed, night_voice, work_order_changed, task_inbox_changed, identity_changed) and counts. The roster (`GET /entities`) advertises it as `reads.tile`; a client that does not find it there reads the card. Pure read; a source that cannot be read costs its facts with a labelled warning, never the tile; a held home answers 409. |
 | GET | `/api/gateway/entities/{name}/verify` | Verify the book's hash chain, the graph projections against the book, the spark document against the engrammed marker, and the manifest. |
 | POST | `/api/gateway/entities/{name}/summon` | Summon the entity into a work session (below). |
@@ -10885,15 +10885,70 @@ the verbatim is the lossless original). Three shapes:
   store, lossless.
 - **Identity records** (values/purposes/traits): their verbatim IS the
   attested spark document — the endpoint serves the spark text itself.
-- **Born-digest records** (interests, dreams): born as words — their
-  digest is their complete text, never a compression. Served as-is with
+- **Born-digest records** (interests, dreams, world-model cards, lessons
+  formed without a verbatim): born as words — their digest is their
+  complete text, never a compression. Served as-is with
   `born_digest: true` ("the words you see are all the words there are").
+- **Summaries without a verbatim** (older session reflections, the
+  mechanical floor): served with their digest as the text,
+  `born_digest: false` and `summarizes` (the graph ids of the records the
+  summary covers). Any other record without a verbatim is an honest 404.
 - **Diary projections**: served to the **operator** from the book. The read
   is marker-first: a `diary_read` host
   marker (entry id, kind, visibility) lands in the entity's replay stream
   before the words return, so the disclosure is recorded in the entity's
   biography. Private entries are included. Born-digest diary kinds
   (interest/dream) serve their digest as the verbatim.
+
+### A record's stored understanding (who wrote these words)
+
+AbstractMemory rewrites a record's words (its digest) in place and keeps
+every earlier reading as a version. The gateway serves what memory stores,
+under memory's own names, so an app can say "Summary by Nerin's mind
+(qwen3.8-27b), 7 Nov" or "Extract (mechanical)" without guessing from the
+text. Every block carries all of these keys; a value the store does not
+hold for the record is `null`, never a missing key:
+
+| Field | Meaning |
+|---|---|
+| `digest` | The words of the reading |
+| `digest_method` | How they were made (`mechanical-v2`, `mechanical-card-v2`, `authored-v1`, ...) |
+| `digest_version` | Which reading (0 = the original) |
+| `version_count` | How many readings memory keeps (0 = never rewritten) |
+| `authored_by` | `{kind, id}`: `mechanical`, `entity-mind`, `capability-model`, `operator` (or `unrecorded` for an old label) |
+| `reader` | `{provider, model, thinking}` of the model that wrote the words (null for mechanical and operator text) |
+| `understood_at` | When this reading was formed |
+| `cause` | Why it was written: `formation`, `backfill`, `ripple`, `evidence`, `operator`, `revert` |
+| `target`, `target_type`, `card_revision`, `source_count` | World-model cards: who or what the card is about, its revision, how many records it was built from |
+| `narrated`, `narration_version` | Dreams: whether a narration is stored beside the summary |
+| `replaced_by` | A superseded record: the graph ids of the records that replaced it |
+
+Where the app reads them:
+
+- **The record read** (`GET .../records/{graph_id}/verbatim`): every
+  non-diary answer carries the fields of the record's current reading and
+  `versions`, memory's list of every reading, oldest first (each with
+  `version`, `text`, `digest_method`, `author`, `reader`, `cause` as
+  `{cause, ...}`, `understood_at`, `seq` and `current`; empty when the
+  record was never rewritten).
+- **Recall snapshots** in the replay stream (`family: "snapshot"`, with
+  `enrich=true`): `display.recalled` holds one block per recalled record
+  (`record_id` as the snapshot lists it, `graph_id`, `kind`, then the
+  fields). The words and their provenance (`digest`, `digest_method`,
+  `digest_version`, `authored_by`, `reader`, `understood_at`, `cause`) are
+  the reading that entered that context, so `digest` equals the
+  snapshot's own row; `version_count`, `replaced_by` and the card and dream
+  fields describe the record now. The payload (the journal record) is
+  unchanged.
+- **The card** (`GET .../card`): each record brief in
+  `discoveries.interests`, `lessons.lessons` and `key_moments.moments`
+  carries the fields of the current reading (its `statement` is the same
+  words as `digest`).
+
+Diary records get none of this: their record read is the book entry as
+before (a recorded `diary_read`), recall snapshots do not list them in
+`display.recalled`, and the card's questions, problems and book lessons are
+unchanged. The reads deposit nothing in the entity's memory.
 
 ### The operator diary door (reads are visible events)
 
