@@ -93,6 +93,113 @@ async def _home_or_404_offloop(registry: EntityRegistry, name: str):
     return await off_loop("light", _home_or_404, registry, name)
 
 
+# ---- Tool-result artifacts of the entity's home (root 1145 step 2) --------
+# Every tool result during the entity's activity rests WHOLE in the home's
+# artifact store (runtime `keep_tool_result_artifact`; the visit lane passes
+# the store from entities.py). These reads serve them: metadata rows, one
+# record's metadata, the bytes with their stored content type. Read-only,
+# through the home's FileArtifactStore; no path or host detail leaves here.
+_ARTIFACT_LIST_SCAN = 10_000  # rows considered per listing before the page is cut (bounded work)
+
+
+def _artifact_row(meta: Any) -> Dict[str, Any]:
+    """One metadata row as served: the store's record minus nothing it holds
+    about the artifact (ids, sizes, tags, the tool's own metadata) — the
+    store keeps no host path in its metadata, and none is added."""
+    row = dict(meta.to_dict()) if hasattr(meta, "to_dict") else dict(meta or {})
+    return row
+
+
+def _home_artifact_store(home: Any):
+    """The home's own artifact store (`<home>/artifacts`), the one the runtime's
+    `keep_tool_result_artifact` writes to and the verbatim route reads from."""
+    from abstractruntime.storage.artifacts import FileArtifactStore
+
+    return FileArtifactStore(str(home.home_dir / "artifacts"))
+
+
+def _list_entity_artifacts(home: Any, *, run_id: Optional[str], tool: Optional[str], turn_id: Optional[str],
+                           limit: int, offset: int) -> Dict[str, Any]:
+    from abstractruntime.identity.tools import TOOL_RESULT_ARTIFACT_KIND
+
+    tags: Dict[str, str] = {"kind": TOOL_RESULT_ARTIFACT_KIND}
+    if tool:
+        tags["tool"] = tool
+    if turn_id:
+        tags["turn_id"] = turn_id
+    rows = list(_home_artifact_store(home).search(run_id=run_id or None, tags=tags, limit=_ARTIFACT_LIST_SCAN))
+    rows.sort(key=lambda m: (str(getattr(m, "created_at", "") or ""), str(getattr(m, "artifact_id", ""))), reverse=True)
+    page = rows[offset: offset + limit + 1]
+    more = len(page) > limit
+    page = page[:limit]
+    return {
+        "items": [_artifact_row(m) for m in page],
+        "count": len(page),
+        "offset": offset,
+        "next_cursor": str(offset + limit) if more else None,
+    }
+
+
+@router.get("/{name}/artifacts")
+async def list_entity_artifacts(
+    name: str,
+    run_id: Optional[str] = Query(None, description="Only the artifacts this run (a visit, a tick) retrieved."),
+    tool: Optional[str] = Query(None, description="Only this tool's results (web_search, fetch_url, read_file, …)."),
+    turn_id: Optional[str] = Query(None, description="Only this turn's results (the visit turn id, e.g. t-0003)."),
+    limit: int = Query(50, ge=1, le=500, description="Rows per page."),
+    cursor: Optional[str] = Query(None, description="The previous page's `next_cursor`."),
+) -> Dict[str, Any]:
+    """The tool results kept whole during this entity's activity (root 1145):
+    metadata rows, newest first, bounded. `items[]` carry `artifact_id`,
+    `content_type`, `size_bytes`, `created_at`, `run_id`, `tags` (kind, tool,
+    lane, entity_id, turn_id or tick_id, session_id) and `metadata` (the
+    tool, its arguments, `shown_is_view`, `bytes`, `failed`, …). Episode
+    verbatims are a different family: `/records/{graph_id}/verbatim`."""
+    registry = _registry()
+    home = await _home_or_404_offloop(registry, name)
+    try:
+        offset = max(0, int(cursor)) if cursor not in (None, "") else 0
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"cursor must be a previous page's next_cursor (got {cursor!r})")
+    return await off_loop(
+        "light", _list_entity_artifacts, home,
+        run_id=(run_id or "").strip() or None, tool=(tool or "").strip() or None,
+        turn_id=(turn_id or "").strip() or None, limit=int(limit), offset=offset,
+    )
+
+
+@router.get("/{name}/artifacts/{artifact_id}/meta")
+async def read_entity_artifact_meta(name: str, artifact_id: str) -> Dict[str, Any]:
+    """One kept result's metadata (the same row the listing serves); 404 when no such artifact."""
+    registry = _registry()
+    home = await _home_or_404_offloop(registry, name)
+    aid = str(artifact_id or "").strip()
+    meta = await off_loop("light", _home_artifact_store(home).get_metadata, aid) if aid else None
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"no artifact {aid!r} in this entity's home")
+    return _artifact_row(meta)
+
+
+@router.get("/{name}/artifacts/{artifact_id}")
+async def read_entity_artifact(name: str, artifact_id: str):
+    """The kept bytes with their stored content type (a fetched page as text,
+    a read image as the image, a command's output); 404 when no such artifact."""
+    from fastapi.responses import Response
+
+    registry = _registry()
+    home = await _home_or_404_offloop(registry, name)
+    aid = str(artifact_id or "").strip()
+    artifact = await off_loop("light", _home_artifact_store(home).load, aid) if aid else None
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"no artifact {aid!r} in this entity's home")
+    content_type = str(artifact.metadata.content_type or "application/octet-stream")
+    return Response(
+        content=bytes(artifact.content),
+        media_type=content_type,
+        headers={"X-Artifact-Id": str(artifact.metadata.artifact_id), "Cache-Control": "private, max-age=3600"},
+    )
+
+
 @router.get("/{name}/replay")
 async def replay_entity_stream(
     name: str,

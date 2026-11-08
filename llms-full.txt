@@ -6837,11 +6837,13 @@ below it, read from the ledger on either store backend (null when the gateway
 has no ledger store). AbstractCode's conversation card shows the sum of its
 turns' `tool_calls`.
 A page also carries `session_totals`: for each `session_id` on the page,
-`{turns, runs}` for the whole session — its turn roots (runs no other run is the
-parent of) and all of its runs — under the page's `session_kind` filter, read
-from the file store's session index (a page of three turns can say the session
-has twelve). The key is absent when the page names no session or the run store
-is not the file-backed one.
+`{turns, runs}` for the whole session — `turns` is what a turn listing shows for
+it (parent-less runs that are not automation controllers, plus occurrences),
+`runs` its runs; the session's internal `session_memory_<id>` bookkeeping run
+counts in neither, so a one-turn conversation reads as 1 — under the page's
+`session_kind` filter, read from the file store's session index (a page of
+three turns can say the session has twelve). The key is absent when the page
+names no session or the run store is not the file-backed one.
 
 ### Archived sessions
 
@@ -10964,6 +10966,24 @@ the verbatim is the lossless original). Three shapes:
   before the words return, so the disclosure is recorded in the entity's
   biography. Private entries are included. Born-digest diary kinds
   (interest/dream) serve their digest as the verbatim.
+
+### What an entity retrieved: tool-result artifacts
+
+Every tool result during an entity's activity — a visit's web search, a
+fetched page, a file it read, an image it looked at, a command's output —
+rests **whole** in the entity's home as an artifact (the runtime's
+`keep_tool_result_artifact`; the result text the entity read ends with
+`[artifact: <id>]`, the visit ledger's `tool_calls` rows and the transcript's
+`tool_details` carry `artifact_id`). Book-adjacent tools (`diary_read`,
+`diary_list`, `search_memory`) store nothing: their content is the home's own
+book and graph. Three read-only routes serve them, from the home's own store,
+with no file path in any answer:
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/gateway/entities/{name}/artifacts?run_id=&tool=&turn_id=&limit=&cursor=` | Metadata rows, newest first, bounded (`limit` 1–500, default 50; `next_cursor` for the next page). Each row: `artifact_id`, `content_type`, `size_bytes`, `created_at`, `run_id`, `tags` (`kind: tool_result`, `tool`, `lane`, `entity_id`, `turn_id` or `tick_id`, `session_id`) and `metadata` (the tool, its `arguments`, `shown_is_view` when the entity saw a bounded view of these bytes, `bytes`, `failed`). |
+| GET | `/api/gateway/entities/{name}/artifacts/{artifact_id}/meta` | One row; 404 when no such artifact. |
+| GET | `/api/gateway/entities/{name}/artifacts/{artifact_id}` | The bytes with their stored content type (a page as text, an image as the image); `X-Artifact-Id` names it; 404 when no such artifact. |
 
 ### A record's stored understanding (who wrote these words)
 

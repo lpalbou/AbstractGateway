@@ -278,6 +278,10 @@ def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[
             success = res.get("success")
             if "success" in res:
                 detail["success"] = bool(success)
+            if res.get("artifact_id"):
+                # The home artifact holding this result whole (root 1145):
+                # `GET /entities/{name}/artifacts/{artifact_id}` serves it.
+                detail["artifact_id"] = str(res["artifact_id"])
             output = res.get("output")
             if isinstance(output, dict) and isinstance(output.get("rendered"), str):
                 # The sight lane's dict output (a read_file on an image): the

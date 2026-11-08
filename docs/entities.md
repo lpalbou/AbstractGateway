@@ -460,6 +460,24 @@ the verbatim is the lossless original). Three shapes:
   biography. Private entries are included. Born-digest diary kinds
   (interest/dream) serve their digest as the verbatim.
 
+### What an entity retrieved: tool-result artifacts
+
+Every tool result during an entity's activity — a visit's web search, a
+fetched page, a file it read, an image it looked at, a command's output —
+rests **whole** in the entity's home as an artifact (the runtime's
+`keep_tool_result_artifact`; the result text the entity read ends with
+`[artifact: <id>]`, the visit ledger's `tool_calls` rows and the transcript's
+`tool_details` carry `artifact_id`). Book-adjacent tools (`diary_read`,
+`diary_list`, `search_memory`) store nothing: their content is the home's own
+book and graph. Three read-only routes serve them, from the home's own store,
+with no file path in any answer:
+
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/gateway/entities/{name}/artifacts?run_id=&tool=&turn_id=&limit=&cursor=` | Metadata rows, newest first, bounded (`limit` 1–500, default 50; `next_cursor` for the next page). Each row: `artifact_id`, `content_type`, `size_bytes`, `created_at`, `run_id`, `tags` (`kind: tool_result`, `tool`, `lane`, `entity_id`, `turn_id` or `tick_id`, `session_id`) and `metadata` (the tool, its `arguments`, `shown_is_view` when the entity saw a bounded view of these bytes, `bytes`, `failed`). |
+| GET | `/api/gateway/entities/{name}/artifacts/{artifact_id}/meta` | One row; 404 when no such artifact. |
+| GET | `/api/gateway/entities/{name}/artifacts/{artifact_id}` | The bytes with their stored content type (a page as text, an image as the image); `X-Artifact-Id` names it; 404 when no such artifact. |
+
 ### A record's stored understanding (who wrote these words)
 
 AbstractMemory rewrites a record's words (its digest) in place and keeps

@@ -2062,6 +2062,22 @@ class EntityRegistry:
                     # This handler folds `tool_result_media` below, so read_file
                     # may say an image is attached to the next model call.
                     results_carry_media=True,
+                    # DURABILITY (root 1145 step 1, operator 2026-11-08: no entity
+                    # activity outside the runtime): every result rests WHOLE as
+                    # an artifact of the entity's home; the result text ends with
+                    # `[artifact: <id>]`. The keys are the runtime's
+                    # (`keep_tool_result_artifact`: lane, phase, run_id,
+                    # session_id, node_id, turn_id, entity_id).
+                    artifact_store=er.home.artifacts,
+                    artifact_context={
+                        "lane": "visit",
+                        "phase": "visit",
+                        "run_id": str(run.run_id),
+                        "session_id": getattr(run, "session_id", None),
+                        "node_id": getattr(run, "current_node", None),
+                        "turn_id": turn_id,
+                        "entity_id": er.home.entity_id,
+                    },
                 )
                 notices.extend(exec_notices)
                 output: Any = str(election.result or "")
@@ -2083,6 +2099,11 @@ class EntityRegistry:
                         "success": True,
                         "output": output,
                         "error": None,
+                        # The home artifact this result rests in (null when the
+                        # tool is book-adjacent or the store refused — the
+                        # #FALLBACK notice says so). Structured: never parsed
+                        # from the `[artifact: <id>]` line.
+                        "artifact_id": election.artifact_id,
                     }
                 )
             out: Dict[str, Any] = {"mode": "executed", "results": results}

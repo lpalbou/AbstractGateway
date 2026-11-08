@@ -1025,6 +1025,115 @@ def test_turn_image_attachment_reaches_the_model_and_the_transcript(monkeypatch:
         assert closed.status_code == 200, closed.text
 
 
+def test_visit_tool_results_rest_as_home_artifacts_and_are_served(monkeypatch: pytest.MonkeyPatch):
+    """Root 1145 step 1+2 at the door (operator 2026-11-08: no entity activity outside the
+    runtime): a visit turn's tool results rest WHOLE as artifacts of the entity's home — the
+    search output byte for byte, a 30 KB file whole while the model saw the 24,000-char view, a
+    PNG as image bytes — each result text ends with `[artifact: <id>]`, the ledger rows and the
+    transcript's tool details carry `artifact_id`, and the read-only routes serve the rows, one
+    record's metadata and the bytes with their content type; unknown ids are 404; no host path
+    appears in any response."""
+    pytest.importorskip("abstractagent.adapters.react_runtime")
+    import abstractruntime.identity.tools as rt_tools
+
+    from abstractgateway import entity_chat
+
+    monkeypatch.setattr(rt_tools, "_run_web_search", lambda q: f"Search results for: {q}\n- a hit about {q}")
+    llm = _NativeToolLLM([
+        {"content": "", "tool_calls": [
+            {"call_id": "s1", "name": "web_search", "arguments": {"query": "durable artifacts"}},
+            {"call_id": "f1", "name": "read_file", "arguments": {"path": "shared/notes.txt"}},
+            {"call_id": "p1", "name": "read_file", "arguments": {"path": "shared/pic.png"}},
+        ]},
+        {"content": "Kept all three."},
+        {"content": "Reflection: kept."},
+    ])
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+
+        from abstractruntime.identity.tool_policy import write_policy_file
+        from abstractruntime.identity.tools import TOOL_RESULT_ARTIFACT_KIND
+
+        write_policy_file(_home_dir(), {"visit": ["web_search", "read_file", "list_files"]})
+        png, _png_abs = _plant_png("shared/pic.png")
+        notes_path = _home_dir() / "workspace" / "shared" / "notes.txt"
+        notes_bytes = ("".join(f"line {i:05d} of the long notes file\n" for i in range(900))).encode("utf-8")
+        assert len(notes_bytes) > 24_000
+        notes_path.write_bytes(notes_bytes)
+
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Look these up."})
+        assert turned.status_code == 200, turned.text
+        assert "Kept all three" in turned.json()["reply"]
+
+        # The home holds three artifacts, byte-identical to what the tools returned / read.
+        from abstractgateway.service import get_gateway_service
+
+        er = get_gateway_service().entity_registry.get_entity_runtime("castor")
+        kept = {a.tags["tool"] + ":" + a.metadata["arguments"]["body"]: a for a in er.home.artifacts.search(tags={"kind": TOOL_RESULT_ARTIFACT_KIND})}
+        assert set(kept) == {"web_search:durable artifacts", "read_file:shared/notes.txt", "read_file:shared/pic.png"}, set(kept)
+        search_meta = kept["web_search:durable artifacts"]
+        assert er.home.artifacts.load(search_meta.artifact_id).content == b"Search results for: durable artifacts\n- a hit about durable artifacts"
+        notes_meta = kept["read_file:shared/notes.txt"]
+        assert er.home.artifacts.load(notes_meta.artifact_id).content == notes_bytes, "the whole file, not the view"
+        assert notes_meta.metadata["shown_is_view"] is True and notes_meta.metadata["bytes"] == len(notes_bytes)
+        png_meta = kept["read_file:shared/pic.png"]
+        assert er.home.artifacts.load(png_meta.artifact_id).content == png and png_meta.content_type == "image/png"
+        for m in kept.values():
+            assert m.metadata["lane"] == "visit" and m.metadata["run_id"] == run_id and m.metadata["turn_id"] == "t-0001"
+            assert m.metadata["entity_id"] == "entity:castor" and m.tags["turn_id"] == "t-0001"
+
+        # The ledger rows name the artifact as a field and the result text ends with the line.
+        rows = {}
+        for rec in er.ledger_store.list(run_id):
+            effect = rec.get("effect") or {}
+            result = rec.get("result")
+            if effect.get("type") == "tool_calls" and isinstance(result, dict):
+                for row in result.get("results") or []:
+                    rows[row.get("call_id")] = row
+        assert rows["s1"]["artifact_id"] == search_meta.artifact_id
+        assert rows["s1"]["output"].endswith(f"[artifact: {search_meta.artifact_id}]")
+        assert rows["f1"]["artifact_id"] == notes_meta.artifact_id and rows["f1"]["output"].endswith(f"[artifact: {notes_meta.artifact_id}]")
+        assert rows["p1"]["artifact_id"] == png_meta.artifact_id and rows["p1"]["output"]["rendered"].endswith(f"[artifact: {png_meta.artifact_id}]")
+        transcript = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
+        details = {d["name"] + ":" + d["artifact_id"]: d for d in transcript["turns"][1]["tool_details"] if d.get("artifact_id")}
+        assert set(details) == {f"web_search:{search_meta.artifact_id}", f"read_file:{notes_meta.artifact_id}", f"read_file:{png_meta.artifact_id}"}
+
+        # The routes: rows newest first, bounded; filters; one record's metadata; the bytes.
+        base = "/api/gateway/entities/Castor/artifacts"
+        listing = client.get(f"{base}?run_id={run_id}").json()
+        assert listing["count"] == 3 and listing["next_cursor"] is None
+        assert {r["artifact_id"] for r in listing["items"]} == {m.artifact_id for m in kept.values()}
+        assert [r["created_at"] for r in listing["items"]] == sorted((r["created_at"] for r in listing["items"]), reverse=True)
+        only_reads = client.get(f"{base}?tool=read_file").json()
+        assert {r["artifact_id"] for r in only_reads["items"]} == {notes_meta.artifact_id, png_meta.artifact_id}
+        first = client.get(f"{base}?turn_id=t-0001&limit=2").json()
+        assert first["count"] == 2 and first["next_cursor"] == "2"
+        rest = client.get(f"{base}?turn_id=t-0001&limit=2&cursor={first['next_cursor']}").json()
+        assert rest["count"] == 1 and rest["next_cursor"] is None
+        assert client.get(f"{base}?turn_id=t-9999").json()["items"] == []
+        assert client.get(f"{base}?cursor=abc").status_code == 400
+
+        meta = client.get(f"{base}/{notes_meta.artifact_id}/meta").json()
+        assert meta["artifact_id"] == notes_meta.artifact_id and meta["metadata"]["tool"] == "read_file"
+        assert meta["metadata"]["arguments"]["body"] == "shared/notes.txt" and meta["size_bytes"] == len(notes_bytes)
+        raw = client.get(f"{base}/{notes_meta.artifact_id}")
+        assert raw.status_code == 200 and raw.content == notes_bytes
+        assert raw.headers["content-type"].startswith("text/plain") and raw.headers["x-artifact-id"] == notes_meta.artifact_id
+        image = client.get(f"{base}/{png_meta.artifact_id}")
+        assert image.status_code == 200 and image.content == png and image.headers["content-type"] == "image/png"
+        assert client.get(f"{base}/nope").status_code == 404 and client.get(f"{base}/nope/meta").status_code == 404
+        assert client.get("/api/gateway/entities/Nobody/artifacts").status_code == 404
+        # No host path on the wire, in any of the answers.
+        home_str = str(_home_dir())
+        for body in (listing, only_reads, meta):
+            assert home_str not in json.dumps(body) and "/Users/" not in json.dumps(body) and "/private/" not in json.dumps(body)
+
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
+
+
 def test_read_file_on_an_image_shows_it_on_the_next_call(monkeypatch: pytest.MonkeyPatch):
     """The sight lane at the door: the entity's own read_file on an image
     serves `{"rendered", "media"}` (runtime's tool_result_media beside the
