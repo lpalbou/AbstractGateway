@@ -15,7 +15,12 @@
   visit) the reply is mirrored into that visit as a turn spoken by the mentioned entity (door join:
   `EntityVisitHost.join_participant` re-signs the stamp with the new participant, then `turn` with that speaker and
   the words `<name> (entity): <reply>`); the visited entity answers it, its home ledger keeps it; listed under
-  `mirrors`. Errors `{detail, code}`: 404 `entity_not_found` for an unknown or a hidden entity alike (members
+  `mirrors`. Only the VISITED entity's own visit is mirrored into (a visit the mention door opened never is: two
+  entities mentioned in one chat do not mirror into each other). The mentioned entity READS the conversation: its
+  visit turn is the session's newest whole turns quoted with their authors (`Laurent: ...`, `Agent (<name>): ...`,
+  `<Name> (entity): ...`, from the turn rows' `author` fields), at most 12 turns / 8,000 tokens whichever first,
+  then the person's words; the answer's `context` states the bound. Visit runs carry `_meta.author` (the entity's
+  display name, identity ref, look). The 404 sentence names the entity only (no server folder path). Errors `{detail, code}`: 404 `entity_not_found` for an unknown or a hidden entity alike (members
   mention only the entities they created; same sentence, same code); 409 `in_another_conversation` naming
   the conversation holding the visit (`session_id`); the visit door's own 409 codes; 503 `entity_cannot_answer`
   (mind unresolvable: the visit door's substrate refusal now carries code `mind_unresolved`; or no reply).

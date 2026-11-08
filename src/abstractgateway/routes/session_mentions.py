@@ -29,8 +29,15 @@ class MentionRequest(BaseModel):
     )
 
 
-def _not_found(detail: str) -> JSONResponse:
-    return JSONResponse(status_code=404, content={"detail": detail, "code": "entity_not_found"},
+def _not_found(name: str) -> JSONResponse:
+    """The one 404 for a missing AND a hidden entity: the sentence only (no server folder path)."""
+    from ..entities import entity_slug
+
+    try:
+        shown = entity_slug(name)
+    except Exception:  # noqa: BLE001 - an invalid name is still just "not found"
+        shown = str(name or "").strip()
+    return JSONResponse(status_code=404, content={"detail": f"There is no entity called {shown!r}.", "code": "entity_not_found"},
                         headers={"X-Gateway-Error-Code": "entity_not_found"})
 
 
@@ -63,7 +70,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
         require_entity_visible(req.entity, registry=registry)
     except HTTPException as e:
         if e.status_code == 404:
-            return _not_found(str(e.detail))
+            return _not_found(req.entity)
         raise
     try:
         return mention(
@@ -77,8 +84,8 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
             mention_index=int(req.mention_index),
             repeat_of=req.repeat_of,
         )
-    except KeyError as e:
-        return _not_found(str(e).strip("'\""))
+    except KeyError:
+        return _not_found(req.entity)
     except MentionRefused as e:
         body: Dict[str, Any] = {"detail": e.detail}
         headers = None

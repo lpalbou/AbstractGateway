@@ -1256,6 +1256,13 @@ class EntityVisitHost:
             identity_ref = entity_identity_ref(manifest.entity_id, home_dir)
             if identity_ref is not None:
                 stamp_run_identity_ref(run.vars, identity_ref)
+            # Who answers in this visit (its display name, identity ref and look), so every surface
+            # reading the home's run names the entity as the identity door does, never by its slug.
+            from abstractruntime.core.turn_author import stamp_turn_authors
+
+            from .entity_mentions import entity_author
+
+            stamp_turn_authors(run.vars, author=entity_author(registry, manifest))
             rt_ns["prompt_cache_binding"] = f"{manifest.entity_id}|{session}"
             if pre.get("thinking"):
                 # Reasoning effort for every model call in this visit: the

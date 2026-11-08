@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import threading
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .entity_visits import VisitRefused
 
@@ -64,7 +64,80 @@ def _session_lock(session_id: str) -> threading.Lock:
 
 
 def _display_name(manifest: Any) -> str:
-    return str(getattr(manifest, "name", "") or getattr(manifest, "slug", "") or "This entity")
+    # THE entity display name (the spark's name, as the identity door words it), never the slug.
+    from .entity_identity import _display_name as identity_display_name
+
+    return identity_display_name(manifest)
+
+
+# The conversation a mentioned entity reads (the chip promises "<name> will read this
+# conversation's history"): the newest whole turns, at most this many and this many tokens,
+# whichever bound comes first. Whole turns only: a turn is never cut.
+CONTEXT_MAX_TURNS = 12
+CONTEXT_MAX_TOKENS = 8000
+
+
+def _speaker_label(author: Any) -> str:
+    """`Castor (entity)` / `Laurent` / `Agent (Basic Agent)`, from the structured author only."""
+    from abstractruntime.core.turn_author import read_author
+
+    a = read_author(author) or {"kind": "person", "name": None, "entity_id": None}
+    name = a["name"] or a["entity_id"] or "someone"
+    if a["kind"] == "entity":
+        return f"{name} (entity)"
+    if a["kind"] == "agent":
+        return f"Agent ({name})"
+    return name
+
+
+def conversation_context(svc: Any, session_id: str, *, current_turn: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+    """The session's recent turns as one quoted block (from the turn rows and their `author`
+    fields, never from parsing text), plus the bound's receipt. `current_turn` is the person's
+    own turn carrying the words being sent now (`repeat_of`): its prompt is not quoted (the words
+    follow the block). A repeated prompt (an earlier mention's) is quoted once, with its turn."""
+    from abstractruntime.history_bundle import _best_effort_session_turns
+    from abstractruntime.memory.token_budget import estimate_message_tokens
+
+    rows = _best_effort_session_turns(
+        run_store=svc.host.run_store, ledger_store=getattr(svc.host, "ledger_store", None), artifact_store=None,
+        session_id=session_id, limit=CONTEXT_MAX_TURNS + 1, include_stats=False, include_artifacts=False,
+    )
+    older_unread = len(rows) > CONTEXT_MAX_TURNS
+    rows = rows[-CONTEXT_MAX_TURNS:]
+    turns: List[List[str]] = []
+    for row in rows:
+        lines: List[str] = []
+        prompt = str(row.get("prompt") or "").strip()
+        if prompt and not row.get("repeat_of") and str(row.get("run_id") or "") != str(current_turn or ""):
+            lines.append(f"{_speaker_label(row.get('prompt_author'))}: {prompt}")
+        answer = str(row.get("answer") or "").strip()
+        if answer and str(row.get("status") or "") == "completed":
+            lines.append(f"{_speaker_label(row.get('author'))}: {answer}")
+        if lines:
+            turns.append(lines)
+    kept: List[List[str]] = []
+    tokens = 0
+    for lines in reversed(turns):  # newest first, whole turns
+        cost = estimate_message_tokens({"role": "user", "content": "\n".join(lines)})
+        if kept and tokens + cost > CONTEXT_MAX_TOKENS:
+            break
+        if not kept and cost > CONTEXT_MAX_TOKENS:
+            break  # even the newest turn alone exceeds the bound: nothing is quoted (never cut)
+        kept.append(lines)
+        tokens += cost
+    kept.reverse()
+    report = {
+        "turns": len(kept), "tokens": tokens, "max_turns": CONTEXT_MAX_TURNS, "max_tokens": CONTEXT_MAX_TOKENS,
+        "dropped_turns": len(turns) - len(kept), "older_turns_not_read": older_unread,
+    }
+    if not kept:
+        return "", report
+    body = "\n".join(line for lines in kept for line in lines)
+    block = (
+        f"[This conversation so far, quoted (the last {len(kept)} turn(s)):\n{body}\n"
+        "End of the quoted conversation.]"
+    )
+    return block, report
 
 
 def entity_author(registry: Any, manifest: Any) -> Dict[str, Any]:
@@ -222,8 +295,11 @@ def mention(
             except VisitRefused as e:
                 raise _from_visit_refusal(e, manifest) from None
             run_id = str(leg["run_id"])
+        # The mentioned entity reads the conversation: the quoted recent turns precede the words.
+        context_block, context_report = conversation_context(svc, sid, current_turn=repeated)
+        visit_text = f"{context_block}\n\n{text}" if context_block else text
         try:
-            turned = visit_host.turn(entity, run_id, text=text, speaker=visitor)
+            turned = visit_host.turn(entity, run_id, text=visit_text, speaker=visitor)
         except VisitRefused as e:
             raise _from_visit_refusal(e, manifest) from None
         reply = str(turned.get("reply") or "").strip()
@@ -257,6 +333,7 @@ def mention(
         "session_id": sid,
         "mention_index": int(mention_index),
         "repeat_of": repeated,
+        "context": context_report,
         "reply": reply,
         "visit": {
             "run_id": run_id,
@@ -294,6 +371,12 @@ def _mirror_into_bound_visits(
         er = registry.get_entity_runtime(child.name)
         live = visit_host._live_visit_run(er)
         if live is None or str(getattr(live, "session_id", "") or "") != session_id:
+            continue
+        # Only the VISITED entity's own visit (the Entity app's lane), never the visit another
+        # mention opened in this conversation: mentioned entities do not mirror into each other.
+        from abstractruntime.core.run_origin import origin_of
+
+        if str((origin_of(live.vars) or {}).get("client") or "") == MENTION_CHANNEL:
             continue
         row: Dict[str, Any] = {"entity_id": str(er.home.entity_id), "run_id": str(live.run_id)}
         try:

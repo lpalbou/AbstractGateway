@@ -32,8 +32,10 @@ class _ScriptedLLM:
 
     def __init__(self, replies) -> None:
         self._replies = list(replies)
+        self.calls = []
 
     def generate(self, **kwargs):
+        self.calls.append(kwargs)
         if not self._replies:
             raise AssertionError("scripted LLM exhausted — an unexpected extra call happened")
         return self._Reply(self._replies.pop(0))
@@ -44,6 +46,7 @@ def _install_llm(monkeypatch, replies) -> None:
 
     llm = _ScriptedLLM(replies)
     monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+    return llm
 
 
 def _spark(name: str = "Castor") -> dict:
@@ -114,12 +117,20 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
         visit_run = body["visit"]["run_id"]
         assert body["visit"]["reused"] is False
         assert body["mirrors"] == []  # a plain chat session is bound to no visit: nothing mirrored
+        # Castor read the conversation: the agent's turn, quoted with its author (the person's own words
+        # of that turn are the ones being sent, so they are not quoted twice).
+        assert body["context"]["turns"] == 1 and body["context"]["max_turns"] == 12 and body["context"]["max_tokens"] == 8000
 
         # THE HOME PROBE: the entity's own runtime holds the visit turn (ledger + its history).
         er = registry.get_entity_runtime("castor")
         assert er.ledger_store.list(visit_run), "the home's ledger must hold the visit"
         history = (er.run_store.load(visit_run).vars or {}).get("_visit", {}).get("history") or []
         assert any("does the bridge hold" in str(m.get("content")) for m in history if m.get("role") == "user")
+        asked = next(str(m["content"]) for m in history if m.get("role") == "user")
+        assert "Agent (Basic Agent): Hi, I am the agent." in asked
+        assert asked.index("Agent (Basic Agent)") < asked.index("@Castor does the bridge hold?")
+        # The home's visit run names its entity by its display name (the spark's), never the slug.
+        assert er.run_store.load(visit_run).vars["_meta"]["author"]["name"] == "Castor"
         assert er.run_store.load(visit_run).session_id == sid  # the visit is bound to this conversation
 
         # Session history: the agent turn, then the mention turn (person -> entity).
@@ -181,6 +192,7 @@ def test_unknown_entity_is_404_and_an_unresolvable_mind_is_503(monkeypatch):
     with _client() as client:
         missing = _mention(client, "sess-x", "@Nobody hi", entity="Nobody")
         assert missing.status_code == 404 and missing.json()["code"] == "entity_not_found"
+        assert "/" not in missing.json()["detail"], "the sentence only: never the server's folder path"
         assert missing.headers["X-Gateway-Error-Code"] == "entity_not_found"
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "", "model": "", "base_url": None, "reasoning": None})
@@ -324,3 +336,23 @@ def test_live_reply_frames_carry_the_turns_author(tmp_path):
         sub2.close()
     finally:
         loop.close()
+
+
+def test_two_mentions_in_one_message_the_second_reads_the_first_and_nothing_mirrors(monkeypatch):
+    """Two mentions in one plain-chat message (mention_index 0 then 1): the second entity's turn
+    quotes the first entity's reply with its author line; neither mention visit is a VISITED
+    entity's visit, so nothing is mirrored between them (no extra model call)."""
+    llm = _install_llm(monkeypatch, ["Castor: the bridge holds.", "Hypnos: I agree with Castor."])
+    with _client() as client:
+        for name in ("Castor", "Hypnos"):
+            assert client.post("/api/gateway/entities", json={"name": name, "spark": _spark(name)}).status_code == 201
+        sid = "sess-two-mentions"
+        first = _mention(client, sid, "@Castor @Hypnos does the bridge hold?", index=0)
+        assert first.status_code == 200, first.text
+        second = _mention(client, sid, "@Castor @Hypnos does the bridge hold?", entity="Hypnos", index=1)
+        assert second.status_code == 200, second.text
+        assert first.json()["mirrors"] == [] and second.json()["mirrors"] == []
+        assert len(llm.calls) == 2, "no mirrored turn between two mentioned entities"
+        hypnos_prompt = str(llm.calls[1])
+        assert "Castor (entity): Castor: the bridge holds." in hypnos_prompt
+        assert second.json()["context"]["turns"] == 1
