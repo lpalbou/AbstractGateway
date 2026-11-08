@@ -84,7 +84,8 @@ async def get_session_acquaintances(request: Request, session_id: str) -> Dict[s
     summary="A conversation's temporary identity (owner or admin)",
     description=(
         "The session's identity (framework ADR 0052 §9) in the entity shape: `{session_id, identity: {rev, avatar: "
-        "{style, color, source, watch_code}, voice, set_at, set_by}, identity_ref}` (`session:<sid>#<rev>`); "
+        "{style, style_requested, color, source, watch_code}, voice, set_at, set_by}, identity_ref}` (`session:<sid>#<rev>`; "
+        "`style` is the design drawn, `style_requested` the stored id: they differ for a retired design); "
         "`identity: null` when the session has none. `?rev=N` serves an earlier revision. 404 `session_not_found` "
         "when the caller's plane has no run of that session."
     ),

@@ -53,7 +53,7 @@ def add_identity_verbs(entity_sub: Any) -> None:
     _connection_args(get)
     put = isub.add_parser("set", help="Set the whole identity (an admin or the entity's creator)")
     put.add_argument("name", help="Entity name or slug")
-    put.add_argument("--style", required=True, help="An avatar design id (for example watch-lotus)")
+    put.add_argument("--style", required=True, help="An avatar design id (for example watch-well; the ready designs are listed when an id is refused)")
     put.add_argument("--color", required=True, help="#rrggbb")
     put.add_argument("--provider", required=True, help="Voice provider")
     put.add_argument("--model", required=True, help="Voice model")

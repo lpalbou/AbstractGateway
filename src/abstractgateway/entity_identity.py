@@ -5,8 +5,8 @@ its bounds, its rev, its `identity_changed` biography row). The gateway checks w
 check, then calls the runtime writer:
 
 - the refusal ladder at SET time, in this order, for every role (ADR section 8): the home is held for
-  maintenance (409); the design is not in the avatar catalog loaded on this gateway, or cannot be
-  drawn on the Watch (400, naming the catalog); the voice is not one this gateway offers (400, the
+  maintenance (409); the design is not one the avatar catalog loaded on this gateway knows (active
+  or retired), or cannot be drawn on the Watch (400, listing the ready designs only); the voice is not one this gateway offers (400, the
   offered list); the voice's model is not downloaded (409, with the download action). After the set
   the entity lane never substitutes a voice.
 - the recorded default (section 2): written once per home, at birth, by the boot pass over every
@@ -16,7 +16,11 @@ check, then calls the runtime writer:
 - the host marker `identity_changed` (rev, from, to, by), recorded inside the runtime writer's check,
   so a marker that cannot be written refuses the change before the biography row and the file.
 - the view `GET /identity` serves: the record with the design's `watch_code`, the fingerprint and
-  the age.
+  the age. A stored design the catalog retired is served as its replacement (`style`), the stored id
+  beside it (`style_requested`): never refused, never drawn blank. The record keeps the id it was
+  given, so a design that returns under the same id comes back by itself.
+- what the gateway offers or assigns as a look comes from the catalog's ready designs only;
+  experimental designs stay reachable by their id.
 
 No flags and no environment variables.
 """
@@ -63,6 +67,8 @@ __all__ = [
     "list_row_identity",
     "materialize_default_identity",
     "no_voice_sentence",
+    "ready_designs",
+    "resolve_style",
     "set_identity",
     "style_for_shape",
 ]
@@ -75,9 +81,13 @@ PROVENANCE_IDENTITY = "gateway:put-identity"
 PROVENANCE_VOICE = "gateway:put-voice"
 PROVENANCE_APPEARANCE = "gateway:put-appearance"
 
-# Legacy `appearance.json` shapes and the designs that draw them (abstractavatar `watch-shape-*`).
+# Legacy `appearance.json` shapes. Their designs (abstractavatar `watch-shape-<shape>`) are retired:
+# a shape writes what the catalog's retired map draws in their place (`resolve_style`).
 _SHAPE_PREFIX = "watch-shape-"
+_SHAPES = ("kitty", "face", "wave")
 _PLANET = "planet"
+_READY = "ready"
+_RETIRED = "retired"
 
 _LOCKS: Dict[str, threading.Lock] = {}
 _LOCKS_GUARD = threading.Lock()
@@ -175,9 +185,13 @@ _CATALOG: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 def avatar_catalog() -> Dict[str, Dict[str, Any]]:
-    """The avatar designs this gateway loaded (`abstractavatar.catalog()`), by id, read once per
-    process. Raises `IdentityRefused(503)` when the package cannot be loaded: no design is verifiable
-    then (a failure is never cached: installing the package fixes it at the next call)."""
+    """Every avatar design id this gateway knows, by id, read once per process: the active designs
+    (`abstractavatar.catalog()`, `status` `ready` or `experimental`, catalog order; the catalog's
+    default design carries `default: True`), then the retired ones (`abstractavatar.retired()`,
+    `status: retired`, `replacement`: the active design drawn in its place, as
+    `abstractavatar.resolve_style` answers). Raises `IdentityRefused(503)` when the package cannot be
+    loaded: no design is verifiable then (a failure is never cached: installing the package fixes it
+    at the next call)."""
     global _CATALOG
     if _CATALOG is not None:
         return _CATALOG
@@ -189,8 +203,51 @@ def avatar_catalog() -> Dict[str, Dict[str, Any]]:
             f"The avatar catalog is not available on this gateway (abstractavatar could not be loaded: {e}); "
             "no identity can be recorded until it is installed.",
         ) from e
-    _CATALOG = {str(row["id"]): dict(row) for row in abstractavatar.catalog()}
+    if not all(hasattr(abstractavatar, name) for name in ("retired", "resolve_style")):
+        raise IdentityRefused(
+            503,
+            f"The avatar catalog on this gateway is too old (abstractavatar {getattr(abstractavatar, '__version__', '?')}: "
+            "it has no retired designs); install abstractavatar 0.2.0 or later.",
+        )
+    try:
+        catalog: Dict[str, Dict[str, Any]] = {str(row["id"]): dict(row) for row in abstractavatar.catalog()}
+        default = abstractavatar.resolve_style("")  # an id the catalog does not have draws its default
+        catalog[default]["default"] = True
+        for row in abstractavatar.retired():
+            key = str(row["id"])
+            catalog[key] = {**dict(row), "status": _RETIRED, "replacement": abstractavatar.resolve_style(key)}
+    except (RuntimeError, OSError, KeyError) as e:  # the native library is missing or refuses its ABI
+        raise IdentityRefused(
+            503,
+            f"The avatar catalog is not available on this gateway (abstractavatar could not read it: {e}); "
+            "no identity can be recorded until it is repaired.",
+        ) from e
+    _CATALOG = catalog
     return _CATALOG
+
+
+def resolve_style(style: str, catalog: Mapping[str, Mapping[str, Any]]) -> str:
+    """The active design drawn for a design id: the id itself when it is active, a retired id's
+    replacement, any other id the catalog's default (the rule of `abstractavatar.resolve_style`,
+    over the catalog this gateway loaded)."""
+    row = catalog.get(style)
+    if row is not None:
+        return str(row["replacement"]) if row.get("status") == _RETIRED else style
+    default = next((key for key, value in catalog.items() if value.get("default")), None)
+    if default is None:
+        raise IdentityRefused(503, "The avatar catalog on this gateway names no default design, so an unknown design can't be drawn.")
+    return default
+
+
+def _drawable(row: Mapping[str, Any]) -> bool:
+    return bool(str(row.get("watch_code") or "").strip())
+
+
+def ready_designs(catalog: Optional[Mapping[str, Mapping[str, Any]]] = None) -> List[str]:
+    """The looks this gateway offers: the catalog's ready designs that the Watch draws, in catalog
+    order. Never an experimental design (reachable by its id only) nor a retired one."""
+    rows = avatar_catalog() if catalog is None else catalog
+    return [key for key, row in rows.items() if row.get("status") == _READY and _drawable(row)]
 
 
 def gateway_default_voice(data_dir: Path) -> Optional[Dict[str, Any]]:
@@ -236,17 +293,18 @@ def _held_sentence(manifest: Any) -> str:
 
 
 def _check_style(style: str, catalog: Mapping[str, Mapping[str, Any]]) -> None:
-    row = catalog.get(style)
-    drawable = sorted(k for k, v in catalog.items() if str(v.get("watch_code") or "").strip())
-    if row is None:
+    """Any id the catalog knows is accepted, active or retired (a retired id draws its replacement);
+    the refusals list the ready designs only."""
+    offered = ", ".join(ready_designs(catalog))
+    if style not in catalog:
         raise IdentityRefused(
             400,
-            f"{style} isn't an avatar design this gateway has. Designs: {', '.join(drawable)}.",
+            f"{style} isn't an avatar design this gateway has. Designs: {offered}.",
         )
-    if not str(row.get("watch_code") or "").strip():
+    if not _drawable(catalog[resolve_style(style, catalog)]):
         raise IdentityRefused(
             400,
-            f"{style} can't be drawn on the Watch, so it can't be an entity's look. Designs: {', '.join(drawable)}.",
+            f"{style} can't be drawn on the Watch, so it can't be an entity's look. Designs: {offered}.",
         )
 
 
@@ -491,9 +549,14 @@ def _age(created_at: str, now: Optional[datetime] = None) -> Dict[str, Any]:
 
 
 def record_payload(record: DigitalIdentity, catalog: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+    """A record as the doors serve it. `avatar.style` is the design drawn (a retired id resolved to
+    its replacement), `avatar.style_requested` the id the record holds (equal when nothing was
+    renamed), `avatar.watch_code` the drawn design's."""
     avatar = record.avatar.to_dict()
-    row = catalog.get(record.avatar.style) or {}
-    avatar["watch_code"] = str(row.get("watch_code") or "") or None
+    style = resolve_style(record.avatar.style, catalog)
+    avatar["style"] = style
+    avatar["style_requested"] = record.avatar.style
+    avatar["watch_code"] = str(catalog[style].get("watch_code") or "") or None
     return {
         "rev": record.rev,
         "avatar": avatar,
@@ -581,19 +644,37 @@ def list_row_identity(registry: Any, manifest: Any) -> Optional[Dict[str, Any]]:
 # --------------------------------------------------------------------------- the legacy files' view
 
 
+def _shape_design(shape: str, catalog: Mapping[str, Mapping[str, Any]]) -> str:
+    """The design a legacy shape writes: what the catalog draws for its retired `watch-shape-<shape>`
+    (abstractavatar 0.2.0: kitty and face -> watch-halo, the default; wave -> watch-wave)."""
+    return resolve_style(f"{_SHAPE_PREFIX}{shape}", catalog)
+
+
 def derived_shape(style: str) -> str:
-    """The legacy appearance shape of a design: `watch-shape-<shape>` draws that shape, every other
-    design is the orb (`planet`)."""
-    return style[len(_SHAPE_PREFIX):] if style.startswith(_SHAPE_PREFIX) else _PLANET
+    """The legacy appearance shape of a design: the shape whose design it draws, when exactly one
+    shape writes that design and it is not the catalog's default orb; every other design is the orb
+    (`planet`). Without the avatar catalog no design resolves, and every look reads as the orb."""
+    try:
+        catalog = avatar_catalog()
+    except IdentityRefused as e:  # logged where the catalog is needed; a listing reads it per row
+        logger.debug("identity: the legacy shape of %s reads as the orb: %s", style, e.detail)
+        return _PLANET
+    drawn = resolve_style(style, catalog)
+    shapes = [shape for shape in _SHAPES if _shape_design(shape, catalog) == drawn]
+    return shapes[0] if len(shapes) == 1 and not catalog[drawn].get("default") else _PLANET
 
 
 def style_for_shape(shape: str, current_style: str, entity_id: str) -> str:
-    """The design a legacy `PUT /appearance` shape writes: `kitty|face|wave` -> `watch-shape-<shape>`;
-    `planet` keeps an orb design, and replaces a shape design by the entity's recorded-default design
-    (a deterministic orb, never a guess)."""
+    """The design a legacy `PUT /appearance` shape writes: `kitty|face|wave` -> the ready design the
+    catalog draws for its retired `watch-shape-<shape>`; `planet` keeps an orb design, and replaces a
+    shape design by the entity's recorded-default design when it is ready, else by the catalog's
+    default (a deterministic ready orb, never a guess)."""
+    catalog = avatar_catalog()
     if shape != _PLANET:
-        return f"{_SHAPE_PREFIX}{shape}"
-    if not current_style.startswith(_SHAPE_PREFIX):
+        return _shape_design(shape, catalog)
+    if derived_shape(current_style) == _PLANET:
         return current_style
     avatar, _voice = default_identity(entity_id, None)
-    return avatar.style
+    if avatar.style in ready_designs(catalog):
+        return avatar.style
+    return resolve_style("", catalog)

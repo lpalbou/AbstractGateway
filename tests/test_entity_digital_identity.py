@@ -131,12 +131,17 @@ def test_birth_records_the_default_once_and_a_bad_birth_identity_creates_nothing
 
 
 def test_a_birth_look_is_the_identity_look(door) -> None:
+    """A legacy birth shape writes the ready design the avatar catalog draws for its retired
+    `watch-shape-<shape>` (abstractavatar 0.2.0: wave -> watch-wave, face -> watch-halo, the orb)."""
     c, entities = door["c"], door["entities"]
-    _born(c, "Vega", appearance={"color": "#f59e0b", "shape": "face"})
+    _born(c, "Vega", appearance={"color": "#f59e0b", "shape": "wave"})
     record = _identity_file(entities, "vega")
-    assert record["rev"] == 1 and record["avatar"] == {"style": "watch-shape-face", "color": "#f59e0b", "source": "chosen"}
+    assert record["rev"] == 1 and record["avatar"] == {"style": "watch-wave", "color": "#f59e0b", "source": "chosen"}
     assert record["voice"]["voice"] == DEFAULT_VOICE["voice"]
-    assert c.get("/api/gateway/entities/vega/appearance").json() == {"color": "#f59e0b", "shape": "face", "source": "identity"}
+    assert c.get("/api/gateway/entities/vega/appearance").json() == {"color": "#f59e0b", "shape": "wave", "source": "identity"}
+    _born(c, "Lyra", appearance={"color": "#f59e0b", "shape": "face"})
+    assert _identity_file(entities, "lyra")["avatar"]["style"] == "watch-halo"
+    assert c.get("/api/gateway/entities/lyra/appearance").json() == {"color": "#f59e0b", "shape": "planet", "source": "identity"}
 
 
 def test_get_identity_serves_the_record_fingerprint_age_and_earlier_revs(door) -> None:
@@ -345,19 +350,123 @@ def test_legacy_and_identity_homes_side_by_side(door) -> None:
     assert r.status_code == 200 and r.json()["voice"] == "am_adam" and r.json()["source"] == "identity", r.text
     assert _identity_file(entities, "new")["rev"] == 2 and not (entities / "new" / "voice.yaml").exists()
     assert c.put("/api/gateway/entities/new/voice", json={"clear": True}).status_code == 409
+    # kitty's design is retired with no replacement: it writes the catalog's default orb, read back as the orb.
     r = c.put("/api/gateway/entities/new/appearance", json={"shape": "kitty"})
-    assert r.json() == {"color": new_record["avatar"]["color"], "shape": "kitty", "source": "identity"}
+    assert r.json() == {"color": new_record["avatar"]["color"], "shape": "planet", "source": "identity"}
+    assert _identity_file(entities, "new")["avatar"]["style"] == "watch-halo"
+    r = c.put("/api/gateway/entities/new/appearance", json={"shape": "wave"})
+    assert r.json() == {"color": new_record["avatar"]["color"], "shape": "wave", "source": "identity"}
     record_now = _identity_file(entities, "new")
-    assert record_now["rev"] == 3 and record_now["avatar"]["style"] == "watch-shape-kitty" and record_now["voice"]["voice"] == "am_adam"
+    assert record_now["rev"] == 4 and record_now["avatar"]["style"] == "watch-wave" and record_now["voice"]["voice"] == "am_adam"
     assert not (entities / "new" / "appearance.json").exists()
     assert c.put("/api/gateway/entities/new/appearance", json={"clear": True}).status_code == 409
     # The legacy voice door applies the ladder for every role on an identity home.
     assert c.put("/api/gateway/entities/new/voice", json={"provider": "kokoro", "model": "kokoro-big", "voice": "af_heart"}).status_code == 409
     # The list row draws the record's look under `appearance` too.
     row = next(e for e in c.get("/api/gateway/entities").json()["entities"] if e["slug"] == "new")
-    assert row["appearance"] == {"color": new_record["avatar"]["color"], "shape": "kitty"} and row["identity"]["rev"] == 3
+    assert row["appearance"] == {"color": new_record["avatar"]["color"], "shape": "wave"} and row["identity"]["rev"] == 4
     old_row = next(e for e in c.get("/api/gateway/entities").json()["entities"] if e["slug"] == "old")
     assert old_row["identity"] is None and "appearance" not in old_row
+
+
+# --------------------------------------------------------------------------- retired and ready designs
+
+
+def _avatar_sets() -> Dict[str, set]:
+    import abstractavatar
+
+    rows = abstractavatar.catalog()
+    return {
+        "ready": {r["id"] for r in rows if r["status"] == "ready"},
+        "experimental": {r["id"] for r in rows if r["status"] == "experimental"},
+        "retired": {r["id"]: abstractavatar.resolve_style(r["id"]) for r in abstractavatar.retired()},
+    }
+
+
+def test_a_retired_design_resolves_to_its_replacement_and_keeps_the_requested_id(door) -> None:
+    """A retired id is accepted, kept in the record, and served as the design drawn in its place
+    (`style`), the stored id beside it (`style_requested`): never refused, never drawn blank."""
+    import abstractavatar
+
+    c, entities = door["c"], door["entities"]
+    retired = _avatar_sets()["retired"]
+    assert retired["eye"] == "watch-well"  # the catalog's own map, read here, not restated
+    watch_codes = {r["id"]: r["watch_code"] for r in abstractavatar.catalog()}
+    _born(c, "Castor")
+    r = c.put("/api/gateway/entities/castor/identity", json={**CHOSEN, "avatar": {"style": "eye", "color": "#3366cc"}})
+    assert r.status_code == 200, r.text
+    assert _identity_file(entities, "castor")["avatar"]["style"] == "eye"
+    served = c.get("/api/gateway/entities/castor/identity").json()["identity"]["avatar"]
+    assert served["style"] == "watch-well" and served["style_requested"] == "eye"
+    assert served["watch_code"] == watch_codes["watch-well"]
+    row = next(e for e in c.get("/api/gateway/entities").json()["entities"] if e["slug"] == "castor")
+    assert row["identity"]["avatar"]["style"] == "watch-well" and row["identity"]["avatar"]["style_requested"] == "eye"
+    # A record stored before the design was retired (written as the runtime writes it) is served the same way.
+    stored = _identity_file(entities, "castor")
+    stored["avatar"]["style"] = "watch-shape-kitty"
+    (entities / "castor" / "identity.json").write_text(json.dumps(stored), encoding="utf-8")
+    served = c.get("/api/gateway/entities/castor/identity").json()["identity"]["avatar"]
+    assert served["style"] == retired["watch-shape-kitty"] and served["style_requested"] == "watch-shape-kitty"
+    assert served["watch_code"] == watch_codes[retired["watch-shape-kitty"]]
+    # An active design is served as stored, `style_requested` equal.
+    assert c.put("/api/gateway/entities/castor/identity", json=CHOSEN).status_code == 200
+    served = c.get("/api/gateway/entities/castor/identity").json()["identity"]["avatar"]
+    assert served["style"] == served["style_requested"] == CHOSEN["avatar"]["style"]
+
+
+def test_an_unknown_design_is_refused_with_the_ready_designs_only(door) -> None:
+    c = door["c"]
+    sets = _avatar_sets()
+    _born(c, "Castor")
+    r = c.put("/api/gateway/entities/castor/identity", json={**CHOSEN, "avatar": {"style": "watch-nosuch", "color": "#3366cc"}})
+    assert r.status_code == 400, r.text
+    prefix = "watch-nosuch isn't an avatar design this gateway has. Designs: "
+    detail = r.json()["detail"]
+    assert detail.startswith(prefix) and detail.endswith(".")
+    listed = detail[len(prefix):-1].split(", ")
+    assert listed and set(listed) <= sets["ready"], listed
+    assert not set(listed) & (sets["experimental"] | set(sets["retired"])), listed
+    # Every ready design the Watch draws is listed (iphone-weave is ready but has no Watch drawing).
+    assert "watch-halo" in listed and "iphone-weave" not in listed
+    # An experimental design stays reachable by its id.
+    assert CHOSEN["avatar"]["style"] in sets["experimental"]
+    assert c.put("/api/gateway/entities/castor/identity", json=CHOSEN).status_code == 200
+
+
+def test_the_looks_the_gateway_offers_or_assigns_are_ready_designs(door) -> None:
+    """The offered list and every look a legacy shape assigns come from the ready designs."""
+    from abstractgateway.entity_identity import ready_designs, style_for_shape
+
+    ready = _avatar_sets()["ready"]
+    offered = ready_designs()
+    assert offered and set(offered) <= ready
+    for shape in ("kitty", "face", "wave"):
+        assert style_for_shape(shape, "watch-halo", "entity:castor") in ready, shape
+    # `planet` over a shape design writes a ready orb, for any entity.
+    for n in range(32):
+        assert style_for_shape("planet", "watch-wave", f"entity:e{n}") in ready
+
+
+def test_an_unreadable_avatar_library_refuses_the_set_and_keeps_the_listing(door, monkeypatch) -> None:
+    """`import abstractavatar` works but its native library refuses (missing or another ABI): the set
+    answers 503 with the reason, the list and the legacy appearance read still answer (the orb)."""
+    import abstractavatar
+
+    import abstractgateway.entity_identity as ei
+
+    c = door["c"]
+    _born(c, "Castor")
+
+    def broken(*_a, **_k):
+        raise RuntimeError("AbstractAvatar native library is unavailable.")
+
+    monkeypatch.setattr(ei, "_CATALOG", None)
+    monkeypatch.setattr(abstractavatar, "catalog", broken)
+    r = c.put("/api/gateway/entities/castor/identity", json=CHOSEN)
+    assert r.status_code == 503 and "native library is unavailable" in r.json()["detail"], r.text
+    assert c.get("/api/gateway/entities").status_code == 200
+    r = c.get("/api/gateway/entities/castor/appearance")
+    assert r.status_code == 200 and r.json()["shape"] == "planet", r.text
 
 
 def test_a_voiceless_default_refuses_a_legacy_look_change_and_the_tts_lane(door, monkeypatch) -> None:
