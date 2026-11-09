@@ -589,3 +589,34 @@ def test_jobs_queued_is_the_runtimes_queue(spawned):
         assert t.status_code == 200, t.text
         append_task_status(_home_dir(), t.json()["task"]["task_id"], "taken", by="entity:castor")
         assert client.get("/api/gateway/entities/Castor/life_state").json()["work"]["jobs_queued"] == 1
+
+
+def test_a_job_interrupting_own_time_keeps_the_personal_return(spawned, own_time):
+    """Codex review 2 #6: publishing the queue's work day overwrote resume_to=personal with "work",
+    so the own time the job interrupted was lost."""
+    from abstractruntime.identity.life import read_resume_to
+
+    from entity_fake_loop import write_status
+
+    with _client() as client:
+        proc = own_time.start(client)
+        assert read_resume_to(_home_dir())["phase"] == "personal"
+        (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
+        write_status(_home_dir(), proc.pid, "day", day_kind="work")
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "work"
+        assert read_resume_to(_home_dir())["phase"] == "personal"
+        proc.kill()
+
+
+def test_a_work_return_never_becomes_own_time_because_a_grant_stands(spawned):
+    """Codex review 2 #6: reconcile turned a remembered "work" return into personal merely because
+    the grant was armed."""
+    from abstractruntime.identity.life import write_resume_to
+
+    from abstractgateway import entity_phase
+
+    with _client() as client:
+        _born_awake_with_personal(client)
+        write_resume_to(_home_dir(), "work", written_by="loop")
+        assert entity_phase.reconcile(_registry(), "castor", "observed")["own_time"] is False
+        assert spawned == []

@@ -797,8 +797,9 @@ def publish(
         # ending WITHOUT an interruption (personal/work straight to idle: its own end, the operator's
         # toggle, a crash) clears it; an interruption (visit, sleep, a request, a Stop) keeps it.
         new_phase = snap["phase"]
-        own_kind = "personal" if new_phase == "personal" else (
-            "work" if new_phase == "work" and _work_kind(snap) in LOOP_JOB_KINDS else None)
+        # Only own time names itself (v3; Codex review 2 #6): a work day the queue drives is not a
+        # place to return to, and it must never overwrite the personal time a job interrupted.
+        own_kind = "personal" if new_phase == "personal" else None
         resume_changed = False
         # Work that INTERRUPTED own time (a summon, an automation) is not own time ending (review
         # #10): only an own-time work day (kind work_order) ending clears the target.
@@ -1483,9 +1484,10 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         if jobs:
             target = "work"  # a queued job comes first; own time waits for it (v3 D4)
         elif target == "work":
-            # The jobs the interruption took over are done: back to own time while it is given.
-            target = "personal" if facts["personal"] else None
-            if target is None and _note_resume_to(rec, None):
+            # A v2 "work" return (no queue left behind it) is not own time: it is never turned into
+            # personal because a grant stands (Codex review 2 #6). Retired.
+            target = None
+            if _note_resume_to(rec, None):
                 write_record(entities_dir, slug, rec)
         if target not in ("personal", "work"):
             return {"own_time": False, "pid": None, "reason": "idle"}  # nothing was interrupted

@@ -21,3 +21,6 @@
   (a clean idle, never a crash).
 - **Canonical phase spec v25** re-vendored byte for byte (abstractentity 814c574): the newborn is idle, the
   `work->personal#operator` edge is gone, and the guards into work are `job_queued`.
+- **A job never erases the own time it interrupted** (Codex review 2 #6). The queue's work day no longer overwrites
+  `resume_to = personal`, and a remembered `work` return is never turned into own time just because the grant
+  stands.
