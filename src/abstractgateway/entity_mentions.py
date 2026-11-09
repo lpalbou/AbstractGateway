@@ -334,6 +334,9 @@ def _from_visit_refusal(e: VisitRefused, manifest: Any, session_id: str = "") ->
     if code == "mind_unresolved":
         logger.info("mention: %s cannot answer (mind unresolved): %s", getattr(manifest, "slug", "?"), e.detail)
         return _cannot_answer(manifest, session_id)
+    if code == "stopped_use_resume":
+        # The kill switch's own refusal passes through intact (review #6).
+        return MentionRefused(int(e.status), str(e.detail), code=code, session_id=session_id or None)
     if not code or int(e.status) == 409:
         # Every refusal carries a code and a person's sentence (REVIEW-1 / mentions-review M): an
         # uncoded busy refusal ("a visit is opening ... retry shortly") is the entity being busy.
@@ -378,7 +381,7 @@ def _check_repeat_of(svc: Any, session_id: str, repeat_of: Optional[str], *, pri
 def _record_session_turn(
     svc: Any, *, session_id: str, text: str, reply: str, principal: Any,
     author: Dict[str, Any], prompt_author: Dict[str, Any], provenance: Dict[str, Any],
-    asked_at: str, repeat_of: Optional[str] = None,
+    asked_at: str, repeat_of: Optional[str] = None, run_id: Optional[str] = None,
 ) -> Any:
     """The entity's reply as a turn of the session: one completed root run in the caller's plane.
     `created_at` is when the person's words arrived (`asked_at`), `updated_at` when the reply did,
@@ -401,7 +404,7 @@ def _record_session_turn(
         vars_obj["_meta"][REPEAT_OF_KEY] = repeat_of
     from abstractruntime.core.models import utc_now
     run = RunState(
-        run_id=str(uuid.uuid4()),
+        run_id=str(run_id or uuid.uuid4()),
         workflow_id=MENTION_WORKFLOW_ID,
         status=RunStatus.COMPLETED,
         current_node="done",
@@ -423,23 +426,66 @@ def _record_session_turn(
     return run
 
 
-def _prior_answer(svc: Any, session_id: str, mention_id: str) -> Optional[Dict[str, Any]]:
-    """The answer already given to this `mention_id` in this conversation (a resend), or None."""
-    lister = getattr(svc.host.run_store, "list_run_index", None)
+# ONE ANSWER PER mention_id, durably (review 2026-11-09 #12): one record per (conversation,
+# mention_id) in the plane's data folder, written atomically WITH the answer before the session
+# turn is saved; the mirrors' completion is recorded separately. A resend reads it directly (never a
+# bounded scan of the session's runs) and re-saves a session turn a crash left unsaved.
+_IDEM_LOCK = threading.Lock()
+
+
+def _idem_path(svc: Any, session_id: str) -> Any:
+    import hashlib
+    from pathlib import Path as _P
+
+    digest = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:40]
+    return _P(svc.config.data_dir) / "mentions" / f"{digest}.json"
+
+
+def _idem_read(svc: Any, session_id: str, mention_id: str) -> Optional[Dict[str, Any]]:
+    import json as _json
+
+    path = _idem_path(svc, session_id)
     try:
-        rows = lister(session_id=session_id, limit=200) if callable(lister) else []
-    except Exception:  # noqa: BLE001
-        rows = []
-    for row in rows or []:
-        rid = str((row.get("run_id") if isinstance(row, dict) else getattr(row, "run_id", "")) or "")
-        if not rid:
-            continue
-        run = svc.host.run_store.load(rid)
-        meta = ((getattr(run, "vars", None) or {}).get("_meta") or {}) if run is not None else {}
-        prov = meta.get("mention") or {}
-        if str(prov.get("mention_id") or "") == mention_id and isinstance(prov.get("response"), dict):
-            return dict(prov["response"])
-    return None
+        data = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rec = (data.get("mentions") or {}).get(str(mention_id)) if isinstance(data, dict) else None
+    return dict(rec) if isinstance(rec, dict) else None
+
+
+def _idem_write(svc: Any, session_id: str, mention_id: str, update: Dict[str, Any]) -> None:
+    import json as _json
+    import os as _os
+
+    path = _idem_path(svc, session_id)
+    with _IDEM_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault("session_id", session_id)
+        mentions = data.setdefault("mentions", {})
+        mentions[str(mention_id)] = {**(mentions.get(str(mention_id)) or {}), **update}
+        tmp = path.with_suffix(f".tmp-{uuid.uuid4().hex[:8]}")
+        tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _os.replace(tmp, path)
+
+
+def _prior_answer(svc: Any, session_id: str, mention_id: str, principal: Any = None) -> Optional[Dict[str, Any]]:
+    """The answer already given to this `mention_id` in this conversation (a resend), or None. A
+    session turn a crash left unsaved is saved again from the record."""
+    rec = _idem_read(svc, session_id, mention_id)
+    if not rec or not isinstance(rec.get("response"), dict):
+        return None
+    turn = rec.get("turn") if isinstance(rec.get("turn"), dict) else None
+    if turn and svc.host.run_store.load(str(rec["response"].get("run_id") or "")) is None:
+        _record_session_turn(svc, session_id=session_id, principal=principal, run_id=rec["response"]["run_id"], **turn)
+    out = dict(rec["response"])
+    out["mirrors"] = list(rec.get("mirrors") or [])
+    return out
 
 
 def mention(
@@ -467,7 +513,7 @@ def mention(
     with _session_lock(sid):
         if mid:
             # ONE ANSWER PER mention_id (mentions-review B): a resend returns the first result.
-            earlier = _prior_answer(svc, sid, mid)
+            earlier = _prior_answer(svc, sid, mid, principal)
             if earlier is not None:
                 return earlier
         er = registry.get_entity_runtime(manifest.slug)
@@ -534,10 +580,9 @@ def mention(
             why = str(turned.get("error") or "") or "the turn produced no reply"
             logger.warning("mention: %s cannot answer: %s", manifest.slug, why)
             raise _cannot_answer(manifest, sid)
-        if generation_of(registry.entities_dir, manifest.slug) != generation:
-            from .entity_visits import STOPPED_VISIT_SENTENCE
+        from .entity_phase import GenerationMoved, fenced
+        from .entity_visits import STOPPED_VISIT_SENTENCE
 
-            raise MentionRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume", session_id=sid)
         turn_id = str(turned.get("turn_id") or "") or None
         visit_ns = ((er.run_store.load(run_id).vars or {}).get("_runtime") or {}).get("entity") or {}
         author = entity_author(registry, manifest)
@@ -550,46 +595,54 @@ def mention(
             "turn_id": turn_id,
             **({"mention_id": mid} if mid else {}),
         }
-        run = _record_session_turn(
-            svc, session_id=sid, text=text, reply=reply, principal=principal,
-            author=author, prompt_author=person_author(principal), provenance=provenance,
-            asked_at=asked_at, repeat_of=repeated,
-        )
+        session_run_id = str(uuid.uuid4())
+        out = {
+            "run_id": session_run_id,
+            "turn_id": turn_id,
+            "author": author,
+            "session_id": sid,
+            "mention_index": int(mention_index),
+            "repeat_of": repeated,
+            "context": context_report,
+            "reply": reply,
+            "visit": {
+                "run_id": run_id,
+                "turn_id": turn_id,
+                "visit_id": visit_ns.get("visit_id"),
+                "entity_id": str(manifest.entity_id),
+                "reused": reused,
+            },
+            "mirrors": [],
+        }
+        turn_fields = {"text": text, "reply": reply, "author": author, "prompt_author": person_author(principal),
+                       "provenance": provenance, "asked_at": asked_at, "repeat_of": repeated}
+        # THE KILL SWITCH'S FENCE around every persistence step (review #2): the generation seen at
+        # the door is checked and the answer written in ONE locked step — a Stop that landed since
+        # (even between the turn and here) means nothing is recorded and nothing is mirrored. The
+        # lock never spans cognition: the turn has already returned.
+        try:
+            with fenced(registry.entities_dir, manifest.slug, generation):
+                if mid:
+                    _idem_write(svc, sid, mid, {"response": out, "turn": turn_fields, "mirrors": None})
+                _record_session_turn(svc, session_id=sid, principal=principal, run_id=session_run_id, **turn_fields)
+        except GenerationMoved:
+            raise MentionRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume", session_id=sid) from None
         mirrors = _mirror_into_bound_visits(
             registry=registry, visit_host=visit_host, session_id=sid, mentioned=manifest, author=author, reply=reply,
-            caller=visitor,
+            caller=visitor, generation=generation,
         )
-        out = {
-        "run_id": str(run.run_id),
-        "turn_id": turn_id,
-        "author": author,
-        "session_id": sid,
-        "mention_index": int(mention_index),
-        "repeat_of": repeated,
-        "context": context_report,
-        "reply": reply,
-        "visit": {
-            "run_id": run_id,
-            "turn_id": turn_id,
-            "visit_id": visit_ns.get("visit_id"),
-            "entity_id": str(manifest.entity_id),
-            "reused": reused,
-        },
-        "mirrors": mirrors,
-        }
+        out["mirrors"] = mirrors
         if mid:
-            # The answer this mention_id got, kept on its own session turn: a resend returns it.
             try:
-                run.vars.setdefault("_meta", {}).setdefault("mention", {})["response"] = out
-                svc.host.run_store.save(run)
-            except Exception:  # noqa: BLE001 - the answer stands; only resend dedup is lost
-                logger.exception("mention: could not keep the answer for mention_id %s", mid)
+                _idem_write(svc, sid, mid, {"mirrors": mirrors})  # the mirrors' completion, recorded on its own
+            except Exception:  # noqa: BLE001 - the answer stands; a resend just shows no mirrors
+                logger.exception("mention: could not record the mirrors of mention_id %s", mid)
     return out
 
 
 def _mirror_into_bound_visits(
     *, registry: Any, visit_host: Any, session_id: str, mentioned: Any, author: Dict[str, Any], reply: str,
-    caller: str,
+    caller: str, generation: Optional[int] = None,
 ) -> list:
     """A VISIT LANE (the conversation is another entity's live visit, e.g. an Entity-app visit with
     nerin): the mentioned entity's reply is a turn of THAT visit, spoken by the mentioned entity,
@@ -625,6 +678,16 @@ def _mirror_into_bound_visits(
         if str((origin_of(live.vars) or {}).get("client") or "") == MENTION_CHANNEL:
             continue
         row: Dict[str, Any] = {"entity_id": str(er.home.entity_id), "run_id": str(live.run_id)}
+        # Mirror ADMISSION is fenced on the mentioned entity's generation (review #2): a Stop of the
+        # mentioned entity since its answer means its words are not carried into another visit.
+        if generation is not None:
+            from .entity_phase import generation_of
+
+            if generation_of(registry.entities_dir, mentioned.slug) != generation:
+                row["reply"] = None
+                row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."
+                out.append(row)
+                continue
         try:
             visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
             turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),

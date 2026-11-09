@@ -28,3 +28,10 @@
   completion never touches a newer pass's record.
 - Test fake loops carry the loop module in their argv: the runtime's hard stop now checks the command line before it
   signals.
+- **Mentions are fenced by the kill switch at every persistence step** (review #2). The answer is recorded under the
+  lifecycle lock, against the generation the door saw. A Stop that landed since means nothing is recorded and
+  nothing is mirrored. Each mirror is admitted only while the mentioned entity is not stopped.
+- **`mention_id` is durable** (review #12). One record per conversation and `mention_id` in the plane's data folder,
+  written atomically with the answer before the session turn is saved, with the mirrors' completion recorded
+  separately. A resend reads it directly (no bounded scan) and re-saves a session turn a crash left unsaved.
+- `stopped_use_resume` passes through the mention door's refusal mapping intact (review #6, mention half).

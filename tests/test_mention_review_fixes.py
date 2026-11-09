@@ -183,6 +183,9 @@ def test_every_refusal_carries_a_code_and_the_callers_session(monkeypatch):
         out = _from_visit_refusal(e, _M(), "sess-x")
         assert out.code and out.session_id == "sess-x"
         assert "entity:castor" not in out.detail
+    # The kill switch's refusal passes through intact (Codex review #6).
+    out = _from_visit_refusal(VisitRefused(409, "Stopped. Resume to visit.", code="stopped_use_resume"), _M(), "sess-x")
+    assert (out.code, out.detail, out.session_id) == ("stopped_use_resume", "Stopped. Resume to visit.", "sess-x")
 
 
 def test_repeat_of_must_be_the_callers_own_turn_with_the_same_words(monkeypatch):
@@ -235,3 +238,84 @@ def test_a_reuse_racing_the_idle_close_opens_a_fresh_visit(monkeypatch):
         assert second.status_code == 200, second.text
         assert second.json()["visit"]["reused"] is False
         assert second.json()["visit"]["run_id"] != first.json()["visit"]["run_id"]
+
+
+def test_a_stop_landing_before_the_answer_is_recorded_records_nothing(monkeypatch):
+    """Codex review #2: the only generation check preceded the author lookup, the persistence and the
+    mirrors; a Stop landing in between was recorded and mirrored anyway."""
+    from abstractgateway import entity_mentions, entity_phase
+    from abstractgateway.service import get_gateway_service
+
+    _install(monkeypatch, ["Castor: answer."])
+    real_author = entity_mentions.entity_author
+
+    import inspect
+
+    def _author_then_stop(registry, manifest):
+        # Only the mention door's own lookup (after the turn, before the answer is recorded); the
+        # visit door's lookup at open runs before the turn.
+        if inspect.stack()[1].function == "mention":
+            entity_phase.stop(registry, manifest.slug, actor="person:admin")
+        return real_author(registry, manifest)
+
+    monkeypatch.setattr(entity_mentions, "entity_author", _author_then_stop)
+    with _client() as client:
+        _create(client)
+        r = _mention(client, "sess-stop-2", "@Castor hi")
+        assert r.status_code == 409 and r.json()["code"] == "stopped_use_resume", r.text
+        runs = get_gateway_service().host.run_store.list_runs(limit=200) or []
+        assert [x for x in runs if getattr(x, "session_id", None) == "sess-stop-2"] == []
+
+
+def test_a_stop_after_the_answer_carries_nothing_into_another_visit(monkeypatch):
+    from abstractgateway import entity_mentions, entity_phase
+
+    llm = _install(monkeypatch, ["Nerin: the tide is low.", "Castor: noted.", "Nerin: unexpected."])
+    real_record = entity_mentions._record_session_turn
+
+    def _record_then_stop(svc, **kw):
+        out = real_record(svc, **kw)
+        from abstractgateway.routes.entities import _registry
+
+        entity_phase.stop(_registry(), "castor", actor="person:admin")
+        return out
+
+    monkeypatch.setattr(entity_mentions, "_record_session_turn", _record_then_stop)
+    with _client() as client:
+        _create(client, "Nerin")
+        _create(client, "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={})
+        sid, rid = opened.json()["session_id"], opened.json()["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "how is the tide?"}).status_code == 200
+        r = _mention(client, sid, "@Castor what do you think?")
+        assert r.status_code == 200, r.text
+        assert r.json()["mirrors"][0]["reply"] is None and "stopped" in r.json()["mirrors"][0]["error"]
+        assert len(llm.calls) == 2, "Nerin was asked to answer a mirrored turn after Castor was stopped"
+
+
+def test_a_mention_id_survives_a_crash_between_the_answer_and_the_session_turn(monkeypatch):
+    from abstractgateway import entity_mentions
+
+    llm = _install(monkeypatch, ["Castor: the one answer.", "Castor: a second answer that must never be asked for."])
+    real_record = entity_mentions._record_session_turn
+    crashed = []
+
+    def _crash_once(svc, **kw):
+        if not crashed:
+            crashed.append(1)
+            raise RuntimeError("the session store fell over")
+        return real_record(svc, **kw)
+
+    monkeypatch.setattr(entity_mentions, "_record_session_turn", _crash_once)
+    with _client() as client:
+        _create(client)
+        first = client.post("/api/gateway/sessions/sess-idem2/mentions",
+                            json={"entity": "Castor", "text": "@Castor once", "mention_index": 0, "mention_id": "m-9"})
+        assert first.status_code >= 500
+        again = _mention(client, "sess-idem2", "@Castor once", mention_id="m-9")
+        assert again.status_code == 200, again.text
+        assert again.json()["reply"] == "Castor: the one answer."
+        assert len(llm.calls) == 1
+        from abstractgateway.service import get_gateway_service
+
+        assert get_gateway_service().host.run_store.load(again.json()["run_id"]) is not None
