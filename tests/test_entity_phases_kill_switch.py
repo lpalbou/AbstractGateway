@@ -74,7 +74,7 @@ def _home_dir():
 
 def _fake_loop(home_dir, phase: str = "day") -> subprocess.Popen:
     """A live own-time loop: a real child process the kill switch may signal."""
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
     threading.Thread(target=proc.wait, daemon=True).start()  # reap it, so a killed pid reads dead
     (home_dir / "loop_status").write_text(json.dumps({"phase": phase, "pid": proc.pid}), encoding="utf-8")
     return proc

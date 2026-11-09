@@ -133,27 +133,31 @@ def _stopped(home_dir: Any) -> bool:
         return False
 
 
-def hold_visiting_posture(home_dir: Any, *, reason: str, token: str) -> Any:
+def hold_visiting_posture(home_dir: Any, *, reason: str, token: str, generation: Optional[int] = None) -> Any:
     """The door's wait poll (`await_loop_quiescent`'s sleep_fn): sleep, then put
     the door's visiting posture back if another writer replaced it while the
     visit was opening (an operator wake or sleep click, a repair) — a visit
-    never fails (operator 2026-11-09). The operator's pause is never undone."""
-    from abstractruntime.identity.life import read_entity_state, write_entity_state
+    never fails (operator 2026-11-09). The operator's pause is never undone.
+
+    CANCELLATION-AWARE BY GENERATION (review 2026-11-09 #1): the wait ends on any Stop since the
+    door's entry — a Stop then Resume included, which a `paused` check alone missed — and the
+    posture is re-written only through the locked, generation-checked admission."""
+    from .entity_phase import GenerationMoved, admit_visit_posture, generation_of
+
+    home = Path(home_dir)
 
     def _poll(seconds: float) -> None:
         time.sleep(seconds)
-        now = read_entity_state(home_dir)
-        if now.get("state") == "paused":
-            # The kill switch landed while the door waited: the wait ends now
-            # (contract-phases §3.3), the open answers stopped_use_resume.
+        if generation is not None and generation_of(home.parent, home.name) != generation:
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
-        if (
-            token
-            and token not in str(now.get("reason") or "")
-            and now.get("state") != "paused"
-            and now.get("mode") != "visiting"  # another door's posture: the loop yields to it as well
-        ):
-            write_entity_state(home_dir, "asleep", reason=reason, mode="visiting", written_by="visit-door")
+        if not token:
+            return
+        try:
+            admit_visit_posture(home.parent, home.name, int(generation if generation is not None
+                                                              else generation_of(home.parent, home.name)),
+                                reason=reason, only_if_not_ours=token)
+        except GenerationMoved:
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
     return _poll
 
@@ -195,30 +199,36 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
     surfaces its own error, never a restore failure."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
+    from .entity_phase import phase_lock
+
+    home = Path(home_dir)
     try:
-        if token:
-            st = read_entity_state(home_dir)
-            still_ours = (
-                str(st.get("state") or "") == "asleep"
-                and str(st.get("mode") or "") == "visiting"
-                and token in str(st.get("reason") or "")
+        # One locked step with the kill switch's write (review 2026-11-09 #1): a Stop between the
+        # ownership check and this write can no longer be overwritten.
+        with phase_lock(home.parent, home.name):
+            if token:
+                st = read_entity_state(home_dir)
+                still_ours = (
+                    str(st.get("state") or "") == "asleep"
+                    and str(st.get("mode") or "") == "visiting"
+                    and token in str(st.get("reason") or "")
+                )
+                if not still_ours:
+                    return  # the state changed hands mid-window; it stands
+            target = str((prior_state or {}).get("state") or "awake")
+            if target not in ("awake", "asleep"):
+                target = "awake"  # paused is the operator's act alone, never auto-restored
+            reason = str((prior_state or {}).get("reason") or "")
+            # A BOUNDED sleep keeps its deadline through the restore (runtime
+            # c343: write_entity_state takes wake_at first-class; dropping it
+            # meant an unattended entity could sleep past its need-check).
+            wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
+            write_entity_state(
+                home_dir, target,
+                reason=(f"{reason} {suffix}".strip() if reason else suffix),
+                wake_at=wake_at,
+                written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
             )
-            if not still_ours:
-                return  # the state changed hands mid-window; it stands
-        target = str((prior_state or {}).get("state") or "awake")
-        if target not in ("awake", "asleep"):
-            target = "awake"  # paused is the operator's act alone, never auto-restored
-        reason = str((prior_state or {}).get("reason") or "")
-        # A BOUNDED sleep keeps its deadline through the restore (runtime
-        # c343: write_entity_state takes wake_at first-class; dropping it
-        # meant an unattended entity could sleep past its need-check).
-        wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
-        write_entity_state(
-            home_dir, target,
-            reason=(f"{reason} {suffix}".strip() if reason else suffix),
-            wake_at=wake_at,
-            written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
-        )
     except Exception:  # noqa: BLE001
         pass
 
@@ -1056,6 +1066,11 @@ class EntityVisitHost:
         slug = manifest.slug
         home_dir = registry.entities_dir / slug
         self._refuse_if_archived(slug)
+        # The door's admission is fenced on the lifecycle generation it sees NOW (review #1): every
+        # state write of this open and its wait is checked against it under the lifecycle lock.
+        from .entity_phase import generation_of
+
+        generation = generation_of(registry.entities_dir, slug)
 
         try:
             provider, model, thinking = resolve_substrate(None, None, home_dir=home_dir)
@@ -1180,15 +1195,13 @@ class EntityVisitHost:
         )
         # The phase this visit interrupts is observed BEFORE the posture lands (resume_to): its
         # close returns there while the operator's grant still allows it (operator 2026-11-09).
-        from .entity_phase import safe_publish
+        from .entity_phase import GenerationMoved, admit_visit_posture, safe_publish
 
         safe_publish(registry, name, "observed", visit_host=self, chat_host=_chat_host_or_none())
-        write_entity_state(
-            home_dir, "asleep",
-            reason=posture_reason,
-            mode="visiting",
-            written_by="visit-door",
-        )
+        try:
+            admit_visit_posture(registry.entities_dir, slug, generation, reason=posture_reason)
+        except GenerationMoved:
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
         if loop_alive:
             # A VISIT NEVER FAILS (operator 2026-11-09, root ADR-0027): no
             # limit on this wait. The loop runs no new tools once it sees the
@@ -1198,13 +1211,16 @@ class EntityVisitHost:
             # posture while it waits (hold_visiting_posture).
             await_loop_quiescent(
                 home_dir, timeout_seconds=None,
-                sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
+                sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token,
+                                               generation=generation),
             )
             yielded = True
         # The wait is cancellation-aware (contract-phases §3.3): a Stop that
         # landed while the door waited ends the open here, never a visit under
         # the kill switch.
-        if read_entity_state(home_dir).get("state") == "paused":
+        from .entity_phase import generation_of
+
+        if read_entity_state(home_dir).get("state") == "paused" or generation_of(registry.entities_dir, slug) != generation:
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         return {
@@ -1213,6 +1229,7 @@ class EntityVisitHost:
             "woke_for_visit": woke_for_visit,
             "prior_state": prior_state,
             "visit_token": visit_token,
+            "generation": generation,
         }
 
     def _start_leg(
@@ -2072,60 +2089,63 @@ class EntityVisitHost:
         home_dir = registry.entities_dir / manifest.slug
         wake_warning: Optional[str] = None
         prior: Dict[str, Any] = {}
+        from .entity_phase import phase_lock
+
         try:
-            st = read_entity_state(home_dir)
-            word = str(st.get("state") or "")
-            reason_now = str(st.get("reason") or "")
-            # RESTORE BY OWNERSHIP (mutual-exclusivity wave, laurent dm#94,
-            # audit finding 4): the open stamps the posture with THIS visit's
-            # id, so terminal restores match the identity token — a posture
-            # belonging to ANOTHER lane's live session is never adopted.
-            # Backward compat: a posture WITHOUT any token (written by a
-            # pre-wave build — in-flight visits across the upgrade boundary)
-            # falls back to the old words-match; the b1 awake-wake check
-            # covers pre-wave opens that wrote awake instead of the posture.
-            prior: Dict[str, Any] = {}
-            visit_id = ""
-            try:
-                run = er.run_store.load(run_id)
-                run_vars = run.vars or {}
-                prior = dict((run_vars.get("_visit") or {}).get("prior_state") or {})
-                visit_id = str(((run_vars.get("_runtime") or {}).get("entity") or {}).get("visit_id") or "")
-            except Exception:
-                prior = {}
-            visiting_now = word == "asleep" and (
-                str(st.get("mode") or "") == "visiting" or "auto-yield" in reason_now
-            )
-            has_token = "[visit " in reason_now
-            owned = visiting_now and (
-                (visit_id and f"[visit {visit_id}]" in reason_now)  # ownership match
-                or not has_token  # pre-wave posture: words-match compat
-            )
-            b1_wake = word == "awake" and reason_now.startswith(_woken_reason())
-            if owned or b1_wake:
-                output = dict(getattr(state, "output", None) or {})
-                target = str(prior.get("state") or "awake")
-                if target not in ("awake", "asleep"):
-                    target = "awake"  # paused is an operator/admin act, never auto-restored
-                suffix = f"(visitor session ended: {output.get('turns', 0)} turns; {output.get('close_reason', 'closed')})"
-                if target == "asleep":
-                    write_entity_state(
-                        home_dir, "asleep",
-                        reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
-                        # Bounded sleeps keep their deadline (runtime c343).
-                        wake_at=str(prior.get("wake_at") or ""),
-                        # The same sleep continues: who chose it travels with it (contract-phases §4.4).
-                        written_by=str(prior.get("written_by") or "operator"),
-                    )
-                elif owned:
-                    write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
-                                       f"{output.get('close_reason', 'closed')})")
-                # b1_wake with prior=awake: already awake — no idle rewrite.
-            elif visiting_now:
-                wake_warning = (
-                    "posture belongs to another session (ownership token mismatch) — left standing; "
-                    "state is the authority"
+            with phase_lock(registry.entities_dir, manifest.slug):
+                st = read_entity_state(home_dir)
+                word = str(st.get("state") or "")
+                reason_now = str(st.get("reason") or "")
+                # RESTORE BY OWNERSHIP (mutual-exclusivity wave, laurent dm#94,
+                # audit finding 4): the open stamps the posture with THIS visit's
+                # id, so terminal restores match the identity token — a posture
+                # belonging to ANOTHER lane's live session is never adopted.
+                # Backward compat: a posture WITHOUT any token (written by a
+                # pre-wave build — in-flight visits across the upgrade boundary)
+                # falls back to the old words-match; the b1 awake-wake check
+                # covers pre-wave opens that wrote awake instead of the posture.
+                prior: Dict[str, Any] = {}
+                visit_id = ""
+                try:
+                    run = er.run_store.load(run_id)
+                    run_vars = run.vars or {}
+                    prior = dict((run_vars.get("_visit") or {}).get("prior_state") or {})
+                    visit_id = str(((run_vars.get("_runtime") or {}).get("entity") or {}).get("visit_id") or "")
+                except Exception:
+                    prior = {}
+                visiting_now = word == "asleep" and (
+                    str(st.get("mode") or "") == "visiting" or "auto-yield" in reason_now
                 )
+                has_token = "[visit " in reason_now
+                owned = visiting_now and (
+                    (visit_id and f"[visit {visit_id}]" in reason_now)  # ownership match
+                    or not has_token  # pre-wave posture: words-match compat
+                )
+                b1_wake = word == "awake" and reason_now.startswith(_woken_reason())
+                if owned or b1_wake:
+                    output = dict(getattr(state, "output", None) or {})
+                    target = str(prior.get("state") or "awake")
+                    if target not in ("awake", "asleep"):
+                        target = "awake"  # paused is an operator/admin act, never auto-restored
+                    suffix = f"(visitor session ended: {output.get('turns', 0)} turns; {output.get('close_reason', 'closed')})"
+                    if target == "asleep":
+                        write_entity_state(
+                            home_dir, "asleep",
+                            reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
+                            # Bounded sleeps keep their deadline (runtime c343).
+                            wake_at=str(prior.get("wake_at") or ""),
+                            # The same sleep continues: who chose it travels with it (contract-phases §4.4).
+                            written_by=str(prior.get("written_by") or "operator"),
+                        )
+                    elif owned:
+                        write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
+                                           f"{output.get('close_reason', 'closed')})")
+                    # b1_wake with prior=awake: already awake — no idle rewrite.
+                elif visiting_now:
+                    wake_warning = (
+                        "posture belongs to another session (ownership token mismatch) — left standing; "
+                        "state is the authority"
+                    )
         except Exception as e:
             wake_warning = f"#FALLBACK wake-on-terminal failed ({e}); the next open treats the visiting posture as yielded"
         details: Dict[str, Any] = {

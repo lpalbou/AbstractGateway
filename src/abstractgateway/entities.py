@@ -194,6 +194,11 @@ class EntityQuotaExceeded(RuntimeError):
     re-creates of existing homes are never refused by the quota."""
 
 
+class _MaintenanceSuperseded(Exception):
+    """The operator sleep's pass lost its home before it began (a Stop moved the generation, or a
+    visit took the posture): the pass is skipped, never run under them."""
+
+
 @dataclass(frozen=True)
 class EntityManifest:
     """Gateway-owned identity card for one home directory."""
@@ -2418,7 +2423,7 @@ class EntityRegistry:
                 # The kill switch's fence (contract-phases §3.3): the pass runs under the
                 # generation it started with; its `finally` restores its own sleep only when no
                 # Stop landed and no visit took the posture meanwhile.
-                from .entity_phase import maintenance_may_write, maintenance_started
+                from .entity_phase import maintenance_started, maintenance_write_if_owner
 
                 maintenance_generation = maintenance_started(self, manifest.slug)
                 # The sleep is announced BEFORE the pass runs (contract-phases §4.3): every open
@@ -2432,7 +2437,9 @@ class EntityRegistry:
                     # finishes in seconds, and a badge claiming consolidation
                     # for a whole sleep conflates dreaming with napping. Set
                     # before, clear after (state stays asleep either way).
-                    write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")
+                    if not maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
+                                                      lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")):
+                        raise _MaintenanceSuperseded()
                     result = _night_pass(
                         home.memory,
                         scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
@@ -2446,13 +2453,20 @@ class EntityRegistry:
                         )
                     if lease_warning:
                         dream_result["warning"] = lease_warning
+                except _MaintenanceSuperseded:
+                    # A Stop or a visit took the home before the pass began: no pass, nothing written.
+                    dream_result = {"skipped": True, "superseded": True}
+                except Exception as e:  # noqa: BLE001 - review #8: a failed pass still completes
+                    logger.exception("maintenance pass failed for %s", manifest.slug)
+                    dream_result = {"failed": True, "error": f"{e.__class__.__name__}: {e}"}
                 finally:
-                    if maintenance_may_write(self, manifest.slug, maintenance_generation):
-                        written = write_entity_state(home_dir, "asleep", reason=reason)
-                    else:
-                        from abstractruntime.identity.life import read_entity_state as _read_state
+                    from abstractruntime.identity.life import read_entity_state as _read_state
 
-                        written = _read_state(home_dir)
+                    # Checked and written in ONE locked step (review #1): a Stop or a visit landing
+                    # between the check and the write is never overwritten.
+                    maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
+                                               lambda: write_entity_state(home_dir, "asleep", reason=reason))
+                    written = _read_state(home_dir)
                     if lease is not None:
                         lease.release()
                     if isinstance(dream_result, dict):

@@ -1803,7 +1803,11 @@ def set_entity_state(name: str, req: SetEntityStateRequest, response: Response =
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if target in ("asleep", "paused"):
+    # NO TEARDOWN AFTER A SLEEP (review 2026-11-09 #7): an operator sleep is refused while a visit is
+    # live or opening (in_visit, above); a visit admitted DURING the maintenance pass is the
+    # visitor's, never closed by the earlier sleep request. `paused` is the kill switch, routed to
+    # entity_phase.stop before this point — this legacy teardown no longer runs.
+    if False:  # pragma: no cover - kept only as the legacy shape's record
         # Legacy in-process chat session (until the /chat surface retires).
         # A missing chat host (503 from _chat_host on a hand-built service)
         # is a GRACEFUL SKIP here, not a hard error — this is a teardown of
@@ -1859,13 +1863,14 @@ def set_entity_state(name: str, req: SetEntityStateRequest, response: Response =
     # and the gateway reconciles, unless a Stop landed (generation moved: nothing written) or a
     # visit took the posture (the wake runs at the visit's close).
     dream_out = result.get("dream") if isinstance(result.get("dream"), dict) else None
-    if target == "asleep" and dream_out and dream_out.get("generation") is not None and not dream_out.get("skipped"):
+    if target == "asleep" and dream_out and dream_out.get("generation") is not None:
         try:
             from ..entity_phase import maintenance_done
 
             result["maintenance"] = maintenance_done(
                 _registry(), name, int(dream_out["generation"]),
                 failed=(str(dream_out.get("error")) if dream_out.get("error") else None),
+                superseded=bool(dream_out.get("superseded")),
             )
         except Exception as e:  # noqa: BLE001 - labelled, never a silent sleep
             result["maintenance_warning"] = f"#FALLBACK maintenance completion failed: {e}"

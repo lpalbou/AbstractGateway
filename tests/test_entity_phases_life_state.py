@@ -76,7 +76,7 @@ def loops():
     procs = []
 
     def _start(home_dir, phase="between"):
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
         threading.Thread(target=proc.wait, daemon=True).start()
         (home_dir / "loop_status").write_text(json.dumps({"phase": phase, "pid": proc.pid}), encoding="utf-8")
         procs.append(proc)

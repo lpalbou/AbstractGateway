@@ -129,7 +129,7 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         # A live own-time loop (a real child process; the hard stop is faked above): the kill
         # switch signals a loop only when one is alive.
-        proc = _sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
+        proc = _sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
         killed.append(proc)
         home = get_gateway_service().entity_registry.entities_dir / "castor"
         (home / "loop_status").write_text(_json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")

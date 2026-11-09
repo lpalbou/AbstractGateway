@@ -177,6 +177,44 @@ def set_resume_to(registry: Any, slug: str, value: Optional[str]) -> None:
             write_record(entities_dir, slug, rec)
 
 
+def admit_visit_posture(entities_dir: Path, slug: str, generation: int, *, reason: str,
+                        only_if_not_ours: str = "") -> bool:
+    """THE visit door's state write, under the per-home arbitration (review 2026-11-09 #1/#9): the
+    generation captured at the door's entry is checked, and the visiting posture written, in ONE
+    locked step — a Stop between the check and the write can no longer be overwritten. Taking the
+    posture also moves `admission_seq`, which invalidates an own-time spawn in progress.
+    `only_if_not_ours`: rewrite only when the standing posture is not this visit's (the wait's
+    hold). Raises GenerationMoved when a Stop landed since the door's entry. Returns True when it
+    wrote."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with fenced(entities_dir, slug, generation) as rec:
+        home_dir = Path(entities_dir) / slug
+        now = read_entity_state(home_dir)
+        if str(now.get("state") or "") == "paused":
+            raise GenerationMoved("stopped")
+        if only_if_not_ours and (only_if_not_ours in str(now.get("reason") or "") or now.get("mode") == "visiting"):
+            return False
+        write_entity_state(home_dir, "asleep", reason=reason, mode="visiting", written_by="visit-door")
+        rec["admission_seq"] = int(rec.get("admission_seq") or 0) + 1
+        write_record(entities_dir, slug, rec)
+        return True
+
+
+def write_if_still_ours(entities_dir: Path, slug: str, predicate: Callable[[Dict[str, Any]], bool],
+                        write: Callable[[], Any]) -> bool:
+    """An ownership-checked restore (a visit's close, an aborted open) as ONE locked step: the
+    standing state is re-read under the lifecycle lock and `write` runs only while `predicate`
+    still holds — a Stop (which writes under the same lock) is never overwritten."""
+    from abstractruntime.identity.life import read_entity_state
+
+    with phase_lock(entities_dir, slug):
+        if not predicate(read_entity_state(Path(entities_dir) / slug)):
+            return False
+        write()
+        return True
+
+
 def generation_of(entities_dir: Path, slug: str) -> int:
     return int(read_record(entities_dir, slug).get("generation") or 0)
 
@@ -1379,6 +1417,7 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         claim = rec.get("spawning") if isinstance(rec.get("spawning"), dict) else None
         if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
             return {"own_time": False, "pid": None, "reason": "spawning"}
+        admission = int(rec.get("admission_seq") or 0)
         rec["spawning"] = {"at": time.time(), "generation": generation, "cause": cause}
         write_record(entities_dir, slug, rec)
         params = dict(rec.get("own_time_params") or {})
@@ -1396,7 +1435,12 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         rec["spawning"] = None
         rec["start_error"] = error
         moved = int(rec.get("generation") or 0) != generation
+        # A visit took the phase while the loop was being spawned (review #9): the visit wins.
+        visited = int(rec.get("admission_seq") or 0) != admission
         write_record(entities_dir, slug, rec)
+    if visited and pid and not moved:
+        _kill_loop(home_dir, {}, "a visit took the phase during the start")
+        return {"own_time": False, "pid": None, "reason": "visit"}
     if moved and pid:
         # A Stop landed while the loop was being spawned: the new loop never outlives the fence
         # (through the same verified, serialized hard stop as the kill switch).
@@ -1507,6 +1551,17 @@ def maintenance_started(registry: Any, slug: str) -> int:
         return gen
 
 
+def maintenance_write_if_owner(registry: Any, slug: str, generation: int, write: Callable[[], Any]) -> bool:
+    """The maintenance pass's own state writes, checked and written in ONE locked step (review #1):
+    only while no Stop moved the generation and no visit took the posture."""
+    entities_dir = Path(registry.entities_dir)
+    with phase_lock(entities_dir, slug):
+        if not maintenance_may_write(registry, slug, generation):
+            return False
+        write()
+        return True
+
+
 def maintenance_may_write(registry: Any, slug: str, generation: int) -> bool:
     """The pass's `finally` may restore its own sleep only when no Stop landed and no visit took
     the posture (contract §3.3, §4.3)."""
@@ -1521,7 +1576,7 @@ def maintenance_may_write(registry: Any, slug: str, generation: int) -> bool:
 
 
 def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optional[str] = None,
-                     chat_host: Any = None, visit_host: Any = None) -> str:
+                     superseded: bool = False, chat_host: Any = None, visit_host: Any = None) -> str:
     """The operator sleep's pass returned: wake + reconcile, unless a Stop moved the generation
     (nothing written) or a visit holds the posture (the wake runs at the visit's close).
     Returns the outcome word: woke | stopped | after_visit | not_ours."""
@@ -1533,16 +1588,23 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
     home_dir = entities_dir / slug
     with phase_lock(entities_dir, slug):
         rec = read_record(entities_dir, slug)
-        if int(rec.get("generation") or 0) != int(generation):
-            rec["maintenance"] = None
+        mine = isinstance(rec.get("maintenance"), dict) and rec["maintenance"].get("generation") == int(generation)
+        # The receipt of THIS pass (review #8): a failure or a superseded pass is always recorded.
+        rec["last_maintenance"] = {"generation": int(generation), "at": _now_iso(),
+                                   "status": "superseded" if superseded else ("failed" if failed else "done"),
+                                   "error": failed}
+        if int(rec.get("generation") or 0) != int(generation) or superseded:
+            if mine:
+                rec["maintenance"] = None  # a stale completion never touches a newer pass's record
             write_record(entities_dir, slug, rec)
-            return "stopped"
+            return "stopped" if int(rec.get("generation") or 0) != int(generation) else "superseded"
         st = read_entity_state(home_dir)
         if str(st.get("state") or "") == "asleep" and str(st.get("mode") or "") == "visiting":
             rec["maintenance"] = {"status": "done_pending_wake", "generation": generation, "failed": failed}
             write_record(entities_dir, slug, rec)
             return "after_visit"
-        rec["maintenance"] = None
+        if mine:
+            rec["maintenance"] = None
         write_record(entities_dir, slug, rec)
         if str(st.get("state") or "") != "asleep" or str(st.get("written_by") or "operator") != "operator":
             return "not_ours"  # a summon or a wake already ended this sleep

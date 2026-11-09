@@ -111,7 +111,7 @@ def own_time(monkeypatch: pytest.MonkeyPatch):
 
     def _start(client):
         _born_awake_with_personal(client)
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
         threading.Thread(target=proc.wait, daemon=True).start()
         procs.append(proc)
         (_home_dir() / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
@@ -243,7 +243,7 @@ def test_an_interrupted_sleep_continues_as_the_same_sleep(spawned, writer):
         _born_awake_with_personal(client)
         home = _home_dir()
         if writer == "self":  # a self-chosen nap: the loop is alive and owns it
-            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
             threading.Thread(target=proc.wait, daemon=True).start()
             procs.append(proc)
             (home / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
@@ -299,7 +299,7 @@ def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.
     procs = []
 
     def _start_then_stop(registry, manifest, params):
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
         threading.Thread(target=proc.wait, daemon=True).start()
         procs.append(proc)
         (_home_dir() / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")

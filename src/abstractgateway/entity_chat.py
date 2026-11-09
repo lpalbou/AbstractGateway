@@ -661,15 +661,17 @@ class EntityChatHost:
         loop_alive = bool(read_loop_status(home_dir).get("running"))
         posture_reason = f"in conversation with {visitor} {visit_token}" + (" (auto-yield)" if loop_alive else "")
         # The phase this visit interrupts is observed BEFORE the posture lands (resume_to).
-        from .entity_phase import default_hosts, safe_publish
+        from .entity_phase import GenerationMoved, admit_visit_posture, default_hosts, generation_of, safe_publish
 
+        # The door's admission is fenced on the lifecycle generation it sees now (review #1).
+        generation = generation_of(self._registry.entities_dir, slug)
         safe_publish(self._registry, name, "observed", chat_host=self, visit_host=default_hosts()[1])
-        write_entity_state(
-            home_dir, "asleep",
-            reason=posture_reason,
-            mode="visiting",
-            written_by="visit-door",
-        )
+        try:
+            admit_visit_posture(self._registry.entities_dir, slug, generation, reason=posture_reason)
+        except GenerationMoved:
+            from .entity_visits import STOPPED_VISIT_SENTENCE
+
+            raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
         if loop_alive:
             # A VISIT NEVER FAILS (operator 2026-11-09, root ADR-0027): no
             # limit on this wait — the durable lane's rule (entity_visits),
@@ -679,13 +681,14 @@ class EntityChatHost:
             try:
                 await_loop_quiescent(
                     home_dir, timeout_seconds=None,
-                    sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
+                    sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token,
+                                                   generation=generation),
                 )
             except VisitRefused:
                 # The kill switch landed while the door waited (contract-phases §3.3).
                 raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
             yielded = True
-        if read_entity_state(home_dir).get("state") == "paused":
+        if read_entity_state(home_dir).get("state") == "paused" or generation_of(self._registry.entities_dir, slug) != generation:
             from .entity_visits import STOPPED_VISIT_SENTENCE
 
             raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
@@ -708,7 +711,9 @@ class EntityChatHost:
                 try:
                     lease = acquire_directory_lease(home_dir, holder="visit-host")
                 except DirectoryLeaseHeld as e:
-                    if read_entity_state(home_dir).get("state") == "paused":
+                    if read_entity_state(home_dir).get("state") == "paused" or generation_of(
+                        self._registry.entities_dir, slug
+                    ) != generation:
                         from .entity_visits import STOPPED_VISIT_SENTENCE
 
                         raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
@@ -1000,29 +1005,35 @@ class EntityChatHost:
         its own error, never a restore failure."""
         from abstractruntime.identity.life import read_entity_state, write_entity_state
 
+        from pathlib import Path as _P
+
+        from .entity_phase import phase_lock
+
+        home = _P(home_dir)
         try:
-            if token:
-                st = read_entity_state(home_dir)
-                still_ours = (
-                    str(st.get("state") or "") == "asleep"
-                    and str(st.get("mode") or "") == "visiting"
-                    and token in str(st.get("reason") or "")
+            with phase_lock(home.parent, home.name):
+                if token:
+                    st = read_entity_state(home_dir)
+                    still_ours = (
+                        str(st.get("state") or "") == "asleep"
+                        and str(st.get("mode") or "") == "visiting"
+                        and token in str(st.get("reason") or "")
+                    )
+                    if not still_ours:
+                        return  # the state changed hands mid-window; it stands
+                target = str((prior_state or {}).get("state") or "awake")
+                if target not in ("awake", "asleep"):
+                    target = "awake"  # paused is the operator's act alone, never auto-restored
+                reason = str((prior_state or {}).get("reason") or "")
+                # A BOUNDED sleep keeps its deadline (runtime c343: wake_at is
+                # first-class on the writer; dropping it slept past need-checks).
+                wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
+                write_entity_state(
+                    home_dir, target,
+                    reason=(f"{reason} {suffix}".strip() if reason else suffix),
+                    wake_at=wake_at,
+                    written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
                 )
-                if not still_ours:
-                    return  # the state changed hands mid-window; it stands
-            target = str((prior_state or {}).get("state") or "awake")
-            if target not in ("awake", "asleep"):
-                target = "awake"  # paused is the operator's act alone, never auto-restored
-            reason = str((prior_state or {}).get("reason") or "")
-            # A BOUNDED sleep keeps its deadline (runtime c343: wake_at is
-            # first-class on the writer; dropping it slept past need-checks).
-            wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
-            write_entity_state(
-                home_dir, target,
-                reason=(f"{reason} {suffix}".strip() if reason else suffix),
-                wake_at=wake_at,
-                written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
-            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -1167,48 +1178,52 @@ class EntityChatHost:
                 # any lane's posture — the cross-lane clobber class).
                 from abstractruntime.identity.life import read_entity_state
 
-                home_dir = self._registry.entities_dir / hosted.entity_slug
-                st = read_entity_state(home_dir)
-                owned = (
-                    str(st.get("state") or "") == "asleep"
-                    and str(st.get("mode") or "") == "visiting"
-                    and f"[visit {hosted.chat_id}]" in str(st.get("reason") or "")
-                )
-                if owned:
-                    prior = dict(hosted.prior_state or {})
-                    if str(prior.get("state") or "awake") == "asleep":
-                        # THE SLEEP RETURNS (skill c219 audit): this visit
-                        # woke an operator-asleep entity (B1 doors-wake);
-                        # the rest resumes when the visitor leaves — with
-                        # its wake deadline intact (runtime c343 seam).
-                        write_entity_state(
-                            home_dir, "asleep",
-                            reason=(str(prior.get("reason") or "") or "operator sleep restored")
-                            + f" (visit ended: {len(hosted.session.reports)} turns)",
-                            wake_at=str(prior.get("wake_at") or ""),
-                            # The same sleep continues (contract-phases §4.4): who chose it travels.
-                            written_by=str(prior.get("written_by") or "operator"),
-                        )
-                    else:
-                        # Wake-cue seeding (maintainer escalation 2026-07-09,
-                        # R3 — "agency blindness"): the return reason carries
-                        # the VISIT's facts (who came, how long, what he
-                        # elected to pursue) so his next day can begin from
-                        # the visit instead of the bridges default.
-                        visitors = [p for p in hosted.session.participants if not p.startswith("entity:")]
-                        reason = (
-                            f"visitor session ended ({', '.join(visitors) or 'a visitor'}; "
-                            f"{len(hosted.session.reports)} turns)"
-                        )
-                        interests = [words for _rid, words in (reflection or {}).get("interests", []) if words]
-                        if interests:
-                            reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
-                        write_entity_state(home_dir, "awake", reason=reason)
-                else:
-                    warnings.append(
-                        "state changed hands mid-visit — left standing (the posture no longer "
-                        "carries this visit's token; state is the authority, no restore-write)"
+                from .entity_phase import phase_lock
+
+                # One locked step with the kill switch's write (review 2026-11-09 #1).
+                with phase_lock(self._registry.entities_dir, hosted.entity_slug):
+                    home_dir = self._registry.entities_dir / hosted.entity_slug
+                    st = read_entity_state(home_dir)
+                    owned = (
+                        str(st.get("state") or "") == "asleep"
+                        and str(st.get("mode") or "") == "visiting"
+                        and f"[visit {hosted.chat_id}]" in str(st.get("reason") or "")
                     )
+                    if owned:
+                        prior = dict(hosted.prior_state or {})
+                        if str(prior.get("state") or "awake") == "asleep":
+                            # THE SLEEP RETURNS (skill c219 audit): this visit
+                            # woke an operator-asleep entity (B1 doors-wake);
+                            # the rest resumes when the visitor leaves — with
+                            # its wake deadline intact (runtime c343 seam).
+                            write_entity_state(
+                                home_dir, "asleep",
+                                reason=(str(prior.get("reason") or "") or "operator sleep restored")
+                                + f" (visit ended: {len(hosted.session.reports)} turns)",
+                                wake_at=str(prior.get("wake_at") or ""),
+                                # The same sleep continues (contract-phases §4.4): who chose it travels.
+                                written_by=str(prior.get("written_by") or "operator"),
+                            )
+                        else:
+                            # Wake-cue seeding (maintainer escalation 2026-07-09,
+                            # R3 — "agency blindness"): the return reason carries
+                            # the VISIT's facts (who came, how long, what he
+                            # elected to pursue) so his next day can begin from
+                            # the visit instead of the bridges default.
+                            visitors = [p for p in hosted.session.participants if not p.startswith("entity:")]
+                            reason = (
+                                f"visitor session ended ({', '.join(visitors) or 'a visitor'}; "
+                                f"{len(hosted.session.reports)} turns)"
+                            )
+                            interests = [words for _rid, words in (reflection or {}).get("interests", []) if words]
+                            if interests:
+                                reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
+                            write_entity_state(home_dir, "awake", reason=reason)
+                    else:
+                        warnings.append(
+                            "state changed hands mid-visit — left standing (the posture no longer "
+                            "carries this visit's token; state is the authority, no restore-write)"
+                        )
             except Exception as e:  # noqa: BLE001 - close must finish; the state write is best-effort
                 warnings.append(f"#FALLBACK could not restore the pre-visit state: {e}")
             with self._lock:
