@@ -646,7 +646,12 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
         "posture": _posture(phase, state, loop, chat, durable),
         "chat_open": bool(chat.get("open")),
         "chat_id": chat.get("chat_id"),
-        "state": state.get("state"),
+        # The state word follows the phase (FINDINGS 2026-11-09 §(1)/(2)): a visit's door writes
+        # `asleep` + mode `visiting` as its posture and a gate sleep (1178) is not a sleep, so the
+        # stored word read "asleep" beside phase=visit or idle. Served: paused while stopped, asleep
+        # in a sleep, awake otherwise (the written record stays GET /state's; `state_mode` and
+        # `state_reason` are still the file's).
+        "state": {"stopped": "paused", "sleep": "asleep"}.get(phase, "awake"),
         "state_mode": state.get("mode"),
         "state_reason": state.get("reason"),
         "own_time_running": loop_alive,

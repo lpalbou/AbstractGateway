@@ -2897,8 +2897,10 @@ def get_entity_life_state(name: str):
     may ask for now, each with its sentence when not allowed) and the `visit`/`work`/`sleep`
     sub-objects. `rev` versions the whole snapshot (monotonic per home, across restarts); a new
     rev is announced once as a `phase_changed` host marker on the replay stream. The existing
-    fields (posture, chat_open, chat_id, state, state_mode, state_reason, own_time_running,
-    own_time_phase, visit_run_id) keep their meaning; posture gains "idle".
+    fields (posture, chat_open, chat_id, state_mode, state_reason, own_time_running,
+    own_time_phase, visit_run_id) keep their meaning; posture gains "idle". `state` follows the
+    phase: `paused` while stopped, `asleep` in a sleep, `awake` otherwise (a visit's posture and a
+    gate sleep are not sleeps; GET /state serves the written record).
 
     A read is also the observation point: a change made inside the own-time loop (or a timer
     expiry, a crashed loop) is versioned and announced by the read that finds it."""

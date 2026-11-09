@@ -139,6 +139,7 @@ def test_a_gate_sleep_with_no_loop_is_idle_root_1178():
                            written_by="grant-gate", wake_at="2099-01-01T00:00:00+00:00")
         body = _ls(client)
         assert body["phase"] == "idle" and body["sleep"] is None
+        assert body["state"] == "awake"  # the state word follows the phase: a gate sleep is no sleep
         assert body["can"]["visit"]["allowed"] is True
 
 
@@ -169,10 +170,12 @@ def test_stopped_personal_work_and_a_self_sleep(loops):
         assert body["phase"] == "sleep" and body["sleep"]["kind"] == "self"
         assert body["sleep"]["ends"] == "2099-01-01T00:30:00+00:00"
         assert body["sleep"]["reason"] == "self-elected sleep: memory saturated"
+        assert body["state"] == "asleep"
 
         write_entity_state(home, "paused", reason="kill switch")
         body = _ls(client)
         assert body["phase"] == "stopped" and body["stopped"] is True and body["posture"] == "paused"
+        assert body["state"] == "paused"
         assert body["can"]["visit"] == {"allowed": False, "sentence": "Stopped. Resume to visit."}
         assert body["can"]["toggle_personal"]["allowed"] is False and "toggle_work" not in body["can"]
         assert client.get("/api/gateway/entities/Castor/cognition").json()["phase"] == "stopped"
@@ -205,6 +208,9 @@ def test_an_open_visit_is_the_visit_phase(monkeypatch: pytest.MonkeyPatch):
         assert opened.status_code == 200, opened.text
         body = _ls(client)
         assert body["phase"] == "visit" and body["visit_run_id"] == opened.json()["run_id"]
+        # The door's posture is stored as asleep + visiting; the served state word is the phase's
+        # (it read "asleep" beside phase=visit, FINDINGS 2026-11-09 §(1)/(2)).
+        assert body["state"] == "awake" and body["state_mode"] == "visiting"
         v = body["visit"]
         assert v["lane"] == "visit" and v["run_id"] == opened.json()["run_id"] and v["chat_id"] is None
         assert v["participants"] == ["person:admin"] and v["since"] and v["waiting_for"] is None
