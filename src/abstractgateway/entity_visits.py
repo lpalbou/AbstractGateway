@@ -47,12 +47,17 @@ sessions). See `entity_gate.mint_summon_stamp` for the convention.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import secrets
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import entity_iterations_ceiling
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["EntityVisitHost", "VisitRefused", "DEFAULT_VISIT_IDLE_S"]
 
@@ -104,6 +109,27 @@ def _woken_reason() -> str:
     from .entities import WOKEN_BY_VISIT_REASON
 
     return WOKEN_BY_VISIT_REASON
+
+
+def hold_visiting_posture(home_dir: Any, *, reason: str, token: str) -> Any:
+    """The door's wait poll (`await_loop_quiescent`'s sleep_fn): sleep, then put
+    the door's visiting posture back if another writer replaced it while the
+    visit was opening (an operator wake or sleep click, a repair) — a visit
+    never fails (operator 2026-11-09). The operator's pause is never undone."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    def _poll(seconds: float) -> None:
+        time.sleep(seconds)
+        now = read_entity_state(home_dir)
+        if (
+            token
+            and token not in str(now.get("reason") or "")
+            and now.get("state") != "paused"
+            and now.get("mode") != "visiting"  # another door's posture: the loop yields to it as well
+        ):
+            write_entity_state(home_dir, "asleep", reason=reason, mode="visiting", written_by="visit-door")
+
+    return _poll
 
 
 def visiting_posture_age_s(state: Dict[str, Any]) -> Optional[float]:
@@ -679,6 +705,9 @@ class EntityVisitHost:
         # (one gateway process serves a door; cross-process ticking is the
         # lease's job, creation is this lock's).
         self._open_locks: Dict[str, threading.Lock] = {}
+        # Set by lease_without_waiting(): the reaper's sweep and the operator's
+        # own pause/sleep teardown answer 409 on a held home instead of waiting.
+        self._no_wait = threading.local()
         # In-flight run ids (state-sources adversary P1-2): ticking is
         # request-driven, so a stored status="running" is a LAST-WRITE CLAIM,
         # not liveness — a host crash mid-drive leaves it at rest forever.
@@ -764,7 +793,8 @@ class EntityVisitHost:
                         if run_id in self._in_flight:
                             continue  # a live request is already driving it
                     try:
-                        self.tick(slug, run_id)
+                        with self.lease_without_waiting():
+                            self.tick(slug, run_id)
                         acts += 1
                     except Exception:
                         # Paused entity / non-visit run / transient store
@@ -796,12 +826,20 @@ class EntityVisitHost:
         visit; the operator's word is not recoverable from it)."""
         if self._chat_probe is None:
             return False  # cannot see the hosted lane: never guess
+        if self._slug_lock(slug).locked():
+            return False  # a visit is opening on this home: its door owns the posture
         from datetime import datetime, timezone
 
-        from abstractruntime.identity.life import read_entity_state, write_entity_state
+        from abstractruntime.identity.life import read_entity_state, read_loop_status, write_entity_state
 
         state = read_entity_state(home_dir)
         if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") != "visiting":
+            return False
+        # A door may still be waiting on this loop (the visit doors wait
+        # without a limit): the posture is not orphaned while the loop has
+        # not yet yielded its day.
+        loop = read_loop_status(home_dir)
+        if loop.get("running") and loop.get("phase") == "day":
             return False
         changed_raw = str(state.get("changed_at") or "").strip()
         try:
@@ -1125,17 +1163,26 @@ class EntityVisitHost:
         # visit existed. The posture carries the visit's OWN identity so
         # closes/restores match by ownership, never by words (finding 4).
         visit_token = f"[visit {visit_id}]" if visit_id else ""
+        posture_reason = (f"in conversation with {visitor} {visit_token}".strip()) + (
+            " (auto-yield)" if loop_alive else ""
+        )
         write_entity_state(
             home_dir, "asleep",
-            reason=(f"in conversation with {visitor} {visit_token}".strip())
-            + (" (auto-yield)" if loop_alive else ""),
+            reason=posture_reason,
             mode="visiting",
             written_by="visit-door",
         )
         if loop_alive:
-            if not await_loop_quiescent(home_dir, timeout_seconds=55.0):
-                _restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: loop did not yield in time)", token=visit_token)
-                raise VisitRefused(409, "the entity's own-time loop has not reached a tick boundary yet — retry shortly", code="loop_busy")
+            # A VISIT NEVER FAILS (operator 2026-11-09, root ADR-0027): no
+            # limit on this wait. The loop runs no new tools once it sees the
+            # posture (runtime ChatSession.yield_check) and yields at the next
+            # tick boundary; the reaper leaves a posture alone while the loop
+            # is still in its day (_repair_stale_yield); the door keeps its
+            # posture while it waits (hold_visiting_posture).
+            await_loop_quiescent(
+                home_dir, timeout_seconds=None,
+                sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
+            )
             yielded = True
 
         return {
@@ -1888,10 +1935,34 @@ class EntityVisitHost:
             from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
         except ImportError:
             return None  # older runtime: no site acquires; labeled at open elsewhere
+        # A visit never fails (operator 2026-11-09): another writer (a sleep's
+        # consolidation pass) holds the home only until its step ends, and it
+        # stops for the visiting posture — wait for it, no limit. The reaper
+        # and the operator's pause/sleep teardown never wait
+        # (lease_without_waiting): they get the old 409.
+        logged = False
+        while True:
+            try:
+                return acquire_directory_lease(Path(er.home.home_dir), holder="visit-host")
+            except DirectoryLeaseHeld as e:
+                if getattr(self._no_wait, "on", False):
+                    raise VisitRefused(409, str(e), code="home_lease_held")
+                if not logged:
+                    logger.info("visit waits for the home's writer to finish: %s", e)
+                    logged = True
+                time.sleep(0.5)
+
+    @contextlib.contextmanager
+    def lease_without_waiting(self) -> Any:
+        """Inside this block a held home answers 409 `home_lease_held` instead
+        of waiting: the one reaper thread must never stall on one home, and the
+        operator's own pause/sleep answers at once (labeled teardown_failed)."""
+        previous = getattr(self._no_wait, "on", False)
+        self._no_wait.on = True
         try:
-            return acquire_directory_lease(Path(er.home.home_dir), holder="visit-host")
-        except DirectoryLeaseHeld as e:
-            raise VisitRefused(409, str(e), code="home_lease_held")
+            yield
+        finally:
+            self._no_wait.on = previous
 
     def _live_visit_run(self, er: Any, *, janitor: bool = False) -> Any:
         """The home's live visit run, if any. STAMPED runs only: a run

@@ -48,9 +48,6 @@ logger = logging.getLogger(__name__)
 __all__ = ["EntityChatHost", "ChatOpenRefused"]
 
 DEFAULT_IDLE_TIMEOUT_S = 15 * 60
-# HTTP-bounded auto-yield wait: long enough for a tick boundary on a busy
-# host, short enough that a browser request does not appear hung.
-DEFAULT_YIELD_WAIT_S = 55.0
 
 # Attention-geometry defaults (maintainer ruling 2026-07-08): the wide summon
 # posture is the DEFAULT, not a tuning trick. The request body overrides;
@@ -470,7 +467,6 @@ class EntityChatHost:
         *,
         llm_factory: Optional[Callable[..., Any]] = None,
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
-        yield_wait_s: float = DEFAULT_YIELD_WAIT_S,
         summon_seat_probe: Any = None,
     ) -> None:
         self._registry = registry
@@ -487,7 +483,6 @@ class EntityChatHost:
         # original function and silently call the real LLM in suites).
         self._llm_factory = llm_factory
         self._idle_timeout_s = float(idle_timeout_s)
-        self._yield_wait_s = float(yield_wait_s)
         self._sessions: Dict[str, _HostedChat] = {}   # chat_id -> chat
         self._by_slug: Dict[str, str] = {}            # slug -> live chat_id
         self._lock = threading.RLock()
@@ -656,40 +651,47 @@ class EntityChatHost:
             # close restores the operator's sleep from prior_state.
             woke_for_visit = True
         loop_alive = bool(read_loop_status(home_dir).get("running"))
+        posture_reason = f"in conversation with {visitor} {visit_token}" + (" (auto-yield)" if loop_alive else "")
         write_entity_state(
             home_dir, "asleep",
-            reason=f"in conversation with {visitor} {visit_token}"
-            + (" (auto-yield)" if loop_alive else ""),
+            reason=posture_reason,
             mode="visiting",
             written_by="visit-door",
         )
         if loop_alive:
-            if not await_loop_quiescent(home_dir, timeout_seconds=self._yield_wait_s):
-                # Restore the prior word so a failed open never strands the
-                # loop asleep (nor erases an operator's sleep).
-                self._restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: loop did not yield in time)", token=visit_token)
-                raise ChatOpenRefused(
-                    409,
-                    "the entity's own-time loop has not reached a tick boundary yet — "
-                    f"waited {self._yield_wait_s:.0f}s; retry shortly (the yield request stands)",
-                )
+            # A VISIT NEVER FAILS (operator 2026-11-09, root ADR-0027): no
+            # limit on this wait — the durable lane's rule (entity_visits),
+            # the posture held while it waits.
+            from .entity_visits import hold_visiting_posture
+
+            await_loop_quiescent(
+                home_dir, timeout_seconds=None,
+                sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
+            )
             yielded = True
 
         # One writer per home (plan item 1, GW-A): the visit IS a write
         # window. Acquired AFTER the auto-yield (the loop's day lease is
         # released at the boundary we just waited for); anything still
         # holding the home — a CLI visit, a dream pass, a maintenance run —
-        # refuses this open loudly, naming the holder. The auto-yield
+        # makes this open wait (logged once, naming the holder). The auto-yield
         # negotiation stays ABOVE the lease (policy); this is the belt.
         lease: Any = None
         try:
             from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
 
-            try:
-                lease = acquire_directory_lease(home_dir, holder="visit-host")
-            except DirectoryLeaseHeld as e:
-                self._restore_prior_state(home_dir, prior_state, suffix="(visit open aborted: home has a writer)", token=visit_token)
-                raise ChatOpenRefused(409, str(e))
+            # A visit never fails (operator 2026-11-09): another writer (a
+            # sleep's consolidation pass) holds the home only until its step
+            # ends, and it stops for the visiting posture — wait, no limit.
+            logged = False
+            while lease is None:
+                try:
+                    lease = acquire_directory_lease(home_dir, holder="visit-host")
+                except DirectoryLeaseHeld as e:
+                    if not logged:
+                        logger.info("visit waits for the home's writer to finish: %s", e)
+                        logged = True
+                    time.sleep(0.5)
         except ImportError:
             # Older runtime without storage.lease: no site acquires (the
             # loop's sites are absent too) — labeled, never silent.

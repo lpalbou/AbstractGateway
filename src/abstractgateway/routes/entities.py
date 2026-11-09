@@ -1828,11 +1828,14 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
             live = host.status(name)
             if live.get("open") and live.get("run_id"):
                 try:
-                    closed_durable = host.close(
-                        name, live["run_id"],
-                        closed_by=("pause" if target == "paused" else "sleep"),
-                        reason=(reason_in or f"{target} requested by operator") + f" {stamp}",
-                    )
+                    # The operator's own pause/sleep never waits on a held
+                    # home (a turn in flight): the teardown is labeled instead.
+                    with host.lease_without_waiting():
+                        closed_durable = host.close(
+                            name, live["run_id"],
+                            closed_by=("pause" if target == "paused" else "sleep"),
+                            reason=(reason_in or f"{target} requested by operator") + f" {stamp}",
+                        )
                 except VisitRefused as e:
                     # The teardown FAILED (e.g. a concurrent turn holds the
                     # lease). The state still flips (it is the coordination

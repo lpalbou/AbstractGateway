@@ -7,8 +7,9 @@ pin the GATEWAY's two acquisition windows:
 
 - the hosted VISIT (`EntityChatHost.open` -> close): holder="visit-host",
   held for the whole visit, released at close (wake write included);
-  an open against a home that already has a writer refuses 409 naming the
-  holder; the auto-yield negotiation stays ABOVE the lease.
+  an open against a home that already has a writer WAITS for it (a visit
+  never fails, operator 2026-11-09); the auto-yield negotiation stays
+  ABOVE the lease.
 - the DREAM window (`set_state(dream=True)`): holder="dream"; a held home
   SKIPS the pass with an honest #FALLBACK (sleep is never blocked; the
   pass is idempotent — same wording rule as the loop's own dream window).
@@ -109,7 +110,12 @@ def test_visit_holds_the_lease_and_releases_at_close(monkeypatch: pytest.MonkeyP
         lease.release()
 
 
-def test_visit_open_refuses_while_home_has_a_writer(monkeypatch: pytest.MonkeyPatch):
+def test_visit_open_waits_while_home_has_a_writer(monkeypatch: pytest.MonkeyPatch):
+    """A visit never fails (operator 2026-11-09): an open against a held
+    home waits for the writer to leave, then opens."""
+    import threading
+    import time
+
     from abstractruntime.storage.lease import acquire_directory_lease
 
     _install_scripted_llm(monkeypatch, ["Hello."])
@@ -118,18 +124,15 @@ def test_visit_open_refuses_while_home_has_a_writer(monkeypatch: pytest.MonkeyPa
         home = _home_dir(client)
 
         incumbent = acquire_directory_lease(home, holder="maintenance")
+        leaving = threading.Timer(1.0, incumbent.release)
+        leaving.start()
+        started = time.monotonic()
         try:
-            refused = client.post("/api/gateway/entities/Castor/chat/open", json={})
-            assert refused.status_code == 409, refused.text
-            detail = refused.json()["detail"]
-            assert "already has a writer" in detail
-            assert "maintenance" in detail  # the refusal names the holder
+            opened = client.post("/api/gateway/entities/Castor/chat/open", json={})
         finally:
-            incumbent.release()
-
-        # The moment the writer leaves, the same open succeeds.
-        opened = client.post("/api/gateway/entities/Castor/chat/open", json={})
+            leaving.join()
         assert opened.status_code == 200, opened.text
+        assert time.monotonic() - started >= 0.9  # it waited for the writer
         client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close", json={})
 
 

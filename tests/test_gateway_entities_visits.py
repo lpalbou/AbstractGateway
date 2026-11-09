@@ -5,7 +5,7 @@ pin the DOOR: open stamps a run in the per-entity runtime and parks it,
 turn serves the reply from the run's own durable history, the run SURVIVES
 the host forgetting everything in memory (the restart story: a fresh host
 rebuilds the spec from the run's verified stamp), one-life-one-visit holds
-DURABLY, a held home refuses the turn naming the writer, close reflects +
+DURABLY, a held home makes the turn wait for the writer, close reflects +
 wakes + marks, and pause-close refuses honestly until the skip_reflection
 route exists.
 """
@@ -444,7 +444,12 @@ def test_one_life_one_visit_is_durable(monkeypatch: pytest.MonkeyPatch):
         client.post(f"/api/gateway/entities/Castor/visit/{third.json()['run_id']}/close", json={})
 
 
-def test_turn_refuses_while_home_has_a_writer(monkeypatch: pytest.MonkeyPatch):
+def test_turn_waits_while_home_has_a_writer(monkeypatch: pytest.MonkeyPatch):
+    """A visit never fails (operator 2026-11-09): a turn against a held home
+    waits for the writer to leave, then is answered."""
+    import threading
+    import time
+
     from abstractruntime.storage.lease import acquire_directory_lease
 
     _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
@@ -453,17 +458,15 @@ def test_turn_refuses_while_home_has_a_writer(monkeypatch: pytest.MonkeyPatch):
         run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
 
         incumbent = acquire_directory_lease(_home_dir(), holder="maintenance")
+        leaving = threading.Timer(1.0, incumbent.release)
+        leaving.start()
+        started = time.monotonic()
         try:
-            refused = client.post(
-                f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Hello?"}
-            )
-            assert refused.status_code == 409
-            assert "maintenance" in refused.json()["detail"]
+            ok = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Hello?"})
         finally:
-            incumbent.release()
-
-        ok = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Hello?"})
-        assert ok.status_code == 200
+            leaving.join()
+        assert ok.status_code == 200, ok.text
+        assert time.monotonic() - started >= 0.9  # it waited for the writer
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
 
 

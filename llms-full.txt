@@ -10815,6 +10815,10 @@ conversational questions. The mode is fixed before the first tick; rejoining an 
 managed session with a conflicting mode is refused (422). Existing tool policy remains
 separate; `ask_user` is an interaction primitive in this mode even when external tools are off.
 
+The open never fails because the entity is busy: when its own time is running, the request
+waits, with no time limit, until the entity has finished the step in progress (it starts no
+new tool call once a visitor is at the door), then the visit opens.
+
 Read `GET /api/gateway/entities/{name}/visit/{run_id}/state`. In conversational mode it adds:
 
 - `public_updates`: up to 64 explicit, safe actor updates with `id`, `text`, `run_id`,
@@ -10997,7 +11001,7 @@ Errors (`{detail, code}` plus the `X-Gateway-Error-Code` header):
 |---|---|---|
 | 404 | `entity_not_found` | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
 | 409 | `in_another_conversation` | The entity's visit belongs to another conversation; `session_id` and the sentence name it. It is free again when that conversation ends or after 5 idle minutes |
-| 409 | `entity_paused`, `entity_asleep`, `loop_busy`, `home_lease_held` | The visit door's own refusals |
+| 409 | `entity_paused`, `entity_asleep` | The visit door's own refusals |
 | 503 | `entity_cannot_answer` | Its mind cannot be resolved (no model chosen), or the turn gave no reply |
 
 **Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each
