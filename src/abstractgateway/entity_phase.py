@@ -487,7 +487,7 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
         "toggles": toggles,
         "personal_expires_at": facts["personal_expires_at"],
         "sentence": _sentence(name, phase, visit, work, sleep, loop, blocked),
-        "next": _next(phase, toggles, sleep, work),
+        "next": _next(phase, toggles, sleep, work, rec.get("resume_to"), _visit_prior(chat, durable)),
         "blocked": blocked,
         "can": _can(facts, rec, phase, stopped),
         "visit": visit,
@@ -574,18 +574,58 @@ def _sentence(name: str, phase: str, visit: Any, work: Any, sleep: Any, loop: Di
     return "Awake and reachable; nothing of his own is running."
 
 
-def _next(phase: str, toggles: Dict[str, bool], sleep: Any, work: Any) -> Optional[Dict[str, Any]]:
-    after = "personal" if toggles["personal"] else "idle"
+def _visit_prior(chat: Dict[str, Any], durable: Dict[str, Any]) -> Optional[str]:
+    """The state word the open visit interrupted (recorded by the door at open), or None."""
+    for status in (chat, durable):
+        if status.get("open") and isinstance(status.get("prior_state"), dict):
+            return str(status["prior_state"].get("state") or "") or None
+    return None
+
+
+def _back_to(resume_to: Optional[str], toggles: Dict[str, bool]) -> Tuple[str, Optional[str]]:
+    """Where an interruption returns (the wire face of the sidecar's `resume_to`): the remembered
+    own-time phase while its grant is on; "idle" otherwise, with the sentence when the operator
+    revoked it meanwhile."""
+    if resume_to == "personal":
+        return ("personal", None) if toggles["personal"] else ("idle", "Own time is off; he stays awake.")
+    if resume_to == "work":
+        if toggles["work"] and toggles["personal"]:
+            return "work", None
+        return "idle", "Work is off; he stays awake."
+    return "idle", None
+
+
+def _next(phase: str, toggles: Dict[str, bool], sleep: Any, work: Any, resume_to: Optional[str] = None,
+          visit_prior: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """What happens next without anyone acting (contract-phases v2 §1.1). During an interruption
+    (a visit, a sleep, a request) `phase` is where it returns: `resume_to` while its grant is on."""
+    back, revoked = _back_to(resume_to, toggles)
     if phase == "visit":
-        return {"phase": None, "sentence": "When the visit closes, he returns to what he was doing."}
-    if phase == "work":
-        if after == "personal":
-            return {"phase": "personal", "sentence": "When this work ends, his own time resumes."}
-        return {"phase": "idle", "sentence": "When this work ends, he stays awake and reachable."}
-    if phase == "sleep" and (sleep or {}).get("ends"):
-        if after == "personal":
-            return {"phase": "personal", "sentence": "When maintenance is done he wakes and his own time resumes."}
-        return {"phase": "idle", "sentence": "When maintenance is done he wakes, awake and reachable."}
+        if visit_prior == "asleep":
+            return {"phase": "sleep", "sentence": "When the visit closes, he goes back to sleep."}
+        if revoked:
+            return {"phase": "idle", "sentence": revoked}
+        return {"phase": back, "sentence": {
+            "personal": "When the visit closes, his own time resumes.",
+            "work": "When the visit closes, he goes back to his work.",
+        }.get(back, "When the visit closes, he stays awake and reachable.")}
+    if phase == "work" and (work or {}).get("kind") != "work_order":
+        if revoked:
+            return {"phase": "idle", "sentence": revoked}
+        return {"phase": back, "sentence": {
+            "personal": "When this work ends, his own time resumes.",
+        }.get(back, "When this work ends, he stays awake and reachable.")}
+    if phase == "sleep":
+        ends = (sleep or {}).get("ends")
+        if revoked:
+            return {"phase": "idle", "sentence": revoked}
+        if not ends:
+            return None  # asleep until a person wakes him
+        when = "When maintenance is done he wakes" if ends == MAINTENANCE_ENDS else "When he wakes"
+        return {"phase": back, "sentence": {
+            "personal": f"{when} and his own time resumes.",
+            "work": f"{when} and goes back to his work.",
+        }.get(back, f"{when}, awake and reachable.")}
     return None
 
 
@@ -1123,9 +1163,11 @@ def set_toggles(
         loop = loop_status(home_dir)
         if bool(loop.get("running")) and str(loop.get("day_kind") or "") == "work":
             stop_loop(home_dir, reason=f"work turned off by {actor}", requested_by="operator")
-    if changed["personal"] is not None:
-        # The operator's own act names the phase to return to (personal on) or retires it (off).
-        set_resume_to(registry, slug, "personal" if personal else None)
+    if changed["personal"] is not None and personal:
+        # The operator's own act names own time as the phase to return to. Turning it OFF keeps the
+        # remembered phase until the interruption ends (the read says "Own time is off"); the
+        # restore then finds the grant off, stays idle and retires it.
+        set_resume_to(registry, slug, "personal")
     if changed["work"] is not None or changed["personal"] is not None:
         reconcile(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host,
                   operator=bool(changed["personal"] is not None and personal))
@@ -1193,11 +1235,12 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         target = "personal" if operator else rec.get("resume_to")
         if target not in ("personal", "work"):
             return {"own_time": False, "pid": None, "reason": "idle"}  # nothing was interrupted
-        if not facts["personal"]:
-            # The loop runs only under the operator's grant (work days too): revoked = stay idle.
-            return {"own_time": False, "pid": None, "reason": "personal_off"}
-        if target == "work" and (not bool(rec.get("work", True)) or not facts["work_order"]):
-            return {"own_time": False, "pid": None, "reason": "work_off"}
+        if not facts["personal"] or (target == "work" and (not bool(rec.get("work", True)) or not facts["work_order"])):
+            # The grant was revoked meanwhile (the loop runs only under the operator's grant, work
+            # days too): stay idle, and the remembered phase is retired with the interruption.
+            if not operator and _note_resume_to(rec, None):
+                write_record(entities_dir, slug, rec)
+            return {"own_time": False, "pid": None, "reason": "personal_off" if not facts["personal"] else "work_off"}
         if not bool(rec.get("work", True)) and facts["work_order"]:
             return {"own_time": False, "pid": None, "reason": "work_order_waits_for_runtime"}
         loop_facts = facts["loop"]

@@ -54,6 +54,14 @@
   - Never twice: a spawn claim in the sidecar. A Stop that lands during the spawn kills the new loop.
   - A crashed loop is never restarted without the operator: the read shows `blocked {loop_crashed, action: retry}`.
   - A graceful stop that completes ends own time and clears `resume_to`. Gateway shutdown never starts own time.
+- **`next.phase` says where an interruption returns** (Entity app a24448c). During a visit, a sleep or a request,
+  `next.phase` is `personal` or `work` (the remembered own-time phase, while its grant is on), `sleep` for a visit that
+  interrupted a sleep, else `idle`. A grant revoked meanwhile reads `{phase: "idle", sentence: "Own time is off; he
+  stays awake."}`. The remembered phase retires when that interruption ends. Visit status (both lanes) carries the
+  interrupted `prior_state`.
+- **The vendored phase spec is v23** (abstractentity a24448c, the privilege rule: personal is entered only by the
+  operator's grant or resume, or by returning to it). The drifted-spec pin is green again; the edge-ops tests use v23's
+  causes and edges.
 - **A visit's close returns to the previous phase** (§4.4). An interrupted sleep continues as the same sleep, keeping
   who chose it (`written_by`), its wake time and its original `since`. Both lanes restore `written_by`.
 - **An operator sleep wakes when its maintenance is done** (`POST /state {state: sleep, dream: true}`; §4.3). The

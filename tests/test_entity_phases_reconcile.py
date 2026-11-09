@@ -170,6 +170,14 @@ def test_a_grant_revoked_during_the_visit_means_idle_after_it(spawned, own_time)
         client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
         assert spawned == []
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "idle"
+        # The remembered phase retired with that interruption: a later visit does not bring own
+        # time back, even once a grant stands again (only the operator's own act starts it).
+        from abstractruntime.identity.life import write_personal_grant
+
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        again = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        client.post(f"/api/gateway/entities/Castor/visit/{again.json()['run_id']}/close", json={"closed_by": "operator"})
+        assert spawned == []
 
 
 def test_a_spontaneous_sleep_returns_to_own_time_when_it_ends(spawned, own_time):
@@ -385,3 +393,44 @@ def test_a_visit_during_maintenance_takes_the_wake_to_its_close(spawned, monkeyp
         entity_phase.after_visit_closed(_registry(), "castor", {"state": "asleep"})
         assert read_entity_state(_home_dir())["state"] == "awake"
         assert spawned == ["castor"]
+
+
+def test_next_names_where_an_interruption_returns(spawned, own_time):
+    """`next.phase` is the wire face of the remembered phase (Entity app ask, a24448c): during a
+    visit and during a spontaneous sleep it says where he returns; a grant revoked meanwhile says
+    idle, with the sentence."""
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        proc = own_time.start(client)
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["phase"] == "visit"
+        assert ls["next"] == {"phase": "personal", "sentence": "When the visit closes, his own time resumes."}
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": False}).status_code == 200
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["next"] == {"phase": "idle", "sentence": "Own time is off; he stays awake."}
+        client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
+        proc.kill()
+
+    with _client() as client:
+        own_time.start(client)
+        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self",
+                           wake_at="2099-01-01T00:00:00+00:00")
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["phase"] == "sleep" and ls["next"]["phase"] == "personal"
+        assert ls["next"]["sentence"] == "When he wakes and his own time resumes."
+
+
+def test_next_during_a_visit_that_interrupted_a_sleep_is_the_sleep(spawned):
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client)
+        write_entity_state(_home_dir(), "asleep", reason="operator sleep")
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["next"] == {"phase": "sleep", "sentence": "When the visit closes, he goes back to sleep."}
+        # Nothing was interrupted under the sleep: the plain visit's next is idle.
+        client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})

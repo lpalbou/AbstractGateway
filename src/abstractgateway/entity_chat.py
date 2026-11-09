@@ -953,6 +953,7 @@ class EntityChatHost:
             "chat_id": hosted.chat_id,
             "session_id": hosted.session.session_id,
             "opened_at": hosted.opened_at,
+            "prior_state": {"state": str((hosted.prior_state or {}).get("state") or "") or None},
             "turns": len(hosted.session.reports),
             "turn_in_flight": bool(getattr(hosted, "turn_in_flight", False)),
             "model_info": dict(hosted.model_info),

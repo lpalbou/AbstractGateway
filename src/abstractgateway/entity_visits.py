@@ -1813,9 +1813,11 @@ class EntityVisitHost:
             # recorded "v0"). Every run SERVES the react graph now — the
             # field documents birth, it no longer selects.
             "workflow_arm": str(visit_vars.get("workflow_arm") or "v0"),
-            # The phase bar's visit facts (contract-phases §1.3): who is in the visit, since when.
+            # The phase bar's visit facts (contract-phases §1.3): who is in the visit, since when,
+            # and the state word it interrupted (its close returns there).
             "participants": [str(p) for p in (visit_vars.get("participants") or stamp.get("participants") or [])],
             "created_at": getattr(run, "created_at", None),
+            "prior_state": {"state": str((visit_vars.get("prior_state") or {}).get("state") or "") or None},
         }
 
     # -------------------------------------------------------------- internal
