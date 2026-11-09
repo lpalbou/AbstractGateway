@@ -353,7 +353,7 @@ def test_structural_edge_ops_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path
         # consultable-redirect visit-close edge, add a new edge on a
         # shipped cause with steering prose.
         ops = [
-            {"op": "remove", "edge": "sleep->work#cadence_need_check"},
+            {"op": "remove", "edge": "work->personal#no_task"},
             {"op": "redirect", "edge": "visit->work#visit_close", "to": "personal",
              "instruction": "after visits, decompress personally before work"},
             {"op": "add", "from": "work", "to": "personal", "cause": "task_complete",
@@ -370,7 +370,7 @@ def test_structural_edge_ops_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path
         assert body["overlay"]["graph"]["edge_ops"] == ops
         eff = {t["edge_id"] if "edge_id" in t else f"{t['from']}->{t['to']}#{t['cause']}": t
                for t in body["effective_transitions"]}
-        assert "sleep->work#cadence_need_check" not in eff
+        assert "work->personal#no_task" not in eff
         assert "visit->personal#visit_close" in eff  # redirected (dedups onto the existing edge_id space)
         assert "work->personal#task_complete" in eff and eff["work->personal#task_complete"]["overlay_op"] == "add"
 
@@ -381,7 +381,7 @@ def test_structural_edge_ops_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path
         assert stored["structural_sha256"] == structural_sha
         assert stored["graph"] == {"edge_ops": ops}
         stored_ids = {t.get("edge_id") or f"{t['from']}->{t['to']}#{t['cause']}" for t in stored["transitions"]}
-        assert "sleep->work#cadence_need_check" not in stored_ids
+        assert "work->personal#no_task" not in stored_ids
         assert "work->personal#task_complete" in stored_ids
         # remove(-1) + add(+1) + redirect DEDUPS onto the baseline
         # visit->personal#visit_close edge (-1; the validator's
@@ -454,7 +454,7 @@ def test_effective_spec_crash_window_and_vendor_drift_reconcile(
     # CRASH WINDOW: the overlay landed (edit_seq 3, one valid op) but the
     # effective file never rewrote — it still says edit_seq 1 and carries
     # no structural_sha256 (also the pre-build shape: self-migrates once).
-    ops = [{"op": "remove", "edge": "sleep->work#cadence_need_check"}]
+    ops = [{"op": "remove", "edge": "work->personal#no_task"}]
     (cfg / "entity_phases_overlay.json").write_text(
         _json.dumps({"edit_seq": 3, "edited_by": "person:op", "edited_at": "2026-07-23T00:00:00+00:00",
                      "tunables": {"unattended_wake_cadence_h": 5.0}, "graph": {"edge_ops": ops}}),
@@ -474,7 +474,7 @@ def test_effective_spec_crash_window_and_vendor_drift_reconcile(
         assert healed["structural_sha256"] == served["sha256"]
         assert healed["tunables"]["unattended_wake_cadence_h"] == 5.0
         healed_ids = {t.get("edge_id") or f"{t['from']}->{t['to']}#{t['cause']}" for t in healed["transitions"]}
-        assert "sleep->work#cadence_need_check" not in healed_ids
+        assert "work->personal#no_task" not in healed_ids
 
         # VENDOR DRIFT: the overlay carries an op referencing an edge the
         # current artifact does not declare (a re-vendor removed it). GET

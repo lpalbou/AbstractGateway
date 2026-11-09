@@ -52,11 +52,16 @@ def test_locked_edge_remove_refused_constitutional_with_artifact_reason() -> Non
     assert locked.get("edit_policy_reason", "")[:20] in r.detail or "locked" in r.detail
 
 
-def test_locked_absolute_is_refused() -> None:
+def test_every_locked_edge_is_refused() -> None:
+    """v23 (abstractentity a24448c) carries no locked-absolute edge any more; every locked edge
+    (the door's, the operator's, the entity's sleep election, the maintenance wake) stays
+    constitutional."""
     spec = _spec()
-    la = _first_edge(spec, "locked-absolute")
-    r = validate_edge_ops(spec, [{"op": "remove", "edge": la["edge_id"]}])
-    assert r is not None and r.code == "constitutional"
+    locked = [t for t in spec["transitions"] if str(t.get("edit_policy") or "").startswith("locked")]
+    assert locked
+    for t in locked:
+        r = validate_edge_ops(spec, [{"op": "remove", "edge": t["edge_id"]}])
+        assert r is not None and r.code == "constitutional", t["edge_id"]
 
 
 def test_unknown_cause_refused_naming_the_registry() -> None:
@@ -79,9 +84,9 @@ def test_machine_exit_from_sleep_refused_kill_switch() -> None:
     spec = _spec()
     # An operator add of a machine-cause exit from sleep is the kill-switch
     # class (would fire on an operator sleep).
-    # cadence_need_check is a SHIPPED machine cause (evaluated_predicate);
-    # a new sleep-exit on it is the kill-switch class.
-    r = validate_edge_ops(spec, [{"op": "add", "from": "sleep", "to": "work", "cause": "cadence_need_check"}])
+    # task_complete is a SHIPPED machine cause (v23; cadence_need_check retired with the timed
+    # wakes); a new sleep-exit on it is the kill-switch class.
+    r = validate_edge_ops(spec, [{"op": "add", "from": "sleep", "to": "work", "cause": "task_complete"}])
     assert r is not None and r.code == "kill_switch"
 
 
