@@ -44,6 +44,31 @@ UNDERSTANDING_KEYS = (
     "replaced_by",
 )
 
+#: `cut` (FINDINGS 2026-11-09 §(4)): the words shown were cut when they were saved, by a writer that is retired.
+#: Derived from the WRITER of the reading, never from its text (no marker is looked for):
+#: - a retired truncating writer's stamp: the flow brain's `mechanical-flow-v1` episodes (about 140 characters a
+#:   side, cut mid-text);
+#: - a session reflection (look-back) still in the words it was formed with, under no recorded author: until
+#:   ADR 0054 (AbstractRuntime 2a1c698) that writer cut its digest at 280 characters and stamped nobody; since then
+#:   a reflection is stored whole and authored at formation.
+#: The Entity app then shows the title and "Older record: its summary was cut when saved; he rewrites it in his
+#: sleep." instead of the cut words.
+RETIRED_CUTTING_WRITERS = frozenset({"mechanical-flow-v1"})
+REFLECTION_WRITER_SOURCES = frozenset({"entity-visit-run-reflection-v0", "entity-reflection-v1", "entity-chat-reflection-v1"})
+
+
+def cut_when_saved(reading: Mapping[str, Any], source: Any) -> bool:
+    """`cut` for one reading (memory's fields: digest_method, digest_version, authored_by) of a record whose
+    formation provenance names `source`."""
+    authored = reading.get("authored_by") if isinstance(reading.get("authored_by"), Mapping) else {}
+    writer = str(reading.get("digest_method") or authored.get("id") or "").strip()
+    if writer in RETIRED_CUTTING_WRITERS:
+        return True
+    original = reading.get("digest_version") in (None, 0)
+    unrecorded = not authored or str(authored.get("kind") or "").strip() in ("", "unrecorded")
+    return bool(original and unrecorded and str(source or "").strip() in REFLECTION_WRITER_SOURCES)
+
+
 #: The card sections whose record briefs carry the fields (`(section, list key)`). Questions and problems are diary
 #: rows and stay as they are.
 CARD_RECORD_LISTS = (("discoveries", "interests"), ("lessons", "lessons"), ("key_moments", "moments"))
@@ -90,12 +115,23 @@ class RecordUnderstandings:
     distinct record), so a replay that recalls the same memory a thousand times reads it once. Scoped to one response
     or one stream chunk, never kept across them: a fresh read always sees the store as it is."""
 
-    __slots__ = ("_home", "_understood", "_versions")
+    __slots__ = ("_home", "_understood", "_versions", "_sources")
 
     def __init__(self, home: Any) -> None:
         self._home = home
         self._understood: Dict[str, Optional[Dict[str, Any]]] = {}
         self._versions: Dict[str, List[Dict[str, Any]]] = {}
+        self._sources: Dict[str, str] = {}
+
+    def source(self, record_id: Any) -> str:
+        """The writer the record's formation provenance names (`provenance.source`), "" when none (read with it)."""
+        rid = str(record_id or "").strip()
+        if rid not in self._understood:
+            self.read(rid)
+        return self._sources.get(rid, "")
+
+    def cut(self, record_id: Any, reading: Mapping[str, Any]) -> bool:
+        return cut_when_saved(reading, self.source(record_id))
 
     def read(self, record_id: Any) -> Optional[Dict[str, Any]]:
         """Memory's `record_understanding` for a formed, non-diary record (private ones included); None for a diary
@@ -113,6 +149,8 @@ class RecordUnderstandings:
             attrs = assertion.attributes if isinstance(assertion.attributes, dict) else {}
             if attrs.get("record_kind"):
                 out = self._home.memory.record_understanding(rid)
+                provenance = getattr(assertion, "provenance", None)
+                self._sources[rid] = str((provenance or {}).get("source") or "") if isinstance(provenance, dict) else ""
         self._understood[rid] = out
         return out
 
@@ -150,6 +188,7 @@ class RecordUnderstandings:
                 "understood_at": reading.get("understood_at") or None,
                 "cause": cause.get("cause") or None,
             })
+        block["cut"] = self.cut(record_id, block)
         return block
 
 
@@ -173,6 +212,20 @@ def with_recalled(envelope: Dict[str, Any], reads: RecordUnderstandings) -> Dict
     return {**envelope, "display": {**display, "recalled": recalled}}
 
 
+def with_cut(envelope: Dict[str, Any]) -> Dict[str, Any]:
+    """A record's own display block in the replay stream (its formation, a rewrite: the hover card's words) carries
+    `cut`, from the writer its row names (`payload.provenance.source`) and the block's reading. Other envelopes, and
+    diary blocks (no digest is served on them), pass unchanged; the payload is never touched."""
+    display = envelope.get("display")
+    if not isinstance(display, dict) or not display.get("record_id") or "digest" not in display:
+        return envelope
+    if str(display.get("kind") or "") == "diary":
+        return envelope
+    payload = envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}
+    provenance = payload.get("provenance") if isinstance(payload.get("provenance"), dict) else {}
+    return {**envelope, "display": {**display, "cut": cut_when_saved(display, provenance.get("source"))}}
+
+
 def card_with_understanding(card: Dict[str, Any], reads: RecordUnderstandings) -> Dict[str, Any]:
     """The card with each record brief of `CARD_RECORD_LISTS` carrying its current reading's fields (the brief's
     `statement` is that reading's words). Diary briefs (book lessons) stay as they are: `RecordUnderstandings.read`
@@ -186,6 +239,7 @@ def card_with_understanding(card: Dict[str, Any], reads: RecordUnderstandings) -
         briefs = []
         for brief in section[list_key]:
             understood = reads.read(brief.get("record_id")) if isinstance(brief, dict) else None
-            briefs.append({**brief, **understanding_fields(understood)} if understood is not None else brief)
+            briefs.append({**brief, **understanding_fields(understood), "cut": reads.cut(brief.get("record_id"), understood)}
+                          if understood is not None else brief)
         out[section_key] = {**section, list_key: briefs}
     return out

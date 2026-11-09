@@ -356,3 +356,50 @@ def test_private_non_diary_record_read_carries_the_understanding():
         assert body["digest_version"] == 1 and body["authored_by"] == MIND and body["reader"] == READER
         assert [v["version"] for v in body["versions"]] == [0, 1]
         assert body["versions"] == home.memory.versions(private)
+
+
+# --------------------------------------------------------------------------- words cut when saved (FINDINGS 2026-11-09 §(4))
+
+
+def test_words_a_retired_writer_cut_when_saved_are_flagged_from_the_writer_never_the_text():
+    """"[#TRUNCATION]" showed inside end-user hover cards: two retired writers cut a record's words when they saved
+    them (the flow brain's mechanical-flow-v1 episodes; session reflections before ADR 0054, under no recorded
+    author). Every surface the Entity app reads (the replay stream's record blocks and recall blocks, the record read,
+    the card) carries `cut`, derived from the writer: a marker in the text is never looked for (a cut word without the
+    writer is not flagged; the writer without a marker is)."""
+    reflection = {"source": "entity-visit-run-reflection-v0", "actor": "entity-reflection"}
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Nerin", "spark": _spark("Nerin")}).status_code == 201
+        home, owner = _home("nerin")
+        flow_ep = _form(home, owner, "ep-flow", "episode", "User: the census figures? Nerin: the first pass found",
+                        attributes={"digest_method": "mechanical-flow-v1"})
+        old_summary = _form(home, owner, "sum-old", "summary", "Thank you for the time and the clear purpose.",
+                            title="session reflection: v-1", attributes={"digest_method": ""}, provenance=reflection,
+                            edges=(("summarizes", flow_ep),))
+        marked = _form(home, owner, "ep-marked", "episode", "A word … [#TRUNCATION: digest bounded]")
+        lesson = _form(home, owner, "lesson-n", "lesson", "Check the source document first.")
+        home.memory.commit_selection("trace-cut", [flow_ep, old_summary, marked, lesson])
+
+        def read(gid):
+            r = client.get(f"/api/gateway/entities/Nerin/records/{gid}/verbatim")
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        # The record read (Detail): the old reflection (a summary answers with its words) and a lesson.
+        assert read(old_summary)["cut"] is True and read(lesson)["cut"] is False
+
+        envelopes = _lines(client.get("/api/gateway/entities/Nerin/replay").text)
+        (snap,) = [e for e in envelopes if e["family"] == "snapshot" and e["payload"].get("trace_id") == "trace-cut"]
+        assert {b["graph_id"]: b["cut"] for b in snap["display"]["recalled"]} == {
+            flow_ep: True, old_summary: True, marked: False, lesson: False}  # the text is never read for it
+        formed = {e["display"]["record_id"]: e["display"]["cut"] for e in envelopes
+                  if isinstance(e.get("display"), dict) and "cut" in e["display"]}
+        assert formed.get(flow_ep) is True and formed.get(old_summary) is True and formed.get(lesson) is False, formed
+
+        card = client.get("/api/gateway/entities/Nerin/card").json()
+        (brief,) = [b for b in card["lessons"]["lessons"] if b["record_id"] == lesson]
+        assert brief["cut"] is False
+
+        # He rewrote the reflection in his sleep: its words now are his, whole.
+        _rewrite(home, old_summary, "The admin gave me time to look outward; I said I would come back with what I found.")
+        assert read(old_summary)["cut"] is False

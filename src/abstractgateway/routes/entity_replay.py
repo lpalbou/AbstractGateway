@@ -224,7 +224,7 @@ async def replay_entity_stream(
 
         await off_loop("heavy", sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
 
-    from ..entity_understanding import RecordUnderstandings, with_recalled
+    from ..entity_understanding import RecordUnderstandings, with_cut, with_recalled
 
     def _lines():
         # Recall snapshots carry each recalled record's stored understanding
@@ -240,7 +240,7 @@ async def replay_entity_stream(
             enrich=bool(enrich),
         ):
             if reads is not None:
-                envelope = with_recalled(envelope, reads)
+                envelope = with_cut(with_recalled(envelope, reads))
             yield (json.dumps(envelope, ensure_ascii=False) + "\n").encode("utf-8")
 
     return StreamingResponse(_batch_bytes(_lines()), media_type="application/x-ndjson")
@@ -335,10 +335,13 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     is_diary = is_diary_record(assertion)
     understanding: Dict[str, Any] = {}
     if not is_diary:
-        understood = RecordUnderstandings(home).read(gid)
+        reads = RecordUnderstandings(home)
+        understood = reads.read(gid)
         understanding = {
             **understanding_fields(understood),
             "versions": home.memory.versions(gid) if understood is not None else [],
+            # Its words were cut when saved, by a retired writer (entity_understanding.cut_when_saved).
+            "cut": reads.cut(gid, understood) if understood is not None else False,
         }
 
     payload_ref = str(attrs.get("payload_ref") or "").strip()
@@ -573,7 +576,7 @@ def _collect_replay_chunk(
     bounded chunk, so poll re-entry is a cursored continuation, never a
     full-journal walk on the loop. Returns (envelopes, new_cursor,
     exhausted)."""
-    from ..entity_understanding import RecordUnderstandings, with_recalled
+    from ..entity_understanding import RecordUnderstandings, with_cut, with_recalled
 
     out: List[Dict[str, Any]] = []
     pos = float(cursor)
@@ -595,7 +598,7 @@ def _collect_replay_chunk(
             if str(envelope.get("family") or "") == "host":
                 continue  # the host lane owns marker delivery
             seq = float(envelope.get("seq") or 0.0)
-            out.append(with_recalled(envelope, reads) if reads is not None else envelope)
+            out.append(with_cut(with_recalled(envelope, reads)) if reads is not None else envelope)
             pos = max(pos, seq)
             if len(out) >= int(limit):
                 exhausted = False
