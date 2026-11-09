@@ -350,3 +350,50 @@ def test_cancel_run_tree_outcomes_reports_every_run():
     assert by[("boom", "failed")]["code"] in ("run_cancel_failed", "run_children_unknown")
     assert {o["code"] for o in out if o["run_id"] == "boom"} == {"run_cancel_failed", "run_children_unknown"}
     assert cancel_run_tree(_Runtime(), _Store(), "root", reason="test") == ["root"]
+
+
+def test_the_hard_stop_never_signals_the_gateway_itself_and_stops_once(monkeypatch: pytest.MonkeyPatch):
+    """Review 2026-11-09 #3: a status naming this process is never signalled; two concurrent Stops
+    run ONE hard stop; a live process behind a stale heartbeat is still stopped; a hard stop whose
+    death is not confirmed is reported as failed."""
+    import os
+
+    from abstractgateway import entity_loop, entity_phase
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        home = _home_dir()
+        # (a) the status names THIS process: never a signal.
+        (home / "loop_status").write_text(json.dumps({"phase": "day", "pid": os.getpid()}), encoding="utf-8")
+        row = entity_phase._kill_loop(home, {}, "test")
+        assert row["outcome"] == "not_running"
+
+        # (b) two concurrent Stops on a live loop with a stale heartbeat: one hard stop, the loop dies.
+        calls = []
+        real_freeze = entity_loop.freeze_loop
+
+        def _spy(home_dir, **kw):
+            calls.append(1)
+            time.sleep(0.2)
+            return real_freeze(home_dir, **kw)
+
+        monkeypatch.setattr(entity_loop, "freeze_loop", _spy)
+        proc = _fake_loop(home)
+        (home / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid,
+                                                      "updated_at": "2020-01-01T00:00:00+00:00"}), encoding="utf-8")
+        rows = []
+        ts = [threading.Thread(target=lambda: rows.append(entity_phase._kill_loop(home, {}, "test"))) for _ in range(2)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(15)
+        assert len(calls) == 1, "two hard stops ran"
+        assert sorted(r["outcome"] for r in rows)[0] in ("killed_sigkill", "killed_sigterm")
+        assert proc.poll() is not None or not entity_phase._pid_alive_strict(proc.pid)
+
+        # (c) a hard stop that does not kill is never reported as a kill.
+        proc2 = _fake_loop(home)
+        monkeypatch.setattr(entity_loop, "freeze_loop", lambda home_dir, **kw: {"frozen": True})
+        row = entity_phase._kill_loop(home, {}, "test")
+        assert row["outcome"] == "failed" and row["code"] == "loop_still_alive"
+        proc2.kill()

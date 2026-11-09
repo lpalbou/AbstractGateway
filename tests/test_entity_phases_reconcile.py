@@ -294,24 +294,30 @@ def test_reconcile_never_starts_under_a_visit_opening_or_a_stop(spawned):
 
 
 def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.MonkeyPatch):
-    from abstractgateway import entity_loop, entity_phase
+    from abstractgateway import entity_phase
 
-    frozen = []
+    procs = []
 
     def _start_then_stop(registry, manifest, params):
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        threading.Thread(target=proc.wait, daemon=True).start()
+        procs.append(proc)
+        (_home_dir() / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")
         with entity_phase.phase_lock(registry.entities_dir, "castor"):
             rec = entity_phase.read_record(registry.entities_dir, "castor")
             rec["generation"] += 1  # Stop's fence lands mid-spawn
             entity_phase.write_record(registry.entities_dir, "castor", rec)
-        return {"pid": 4321}
+        return {"pid": proc.pid}
 
     monkeypatch.setattr(entity_phase, "start_own_time", _start_then_stop)
-    monkeypatch.setattr(entity_loop, "freeze_loop", lambda home, **kw: frozen.append(home.name) or {})
     with _client() as client:
         _born_awake_with_personal(client)
         out = entity_phase.reconcile(_registry(), "castor", "test", operator=True)
         assert out == {"own_time": False, "pid": None, "reason": "stopped"}
-        assert frozen == ["castor"]
+        deadline = time.monotonic() + 6
+        while procs[0].poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert procs[0].poll() is not None, "the loop spawned across the Stop outlived the fence"
 
 
 def test_a_request_ending_and_the_work_order_cleared_return_to_own_time(spawned, own_time):

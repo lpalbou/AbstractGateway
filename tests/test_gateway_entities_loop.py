@@ -105,8 +105,13 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
 
     frozen_calls = {}
 
+    killed: list = []
+
     def _fake_hard_stop(home_dir, *, reason="", requested_by="admin"):
         frozen_calls.update({"home": str(home_dir), "reason": reason, "requested_by": requested_by})
+        for proc in killed:  # the stand-in actually ends the loop (the kill switch confirms it)
+            proc.kill()
+            proc.wait(5)
         return {
             "frozen": True, "pid": 4242, "was_running": True,
             "escalated_to_sigkill": False, "reason": reason, "requested_by": requested_by,
@@ -125,7 +130,7 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
         # A live own-time loop (a real child process; the hard stop is faked above): the kill
         # switch signals a loop only when one is alive.
         proc = _sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
-        _th.Thread(target=proc.wait, daemon=True).start()
+        killed.append(proc)
         home = get_gateway_service().entity_registry.entities_dir / "castor"
         (home / "loop_status").write_text(_json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")
 

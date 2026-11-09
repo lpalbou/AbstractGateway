@@ -1038,22 +1038,114 @@ def _queue_stop(entities_dir: Path, slug: str) -> Dict[str, Any]:
         return _item("queue", None, "failed", "queue_clear_failed", f"His waiting requests could not be cleared: {e}")
 
 
-def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> Dict[str, Any]:
-    from .entity_loop import freeze_loop, loop_status
+_KILL_LOCKS: Dict[str, threading.Lock] = {}
+_KILL_LOCKS_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def _kill_lock(home_dir: Path) -> Iterator[None]:
+    """ONE hard stop per home at a time, across threads and processes (review 2026-11-09 #3: two
+    concurrent Stops both passed the liveness check, and the second hard stop read the first one's
+    status stamp — the gateway's own pid — as the loop and signalled the gateway)."""
+    key = str(Path(home_dir).resolve())
+    with _KILL_LOCKS_GUARD:
+        lock = _KILL_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        lock_path = Path(home_dir).parent / SIDECAR_DIRNAME / f"{Path(home_dir).name}.kill.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "a+") as fh:
+            try:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
+            yield
+
+
+def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
+    """The live own-time process this home's status names, verified BEFORE any signal: the raw
+    status file (never the folded `running`, which hides a live process behind a stale heartbeat),
+    never this gateway's own pid, and the same incarnation (pid + its OS start time, the token
+    the loop stamped). Returns (target, why-not)."""
+    import os
+
+    from abstractruntime.identity.life import _pid_start_time
 
     try:
-        before = loop_status(home_dir)
-        pid = before.get("pid")
-        if not before.get("running"):
-            # NEVER call the hard stop without a live loop: the runtime's hard stop writes the
-            # status as the CALLING process (this gateway), and a second hard stop then reads that
-            # pid as the loop's own incarnation and signals the gateway itself.
-            return _item("loop", None, "not_running")
-        res = freeze_loop(home_dir, reason=reason or "kill switch", requested_by="admin")
-        cancelled["loop_pid"] = int(pid) if pid else None
-        if res.get("killed") is False or (res.get("was_running") and not res.get("killed", True)):
-            return _item("loop", pid, "failed", "loop_still_alive", "His own-time process did not stop; press Stop again.")
-        return _item("loop", pid, "killed_sigkill" if res.get("escalated_to_sigkill") else "killed_sigterm")
+        raw = json.loads((Path(home_dir) / "loop_status").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "no status"
+    try:
+        pid = int(raw.get("pid") or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid <= 0:
+        return None, "no pid"
+    if pid == os.getpid():
+        return None, "the status names this gateway's own process"
+    if not _pid_alive_strict(pid):
+        return None, "not alive"
+    token = str(raw.get("pid_started_at") or "")
+    current = _pid_start_time(pid)
+    if token:
+        if current != token:
+            return None, "another process holds that pid now"
+    elif str(raw.get("phase") or "") not in ("day", "between"):
+        return None, "an unstamped status that does not say a loop is up"
+    return {"pid": pid, "token": token or current}, ""
+
+
+def _pid_alive_strict(pid: int) -> bool:
+    """Alive and not a zombie (a killed child of this gateway waits to be reaped)."""
+    import os
+    import subprocess
+
+    try:
+        os.waitpid(pid, os.WNOHANG)  # reap it if it is our own child
+    except (ChildProcessError, OSError):
+        pass
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        stat = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=5).stdout
+        if stat.strip().startswith("Z"):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    return True
+
+
+def _target_gone(target: Dict[str, Any]) -> bool:
+    from abstractruntime.identity.life import _pid_start_time
+
+    if not _pid_alive_strict(int(target["pid"])):
+        return True
+    return bool(target.get("token")) and _pid_start_time(int(target["pid"])) != target["token"]
+
+
+def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> Dict[str, Any]:
+    """The kill switch's own-time row (contract §3.1; review 2026-11-09 #3): serialized per home,
+    the target verified before any signal, and the death CONFIRMED — the runtime's answer when it
+    says (`killed`), else the gateway's own check of that exact incarnation. Never a success it did
+    not see."""
+    from .entity_loop import freeze_loop
+
+    try:
+        with _kill_lock(home_dir):
+            target, why = _loop_target(home_dir)
+            if target is None:
+                return _item("loop", None, "not_running", None, None)
+            pid = int(target["pid"])
+            res = freeze_loop(home_dir, reason=reason or "kill switch", requested_by="admin")
+            cancelled["loop_pid"] = pid
+            reported = res.get("killed") if isinstance(res, dict) else None
+            gone = _target_gone(target)
+            if reported is False or not gone:
+                return _item("loop", pid, "failed", "loop_still_alive", "His own-time process did not stop; press Stop again.")
+            return _item("loop", pid, "killed_sigkill" if (res or {}).get("escalated_to_sigkill") else "killed_sigterm")
     except Exception as e:  # noqa: BLE001
         return _item("loop", None, "failed", "loop_still_alive", f"His own-time process could not be stopped: {e}")
 
@@ -1269,13 +1361,11 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         moved = int(rec.get("generation") or 0) != generation
         write_record(entities_dir, slug, rec)
     if moved and pid:
-        # A Stop landed while the loop was being spawned: the new loop never outlives the fence.
-        from .entity_loop import freeze_loop
-
-        try:
-            freeze_loop(home_dir, reason="kill switch landed during the start", requested_by="admin")
-        except Exception:  # noqa: BLE001
-            logger.exception("could not stop a loop spawned across a Stop for %s", slug)
+        # A Stop landed while the loop was being spawned: the new loop never outlives the fence
+        # (through the same verified, serialized hard stop as the kill switch).
+        row = _kill_loop(home_dir, {}, "kill switch landed during the start")
+        if row.get("outcome") == "failed":
+            logger.error("a loop spawned across a Stop for %s could not be stopped: %s", slug, row.get("sentence"))
         return {"own_time": False, "pid": None, "reason": "stopped"}
     if error:
         return {"own_time": False, "pid": None, "reason": "start_failed", "error": error}
