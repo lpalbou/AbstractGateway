@@ -44,3 +44,7 @@
   call, formation or authoring, and its record says cancelled, by the operator (the turn answers 409
   `stopped_use_resume`). The operator's maintenance pass stops at its next stage on a Stop or a visitor
   (`should_continue`), and the authoring drainer stops before any further call or write (`should_stop`).
+- **A mirrored mention is admitted in one step** (Codex review 2 #3). The mentioned entity's generation check and
+  its join to the other visit happen under its lifecycle lock, and the generation is checked again right before the
+  mirrored turn: a Stop of the mentioned entity carries none of his words into another visit. (A Stop landing
+  while the visited entity is already answering cannot cancel that other entity's turn.)

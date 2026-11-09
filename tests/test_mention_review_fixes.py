@@ -369,3 +369,32 @@ def _last_user_text_of(call) -> str:
     msgs = call.get("messages") or []
     users = [m for m in msgs if m.get("role") == "user"]
     return str(users[-1].get("content") if users else call.get("prompt") or "")
+
+
+def test_a_mirror_is_admitted_in_one_step_against_a_stop(monkeypatch):
+    """Codex review 2 #3: the mirror checked the mentioned entity's generation, then joined and
+    turned; a Stop landing after the check still carried his words into the other visit. Now the
+    check and the join are one locked step, and the generation is checked again before the turn."""
+    from abstractruntime.identity.life import bump_lifecycle_generation
+
+    from abstractgateway.entity_visits import EntityVisitHost
+
+    llm = _install(monkeypatch, ["Nerin: the tide is low.", "Castor: noted.", "Nerin: unexpected."])
+    real_join = EntityVisitHost.join_participant
+
+    def _join_then_stop(self, name, run_id, participant):
+        out = real_join(self, name, run_id, participant)
+        bump_lifecycle_generation(self._registry.entities_dir / "castor", written_by="test")  # Castor stopped
+        return out
+
+    monkeypatch.setattr(EntityVisitHost, "join_participant", _join_then_stop)
+    with _client() as client:
+        _create(client, "Nerin")
+        _create(client, "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={})
+        sid, rid = opened.json()["session_id"], opened.json()["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "how is the tide?"}).status_code == 200
+        r = _mention(client, sid, "@Castor what do you think?")
+        assert r.status_code == 200, r.text
+        assert r.json()["mirrors"][0]["reply"] is None and "stopped" in r.json()["mirrors"][0]["error"]
+        assert len(llm.calls) == 2, "Nerin was asked to answer words carried across a Stop"

@@ -728,16 +728,36 @@ def _mirror_into_bound_visits(
         row: Dict[str, Any] = {"entity_id": str(er.home.entity_id), "run_id": str(live.run_id)}
         # Mirror ADMISSION is fenced on the mentioned entity's generation (review #2): a Stop of the
         # mentioned entity since its answer means its words are not carried into another visit.
+        # ATOMIC ADMISSION (Codex review 2 #3): the generation check and the join are ONE step under
+        # the mentioned entity's lifecycle lock, so a Stop can no longer land between them; the turn
+        # (cognition) runs outside the lock.
+        from .entity_phase import GenerationMoved, fenced
+
+        try:
+            if generation is not None:
+                with fenced(registry.entities_dir, mentioned.slug, generation):
+                    visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+            else:
+                visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+        except GenerationMoved:
+            row["reply"] = None
+            row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."
+            out.append(row)
+            continue
+        except VisitRefused as e:
+            row["error"] = str(e.detail)
+            out.append(row)
+            continue
         if generation is not None:
             from .entity_phase import generation_of
 
             if generation_of(registry.entities_dir, mentioned.slug) != generation:
+                # Stopped after the admission: his words still never reach the other visit.
                 row["reply"] = None
                 row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."
                 out.append(row)
                 continue
         try:
-            visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
             turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
                                      speaker=str(mentioned.entity_id))
             row["turn_id"] = str(turned.get("turn_id") or "") or None
