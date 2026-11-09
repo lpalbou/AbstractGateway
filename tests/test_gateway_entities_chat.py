@@ -264,12 +264,20 @@ def test_one_life_one_summon_and_paused_refusal(monkeypatch: pytest.MonkeyPatch)
         assert first.status_code == 200, first.text
         chat_id = first.json()["chat_id"]
 
-        # One life, one summon: the second open refuses while a session is live.
-        second = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
-        assert second.status_code == 409
-        assert "one life, one summon" in second.json()["detail"]
+        # One life, one summon — and a visit never fails (Codex review 2 #9): the second open WAITS,
+        # without a deadline, for the live session to end, then opens.
+        import threading
 
+        second: dict = {}
+        t = threading.Thread(target=lambda: second.update(
+            r=client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})))
+        t.start()
+        t.join(1.0)
+        assert t.is_alive(), "the second open did not wait for the live session"
         assert client.post(f"/api/gateway/entities/Castor/chat/{chat_id}/close").status_code == 200
+        t.join(30)
+        assert second["r"].status_code == 200, second["r"].text
+        assert client.post(f"/api/gateway/entities/Castor/chat/{second['r'].json()['chat_id']}/close").status_code == 200
 
         # Paused = hard freeze: the open refuses with the reason.
         assert client.post(

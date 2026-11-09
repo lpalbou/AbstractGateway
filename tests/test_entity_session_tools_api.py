@@ -53,8 +53,8 @@ def test_real_entity_session_approval_policy_rejoin_end_and_turn_metrics(client,
     rejoined = client.post(base + open_route, json={"session_id": "phone-session", "tool_policy": {"modes": {}}})
     assert rejoined.status_code == 200 and rejoined.json()["run_id"] == run
     assert rejoined.json()["tool_policy"]["modes"] == {"read_memory": "approve"}
-    conflict = client.post(base + open_route, json={"session_id": "other-session", "tool_policy": {"modes": None}})
-    assert conflict.status_code == 409
+    # The same visitor in ANOTHER conversation is a handoff, never a refusal (Codex review 2 #9):
+    # that is exercised in test_entity_phases_arbitration; this flow goes on in its own session.
     turn = client.post(path + "/turn", json={"text": "Read that memory."})
     assert turn.status_code == 200, turn.text
     state = client.get(path + "/state").json()

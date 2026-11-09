@@ -126,6 +126,11 @@ class _JoinOwnVisit(Exception):
         self.run = run
 
 
+class _OtherVisitLive(Exception):
+    """Another person's visit holds the home (a durable visit or the hosted drawer): the door waits
+    for it to end — a visit never fails (Codex review 2 #9; root ADR-0027)."""
+
+
 def _wait_while(busy: Any, entities_dir: Any, slug: str, generation: Optional[int]) -> None:
     """Wait, WITHOUT a deadline (root ADR-0027; a visit never fails), while `busy()` holds. The
     wait is cancellation-aware: a kill switch since the door's entry ends it (stopped)."""
@@ -971,13 +976,13 @@ class EntityVisitHost:
         except _JoinOwnVisit as j:
             view = self._run_status_view(j.run)
             if session_id and str(session_id) != str(view.get("session_id") or ""):
-                # The same visitor, but ANOTHER conversation: that is not a reload of this visit.
-                raise VisitRefused(
-                    409,
-                    f"a visit is already open on {self._registry.manifest_for(name).entity_id} in another "
-                    "conversation — one life, one visit; continue it there or end it",
-                    code="visit_already_open",
-                ) from None
+                # The same visitor, but ANOTHER conversation (Codex review 2 #9): an explicit
+                # HANDOFF — his own visit there closes (his words kept, its look-back runs) and this
+                # conversation's visit opens. Never a refusal; never someone else's visit.
+                self.close(name, str(view["run_id"]), closed_by="operator",
+                           reason="the visitor continued in another conversation")
+                return self.open(name, participants=participants, session_id=session_id,
+                                 session_tools=session_tools, conversation=conversation)
             return {
                 "run_id": view["run_id"], "visit_id": view.get("visit_id"),
                 "entity_id": self._registry.manifest_for(name).entity_id,
@@ -1033,20 +1038,50 @@ class EntityVisitHost:
         opens on the same home (the check->create window closes under a
         per-slug mutex). Shared by the operator visit and each side of a
         two-entity meet — one code path, one guard."""
+        from .entity_phase import generation_of
+
         slug = self._registry.manifest_for(name).slug
-        with self._slug_lock(slug):
-            pre = self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
-            leg = self._start_leg(
-                pre,
-                participants=list(participants),
-                visit_id=visit_id,
-                session_id=session_id,
-                channel_label=channel_label,
-                session_tools=session_tools,
-                conversation=conversation,
-                idle_seconds=idle_seconds,
-            )
-        return pre, leg
+        generation = generation_of(self._registry.entities_dir, slug)
+        while True:
+            # Another person's visit holds the home: wait for it, OUTSIDE the open lock (its own
+            # visitor may still rejoin it), without a deadline; only the kill switch ends the wait.
+            _wait_while(lambda: self._other_visit_live(name, participants, join_existing),
+                        self._registry.entities_dir, slug, generation)
+            with self._slug_lock(slug):
+                try:
+                    pre = self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
+                except _OtherVisitLive:
+                    continue  # it came back between the wait and the lock: wait again
+                leg = self._start_leg(
+                    pre,
+                    participants=list(participants),
+                    visit_id=visit_id,
+                    session_id=session_id,
+                    channel_label=channel_label,
+                    session_tools=session_tools,
+                    conversation=conversation,
+                    idle_seconds=idle_seconds,
+                )
+            return pre, leg
+
+    def _other_visit_live(self, name: str, participants: Optional[List[str]], join_existing: bool) -> bool:
+        """True while a visit this door must not join holds the home: another person's durable visit,
+        or a hosted drawer session. The same visitor's own durable visit is joinable (False)."""
+        try:
+            er = self._registry.get_entity_runtime(self._registry.manifest_for(name).slug)
+            live = self._live_visit_run(er)
+        except Exception:  # noqa: BLE001 - a broken read must not hold the door
+            live = None
+        if live is not None:
+            stamped = [str(p) for p in (((live.vars or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or []]
+            if not (join_existing and (participants or ["person:operator"])[0] in stamped):
+                return True
+        if self._chat_probe is not None:
+            try:
+                return bool(self._chat_probe(self._registry.manifest_for(name).slug))
+            except Exception:  # noqa: BLE001
+                return False
+        return False
 
     def _slug_lock(self, slug: str) -> threading.Lock:
         with self._lock:
@@ -1126,12 +1161,7 @@ class EntityVisitHost:
                 # own live visit instead of failing (a visit never fails).
                 raise _JoinOwnVisit(live)
         if live is not None:
-            raise VisitRefused(
-                409,
-                f"a visit is already open on {manifest.entity_id} (run {live.run_id!r}) — "
-                "one life, one summon; continue it with /turn or end it with /close",
-                code="visit_already_open",
-            )
+            raise _OtherVisitLive()  # open_leg waits for it (a visit never fails)
         # ONE LIFE ACROSS LANES (mutual-exclusivity wave, audit finding 4):
         # the hosted chat drawer and this durable lane serve the SAME home.
         # Without this probe a durable open ADOPTED a live chat's visiting
@@ -1141,17 +1171,11 @@ class EntityVisitHost:
         # gateway always wires it (service factory).
         if self._chat_probe is not None:
             try:
-                if bool(self._chat_probe(slug)):
-                    raise VisitRefused(
-                        409,
-                        f"a hosted chat session is already open on {manifest.entity_id} — "
-                        "one life, one summon; close the drawer session first",
-                        code="chat_session_open",
-                    )
-            except VisitRefused:
-                raise
+                drawer_open = bool(self._chat_probe(slug))
             except Exception:  # noqa: BLE001 - a broken probe must not block the door
-                pass
+                drawer_open = False
+            if drawer_open:
+                raise _OtherVisitLive()  # open_leg waits for the drawer session to end
         # THE SUMMON LANE too (conversation-seat plan, item 5: one seat,
         # three doors): a summon turn mid-flight holds the one life — a
         # visit opened under it would interleave a second session into the

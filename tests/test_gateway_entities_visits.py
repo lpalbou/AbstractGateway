@@ -1622,7 +1622,7 @@ def test_summon_wake_is_refused_on_a_visiting_posture(monkeypatch: pytest.Monkey
         assert "mutually exclusive" in str(summoned.json().get("detail", ""))
 
 
-def test_durable_open_is_refused_under_a_live_hosted_chat(monkeypatch: pytest.MonkeyPatch):
+def test_durable_open_waits_for_a_live_hosted_chat(monkeypatch: pytest.MonkeyPatch):
     """AUDIT FINDING 4 (cross-lane): the durable preflight used to ADOPT a
     live hosted chat's posture as stale (prior=awake) and its abort paths
     wrote awake UNDER the live chat — two sessions, one life. The chat
@@ -1633,11 +1633,18 @@ def test_durable_open_is_refused_under_a_live_hosted_chat(monkeypatch: pytest.Mo
         hosted = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert hosted.status_code == 200, hosted.text
 
-        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
-        assert opened.status_code == 409, opened.text
-        assert "one life, one summon" in opened.json()["detail"]
+        # One life — and a visit never fails (Codex review 2 #9): the durable open WAITS for the
+        # drawer session to end, then opens; never two sessions on one life.
+        import threading
 
+        opened: dict = {}
+        t = threading.Thread(target=lambda: opened.update(r=client.post("/api/gateway/entities/Castor/visit/open", json={})))
+        t.start()
+        t.join(1.0)
+        assert t.is_alive(), "the durable open did not wait for the drawer session"
         client.post(f"/api/gateway/entities/Castor/chat/{hosted.json()['chat_id']}/close")
+        t.join(30)
+        assert opened["r"].status_code == 200, opened["r"].text
 
 
 def test_bounded_sleep_keeps_its_wake_deadline_through_a_visit(monkeypatch: pytest.MonkeyPatch):

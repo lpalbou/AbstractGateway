@@ -572,15 +572,25 @@ class EntityChatHost:
         speculation = mind["speculation"]
         base_url = entity_base_url(provider, base_url, mind_base_url=mind["base_url"])
 
-        with self._lock:
-            self._reap_idle_locked()
-            live = self._by_slug.get(slug)
-            if live is not None:
-                raise ChatOpenRefused(
-                    409,
-                    f"a chat session is already open on {manifest.entity_id} (chat_id {live!r}) — "
-                    "one life, one summon; close it or let it idle out",
-                )
+        # Another drawer session holds the home: wait for it to close or idle out, without a
+        # deadline (a visit never fails, Codex review 2 #9); only the kill switch ends the wait.
+        from .entity_phase import generation_of as _gen_open
+        from .entity_visits import STOPPED_VISIT_SENTENCE
+        from .entity_visits import _wait_while as _wait_open
+
+        _open_gen = _gen_open(self._registry.entities_dir, slug)
+
+        def _drawer_live() -> bool:
+            with self._lock:
+                self._reap_idle_locked()
+                return self._by_slug.get(slug) is not None
+
+        try:
+            _wait_open(_drawer_live, self._registry.entities_dir, slug, _open_gen)
+        except Exception as e:  # VisitRefused(stopped) -> the chat door's own refusal
+            if getattr(e, "code", None) == "stopped_use_resume":
+                raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
+            raise
         # THE SUMMON LANE too (conversation-seat plan, item 5: one seat,
         # three doors): a summon turn mid-flight holds the one life. The
         # probe answers only LIVE runs — a TTL-idle summon seat never blocks

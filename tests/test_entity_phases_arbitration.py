@@ -305,3 +305,17 @@ def test_the_same_visitor_opening_again_joins_their_visit():
         second = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert first.status_code == 200 and second.status_code == 200, second.text
         assert second.json()["run_id"] == first.json()["run_id"] and second.json()["joined"] is True
+
+
+def test_the_same_visitor_in_another_conversation_is_a_handoff():
+    """Codex review 2 #9: the same visitor opening a visit from ANOTHER conversation was refused
+    (visit_already_open). It is a handoff: his visit there closes, this conversation's opens."""
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        first = client.post("/api/gateway/entities/Castor/visit/open", json={"session_id": "phone"})
+        assert first.status_code == 200, first.text
+        second = client.post("/api/gateway/entities/Castor/visit/open", json={"session_id": "laptop"})
+        assert second.status_code == 200, second.text
+        assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == "laptop"
+        status = client.get("/api/gateway/entities/Castor/visit").json()
+        assert status.get("open") is True and status.get("run_id") == second.json()["run_id"]
