@@ -246,39 +246,31 @@ def _sweep_one(
             out["warnings"] = [warn]
         return out
 
-    # --- faithful respawn -------------------------------------------------
-    from .entity_chat import ChatOpenRefused, resolve_substrate
-    from .entity_loop import start_loop
-
-    spawn = _read_json(home_dir / _SPAWN_SIDECAR)
-    try:
-        provider, model, _thinking = resolve_substrate(
-            str(spawn.get("provider") or "") or None,
-            str(spawn.get("model") or "") or None,
-            home_dir=home_dir,
-        )
-        # The reasoning dial is deliberately NOT replayed (runtime c5890):
-        # the loop re-reads the home's substrate file at each day-open, so
-        # the file is the one authority — a respawn-time value would be a
-        # stale copy the loop ignores.
-    except ChatOpenRefused as e:
-        return {**base, "action": "skipped", "reason": f"substrate unresolvable: {e.detail}"}
-
-    kwargs: Dict[str, Any] = {"provider": provider, "model": model}
-    for key in ("base_url", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size", "context_window"):
-        if spawn.get(key) is not None:
-            kwargs[key] = spawn[key]
-
-    started = start_loop(home_dir, **kwargs)
-    _write_sidecar(sidecar_path, {"last_signature": signature, "last_repair_at": now})
+    # --- NO AUTOMATIC RESPAWN (Codex review 2026-11-09 #11; operator 2026-11-09: own time is the
+    # operator's to give). A crashed or culled loop stays DOWN: /life_state shows
+    # `blocked {loop_crashed, action: retry}` and only the operator's Retry restarts it, through
+    # the gateway's reconcile (its crash rule, resume_to and generation arbitration). The sweep
+    # still sees the death once, records it, tells the operator, and marks the biography.
+    warn = _notify_operator(
+        subject=f"[abstractgateway] {slug}: own-time loop down",
+        body=(
+            f"The own-time loop of {entity_id} stopped unexpectedly ({kind}, stopped_by={stopped_by or 'n/a'}). "
+            "It stays down until you press Retry on its phase bar (POST /entities/{name}/lifecycle {action: retry})."
+        ),
+    )
+    _write_sidecar(sidecar_path, {"last_signature": signature, "last_repair_at": last_repair_at,
+                                  "left_down_at": now})
     _marker(registry, slug, entity_id, home_dir, {
-        "channel": "self-repair", "repair": True, "death": kind,
-        "prior_stopped_by": stopped_by or None, "pid": started.get("pid"),
-        "reason": f"loop {kind} — respawned automatically (laurent's self-repair directive)",
+        "channel": "self-repair", "repair": False, "death": kind,
+        "prior_stopped_by": stopped_by or None,
+        "reason": f"loop {kind} — left down for the operator's Retry (no automatic respawn)",
     })
-    logger.warning("self-repair: respawned %s's own-time loop (%s, prior stopped_by=%s, pid=%s)",
-                   slug, kind, stopped_by or "n/a", started.get("pid"))
-    return {**base, "action": "repaired", "pid": started.get("pid")}
+    logger.warning("own-time loop of %s is down (%s, prior stopped_by=%s): left for the operator's Retry",
+                   slug, kind, stopped_by or "n/a")
+    out = {**base, "action": "left_down", "reason": "no automatic respawn: the operator's Retry restarts it"}
+    if warn:
+        out["warnings"] = [warn]
+    return out
 
 
 def _write_sidecar(path: Path, data: Dict[str, Any]) -> None:

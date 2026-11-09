@@ -750,11 +750,16 @@ def publish(
         own_kind = "personal" if new_phase == "personal" else (
             "work" if new_phase == "work" and (snap.get("work") or {}).get("kind") == "work_order" else None)
         resume_changed = False
+        # Work that INTERRUPTED own time (a summon, an automation) is not own time ending (review
+        # #10): only an own-time work day (kind work_order) ending clears the target.
+        prev_work_kind = ((prev or {}).get("work") or {}).get("kind")
+        prev_was_own_time = prev_phase == "personal" or (prev_phase == "work" and prev_work_kind == "work_order")
+        prev_was_interruption = prev_phase in ("visit", "sleep") or (prev_phase == "work" and prev_work_kind != "work_order")
         if own_kind:
             resume_changed = _note_resume_to(rec, own_kind)
-        elif new_phase == "idle" and prev_phase in ("personal", "work"):
+        elif new_phase == "idle" and prev_was_own_time:
             resume_changed = _note_resume_to(rec, None)
-        elif (new_phase == "idle" and prev_phase in ("visit", "sleep", "work") and rec.get("resume_to")
+        elif (new_phase == "idle" and prev_was_interruption and rec.get("resume_to")
               and cause in ("observed", "grant_expired")):
             # An interruption ended where the gateway has no write point (a self sleep's end, a
             # request's end seen on read): restore what it interrupted.

@@ -111,57 +111,30 @@ def _sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, respawns: List[Di
     return actions
 
 
-def test_failure_culled_loop_respawns_with_recorded_params(
+def test_a_culled_loop_is_left_down_for_the_operators_retry(
     tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Codex review 2026-11-09 #11 (operator 2026-11-09: own time is the operator's to give): the
+    sweep no longer respawns a culled or crashed loop. It records the death once, tells the
+    operator, marks the biography, and leaves the loop down for the phase bar's Retry."""
     _write_status(home, phase="stopped", stopped_by="failures", updated_at="2026-07-21T03:03:00+00:00")
-    entity_repair.record_spawn_params(home, {
-        "provider": "lmstudio", "model": "ornith-1.0-35b", "base_url": "http://127.0.0.1:1234/v1",
-        "tick_seconds": 20.0, "ticks_per_day": 8, "rest_minutes": 30.0,
-        "shelf_size": 50, "context_window": 65536,
-    })
+    entity_repair.record_spawn_params(home, {"provider": "lmstudio", "model": "ornith-1.0-35b", "tick_seconds": 20.0})
     respawns: List[Dict[str, Any]] = []
-    actions = _sweep(tmp_path, monkeypatch, respawns=respawns)
-    assert [a["action"] for a in actions] == ["repaired"], actions
-    assert respawns and respawns[0]["tick_seconds"] == 20.0 and respawns[0]["context_window"] == 65536
+    notes: List[str] = []
+    actions = _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)
+    assert [a["action"] for a in actions] == ["left_down"], actions
+    assert respawns == [], "the sweep respawned a loop without the operator"
+    assert notes, "the operator is told the loop is down"
     markers = actions[0]["_markers"]
-    assert markers and markers[0]["repair"] is True and markers[0]["channel"] == "self-repair"
-    assert markers[0]["prior_stopped_by"] == "failures"
+    assert markers and markers[0]["repair"] is False and markers[0]["prior_stopped_by"] == "failures"
 
 
-def test_repair_respawn_leaves_the_reasoning_dial_to_the_home_file(
-    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """File-is-authority (runtime c5890, agreed): the loop re-reads the
-    home's substrate file at each day-open, so a respawn passes NO
-    reasoning value — a spawn-time copy would go stale the moment the
-    operator changes the dial. Legacy spawn records that carry a
-    `thinking` field (written before this rule) must not break the
-    respawn either."""
-    from abstractgateway.entity_chat import write_entity_substrate
-
-    _write_status(home, phase="stopped", stopped_by="failures", updated_at="2026-07-21T03:03:00+00:00")
-    write_entity_substrate(home, provider="lmstudio", model="ornith-1.0-35b", thinking="high")
-    # A LEGACY sidecar with the retired field: tolerated, never replayed.
-    entity_repair.record_spawn_params(home, {
-        "provider": "lmstudio", "model": "ornith-1.0-35b", "thinking": "high",
-        "tick_seconds": 20.0, "ticks_per_day": 8, "rest_minutes": 30.0,
-    })
-    respawns: List[Dict[str, Any]] = []
-    actions = _sweep(tmp_path, monkeypatch, respawns=respawns)
-    assert [a["action"] for a in actions] == ["repaired"], actions
-    assert respawns and "thinking" not in respawns[0], (
-        "the respawn must not carry a reasoning value — the loop reads the home file"
-    )
-
-
-def test_crashed_loop_respawns(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Status claims a live day but the pid is dead (no dying write).
+def test_a_crashed_loop_is_left_down_too(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_status(home, phase="day", pid=99999999, pid_started_at="Tue Jul 21 04:00:00 2026")
     respawns: List[Dict[str, Any]] = []
     actions = _sweep(tmp_path, monkeypatch, respawns=respawns)
-    assert [a["action"] for a in actions] == ["repaired"], actions
-    assert actions[0]["kind"] == "crashed"
+    assert [a["action"] for a in actions] == ["left_down"], actions
+    assert actions[0]["kind"] == "crashed" and respawns == []
 
 
 @pytest.mark.parametrize("word", ["stop_command", "stop_file", "operator-interrupt", "rest", "max_ticks"])
@@ -192,28 +165,16 @@ def test_lapsed_grant_blocks_repair(tmp_path: Path, home: Path, monkeypatch: pyt
     assert "grant" in actions[0]["reason"] and respawns == []
 
 
-def test_one_repair_per_death_and_breaker_on_the_second(
-    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_one_notice_per_death(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_status(home, phase="stopped", stopped_by="failures", updated_at="2026-07-21T03:03:00+00:00")
     respawns: List[Dict[str, Any]] = []
     notes: List[str] = []
-    actions = _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)
-    assert [a["action"] for a in actions] == ["repaired"] and len(respawns) == 1
-
-    # Same death again (nothing changed): dedup — no second repair.
-    actions2 = _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)
-    assert actions2 == [] and len(respawns) == 1
-
-    # A NEW death lands minutes later (fresh updated_at) — inside the
-    # breaker window: STAY DOWN + notify, marker says suppressed.
+    assert [a["action"] for a in _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)] == ["left_down"]
+    # Same death again: nothing new. A new death: one more notice, still no respawn.
+    assert _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes) == []
     _write_status(home, phase="stopped", stopped_by="failures", updated_at="2026-07-21T03:20:00+00:00")
-    actions3 = _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)
-    assert [a["action"] for a in actions3] == ["suppressed"], actions3
-    assert len(respawns) == 1, "the breaker must prevent the second respawn"
-    assert notes, "the operator must be notified when the breaker opens"
-    markers = actions3[0]["_markers"]
-    assert any(m.get("repair_suppressed") for m in markers)
+    assert [a["action"] for a in _sweep(tmp_path, monkeypatch, respawns=respawns, notifications=notes)] == ["left_down"]
+    assert respawns == [] and len(notes) == 2
 
 
 def test_visiting_posture_defers_repair(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

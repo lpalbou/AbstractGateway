@@ -440,3 +440,23 @@ def test_next_during_a_visit_that_interrupted_a_sleep_is_the_sleep(spawned):
         assert ls["next"] == {"phase": "sleep", "sentence": "When the visit closes, he goes back to sleep."}
         # Nothing was interrupted under the sleep: the plain visit's next is idle.
         client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
+
+
+def test_a_request_interrupting_own_time_keeps_the_way_back(spawned):
+    """Codex review #10: observing a summon's end (work -> idle) cleared resume_to like an own-time
+    work day ending, so a read racing the run's end hook prevented the restore."""
+    from abstractgateway.routes.entities import _chat_host, _visit_host
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
+        assert spawned == ["castor"]  # own time given by the operator (faked: no live loop)
+        live = {"on": True}
+        probe = lambda slug: ({"run_id": "s-1", "session_id": "x", "holder": "agent:bot", "holder_kind": "agent"}
+                              if live["on"] else None)
+        _visit_host()._summon_seat_probe = probe
+        _chat_host()._summon_seat_probe = probe
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "work"
+        live["on"] = False
+        client.get("/api/gateway/entities/Castor/life_state")  # the read sees the request end first
+        assert spawned == ["castor", "castor"], "the interrupted own time was not restored"

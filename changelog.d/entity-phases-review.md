@@ -44,3 +44,9 @@
     still exactly one run.
   - Every wait ends only on a Stop (generation).
   - A different person opening while someone else's visit is live still answers 409 `visit_already_open`.
+- **A request that interrupted own time keeps the way back** (review #10). Only an own-time work day ending clears
+  `resume_to`; a summon or automation ending is the end of an interruption, so a read racing the run's end hook now
+  restores own time instead of erasing it.
+- **The self-repair sweeper no longer respawns crashed or culled loops** (review #11). It records the death once,
+  tells the operator and marks the biography; the loop stays down (`blocked {loop_crashed, action: retry}`) until the
+  operator's Retry. The loop-less need-check (work orders) is unchanged pending the work redesign.
