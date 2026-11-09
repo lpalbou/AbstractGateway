@@ -125,7 +125,8 @@ was not in it, and never under a visit, a sleep, work or the kill switch. If own
 unexpectedly, the phase is `idle` with a `blocked` reason and a **retry** action; nothing restarts it
 behind your back. When own time ends because it was asked to (personal or work turned off, a removed
 step, or nothing of its own left to return to), that is not a crash: the entity is awake and
-reachable, `idle`, with no `blocked` reason. Sleep is entered only by the operator's sleep or by the entity's own decision. A
+reachable, `idle`, with no `blocked` reason. Sleep is entered only by the operator's sleep or by the entity's own decision. The entity's own sleep has no set
+time: its `sleep.ends` is "when maintenance is done". A
 sleep is never followed by another sleep.
 
 | Method | Path | What it does |

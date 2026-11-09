@@ -89,6 +89,18 @@ def _update_run_under_its_lock(run_id: str, update: Any, *, wait_s: float = POST
     done.wait(max(0.0, float(wait_s)))
 
 
+def _history_reader_entity_id(vars0: Dict[str, Any]) -> Optional[str]:
+    """The entity that will READ a seeded session history: a summoned entity's own earlier replies
+    replay as the exact bytes it said, never as "<name> (entity): ..." (runtime
+    `session_chat_messages(reader_entity_id=)`, REVIEW-1 #7). The author is written by the summon
+    route only (`/runs/start` drops a client's), so it is the gateway's word, not the caller's."""
+    meta = vars0.get("_meta") if isinstance(vars0.get("_meta"), dict) else {}
+    author = meta.get("author") if isinstance(meta.get("author"), dict) else {}
+    if str(author.get("kind") or "") != "entity":
+        return None
+    return str(author.get("entity_id") or "").strip() or None
+
+
 @dataclass(frozen=True)
 class _GatewayToolSpec:
     name: str
@@ -2919,6 +2931,7 @@ class WorkflowBundleGatewayHost:
             session_id=session_id,
             automation_id=attribution.get("automation_id") if attribution.get("kind") == "automation" else None,
             strict=True,
+            reader_entity_id=_history_reader_entity_id(vars0),
         )
         self._normalize_seeded_context(vars0, ctx0, messages=messages)
         rt_ns["session_history"] = {
@@ -3001,6 +3014,7 @@ class WorkflowBundleGatewayHost:
                 run_store=self.runtime.run_store,
                 ledger_store=self.runtime.ledger_store,
                 session_id=session_id,
+                reader_entity_id=_history_reader_entity_id(vars0),
             )
             # Normalize context.messages to a list even when the seed is
             # empty: turn classification treats a messages LIST as "chat",

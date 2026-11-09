@@ -16,3 +16,10 @@
   turn answer now carries `turn_error`. A mention whose own answer failed is still 503 `entity_cannot_answer` with the
   plain sentence (the error is never shown to the caller). A mirrored turn the visited entity could not answer shows
   "This turn could not be answered: …" as its `reply`, with `turn_error`.
+- **His own sleep says when it ends.** The entity's own sleep carries no clock (AbstractRuntime a5ac083); its
+  `life_state.sleep.ends` is now "when maintenance is done" instead of `null`.
+- **A summoned entity re-reads its own replies as it said them.** The session history seeded into a summon names
+  the summoned entity as the reader (`session_chat_messages(reader_entity_id=)`): its own earlier replies replay
+  as the exact bytes, other entities' replies keep their "<name> (entity):" label.
+- **The diary handlers know their home.** The entity door passes `home_dir` to the diary handlers, so a public entry
+  projected without a gist is recorded in that home's title-failure file.

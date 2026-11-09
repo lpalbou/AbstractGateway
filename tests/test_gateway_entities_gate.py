@@ -1020,3 +1020,39 @@ def test_reflection_segment_admits_lesson_into_life_scope():
     # A lesson into SELF scope is NOT the shipped shape — refused.
     lesson_self = {"records": [{"kind": "lesson", "digest": "x"}], "scope": "self"}
     assert _is_reflection_form_act(lesson_self) is not None
+
+
+def test_the_diary_handlers_know_the_home_they_serve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Runtime seam (2026-11-09): `build_diary_effect_handlers(home_dir=)` locates the home's title
+    failure file; the door passes the home it serves, so a gistless public entry is recorded there."""
+    import abstractruntime.identity as identity
+
+    real = identity.build_diary_effect_handlers
+    seen: Dict[str, Any] = {}
+
+    def _spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(identity, "build_diary_effect_handlers", _spy)
+    registry = EntityRegistry(data_dir=tmp_path / "runtime")
+    created = registry.create(name="Castor", spark=_spark())
+    run_store = _RunStore()
+    runtime = _StubRuntime()
+    install_entity_routing(runtime, registry=registry, run_store=run_store, artifact_store=None)
+    stamp = finalize_summon_stamp(
+        mint_summon_stamp(data_dir=registry.data_dir, entity_id=created.entity_id, channel=CHANNEL_WORKPLACE,
+                          session_id="s-home", participants=["person:maintainer", created.entity_id]),
+        data_dir=registry.data_dir, run_id="run-h",
+    )
+    run_store.runs["run-h"] = _Run(run_id="run-h", session_id="s-home", vars={"_runtime": {"entity": stamp}})
+    try:
+        out = runtime._handlers[EffectType.DIARY_WRITE](
+            run_store.runs["run-h"],
+            Effect(type=EffectType.DIARY_WRITE, payload={"text": "A day.", "gist": "A day.", "kind": "reflection", "turn_id": "t1"}),
+            None,
+        )
+        assert out.status == "completed", out.error
+        assert Path(seen.get("home_dir") or "") == registry.get_home("castor").home_dir
+    finally:
+        registry.close_all()

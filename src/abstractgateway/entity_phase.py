@@ -509,6 +509,9 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
             ends: Optional[str] = MAINTENANCE_ENDS
         elif state.get("wake_at"):
             ends = _iso(state.get("wake_at"))
+        elif kind == "self":
+            # His own sleep carries no clock (runtime a5ac083): he wakes when its maintenance is done.
+            ends = MAINTENANCE_ENDS
         else:
             ends = None
         since = _iso(state.get("changed_at"))

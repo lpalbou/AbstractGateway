@@ -1264,6 +1264,9 @@ def install_entity_routing(
                     diary_store=home.diary,
                     memory_system=home.memory,
                     now_iso=utc_now_iso,
+                    # The home these handlers serve: a public entry projected without a gist is
+                    # recorded in ITS failure file (runtime seam 2026-11-09), never only as a warning.
+                    home_dir=home.home_dir,
                 ),
             }
             if _build_brain_handlers is not None:

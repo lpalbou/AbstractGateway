@@ -531,3 +531,17 @@ def test_a_loop_that_ends_on_purpose_hands_the_phase_back(spawned, own_time, sto
         assert read_entity_state(_home_dir())["state"] == "awake", "the gate sleep was left in place"
         assert body["phase"] == "idle" and (body.get("blocked") or {}).get("code") != "loop_crashed"
         assert spawned == []
+
+
+def test_his_own_sleep_ends_when_its_maintenance_is_done(spawned, own_time):
+    """Runtime a5ac083: the entity's own sleep carries no clock; `sleep.ends` says it ends when its
+    maintenance is done (never null, never a time)."""
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        proc = own_time.start(client)
+        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self")
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["phase"] == "sleep" and ls["sleep"]["kind"] == "self"
+        assert ls["sleep"]["ends"] == "when maintenance is done"
+        proc.kill()

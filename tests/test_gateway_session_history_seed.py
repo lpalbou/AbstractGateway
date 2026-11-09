@@ -312,3 +312,24 @@ def test_run_summary_carries_the_seed_receipt_counts_only(tmp_path: Path) -> Non
 
     unseeded = _start(tmp_path / "b", input_data={"prompt": "hi"}, session_id=None)
     assert run_summary(unseeded)["session_history"] is None
+
+
+def test_a_summoned_entity_reads_its_own_replies_as_it_said_them(tmp_path: Path) -> None:
+    """Runtime seam (session_chat_messages(reader_entity_id=), REVIEW-1 #7): the seed names the
+    run's own entity (the author the summon route writes) as the reader, so its earlier replies
+    replay as the exact bytes it said; another entity still reads them labelled."""
+    castor = {"kind": "entity", "name": "Castor", "entity_id": "entity:castor"}
+    nerin = {"kind": "entity", "name": "Nerin", "entity_id": "entity:nerin"}
+
+    def _seeded(author: Dict[str, Any]) -> list:
+        run_store = InMemoryRunStore()
+        prior = _prior_turn("turn-1", "analyze the report", "It concludes X.", "2026-01-01T00:00:00+00:00")
+        prior.vars["_meta"] = {"author": dict(castor)}
+        run_store.save(prior)
+        host = _build_host(tmp_path / author["name"], run_store)
+        run_id = host.start_run(flow_id="root", bundle_id="history-demo", session_id=_SESSION,
+                                input_data={"prompt": "and now?", "use_session_history": True, "_meta": {"author": dict(author)}})
+        return [m["content"] for m in run_store.load(run_id).vars["context"]["messages"] if m["role"] == "assistant"]
+
+    assert _seeded(castor) == ["It concludes X."]
+    assert _seeded(nerin) == ["Castor (entity): It concludes X."]
