@@ -29,11 +29,14 @@ turn produced no reply.
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from .entity_visits import VisitRefused
+
+logger = logging.getLogger(__name__)
 
 MENTION_WORKFLOW_ID = "entity-mention"
 MENTION_CHANNEL = "mention"
@@ -175,24 +178,43 @@ def person_author(principal: Any) -> Dict[str, Any]:
     return author_for("person", name or user)
 
 
-def _elsewhere(manifest: Any, holder_session: Optional[str], cause: str = "") -> MentionRefused:
+def _elsewhere(manifest: Any, caller_session: str, cause: str = "", *, own_session: Optional[str] = None) -> MentionRefused:
+    """The entity is in someone else's conversation. The sentence and the body name NO other
+    session, run or account (security, 2026-11-09 review K: the holder's session id let a member
+    post into the admin's visit); `session_id` is the caller's own. The cause goes to the log."""
     name = _display_name(manifest)
-    where = f"another conversation (session {holder_session})" if holder_session else "another conversation"
     from .entity_seat import SEAT_IDLE_TTL_S
 
-    sentence = (
-        f"{name} is in {where}. One conversation at a time: {name} is free again when that conversation "
-        f"ends, or after {int(SEAT_IDLE_TTL_S // 60)} minutes without a message there."
-    )
     if cause:
-        sentence += f" ({cause})"
-    return MentionRefused(409, sentence, code=CODE_ELSEWHERE, session_id=holder_session)
+        logger.info("mention refused, %s is busy elsewhere: %s", getattr(manifest, "slug", "?"), cause)
+    where = f"another of your conversations (session {own_session})" if own_session else "another conversation"
+    sentence = (
+        f"{name} is in {where}. One conversation at a time: {name} is free again when that "
+        f"conversation ends, or after {int(SEAT_IDLE_TTL_S // 60)} minutes without a message there."
+    )
+    return MentionRefused(409, sentence, code=CODE_ELSEWHERE, session_id=own_session or caller_session or None)
 
 
-def _from_visit_refusal(e: VisitRefused, manifest: Any) -> MentionRefused:
+def _stamped_participants(run: Any) -> list:
+    return [str(p) for p in ((((getattr(run, "vars", None) or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or [])]
+
+
+def _own_mention_visit(run: Any, *, session_id: str, caller: str) -> bool:
+    """A live visit the mention door may reuse: opened by this door, bound to this session, with
+    the caller among its stamped participants."""
+    from abstractruntime.core.run_origin import origin_of
+
+    return (
+        str(getattr(run, "session_id", "") or "") == session_id
+        and str((origin_of(getattr(run, "vars", None)) or {}).get("client") or "") == MENTION_CHANNEL
+        and caller in _stamped_participants(run)
+    )
+
+
+def _from_visit_refusal(e: VisitRefused, manifest: Any, session_id: str = "") -> MentionRefused:
     code = str(getattr(e, "code", "") or "")
     if code in _ELSEWHERE_CODES:
-        return _elsewhere(manifest, None, cause=str(e.detail))
+        return _elsewhere(manifest, session_id, cause=str(e.detail))
     if code == "mind_unresolved":
         return MentionRefused(503, f"{_display_name(manifest)} cannot answer: {e.detail}", code=CODE_CANNOT_ANSWER)
     return MentionRefused(int(e.status), str(e.detail), code=code)
@@ -283,8 +305,17 @@ def mention(
         live = visit_host._live_visit_run(er)
         reused = False
         if live is not None:
-            if str(getattr(live, "session_id", "") or "") != sid:
-                raise _elsewhere(manifest, str(getattr(live, "session_id", "") or "") or None)
+            # REUSE ONLY THE CALLER'S OWN MENTION VISIT (security, 2026-11-09 review K): the visit
+            # must be one this door opened, in this session, with the caller among its stamped
+            # participants. Anything else — another account's visit, an Entity-app visit, a visit
+            # bound to a session id the caller merely posted — is someone else's conversation:
+            # refused with a sentence that names no session, run or account.
+            if not _own_mention_visit(live, session_id=sid, caller=visitor):
+                # The caller's OWN other conversation may be named (it is theirs to go back to);
+                # anyone else's never is.
+                own_elsewhere = visitor in _stamped_participants(live)
+                holder = str(getattr(live, "session_id", "") or "") if own_elsewhere else ""
+                raise _elsewhere(manifest, sid, own_session=holder or None)
             run_id = str(live.run_id)
             reused = True
         else:
@@ -298,15 +329,15 @@ def mention(
                     idle_seconds=float(SEAT_IDLE_TTL_S),
                 )
             except VisitRefused as e:
-                raise _from_visit_refusal(e, manifest) from None
+                raise _from_visit_refusal(e, manifest, sid) from None
             run_id = str(leg["run_id"])
         # The mentioned entity reads the conversation: the quoted recent turns precede the words.
         context_block, context_report = conversation_context(svc, sid, current_turn=repeated)
         visit_text = f"{context_block}\n\n{text}" if context_block else text
         try:
-            turned = visit_host.turn(entity, run_id, text=visit_text, speaker=visitor)
+            turned = visit_host.turn(entity, run_id, text=visit_text, speaker=visitor, caller=visitor)
         except VisitRefused as e:
-            raise _from_visit_refusal(e, manifest) from None
+            raise _from_visit_refusal(e, manifest, sid) from None
         reply = str(turned.get("reply") or "").strip()
         status = str(turned.get("status") or "")
         if status == "failed" or not reply:
@@ -334,6 +365,7 @@ def mention(
         )
         mirrors = _mirror_into_bound_visits(
             registry=registry, visit_host=visit_host, session_id=sid, mentioned=manifest, author=author, reply=reply,
+            caller=visitor,
         )
     return {
         "run_id": str(run.run_id),
@@ -357,6 +389,7 @@ def mention(
 
 def _mirror_into_bound_visits(
     *, registry: Any, visit_host: Any, session_id: str, mentioned: Any, author: Dict[str, Any], reply: str,
+    caller: str,
 ) -> list:
     """A VISIT LANE (the conversation is another entity's live visit, e.g. an Entity-app visit with
     nerin): the mentioned entity's reply is a turn of THAT visit, spoken by the mentioned entity,
@@ -380,6 +413,10 @@ def _mirror_into_bound_visits(
         er = registry.get_entity_runtime(child.name)
         live = visit_host._live_visit_run(er)
         if live is None or str(getattr(live, "session_id", "") or "") != session_id:
+            continue
+        # Only a visit the CALLER is in (security, 2026-11-09 review K): a session id that names
+        # someone else's visit is not the caller's conversation, and nothing is mirrored into it.
+        if caller not in _stamped_participants(live):
             continue
         # Only the VISITED entity's own visit (the Entity app's lane), never the visit another
         # mention opened in this conversation: mentioned entities do not mirror into each other.

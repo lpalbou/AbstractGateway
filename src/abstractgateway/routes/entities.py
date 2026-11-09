@@ -2031,8 +2031,13 @@ def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
     try:
+        from ..security.principal import current_gateway_principal
+
+        _principal = current_gateway_principal()
         return _visit_host().turn(
             name, run_id, text=req.text, speaker=req.speaker,
+            # The speaker is always the caller (security, 2026-11-09 review K).
+            caller=(f"person:{_principal.user_id}" if _principal is not None else "person:operator"),
             attachments=[{"path": a.path} for a in (req.attachments or [])] or None,
         )
     except KeyError as e:

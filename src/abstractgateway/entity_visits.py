@@ -1380,12 +1380,20 @@ class EntityVisitHost:
     # ------------------------------------------------------------------ turn
     def turn(
         self, name: str, run_id: str, *, text: str, speaker: Optional[str] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None, caller: Optional[str] = None,
     ) -> Dict[str, Any]:
         from abstractruntime.identity.visit_workflow import VISITOR_WAIT_KEY
 
         er, run, wf, manifest = self._load_visit(name, run_id)
         self._refuse_if_paused(manifest, verb="take a message")
+        stamped_all = [
+            str(p) for p in (((run.vars or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or []
+        ]
+        if caller is not None and str(caller) not in stamped_all:
+            # THE SPEAKER IS ALWAYS THE CALLER (security, 2026-11-09 review K): a caller who is not
+            # a stamped participant of this visit is refused — never seated as the visit's own
+            # person. The sentence names no account, session or run.
+            raise VisitRefused(403, "This visit belongs to another conversation.", code="not_a_participant")
         # Attachments are validated against the entity's own workspace BEFORE
         # anything moves (a refused attachment costs no turn); the records
         # ride the resume payload as structured data (operator 2026-11-08:
@@ -1441,7 +1449,7 @@ class EntityVisitHost:
                 return ":" in participant and participant.split(":", 1)[1] == claim_s
 
             if stamped and not any(_matches(claim, p) for p in stamped):
-                verified = next((p for p in stamped if not p.startswith("entity:")), stamped[0])
+                verified = str(caller) if caller else next((p for p in stamped if not p.startswith("entity:")), stamped[0])
                 payload["speaker"] = verified
                 payload["speaker_claim_rejected"] = claim
             else:
