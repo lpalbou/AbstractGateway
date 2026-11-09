@@ -52,6 +52,8 @@ SELF_SLEEP_WRITERS = ("self", "personal-cycle", "sleep-bound")
 # they are not sleep at all — the entity is awake and reachable (contract §1.2).
 GATE_SLEEP_WRITERS = ("grant-gate", "day-gate", "need-check")
 MAINTENANCE_ENDS = "when maintenance is done"
+# The one wording of a kill-switch ending on every record it leaves (runs, visits, chats, passes).
+KILL_SWITCH_REASON = "kill_switch: stopped by the operator"
 # A spawn claim older than this is a crashed claimant; a new reconcile may spawn.
 SPAWN_CLAIM_TTL_S = 30.0
 # loop_status.stopped_by values that mean "the loop ended because it was asked to".
@@ -1024,11 +1026,9 @@ def stop(
     visit_run = str(durable.get("run_id") or "") if durable.get("open") else ""
     visit_cancelled = False
     if visit_run:
-        try:
-            in_flight = bool(visit_host.is_in_flight(visit_run))
-        except Exception:  # noqa: BLE001
-            in_flight = False
-        if in_flight:
+        # The open visit ends CANCELLED by the operator, in flight or parked (a clean terminal
+        # record, never a completed close nor a failure), then its terminal duty runs.
+        if True:
             try:
                 er = registry.get_entity_runtime(slug)
                 for o in _cancel_tree(er.runtime, er.run_store, visit_run):
@@ -1093,7 +1093,10 @@ def _cancel_tree(runtime: Any, run_store: Any, run_id: str) -> List[Dict[str, An
         return [{"run_id": run_id, "outcome": "failed", "code": "run_cancel_failed", "error": "no runtime to cancel it on"}]
     from .entity_seat import cancel_run_tree_outcomes
 
-    return cancel_run_tree_outcomes(runtime, run_store, run_id, reason="stopped by the kill switch")
+    # A CLEAN TERMINAL RECORD (operator 2026-11-09: "the ledger must be kept clean"): every run the
+    # kill switch ends is CANCELLED, reason kill_switch, by the operator — the runtime stops an
+    # effect in flight and closes its ledger record as `cancelled` naming who asked.
+    return cancel_run_tree_outcomes(runtime, run_store, run_id, reason=KILL_SWITCH_REASON, cancelled_by="operator")
 
 
 def _queue_stop(entities_dir: Path, slug: str) -> Dict[str, Any]:
@@ -1237,8 +1240,9 @@ def _close_durable(registry: Any, visit_host: Any, name: str, run_id: str, was_c
         if was_cancelled:
             visit_host.finalize_cancelled(name, run_id)
         else:
+            # The cancel did not take (a store problem): the hard-freeze close is the fallback.
             with visit_host.lease_without_waiting():
-                visit_host.close(name, run_id, closed_by="pause", reason="stopped by the kill switch")
+                visit_host.close(name, run_id, closed_by="pause", reason=KILL_SWITCH_REASON)
         cancelled["visits"].append(run_id)
         return _item("visit", run_id, "closed")
     except Exception as e:  # noqa: BLE001
@@ -1595,9 +1599,14 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
         rec = read_record(entities_dir, slug)
         mine = isinstance(rec.get("maintenance"), dict) and rec["maintenance"].get("generation") == int(generation)
         # The receipt of THIS pass (review #8): a failure or a superseded pass is always recorded.
+        stopped_by_switch = int(rec.get("generation") or 0) != int(generation)
         rec["last_maintenance"] = {"generation": int(generation), "at": _now_iso(),
-                                   "status": "superseded" if superseded else ("failed" if failed else "done"),
+                                   "status": ("cancelled" if stopped_by_switch else
+                                              "superseded" if superseded else ("failed" if failed else "done")),
                                    "error": failed}
+        if stopped_by_switch:
+            # A clean terminal record: the pass ended under the kill switch, by the operator.
+            rec["last_maintenance"].update({"reason": "kill_switch", "by": "operator"})
         if int(rec.get("generation") or 0) != int(generation) or superseded:
             if mine:
                 rec["maintenance"] = None  # a stale completion never touches a newer pass's record

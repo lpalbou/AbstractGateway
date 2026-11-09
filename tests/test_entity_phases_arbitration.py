@@ -162,10 +162,10 @@ def test_a_visit_taking_the_phase_during_a_spawn_wins(monkeypatch: pytest.Monkey
     procs = []
 
     def _start_while_a_visit_opens(registry, manifest, params):
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-        threading.Thread(target=proc.wait, daemon=True).start()
+        from entity_fake_loop import spawn
+
+        proc = spawn(_home(), "day", 60)
         procs.append(proc)
-        (_home() / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")
         gen = entity_phase.generation_of(registry.entities_dir, "castor")
         entity_phase.admit_visit_posture(registry.entities_dir, "castor", gen, reason="in conversation [visit v-3]")
         return {"pid": proc.pid}

@@ -970,6 +970,14 @@ class EntityVisitHost:
             )
         except _JoinOwnVisit as j:
             view = self._run_status_view(j.run)
+            if session_id and str(session_id) != str(view.get("session_id") or ""):
+                # The same visitor, but ANOTHER conversation: that is not a reload of this visit.
+                raise VisitRefused(
+                    409,
+                    f"a visit is already open on {self._registry.manifest_for(name).entity_id} in another "
+                    "conversation — one life, one visit; continue it there or end it",
+                    code="visit_already_open",
+                ) from None
             return {
                 "run_id": view["run_id"], "visit_id": view.get("visit_id"),
                 "entity_id": self._registry.manifest_for(name).entity_id,
@@ -2187,6 +2195,10 @@ class EntityVisitHost:
             "transport": "visit-run",
             "output": dict(getattr(state, "output", None) or {}),
         }
+        if str(getattr(getattr(state, "status", None), "value", getattr(state, "status", "")) or "") == "cancelled":
+            # A clean terminal record: what ended it and who (the kill switch: the operator).
+            details["status"] = "cancelled"
+            details["reason"] = str(getattr(state, "error", "") or "") or None
         if wake_warning:
             details["warnings"] = [wake_warning]
         self._marker(

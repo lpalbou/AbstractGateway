@@ -1086,6 +1086,8 @@ class EntityChatHost:
             hosted.session.yield_check = lambda: True
         except Exception:  # noqa: BLE001 - a session without the seam still closes after its turn
             pass
+        # Its close record says what ended it: cancelled by the operator's kill switch.
+        hosted.stopped_by_switch = True
         if hosted.turn_lock.acquire(blocking=False):
             try:
                 if hosted.closed:
@@ -1252,10 +1254,11 @@ class EntityChatHost:
                 except Exception:
                     pass  # fd close releases the kernel lock regardless
 
-        self._marker(
-            hosted, "session_closed",
-            details={"session_id": hosted.session.session_id, "turns": len(hosted.session.reports)},
-        )
+        details_closed: Dict[str, Any] = {"session_id": hosted.session.session_id, "turns": len(hosted.session.reports)}
+        if getattr(hosted, "stopped_by_switch", False):
+            details_closed.update({"status": "cancelled", "closed_by": "kill_switch", "by": "operator",
+                                   "reason": "kill_switch: stopped by the operator"})
+        self._marker(hosted, "session_closed", details=details_closed)
         # Back to the previous phase where the toggles allow it; the gateway restarts own time
         # when personal is on (contract-phases v2 §4.2, §4.4).
         if not getattr(self, "_shutting_down", False):

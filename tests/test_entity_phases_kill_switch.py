@@ -74,10 +74,9 @@ def _home_dir():
 
 def _fake_loop(home_dir, phase: str = "day") -> subprocess.Popen:
     """A live own-time loop: a real child process the kill switch may signal."""
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-    threading.Thread(target=proc.wait, daemon=True).start()  # reap it, so a killed pid reads dead
-    (home_dir / "loop_status").write_text(json.dumps({"phase": phase, "pid": proc.pid}), encoding="utf-8")
-    return proc
+    from entity_fake_loop import spawn
+
+    return spawn(home_dir, phase)  # this home's loop invocation, stamped (what the hard stop verifies)
 
 
 def _registry():
@@ -379,8 +378,9 @@ def test_the_hard_stop_never_signals_the_gateway_itself_and_stops_once(monkeypat
 
         monkeypatch.setattr(entity_loop, "freeze_loop", _spy)
         proc = _fake_loop(home)
-        (home / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid,
-                                                      "updated_at": "2020-01-01T00:00:00+00:00"}), encoding="utf-8")
+        from entity_fake_loop import write_status
+
+        write_status(home, proc.pid, "day", updated_at="2020-01-01T00:00:00+00:00")
         rows = []
         ts = [threading.Thread(target=lambda: rows.append(entity_phase._kill_loop(home, {}, "test"))) for _ in range(2)]
         for t in ts:

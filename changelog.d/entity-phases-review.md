@@ -53,3 +53,12 @@
 - **A reused mention in a visit lane never re-quotes the lane** (review #13). A per-entity, per-visit cursor kept with
   the conversation's mention record skips the lane turns the mentioned entity's visit already holds, mirrored turn
   included.
+- **The kill switch keeps the ledger clean** (operator 2026-11-09: "the ledger must be kept clean"). Every run, visit,
+  turn and pass it ends leaves one clean terminal record: status `cancelled`, reason `kill_switch: stopped by the
+  operator`, by the operator. Never a failure, never a half-written entry.
+  - Runs are cancelled with `cancelled_by="operator"` (the runtime closes an in-flight effect's ledger record as
+    `cancelled`).
+  - An open durable visit, parked or mid-turn, is cancelled, never "completed" by a hard-freeze close; its
+    `session_closed` marker says `status: cancelled` and the reason.
+  - A hosted chat closes with `status: cancelled, closed_by: kill_switch, by: operator`.
+  - A maintenance pass ends with the receipt `last_maintenance {status: cancelled, reason: kill_switch, by: operator}`.

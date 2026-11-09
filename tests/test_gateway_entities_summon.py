@@ -773,3 +773,30 @@ def test_summon_drops_a_client_repeat_of_and_mention(client: TestClient):
     run = get_gateway_service().host.run_store.load(r.json()["run_id"])
     meta = (run.vars or {}).get("_meta") or {}
     assert "repeat_of" not in meta and "mention" not in meta
+
+
+def test_the_kill_switch_ends_a_live_summon_run_with_a_clean_cancelled_record(client: TestClient):
+    """Operator 2026-11-09 ("the ledger must be kept clean"): a summon run the kill switch ends is
+    CANCELLED, reason kill_switch, by the operator — never a failure, never a half-written record."""
+    assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+    payload = {"prompt": "hi", "bundle_id": "hold", "flow_id": "root", "input_data": {"provider": "mock", "model": "mock-model"}}
+    r = client.post("/api/gateway/entities/Castor/summon", json=payload)
+    assert r.status_code == 200, r.text
+    run_id = r.json()["run_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline and client.get(f"/api/gateway/runs/{run_id}").json().get("status") != "waiting":
+        time.sleep(0.1)
+    stop = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+    assert stop.status_code == 200, stop.text
+    assert run_id in stop.json()["cancelled"]["runs"]
+    from abstractgateway.service import get_gateway_service
+
+    run = get_gateway_service().host.run_store.load(run_id)
+    status = str(getattr(run.status, "value", run.status))
+    assert status == "cancelled" and "kill_switch" in str(run.error) and "operator" in str(run.error)
+    records = get_gateway_service().host.ledger_store.list(run_id) or []
+    started = {r.get("step_id") for r in records if r.get("status") == "started"}
+    ended = {r.get("step_id") for r in records if r.get("status") in ("completed", "failed", "cancelled", "waiting")}
+    assert started <= ended, "a half-written ledger entry was left behind"
+    assert not any(r.get("status") == "failed" for r in records)

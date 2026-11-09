@@ -111,10 +111,10 @@ def own_time(monkeypatch: pytest.MonkeyPatch):
 
     def _start(client):
         _born_awake_with_personal(client)
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-        threading.Thread(target=proc.wait, daemon=True).start()
+        from entity_fake_loop import spawn
+
+        proc = spawn(_home_dir(), "between", 60)
         procs.append(proc)
-        (_home_dir() / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "personal"
         return proc
 
@@ -243,10 +243,10 @@ def test_an_interrupted_sleep_continues_as_the_same_sleep(spawned, writer):
         _born_awake_with_personal(client)
         home = _home_dir()
         if writer == "self":  # a self-chosen nap: the loop is alive and owns it
-            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-            threading.Thread(target=proc.wait, daemon=True).start()
+            from entity_fake_loop import spawn
+
+            proc = spawn(home, "between", 60)
             procs.append(proc)
-            (home / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
         write_entity_state(home, "asleep", reason="resting", written_by=writer, wake_at="2099-01-01T00:00:00+00:00")
         before = client.get("/api/gateway/entities/Castor/life_state").json()
         assert before["phase"] == "sleep"
@@ -299,10 +299,10 @@ def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.
     procs = []
 
     def _start_then_stop(registry, manifest, params):
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-        threading.Thread(target=proc.wait, daemon=True).start()
+        from entity_fake_loop import spawn
+
+        proc = spawn(_home_dir(), "day", 60)
         procs.append(proc)
-        (_home_dir() / "loop_status").write_text(json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")
         with entity_phase.phase_lock(registry.entities_dir, "castor"):
             rec = entity_phase.read_record(registry.entities_dir, "castor")
             rec["generation"] += 1  # Stop's fence lands mid-spawn

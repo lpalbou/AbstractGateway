@@ -88,9 +88,9 @@ def test_state_paused_is_the_kill_switch_and_restore_is_resume(spawned):
 
         write_entity_state(_home_dir(), "awake", reason="woken")  # own time runs (not the newborn's sleep)
         write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
-        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "-m", "abstractruntime.identity.life"])  # argv names the loop module
-        threading.Thread(target=proc.wait, daemon=True).start()
-        (_home_dir() / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
+        from entity_fake_loop import spawn
+
+        proc = spawn(_home_dir(), "between", 60)
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "paused"})
         assert r.status_code == 200, r.text
         _deprecated(r, "/lifecycle")

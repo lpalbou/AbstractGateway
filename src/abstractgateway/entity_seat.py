@@ -294,7 +294,8 @@ def cancel_run_tree(runtime: Any, run_store: Any, run_id: str, *, reason: str) -
             if o["outcome"] == "cancelled"]
 
 
-def cancel_run_tree_outcomes(runtime: Any, run_store: Any, run_id: str, *, reason: str) -> list[Dict[str, Any]]:
+def cancel_run_tree_outcomes(runtime: Any, run_store: Any, run_id: str, *, reason: str,
+                             cancelled_by: Optional[str] = None) -> list[Dict[str, Any]]:
     """Cancel a run and its descendants, root first, and return ONE outcome
     per run (the kill switch's per-item report, contract-phases §3.1):
     `{run_id, outcome: cancelled|already_terminal|missing|failed, code, error}`.
@@ -312,7 +313,11 @@ def cancel_run_tree_outcomes(runtime: Any, run_store: Any, run_id: str, *, reaso
         seen.add(rid)
         before = _run_status(run_store, rid)
         try:
-            runtime.cancel_run(rid, reason=reason)
+            if cancelled_by:
+                # Who asked rides the runtime's cancelled ledger record (the kill switch: "operator").
+                runtime.cancel_run(rid, reason=reason, cancelled_by=cancelled_by)
+            else:
+                runtime.cancel_run(rid, reason=reason)
             if before is None:
                 outcomes.append({"run_id": rid, "outcome": "missing", "code": None, "error": None})
             elif before in _TERMINAL:
