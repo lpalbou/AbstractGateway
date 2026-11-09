@@ -31,3 +31,6 @@
   finds another person's visit or a drawer session on the entity waits, without a deadline, for it to end (only
   Stop ends the wait). The same visitor opening from another conversation is a handoff: their visit there closes
   and this conversation's visit opens. Participants stay isolated: nobody joins another person's visit.
+- **Stop never takes an unknown process for a dead one** (Codex review 2 #4). The loop's liveness is alive, dead or
+  unknown (EPERM, an unreadable start time): unknown is not signalled and not counted as stopped, the Stop's loop
+  row says `loop_unverified`, and pressing Stop again retries.

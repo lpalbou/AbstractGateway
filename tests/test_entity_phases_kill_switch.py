@@ -547,3 +547,37 @@ def test_nothing_gives_own_time_back_across_a_stop(monkeypatch: pytest.MonkeyPat
         assert back.status_code == 200, back.text
         assert back.json()["phase"] == "idle" and back.json()["toggles"]["personal"] is False
         assert read_personal_grant(_home_dir())["mode"] == "disabled" and spawned == []
+
+
+def test_an_unverifiable_loop_is_never_taken_for_dead(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Codex review 2 #4: EPERM on the liveness probe, or an unreadable incarnation token, made the
+    Stop report the loop as not running. Unknown is incomplete: no signal, a failed row, retried."""
+    import os
+
+    import abstractruntime.identity.life as life
+
+    from abstractgateway import entity_loop, entity_phase
+
+    home = tmp_path / "castor"
+    home.mkdir()
+    proc = _fake_loop(home)
+    signalled = []
+    monkeypatch.setattr(entity_loop, "freeze_loop", lambda home_dir, **kw: signalled.append(1) or {"killed": True})
+    try:
+        real_kill = os.kill
+
+        def _eperm(pid, sig):
+            if pid == proc.pid:
+                raise PermissionError(1, "Operation not permitted")
+            return real_kill(pid, sig)
+
+        monkeypatch.setattr(os, "kill", _eperm)
+        row = entity_phase._kill_loop(home, {}, "test")
+        assert (row["outcome"], row["code"]) == ("failed", "loop_unverified") and signalled == []
+        monkeypatch.setattr(os, "kill", real_kill)
+
+        monkeypatch.setattr(life, "_pid_start_time", lambda pid: None)
+        row = entity_phase._kill_loop(home, {}, "test")
+        assert (row["outcome"], row["code"]) == ("failed", "loop_unverified") and signalled == []
+    finally:
+        proc.kill()

@@ -1218,7 +1218,8 @@ def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
     """The live own-time process this home's status names, verified BEFORE any signal: the raw
     status file (never the folded `running`, which hides a live process behind a stale heartbeat),
     never this gateway's own pid, and the same incarnation (pid + its OS start time, the token
-    the loop stamped). Returns (target, why-not)."""
+    the loop stamped). Returns (target, why-not). A process whose life or incarnation cannot be
+    read is UNKNOWN (Codex review 2 #4): a target marked `unknown`, never taken for dead."""
     import os
 
     from abstractruntime.identity.life import _pid_start_time
@@ -1235,11 +1236,16 @@ def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
         return None, "no pid"
     if pid == os.getpid():
         return None, "the status names this gateway's own process"
-    if not _pid_alive_strict(pid):
+    life = _pid_liveness(pid)
+    if life == "dead":
         return None, "not alive"
     token = str(raw.get("pid_started_at") or "")
     current = _pid_start_time(pid)
+    if life == "unknown":
+        return {"pid": pid, "token": token or current, "unknown": "its process cannot be checked"}, ""
     if token:
+        if not current:
+            return {"pid": pid, "token": token, "unknown": "its start time cannot be read"}, ""
         if current != token:
             return None, "another process holds that pid now"
     elif str(raw.get("phase") or "") not in ("day", "between"):
@@ -1247,8 +1253,10 @@ def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
     return {"pid": pid, "token": token or current}, ""
 
 
-def _pid_alive_strict(pid: int) -> bool:
-    """Alive and not a zombie (a killed child of this gateway waits to be reaped)."""
+def _pid_liveness(pid: int) -> str:
+    """"alive", "dead" (gone, or a zombie waiting to be reaped) or "unknown" (EPERM: it exists but
+    is not ours to probe; any other error) — never a guess (Codex review 2 #4)."""
+    import errno
     import os
     import subprocess
 
@@ -1258,23 +1266,37 @@ def _pid_alive_strict(pid: int) -> bool:
         pass
     try:
         os.kill(pid, 0)
-    except OSError:
-        return False
+    except ProcessLookupError:
+        return "dead"
+    except PermissionError:
+        return "unknown"
+    except OSError as e:
+        return "dead" if e.errno == errno.ESRCH else "unknown"
     try:
         stat = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=5).stdout
         if stat.strip().startswith("Z"):
-            return False
-    except Exception:  # noqa: BLE001
+            return "dead"
+    except Exception:  # noqa: BLE001 - alive by kill(0); the zombie check is the refinement
         pass
-    return True
+    return "alive"
+
+
+def _pid_alive_strict(pid: int) -> bool:
+    """Alive and not a zombie. Unknown counts as alive: a process is dead only when seen dead."""
+    return _pid_liveness(pid) != "dead"
 
 
 def _target_gone(target: Dict[str, Any]) -> bool:
+    """True only when the death of THAT incarnation is confirmed."""
     from abstractruntime.identity.life import _pid_start_time
 
-    if not _pid_alive_strict(int(target["pid"])):
+    life = _pid_liveness(int(target["pid"]))
+    if life == "dead":
         return True
-    return bool(target.get("token")) and _pid_start_time(int(target["pid"])) != target["token"]
+    if life == "unknown" or not target.get("token"):
+        return False
+    current = _pid_start_time(int(target["pid"]))
+    return bool(current) and current != target["token"]  # recycled: the target is gone
 
 
 def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> Dict[str, Any]:
@@ -1290,6 +1312,10 @@ def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> D
             if target is None:
                 return _item("loop", None, "not_running", None, None)
             pid = int(target["pid"])
+            if target.get("unknown"):
+                # Not signalled, not counted as stopped: an incomplete row the next Stop retries.
+                return _item("loop", pid, "failed", "loop_unverified",
+                             f"His own-time process could not be checked ({target['unknown']}); press Stop again.")
             res = freeze_loop(home_dir, reason=reason or "kill switch", requested_by="admin")
             cancelled["loop_pid"] = pid
             reported = res.get("killed") if isinstance(res, dict) else None
