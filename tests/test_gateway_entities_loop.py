@@ -115,13 +115,25 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
 
     monkeypatch.setattr(life_mod, "hard_stop_loop", _fake_hard_stop)
 
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    import threading as _th
+
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # A live own-time loop (a real child process; the hard stop is faked above): the kill
+        # switch signals a loop only when one is alive.
+        proc = _sp.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
+        _th.Thread(target=proc.wait, daemon=True).start()
+        home = get_gateway_service().entity_registry.entities_dir / "castor"
+        (home / "loop_status").write_text(_json.dumps({"phase": "day", "pid": proc.pid}), encoding="utf-8")
 
         r = client.post(
             "/api/gateway/entities/Castor/loop/stop",
             json={"mode": "freeze", "reason": "imminent threat drill"},
         )
+        proc.kill()
         assert r.status_code == 200, r.text
         assert r.json()["frozen"] is True
         assert frozen_calls["requested_by"] == "admin"
@@ -133,7 +145,8 @@ def test_loop_freeze_kills_now_pauses_state_and_marks_biography(monkeypatch: pyt
 
         state = read_entity_state(registry.entities_dir / "castor")
         assert state["state"] == "paused"
-        assert "FROZEN" in state["reason"]
+        # Freeze IS the kill switch since the 2026-11-08 ruling (contract-phases v2 §6.3).
+        assert state["reason"].startswith("stopped: imminent threat drill")
 
         # No STOP file, no graceful command involved.
         assert not (registry.entities_dir / "castor" / "STOP").exists()
@@ -250,17 +263,21 @@ def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pyte
         # not_awake — the start arms, wakes, and spawns in one act.
         from abstractruntime.identity.life import read_entity_state, read_personal_grant, write_entity_state
 
+        # Since the 2026-11-08 ruling (contract-phases v2 §6.3) a running operator sleep is never cut
+        # short by a start: the grant is armed and own time is DEFERRED to the end of that sleep.
         write_entity_state(home_dir, "asleep", reason="operator rest")
         r0 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r0.status_code == 200, r0.text
+        assert r0.json()["deferred"] is True and r0.json()["started"] is False
         assert read_personal_grant(home_dir).get("mode") == "until_revoked"
-        assert read_entity_state(home_dir).get("state") == "awake"
+        assert read_entity_state(home_dir).get("state") == "asleep"
+        write_entity_state(home_dir, "awake", reason="the sleep ended")
 
         # PAUSED entity: distinct reason_code.
         write_entity_state(home_dir, "paused", reason="freeze drill")
         r2 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r2.status_code == 409, r2.text
-        assert r2.json()["detail"]["reason_code"] == "paused"
+        assert r2.json()["detail"]["reason_code"] == "stopped_use_resume"  # contract-phases v2 §7
 
         # ALREADY RUNNING: the exact repeated-click case — reason_code=already_running
         # + the live pid/phase, so the button can render "running" instead of nothing.

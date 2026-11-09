@@ -197,6 +197,7 @@ def test_a_maintenance_pass_never_undoes_a_stop(monkeypatch: pytest.MonkeyPatch)
         # The runtime facade re-exports the engine's sleep_pass lazily (module __getattr__): patch
         # the engine only — setting the facade attribute would leave a cached binding behind.
         monkeypatch.setattr(abstractmemory, "sleep_pass", _pass_with_a_stop)
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "dream": True})
         assert r.status_code == 200, r.text
         assert read_entity_state(_home_dir())["state"] == "paused"

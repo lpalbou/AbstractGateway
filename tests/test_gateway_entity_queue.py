@@ -393,7 +393,7 @@ def test_paused_entity_fails_the_entry_instead_of_retrying_forever(client: TestC
     _attempt_queue_admission("Castor")
     p = client.get(f"/api/gateway/entities/Castor/queue/{qid}")
     assert p.json()["state"] == "failed", p.text
-    assert "paused" in str(p.json().get("reason") or "").lower()
+    assert "stopped" in str(p.json().get("reason") or "").lower()  # the kill switch (contract-phases v2 §7)
 
 
 def test_admitting_crash_reconciles_to_one_run(client: TestClient):

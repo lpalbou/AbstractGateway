@@ -665,15 +665,15 @@ def test_sleep_tears_down_an_open_durable_visit(monkeypatch: pytest.MonkeyPatch)
         run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "one"})
 
+        # Since the 2026-11-08 ruling (contract-phases v2 §4.3) the operator sleep never ends a
+        # visit implicitly: it is refused (in_visit) and the visit stands until it is closed.
         slept = client.post(
             "/api/gateway/entities/Castor/state", json={"state": "asleep", "reason": "day over"}
         )
-        assert slept.status_code == 200, slept.text
-        body = slept.json()
-        assert body["closed_visit_run"]["run_id"] == run_id
-        assert body["closed_visit_run"]["status"] == "completed"
-        # The visit is actually gone — a follow-up open succeeds after wake.
-        assert client.get("/api/gateway/entities/Castor/visit").json()["open"] is False
+        assert slept.status_code == 409 and slept.json()["code"] == "in_visit", slept.text
+        assert client.get("/api/gateway/entities/Castor/visit").json()["open"] is True
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        assert closed.status_code == 200 and closed.json()["status"] == "completed"
 
 
 def test_pause_hard_freezes_an_open_durable_visit(monkeypatch: pytest.MonkeyPatch):

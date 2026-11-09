@@ -582,7 +582,10 @@ def _can(facts: Dict[str, Any], rec: Dict[str, Any], phase: str, stopped: bool) 
         return {"visit": no(archived), "sleep_now": no(archived), "toggle_work": no(archived), "toggle_personal": no(archived)}
     if phase == "visit":
         sleep_now = no("He is in a visit; end it to let him sleep.")
-    elif phase == "sleep" or (phase == "idle" and rec.get("last_activity_phase") == "sleep"):
+    elif phase == "sleep":
+        # A sleep is never followed by another sleep: refused while asleep. Once he is awake
+        # (idle included) the operator may ask for maintenance again; the loop's own chained-sleep
+        # refusal is the runtime's (contract-phases v2 §10.5).
         sleep_now = no("He is already resting; a sleep cannot follow a sleep.")
     else:
         sleep_now = yes
@@ -759,17 +762,21 @@ def _actor() -> str:
     return f"person:{principal.user_id}" if principal is not None else "person:operator"
 
 
-def _marker(registry: Any, manifest: Any, kind: str, details: Dict[str, Any]) -> None:
-    from .entity_replay import record_host_marker
+def _marker(registry: Any, manifest: Any, kind: str, details: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
+    """Append one host marker; returns (its seq, None) or (None, the failure). A marker that cannot
+    be written never undoes the act it records (the caller labels the gap)."""
+    from . import entity_replay
 
     try:
         home = registry.get_home(manifest.slug)
-        record_host_marker(
+        env = entity_replay.record_host_marker(
             entities_dir=Path(registry.entities_dir), slug=manifest.slug, entity_id=manifest.entity_id,
             kind=kind, journal_seq=int(home.memory.current_seq()), details=details,
         )
-    except Exception:  # noqa: BLE001 - markers are observability
+        return (env.get("seq") if isinstance(env, dict) else None), None
+    except Exception as e:  # noqa: BLE001 - markers are observability
         logger.exception("%s marker for %s failed", kind, manifest.slug)
+        return None, str(e)
 
 
 def _item(item: str, ident: Any, outcome: str, code: Optional[str] = None, sentence: Optional[str] = None) -> Dict[str, Any]:
@@ -812,8 +819,11 @@ def stop(
         if not already:
             stamp = f"[by {actor} via {via}]"
             write_entity_state(home_dir, "paused", reason=f"stopped{(': ' + reason) if reason else ''} {stamp}")
+    pause_seq: Optional[float] = None
+    pause_error: Optional[str] = None
     if not already:
-        _marker(registry, manifest, "pause", {"state": "paused", "reason": reason or "stopped", "by": actor, "channel": "kill_switch"})
+        pause_seq, pause_error = _marker(registry, manifest, "pause",
+                                         {"state": "paused", "reason": reason or "stopped", "by": actor, "channel": "kill_switch"})
 
     items: List[Dict[str, Any]] = []
     cancelled = {"visits": [], "chats": [], "runs": [], "loop_pid": None}
@@ -873,7 +883,12 @@ def stop(
         items.append(_item("maintenance", None, "not_running"))
 
     # 3. TEAR DOWN, each step on its own.
-    items.append(_kill_loop(home_dir, cancelled))
+    loop_row = _kill_loop(home_dir, cancelled, reason)
+    items.append(loop_row)
+    if loop_row["outcome"] in ("killed_sigterm", "killed_sigkill"):
+        # His own time was cut off: a moment of his biography he could not write himself.
+        _marker(registry, manifest, "personal_frozen", {"channel": "kill_switch", "by": actor, "reason": reason or "stopped",
+                                                        "pid": loop_row.get("id"), "escalated_to_sigkill": loop_row["outcome"] == "killed_sigkill"})
     items.append(_close_durable(registry, visit_host, name, visit_run, visit_cancelled, cancelled))
     items.append(_close_chat(chat_host, name, cancelled))
 
@@ -894,7 +909,10 @@ def stop(
         "cancelled": cancelled,
         "loop_signal": {"killed_sigterm": "sigterm", "killed_sigkill": "sigkill"}.get(str(loop_item.get("outcome") or "")),
         "started": {"own_time": False, "pid": None},
+        "marker_seq": pause_seq,
     })
+    if pause_error:
+        body["warning"] = f"#FALLBACK state applied but the host marker failed: {pause_error}"
     return body
 
 
@@ -934,15 +952,18 @@ def _queue_stop(entities_dir: Path, slug: str) -> Dict[str, Any]:
         return _item("queue", None, "failed", "queue_clear_failed", f"His waiting requests could not be cleared: {e}")
 
 
-def _kill_loop(home_dir: Path, cancelled: Dict[str, Any]) -> Dict[str, Any]:
+def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> Dict[str, Any]:
     from .entity_loop import freeze_loop, loop_status
 
     try:
         before = loop_status(home_dir)
         pid = before.get("pid")
         if not before.get("running"):
+            # NEVER call the hard stop without a live loop: the runtime's hard stop writes the
+            # status as the CALLING process (this gateway), and a second hard stop then reads that
+            # pid as the loop's own incarnation and signals the gateway itself.
             return _item("loop", None, "not_running")
-        res = freeze_loop(home_dir, reason="kill switch", requested_by="admin")
+        res = freeze_loop(home_dir, reason=reason or "kill switch", requested_by="admin")
         cancelled["loop_pid"] = int(pid) if pid else None
         if res.get("killed") is False or (res.get("was_running") and not res.get("killed", True)):
             return _item("loop", pid, "failed", "loop_still_alive", "His own-time process did not stop; press Stop again.")

@@ -52,6 +52,8 @@ def test_state_writes_carry_server_derived_principal_provenance():
     prose is preserved but never the last word)."""
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # A newborn is asleep, and a sleep cannot follow a sleep (contract-phases v2 §4.3): wake first.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
         r = client.post(
             "/api/gateway/entities/Castor/state",
@@ -290,6 +292,8 @@ def test_sleep_verb_runs_the_full_canonical_night(monkeypatch) -> None:
 
     with TestClient(app, headers={"Authorization": "Bearer night-secret"}) as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # A newborn is asleep, and a sleep cannot follow a sleep (contract-phases v2 §4.3): wake first.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
         r = client.post(
             "/api/gateway/entities/Castor/state",
             json={"state": "asleep", "reason": "canonical night", "dream": True},

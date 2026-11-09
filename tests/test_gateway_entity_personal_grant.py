@@ -119,7 +119,10 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
     marker): simplification removed the ceremony, never the biography."""
     import abstractruntime.identity.life as life_mod
 
+    spawned: list = []
+
     def _fake_spawn(home_dir, **kwargs):
+        spawned.append(Path(home_dir).name)
         return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
 
     monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
@@ -127,9 +130,14 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Pollux", "spark": _spark("Pollux")}).status_code == 201
 
+        # A newborn sleeps until woken: the start ARMS the grant and own time is deferred to the
+        # wake (contract-phases v2 §6.3: a running sleep is never cut short by a start).
         r = client.post("/api/gateway/entities/Pollux/loop/start", json={})
         assert r.status_code == 200, r.text
-        assert r.json()["started"] is True
+        assert r.json()["started"] is False and r.json()["deferred"] is True
+        woke = client.post("/api/gateway/entities/Pollux/state", json={"state": "awake"})
+        assert woke.status_code == 200, woke.text
+        assert spawned == ["pollux"], "the wake hands the phase to the toggles: own time starts"
 
         # The grant was armed BY the start, attributed to the principal.
         g = client.get("/api/gateway/entities/Pollux/personal-grant").json()
@@ -144,7 +152,6 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
         home_dir = Path(get_gateway_service().config.data_dir) / "entities" / "pollux"
         st = read_entity_state(home_dir)
         assert st.get("state") == "awake"
-        assert "personal time" in str(st.get("reason") or "")
 
         # Both acts are on the stream: granted (marker-first) then started.
         kinds = [m["payload"].get("kind") for m in _markers("pollux")]
@@ -262,7 +269,7 @@ def test_visit_and_state_never_touch_the_grant():
         original = ec._default_llm_factory
         ec._default_llm_factory = lambda provider, **kw: _LLM()
         try:
-            assert client.post("/api/gateway/entities/Norn/state", json={"state": "asleep"}).status_code == 200
+            # A newborn is asleep already (and a sleep cannot follow a sleep): this is that sleep.
             opened = client.post("/api/gateway/entities/Norn/visit/open", json={})
             assert opened.status_code == 200, opened.text  # B1 auto-wake fired
             run_id = opened.json()["run_id"]

@@ -1652,7 +1652,7 @@ class SetEntityStateRequest(BaseModel):
 
 
 @router.post("/{name}/state")
-def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
+def set_entity_state(name: str, req: SetEntityStateRequest, response: Response = None):
     """The sleep/wake/pause door (a2a 0008, ask 2). Writes go through the
     runtime's single state writer; the moment is host-marked into the
     replay stream; `asleep --dream` runs the dream pass in the window the
@@ -1681,7 +1681,64 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     # restore = the paused exit). Legacy awake/asleep/paused stay accepted
     # forever — CLIs, scripts, and engraved muscle memory ride them; the
     # at-rest state-file words never change (adversary P1-11).
+    raw_target = target
     target = {"sleep": "asleep", "restore": "awake"}.get(target, target)
+    # THE OLD VERBS ON THE PHASE MODEL (contract-phases v2 §6.3): `paused` IS the kill switch,
+    # `restore` (or awake while stopped) IS resume — both through entity_phase, deprecated here.
+    from .. import entity_phase as _ep
+
+    try:
+        _manifest_s = _registry().manifest_for(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    _home_s = _registry().entities_dir / _manifest_s.slug
+    from abstractruntime.identity.life import read_entity_state as _read_state_s
+
+    _now_word = str(_read_state_s(_home_s).get("state") or "awake")
+    def _legacy(out: Dict[str, Any]) -> Dict[str, Any]:
+        # This route's own keys keep their old shapes: `state` is the written state record, `prior`
+        # the one before, `closed_visit_run` the visit the stop closed; the phase report rides
+        # beside them (`life_state` fields).
+        out["state"] = _registry().state_of(name)
+        out["prior"] = _prior_s
+        out.setdefault("marker_seq", None)
+        visit_row = next((i for i in out.get("items") or [] if i.get("item") == "visit" and i.get("id")), None)
+        if visit_row is not None:
+            out["closed_visit_run"] = (
+                {"run_id": visit_row["id"], "status": "completed"} if visit_row["outcome"] == "closed"
+                else {"run_id": visit_row["id"], "teardown_failed": True, "error": visit_row.get("sentence")}
+            )
+        return out
+
+    _prior_s = _read_state_s(_home_s)
+    if target != "paused":
+        # Wake entry point: an archived entity is never woken or put to sleep (round 3).
+        from ..entity_access import EntityArchivedError as _Arch, refuse_if_entity_archived as _refuse_arch, users_path_of as _upo
+
+        try:
+            _refuse_arch(_manifest_s.slug, users_path=_upo(_registry()))
+        except _Arch as e:
+            raise HTTPException(status_code=409, detail={"reason_code": "entity_archived", "message": e.message}) from None
+    if req.dream and target != "asleep":
+        raise HTTPException(status_code=400, detail="a dream pass runs only inside sleep (state='asleep') — dreams need the no-summon window")
+    if target == "paused":
+        _deprecate(response, "lifecycle")
+        return _legacy(_ep.stop(_registry(), name, reason=str(req.reason or "").strip(), via="POST /entities/{name}/state"))
+    if target == "awake" and _now_word == "paused":
+        _deprecate(response, "lifecycle")
+        return _legacy(_ep.resume(_registry(), name))
+    if target == "asleep":
+        _snap = _ep.publish(_registry(), name, "observed")
+        _can = (_snap.get("can") or {}).get("sleep_now") or {}
+        _sl = _snap.get("sleep") or {}
+        # An operator sleep with no maintenance running (a newborn's, a plain one) takes the request
+        # as the SAME sleep (now with its maintenance pass when `dream`): not a chained sleep.
+        _same_sleep = (_snap.get("phase") == "sleep" and _sl.get("kind") == "operator"
+                       and _sl.get("ends") != "when maintenance is done")
+        if not _can.get("allowed", True) and not _same_sleep:
+            _code = ("stopped_use_resume" if _snap.get("stopped") else
+                     "in_visit" if _snap.get("phase") == "visit" else "already_asleep")
+            return _phase_refusal(409, _code, str(_can.get("sentence") or ""), _snap)
     from ..security.principal import current_gateway_principal
 
     principal = current_gateway_principal()
@@ -1839,6 +1896,11 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     try:
         from ..entity_phase import publish as _publish_phase
 
+        if target == "awake":
+            # A wake hands the phase back to the toggles (contract-phases v2 §6.3).
+            from ..entity_phase import reconcile as _reconcile_w
+
+            _reconcile_w(_registry(), name, "operator_wake")
         settled = _publish_phase(_registry(), name, {"asleep": "operator_sleep", "paused": "stop"}.get(target, "operator_wake"))
         result["phase"] = settled.get("phase")
         result["life_state"] = settled
@@ -2864,6 +2926,13 @@ def _phase_refusal(status: int, code: str, message: str, life_state: Optional[Di
         content={"code": code, "detail": {"reason_code": code, "message": message, "life_state": life_state}},
         headers={"X-Gateway-Error-Code": code},
     )
+
+
+def _deprecate(response: Optional[Response], successor: str) -> None:
+    """A deprecated lifecycle route names its successor (contract-phases v2 §6.3)."""
+    if response is not None:
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = f'</api/gateway/entities/{{name}}/{successor}>; rel="successor-version"'
 
 
 def _work_off_refusal(registry: Any, manifest: Any, what: str, *, entity_id: Optional[str] = None) -> Optional[HTTPException]:
@@ -6556,7 +6625,7 @@ def get_entity_loop(name: str) -> Dict[str, Any]:
 
 
 @router.post("/{name}/loop/start")
-def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
+def start_entity_loop(name: str, req: StartLoopRequest, response: Response = None) -> Dict[str, Any]:
     import os as _os
 
     from ..entity_loop import loop_status, start_loop
@@ -6580,6 +6649,37 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             status_code=status_code,
             detail={"reason_code": reason_code, "message": message, "loop": loop_status(home_dir)},
         )
+
+    # PERSONAL ON, ON THE PHASE MODEL (contract-phases v2 §6.3; deprecated -> PUT
+    # /life_state/toggles): the explicit parameters are remembered for the gateway's reconcile;
+    # stopped refuses (stopped_use_resume); a visit, live work or a running sleep DEFERS the start
+    # (200, the grant armed, own time starts when the phase frees) — never a 409, never a sleep cut
+    # short.
+    from .. import entity_phase as _ep
+    from abstractruntime.identity.life import read_entity_state as _rs
+
+    _deprecate(response, "life_state/toggles")
+    from ..entity_access import EntityArchivedError as _ArchS, refuse_if_entity_archived as _refuse_s, users_path_of as _upo_s
+
+    try:
+        _refuse_s(manifest.slug, users_path=_upo_s(registry))
+    except _ArchS as e:
+        raise _loop_refuse(409, "entity_archived", e.message) from None
+    if str(_rs(home_dir).get("state") or "") == "paused":
+        raise _loop_refuse(409, "stopped_use_resume", "Stopped. Resume him first, then choose what he may do.")
+    _ep.remember_own_time_params(registry, manifest.slug, {
+        "provider": req.provider, "model": req.model, "base_url": req.base_url,
+        "tick_seconds": req.tick_seconds, "ticks_per_day": req.ticks_per_day, "rest_minutes": req.rest_minutes,
+        "shelf_size": req.shelf_size, "context_window": req.context_window,
+    })
+    _facts = _ep.gather(registry, name, chat_host=_ep.default_hosts()[0], visit_host=_ep.default_hosts()[1])
+    if _ep.visit_live(_facts) or _ep.work_live(_facts) or _ep.running_sleep(_facts):
+        from abstractruntime.identity.life import personal_grant_refusal as _pgr, read_personal_grant as _rpg
+
+        if _pgr(_rpg(home_dir)) is not None:
+            _apply_personal_grant(registry, manifest, mode="until_revoked", expires_at=None)
+        return {"started": False, "deferred": True, "status": loop_status(home_dir),
+                "life_state": _ep.publish(registry, name, "toggle")}
 
     # One life, one summon: a live visit and his own time never overlap.
     try:
@@ -6785,7 +6885,7 @@ class StopLoopRequest(BaseModel):
 
 
 @router.post("/{name}/loop/stop")
-def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[str, Any]:
+def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None, response: Response = None) -> Dict[str, Any]:
     from ..entity_loop import freeze_loop, stop_loop
     from ..entity_replay import record_host_marker
 
@@ -6803,39 +6903,34 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[s
     mode = (req.mode if req else "graceful").strip().lower()
     reason = (req.reason if req else "") or "own time stop via gateway"
     if mode in ("freeze", "hard", "hibernate"):
-        # FREEZE (maintainer ruling 2026-07-08): admin-only hibernation — the
-        # process dies now, and the paused state closes the door until an
-        # admin wakes him. Nothing changes in the memory graph.
-        # Mid-visit guard (observer 2026-07-09): freeze kills the loop
-        # PROCESS, but an open visit lives in the GATEWAY process — close it
-        # too (no reflection: a freeze is not a graceful goodbye), else the
-        # emergency stop leaves the chat writing episodes.
-        from abstractruntime.identity.life import write_entity_state
+        # FREEZE IS THE KILL SWITCH (contract-phases v2 §6.3; deprecated -> POST /lifecycle):
+        # fence, paused, every live run cancelled, the loop killed, both visit lanes closed — one
+        # path, entity_phase.stop. The old response keys ride beside the stop report.
+        from .. import entity_phase as _ep
+        from ..entity_loop import loop_status as _ls_f
 
-        try:
-            _chat_host().close_open_visit(name, reflect=False)
-        except HTTPException:
-            raise
-        except Exception:
-            pass
-        result = freeze_loop(home_dir, reason=reason, requested_by="admin")
-        write_entity_state(home_dir, "paused", reason=f"FROZEN: {reason} [by {actor} via POST /entities/{name}/loop/stop]")
-        try:
-            home = registry.get_home(manifest.slug)
-            record_host_marker(
-                entities_dir=registry.entities_dir,
-                slug=manifest.slug,
-                entity_id=manifest.entity_id,
-                kind="personal_frozen",
-                journal_seq=int(home.memory.current_seq()),
-                details={"channel": "admin", "by": actor, "reason": reason, **{k: result[k] for k in ("pid", "was_running", "escalated_to_sigkill")}},
-            )
-        except Exception:
-            pass
-        return {"frozen": True, **result}
+        _deprecate(response, "lifecycle")
+        before = _ls_f(home_dir)
+        out = _ep.stop(registry, name, reason=reason, actor=actor, via="POST /entities/{name}/loop/stop")
+        loop_item = next((i for i in out.get("items") or [] if i.get("item") == "loop"), {})
+        out.update({
+            "frozen": True,
+            "pid": before.get("pid"),
+            "was_running": bool(before.get("running")),
+            "escalated_to_sigkill": loop_item.get("outcome") == "killed_sigkill",
+        })
+        return out
     if mode != "graceful":
         raise HTTPException(status_code=400, detail="mode must be 'graceful' or 'freeze'")
 
+    # A GRACEFUL STOP ALSO TURNS PERSONAL OFF (contract-phases v2 §6.3; deprecated -> PUT
+    # /life_state/toggles {personal: false}): the gateway now restarts own time whenever personal is
+    # on and nothing holds the phase, so a stop that leaves the grant armed would be undone at the
+    # next visit's close.
+    _deprecate(response, "life_state/toggles")
+    from abstractruntime.identity.life import write_personal_grant as _wpg
+
+    _wpg(home_dir, mode="disabled", granted_by=actor)
     # Durable command, not a sentinel file (maintainer ruling 2026-07-08):
     # the loop consumes it at its next boundary; his thought finishes whole.
     status = stop_loop(home_dir, reason=reason, requested_by="operator")
@@ -6851,7 +6946,9 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None) -> Dict[s
         )
     except Exception:
         pass
-    return {"stop_requested": True, "status": status}
+    from ..entity_phase import publish as _publish_s
+
+    return {"stop_requested": True, "status": status, "life_state": _publish_s(registry, name, "toggle")}
 
 
 # ----------------------------------------------------------- personal grant
@@ -6996,11 +7093,26 @@ def get_personal_grant(name: str) -> Dict[str, Any]:
 
 
 @router.put("/{name}/personal-grant")
-def put_personal_grant(name: str, req: PutPersonalGrantRequest) -> Dict[str, Any]:
+def put_personal_grant(name: str, req: PutPersonalGrantRequest, response: Response = None) -> Dict[str, Any]:
+    """Deprecated -> PUT /life_state/toggles {personal} (contract-phases v2 §6.3). `until_revoked`
+    and `timer` are personal on, `disabled` personal off — with the toggle's effects: own time
+    starts when the phase is free, ends at the loop's boundary, never a sleep."""
+    from .. import entity_phase as _ep
+
     registry = _registry()
     try:
         manifest = registry.manifest_for(name)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    _deprecate(response, "life_state/toggles")
     _apply_personal_grant(registry, manifest, mode=req.mode, expires_at=req.expires_at)
-    return get_personal_grant(name)
+    home_dir = registry.entities_dir / manifest.slug
+    if str(req.mode or "") == "disabled":
+        from ..entity_loop import loop_status as _ls_g, stop_loop as _stop_g
+
+        if bool(_ls_g(home_dir).get("running")):
+            _stop_g(home_dir, reason="personal turned off (personal-grant)", requested_by="operator")
+    _ep.reconcile(registry, name, "toggle")
+    out = get_personal_grant(name)
+    out["life_state"] = _ep.publish(registry, name, "toggle")
+    return out

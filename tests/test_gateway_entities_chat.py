@@ -384,19 +384,16 @@ def test_operator_sleep_mid_chat_visit_survives_the_close(monkeypatch: pytest.Mo
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
 
-        # The operator's sleep lands mid-visit through the state route
-        # (state writes FIRST, then this same route tears the chat down).
+        # The operator's sleep during a visit is refused, the visit stands (operator ruling
+        # 2026-11-08, contract-phases v2 §4.3: a visit is never ended implicitly).
         r = client.post(
             "/api/gateway/entities/Castor/state",
             json={"state": "asleep", "reason": "host under load"},
         )
-        assert r.status_code == 200, r.text
-        assert r.json()["closed_visit"] is not None  # the teardown ran
-
-        # The operator's word STANDS — the close's wake-write did not fire.
+        assert r.status_code == 409 and r.json()["code"] == "in_visit", r.text
         state = client.get("/api/gateway/entities/Castor/state").json()
-        assert state["state"] == "asleep"
-        assert "host under load" in state["reason"]
+        assert state["state"] == "asleep" and state.get("mode") == "visiting"
+        assert client.get("/api/gateway/entities/Castor/chat").json()["open"] is True
 
 
 def test_open_salvages_a_died_unreflected_session(monkeypatch: pytest.MonkeyPatch):
@@ -483,6 +480,8 @@ def test_operator_set_sleep_is_woken_by_the_visit(monkeypatch: pytest.MonkeyPatc
     _install_scripted_llm(monkeypatch, ["I'm awake now.", "(reflection) quiet"])
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # A newborn is asleep; a sleep cannot follow a sleep (contract-phases v2 §4.3): wake first.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
         assert client.post(
             "/api/gateway/entities/Castor/state",
             json={"state": "asleep", "reason": "night consolidation"},
@@ -550,12 +549,13 @@ def test_set_sleep_closes_an_open_visit(monkeypatch: pytest.MonkeyPatch):
             f"/api/gateway/entities/Castor/chat/{chat_id}/turn", json={"text": "hello"}
         ).status_code == 200
 
-        # Operator puts him to sleep mid-visit -> the visit is torn down.
+        # The operator's sleep mid-visit is refused (in_visit); the visit is never ended implicitly
+        # (operator ruling 2026-11-08, contract-phases v2 §4.3). Revocation is the kill switch.
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "asleep", "reason": "enough for tonight"})
-        assert r.status_code == 200, r.text
-        assert r.json().get("closed_visit") is not None
-
-        # The chat is gone; further turns 404/409, and status shows no visit.
+        assert r.status_code == 409 and r.json()["code"] == "in_visit", r.text
+        assert client.get("/api/gateway/entities/Castor/chat").json()["open"] is True
+        stop = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        assert stop.status_code == 200, stop.text
         assert client.get("/api/gateway/entities/Castor/chat").json()["open"] is False
         assert client.post(
             f"/api/gateway/entities/Castor/chat/{chat_id}/turn", json={"text": "still there?"}
