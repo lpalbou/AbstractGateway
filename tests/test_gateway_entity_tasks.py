@@ -60,6 +60,12 @@ def test_task_endpoints_marker_first_and_roster_field(monkeypatch: pytest.Monkey
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "tasks-marker-secret")
+    # A queued task starts the loop for work (contract v3 D1): only the process creation is stubbed,
+    # so the task stays pending for the roster to count.
+    import abstractruntime.identity.life as life_mod
+
+    spawns: list = []
+    monkeypatch.setattr(life_mod, "spawn_loop_process", lambda home, **kw: spawns.append(kw) or {"pid": 999999})
     from abstractgateway.app import app
 
     with TestClient(app, headers={"Authorization": "Bearer tasks-marker-secret"}) as client:
@@ -83,6 +89,7 @@ def test_task_endpoints_marker_first_and_roster_field(monkeypatch: pytest.Monkey
         assert task["by"] == "person:admin"
         assert task["origin"].startswith("person:admin via POST")
         assert r1.json()["pending"] == 1
+        assert len(spawns) == 1 and spawns[0].get("return_to") is None  # the job started the loop, for work
 
         # The roster now carries the count (three-consumer contract c2801).
         roster = client.get("/api/gateway/entities").json()["entities"]

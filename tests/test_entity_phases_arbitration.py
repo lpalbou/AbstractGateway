@@ -251,13 +251,16 @@ def test_a_failed_pass_completes_with_a_receipt_and_a_stale_completion_touches_n
         assert rec["maintenance"] is None
 
         # A stale completion (generation 1) while a newer pass (generation 2) runs: untouched.
+        from abstractruntime.identity.life import bump_lifecycle_generation
+
+        old = entity_phase.generation_of(_home().parent, "castor")
+        new = bump_lifecycle_generation(_home(), written_by="test")
         with entity_phase.phase_lock(_home().parent, "castor"):
             rec = entity_phase.read_record(_home().parent, "castor")
-            rec["generation"] = 2
-            rec["maintenance"] = {"status": "running", "generation": 2}
+            rec["maintenance"] = {"status": "running", "generation": new}
             entity_phase.write_record(_home().parent, "castor", rec)
-        assert entity_phase.maintenance_done(_registry(), "castor", 1) == "stopped"
-        assert entity_phase.read_record(_home().parent, "castor")["maintenance"] == {"status": "running", "generation": 2}
+        assert entity_phase.maintenance_done(_registry(), "castor", old) == "stopped"
+        assert entity_phase.read_record(_home().parent, "castor")["maintenance"] == {"status": "running", "generation": new}
 
 
 @pytest.mark.parametrize("door", ["visit", "chat"])
@@ -319,3 +322,51 @@ def test_the_same_visitor_in_another_conversation_is_a_handoff():
         assert second.json()["run_id"] != first.json()["run_id"] and second.json()["session_id"] == "laptop"
         status = client.get("/api/gateway/entities/Castor/visit").json()
         assert status.get("open") is True and status.get("run_id") == second.json()["run_id"]
+
+
+def test_one_lock_with_the_runtime_and_no_state_write_over_a_stop(monkeypatch: pytest.MonkeyPatch):
+    """Codex review 2 #1: the operator's state write (set_state) checked nothing, and the gateway's
+    lock was not the runtime's, so a late writer could undo a Stop. Now the gateway's lifecycle lock
+    holds the runtime's home state lock, and set_state is fenced on the one lifecycle generation."""
+    from abstractruntime.identity.life import bump_lifecycle_generation, home_state_lock, read_entity_state
+
+    from abstractgateway import entities as entities_mod
+    from abstractgateway import entity_phase
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        reg = _registry()
+
+        # (a) a runtime writer holding the home's state lock holds the gateway's lifecycle lock too.
+        held = threading.Event()
+        release = threading.Event()
+
+        def _runtime_writer():
+            with home_state_lock(_home(), timeout_s=None):
+                held.set()
+                release.wait(5)
+
+        t = threading.Thread(target=_runtime_writer)
+        t.start()
+        held.wait(5)
+        threading.Timer(0.6, release.set).start()
+        t0 = time.monotonic()
+        with entity_phase.phase_lock(reg.entities_dir, "castor"):
+            waited = time.monotonic() - t0
+        t.join(5)
+        assert waited >= 0.4, "the gateway's lock did not wait for the runtime's"
+
+        # (b) a Stop landing between set_state's check and its write: nothing is written.
+        real_gen = entity_phase.generation_of
+
+        def _gen_then_stop(entities_dir, slug):
+            g = real_gen(entities_dir, slug)
+            bump_lifecycle_generation(_home(), written_by="test")
+            return g
+
+        monkeypatch.setattr(entity_phase, "generation_of", _gen_then_stop)
+        before = read_entity_state(_home())["state"]
+        with pytest.raises(ValueError, match="stopped"):
+            reg.set_state(name="castor", state="asleep", reason="late operator sleep")
+        assert read_entity_state(_home())["state"] == before
+        del entities_mod

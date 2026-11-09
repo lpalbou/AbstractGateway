@@ -461,6 +461,10 @@ def _register_hermetic_markers(config) -> None:
     )
     config.addinivalue_line(
         "markers",
+        "real_loop_spawn: the test starts a REAL own-time child process instead of the stubbed process creation.",
+    )
+    config.addinivalue_line(
+        "markers",
         "capability_models: the test meets the entity's real capability models (the summaries model that "
         "authors every memory's title and summary) instead of the fixed test one.",
     )
@@ -702,6 +706,22 @@ def _fixed_summaries_capability(request: pytest.FixtureRequest, monkeypatch: pyt
         return real(self, slug, capability)
 
     monkeypatch.setattr(EntityRegistry, "capability_llm", capability_llm)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_own_time_process(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A queued job, a toggle or a resume can start an entity's own-time loop (contract v3): a REAL
+    # child process (`python -m abstractruntime.identity.life`) that would outlive the test and call
+    # a model. Only the process creation is stubbed here; the whole admission path still runs. A test
+    # that needs the real child marks itself `real_loop_spawn`.
+    if request.node.get_closest_marker("real_loop_spawn") is not None:
+        return
+    try:
+        import abstractruntime.identity.life as life
+    except Exception:  # noqa: BLE001 - no runtime in this tree: nothing to stub
+        return
+    monkeypatch.setattr(life, "spawn_loop_process", lambda home_dir, **kw: {"pid": None, "stubbed_by_test": True, **{
+        k: kw.get(k) for k in ("provider", "model", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size")}})
 
 
 @pytest.fixture(autouse=True)

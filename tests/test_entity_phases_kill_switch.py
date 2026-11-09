@@ -102,7 +102,8 @@ def test_stop_fences_kills_the_loop_and_reports_every_item():
         assert body["action"] == "stop" and body["already"] is False
         assert body["phase"] == "stopped" and body["stopped"] is True
         assert read_entity_state(home_dir)["state"] == "paused"
-        assert read_record(_registry().entities_dir, "castor")["generation"] == gen0 + 1
+        # Moved (the gateway's Stop bumps it; the runtime's hard stop of the live loop bumps it too).
+        assert read_record(_registry().entities_dir, "castor")["generation"] > gen0
         rows = {i["item"]: i for i in body["items"]}
         assert set(rows) >= {"loop", "visit", "chat", "maintenance", "queue"}
         assert rows["loop"]["outcome"] in ("killed_sigterm", "killed_sigkill")
@@ -214,9 +215,9 @@ def test_a_mention_answer_landing_after_a_stop_is_neither_recorded_nor_mirrored(
     def _turn_then_stop(self, *args, **kwargs):
         out = real_turn(self, *args, **kwargs)
         with entity_phase.phase_lock(self._registry.entities_dir, "castor"):
-            rec = entity_phase.read_record(self._registry.entities_dir, "castor")
-            rec["generation"] = int(rec["generation"]) + 1  # what Stop's fence does first
-            entity_phase.write_record(self._registry.entities_dir, "castor", rec)
+            from abstractruntime.identity.life import bump_lifecycle_generation
+
+            bump_lifecycle_generation(self._registry.entities_dir / "castor", written_by="test")  # what Stop's fence does first
         return out
 
     monkeypatch.setattr(EntityVisitHost, "turn", _turn_then_stop)

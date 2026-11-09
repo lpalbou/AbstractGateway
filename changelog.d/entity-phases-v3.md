@@ -34,3 +34,8 @@
 - **Stop never takes an unknown process for a dead one** (Codex review 2 #4). The loop's liveness is alive, dead or
   unknown (EPERM, an unreadable start time): unknown is not signalled and not counted as stopped, the Stop's loop
   row says `loop_unverified`, and pressing Stop again retries.
+- **One lock and one generation with the runtime** (Codex review 2 #1; AbstractRuntime f881cac). The gateway's
+  lifecycle lock now holds the runtime's home state lock inside it, so every gateway check-then-write is serialized
+  with the loop's own state and `phases.yaml` writes; the lifecycle generation is the runtime's
+  (`read_lifecycle_generation`, bumped by every Stop through `bump_lifecycle_generation` and by the runtime's hard
+  stop). The operator's state write (`POST …/state`) is fenced on it: a Stop landing meanwhile is never written over.

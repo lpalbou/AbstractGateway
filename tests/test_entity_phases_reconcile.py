@@ -312,10 +312,9 @@ def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.
 
         proc = spawn(_home_dir(), "day", 60)
         procs.append(proc)
-        with entity_phase.phase_lock(registry.entities_dir, "castor"):
-            rec = entity_phase.read_record(registry.entities_dir, "castor")
-            rec["generation"] += 1  # Stop's fence lands mid-spawn
-            entity_phase.write_record(registry.entities_dir, "castor", rec)
+        from abstractruntime.identity.life import bump_lifecycle_generation
+
+        bump_lifecycle_generation(registry.entities_dir / "castor", written_by="test")  # Stop's fence lands mid-spawn
         return {"pid": proc.pid}
 
     monkeypatch.setattr(entity_phase, "start_own_time", _start_then_stop)

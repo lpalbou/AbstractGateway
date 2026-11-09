@@ -138,7 +138,12 @@ def phase_lock(entities_dir: Path, slug: str) -> Iterator[None]:
                 pass  # non-POSIX: the in-process lock still serializes this gateway
             held[key] = [1, fh]
             try:
-                yield
+                # ONE cross-process lock with the runtime (Codex review 2 #1; runtime f881cac): the
+                # home's state lock is taken INSIDE this one (the runtime never takes ours), so every
+                # gateway check-then-write is serialized with the loop's own state and phases.yaml
+                # writes, which take it themselves. No limit: a Stop never fails.
+                with _home_state_lock(Path(entities_dir) / slug):
+                    yield
             finally:
                 held.pop(key, None)
         finally:
@@ -160,6 +165,16 @@ def read_record(entities_dir: Path, slug: str) -> Dict[str, Any]:
     # interrupting own time, an idle exit, the kill switch). Read through its reader — before the
     # bucket exists it answers the sidecar's value; afterwards the bucket wins.
     rec["resume_to"] = _bucket_resume_to(Path(entities_dir) / slug, rec.get("resume_to"))
+    # The lifecycle generation is the runtime's too (Codex review 2 #1; runtime f881cac): ONE number
+    # both sides fence on, bumped by every Stop (the gateway's and hard_stop_loop's).
+    home_dir = Path(entities_dir) / slug
+    if home_dir.is_dir():
+        from abstractruntime.identity.life import read_lifecycle_generation
+
+        try:
+            rec["generation"] = int(read_lifecycle_generation(home_dir))
+        except ValueError as e:  # a corrupt phases.yaml: say so; the sidecar's number stands
+            logger.warning("lifecycle generation of %s unreadable (%s); using the sidecar's", slug, e)
     return rec
 
 
@@ -248,6 +263,17 @@ def write_if_still_ours(entities_dir: Path, slug: str, predicate: Callable[[Dict
 
 def generation_of(entities_dir: Path, slug: str) -> int:
     return int(read_record(entities_dir, slug).get("generation") or 0)
+
+
+@contextlib.contextmanager
+def _home_state_lock(home_dir: Path) -> Iterator[None]:
+    if not home_dir.is_dir():
+        yield  # no home yet (creation, a test registry): nothing of the runtime's to serialize
+        return
+    from abstractruntime.identity.life import home_state_lock
+
+    with home_state_lock(home_dir, timeout_s=None):
+        yield
 
 
 @contextlib.contextmanager
@@ -1025,7 +1051,9 @@ def stop(
         except Exception as e:  # noqa: BLE001 - reported on its row; the stop goes on
             revoke_error = str(e)
             logger.exception("stop: the personal grant of %s could not be revoked", slug)
-        rec["generation"] = int(rec.get("generation") or 0) + 1
+        from abstractruntime.identity.life import bump_lifecycle_generation
+
+        rec["generation"] = int(bump_lifecycle_generation(home_dir, written_by="gateway:kill_switch", timeout_s=None))
         maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
         if maint and maint.get("status") == "running":
             maint["status"] = "cancel_requested"

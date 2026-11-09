@@ -2416,8 +2416,18 @@ class EntityRegistry:
 
             refuse_if_entity_archived(manifest.slug, users_path=self._principal_registry_path())
         home_dir = self.entities_dir / manifest.slug
-        prior = read_entity_state(home_dir)
-        written = write_entity_state(home_dir, state2, reason=reason)
+        # FENCED (Codex review 2 #1): the generation seen at entry is checked and the state written in
+        # ONE step under the lifecycle lock (which holds the runtime's home state lock), so a Stop
+        # landing meanwhile is never written over.
+        from .entity_phase import GenerationMoved, fenced, generation_of
+
+        entry_generation = generation_of(self.entities_dir, manifest.slug)
+        try:
+            with fenced(self.entities_dir, manifest.slug, entry_generation):
+                prior = read_entity_state(home_dir)
+                written = write_entity_state(home_dir, state2, reason=reason)
+        except GenerationMoved:
+            raise ValueError("stopped: the kill switch landed while this state change was on its way") from None
 
         dream_result: Optional[Dict[str, Any]] = None
         home = self.get_home(manifest.slug)
