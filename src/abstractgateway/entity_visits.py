@@ -120,6 +120,23 @@ def _chat_host_or_none() -> Any:
         return None
 
 
+class _JoinOwnVisit(Exception):
+    def __init__(self, run: Any) -> None:
+        super().__init__("join")
+        self.run = run
+
+
+def _wait_while(busy: Any, entities_dir: Any, slug: str, generation: Optional[int]) -> None:
+    """Wait, WITHOUT a deadline (root ADR-0027; a visit never fails), while `busy()` holds. The
+    wait is cancellation-aware: a kill switch since the door's entry ends it (stopped)."""
+    from .entity_phase import generation_of
+
+    while busy():
+        if generation is not None and generation_of(entities_dir, slug) != generation:
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
+        time.sleep(0.25)
+
+
 # The one visit refusal (operator 2026-11-09; contract-phases §6.1, §7).
 STOPPED_VISIT_SENTENCE = "Stopped. Resume to visit."
 
@@ -940,15 +957,25 @@ class EntityVisitHost:
         the authenticated principal (payload claims are refused at the
         boundary — the situation contract: WHO is stamped by the door,
         never claimed)."""
-        pre, leg = self.open_leg(
-            name,
-            participants=list(participants or ["person:operator"]),
-            visit_id=f"visit-{secrets.token_hex(6)}",
-            session_id=session_id,
-            channel_label="operator-visit",
-            session_tools=session_tools,
-            conversation=conversation,
-        )
+        try:
+            pre, leg = self.open_leg(
+                name,
+                participants=list(participants or ["person:operator"]),
+                visit_id=f"visit-{secrets.token_hex(6)}",
+                session_id=session_id,
+                channel_label="operator-visit",
+                session_tools=session_tools,
+                conversation=conversation,
+                join_existing=True,
+            )
+        except _JoinOwnVisit as j:
+            view = self._run_status_view(j.run)
+            return {
+                "run_id": view["run_id"], "visit_id": view.get("visit_id"),
+                "entity_id": self._registry.manifest_for(name).entity_id,
+                "session_id": view.get("session_id"), "participants": view.get("participants"),
+                "yielded_loop": False, "prelude_warnings": [], "joined": True,
+            }
         out = {
             "run_id": leg["run_id"],
             "visit_id": leg["visit_id"],
@@ -992,6 +1019,7 @@ class EntityVisitHost:
         session_tools: Optional[Dict[str, Any]] = None,
         conversation: Optional[bool] = None,
         idle_seconds: Optional[float] = None,
+        join_existing: bool = False,
     ) -> Any:
         """Preflight + start ONE visit leg atomically against concurrent
         opens on the same home (the check->create window closes under a
@@ -999,7 +1027,7 @@ class EntityVisitHost:
         two-entity meet — one code path, one guard."""
         slug = self._registry.manifest_for(name).slug
         with self._slug_lock(slug):
-            pre = self._preflight(name, participants, visit_id=visit_id)
+            pre = self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
             leg = self._start_leg(
                 pre,
                 participants=list(participants),
@@ -1046,7 +1074,8 @@ class EntityVisitHost:
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
     # ------------------------------------------------- shared leg machinery
-    def _preflight(self, name: str, participants: Optional[List[str]], *, visit_id: str = "") -> Dict[str, Any]:
+    def _preflight(self, name: str, participants: Optional[List[str]], *, visit_id: str = "",
+                   join_existing: bool = False) -> Dict[str, Any]:
         """The per-home gates every visit leg passes BEFORE anything durable:
         substrate resolve (no-fallback), one-life-one-visit (durable AND the
         hosted lane), paused refusal, and the auto-yield negotiation with
@@ -1082,6 +1111,12 @@ class EntityVisitHost:
         er = registry.get_entity_runtime(slug)
 
         live = self._live_visit_run(er, janitor=True)
+        if live is not None and join_existing:
+            stamped = [str(p) for p in (((live.vars or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or []]
+            if (participants or ["person:operator"])[0] in stamped:
+                # The same visitor opening again (a reload, a second window): the open JOINS its
+                # own live visit instead of failing (a visit never fails).
+                raise _JoinOwnVisit(live)
         if live is not None:
             raise VisitRefused(
                 409,
@@ -1115,20 +1150,16 @@ class EntityVisitHost:
         # same home. The probe answers only LIVE runs (a TTL-idle seat does
         # not block a visit; summon-vs-summon keeps the full TTL).
         if self._summon_seat_probe is not None:
-            seat = None
-            try:
-                seat = self._summon_seat_probe(slug)
-            except Exception:  # noqa: BLE001 - a broken probe must not block the door
-                seat = None
-            if seat is not None:
-                raise VisitRefused(
-                    409,
-                    f"a summoned conversation is mid-turn on {manifest.entity_id} "
-                    f"(run {seat.get('run_id')!r}, session {seat.get('session_id')!r}, "
-                    f"holder {seat.get('holder') or 'unknown'}) — one life, one summon; "
-                    "wait for the turn to end",
-                    code="summon_seat_live",
-                )
+            # A VISIT NEVER FAILS on a live summon (Codex review 2026-11-09 #6): machinery yields to
+            # people — the door waits, without a deadline, for the summon's turn to end; the wait
+            # ends only on the kill switch.
+            def _summon_live() -> bool:
+                try:
+                    return self._summon_seat_probe(slug) is not None
+                except Exception:  # noqa: BLE001 - a broken probe must not block the door
+                    return False
+
+            _wait_while(_summon_live, registry.entities_dir, slug, generation)
 
         state = read_entity_state(home_dir)
         mode = str(state.get("mode") or "")
@@ -1165,12 +1196,16 @@ class EntityVisitHost:
                 # exactly like the /loop/start registration-window guard.
                 age = visiting_posture_age_s(state)
                 if age is not None and age < float(EntityVisitHost.STALE_YIELD_GRACE_S):
-                    raise VisitRefused(
-                        409,
-                        f"a visit is opening on {manifest.entity_id} (visiting posture "
-                        f"{age:.0f}s old) — one life, one summon; retry shortly "
-                        "(a genuinely stale posture is adoptable after the grace window)",
-                    )
+                    # Another visit is opening (Codex review #6: no "retry shortly"): wait, without
+                    # a deadline, until it registers or goes, then pass every gate again (a live
+                    # visit then answers as such; the same visitor joins it).
+                    def _opening() -> bool:
+                        st2 = read_entity_state(home_dir)
+                        a2 = visiting_posture_age_s(st2)
+                        return a2 is not None and a2 < float(EntityVisitHost.STALE_YIELD_GRACE_S) and self._live_visit_run(er) is None
+
+                    _wait_while(_opening, registry.entities_dir, slug, generation)
+                    return self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
                 # A visiting-yield posture OLDER than the grace belongs to a
                 # PREVIOUS (crashed) visit; the operator's own word is not
                 # recoverable from it — awake is the honest restore.

@@ -258,3 +258,50 @@ def test_a_failed_pass_completes_with_a_receipt_and_a_stale_completion_touches_n
             entity_phase.write_record(_home().parent, "castor", rec)
         assert entity_phase.maintenance_done(_registry(), "castor", 1) == "stopped"
         assert entity_phase.read_record(_home().parent, "castor")["maintenance"] == {"status": "running", "generation": 2}
+
+
+@pytest.mark.parametrize("door", ["visit", "chat"])
+def test_a_visit_waits_for_a_live_summon_instead_of_refusing(door):
+    """Codex review #6: a live summon answered 409 summon_seat_live; the door now waits (no deadline)
+    for the summon's turn to end, then opens."""
+    from abstractgateway.routes.entities import _chat_host, _visit_host
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        until = time.monotonic() + 0.8
+        probe = lambda slug: {"run_id": "summon-1", "session_id": "s", "holder": "agent:x"} if time.monotonic() < until else None
+        _visit_host()._summon_seat_probe = probe
+        _chat_host()._summon_seat_probe = probe
+        path, body = ("visit/open", {}) if door == "visit" else ("chat/open", {"context_window": 32000})
+        t0 = time.monotonic()
+        r = client.post(f"/api/gateway/entities/Castor/{path}", json=body)
+        assert r.status_code == 200, r.text
+        assert time.monotonic() - t0 >= 0.5  # it waited for the summon's turn
+
+
+@pytest.mark.parametrize("door", ["visit", "chat"])
+def test_a_visit_waits_for_another_opening_instead_of_retry_shortly(door):
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        write_entity_state(_home(), "asleep", reason="in conversation with person:bob [visit v-other]",
+                           mode="visiting", written_by="visit-door")
+
+        def _the_other_open_gives_up():
+            time.sleep(0.8)
+            write_entity_state(_home(), "awake", reason="the other open was aborted")
+
+        threading.Thread(target=_the_other_open_gives_up, daemon=True).start()
+        path, body = ("visit/open", {}) if door == "visit" else ("chat/open", {"context_window": 32000})
+        r = client.post(f"/api/gateway/entities/Castor/{path}", json=body)
+        assert r.status_code == 200, r.text
+
+
+def test_the_same_visitor_opening_again_joins_their_visit():
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        first = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        second = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert first.status_code == 200 and second.status_code == 200, second.text
+        assert second.json()["run_id"] == first.json()["run_id"] and second.json()["joined"] is True

@@ -578,19 +578,21 @@ class EntityChatHost:
         # probe answers only LIVE runs — a TTL-idle summon seat never blocks
         # the drawer's own chat open.
         if self._summon_seat_probe is not None:
-            seat = None
+            # A VISIT NEVER FAILS on a live summon (Codex review 2026-11-09 #6): the door waits,
+            # without a deadline, for the summon's turn to end; only the kill switch ends the wait.
+            from .entity_phase import generation_of as _gen_of
+            from .entity_visits import STOPPED_VISIT_SENTENCE, VisitRefused, _wait_while
+
+            def _summon_live() -> bool:
+                try:
+                    return self._summon_seat_probe(slug) is not None
+                except Exception:  # noqa: BLE001 - a broken probe must not block the door
+                    return False
+
             try:
-                seat = self._summon_seat_probe(slug)
-            except Exception:  # noqa: BLE001 - a broken probe must not block the door
-                seat = None
-            if seat is not None:
-                raise ChatOpenRefused(
-                    409,
-                    f"a summoned conversation is mid-turn on {manifest.entity_id} "
-                    f"(run {seat.get('run_id')!r}, session {seat.get('session_id')!r}, "
-                    f"holder {seat.get('holder') or 'unknown'}) — one life, one summon; "
-                    "wait for the turn to end",
-                )
+                _wait_while(_summon_live, self._registry.entities_dir, slug, _gen_of(self._registry.entities_dir, slug))
+            except VisitRefused:
+                raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
         state = read_entity_state(home_dir)
         mode = str(state.get("mode") or "")
@@ -645,12 +647,24 @@ class EntityChatHost:
 
             age = visiting_posture_age_s(state)
             if age is not None and age < float(EntityVisitHost.STALE_YIELD_GRACE_S):
-                raise ChatOpenRefused(
-                    409,
-                    f"a visit is opening on {manifest.entity_id} (visiting posture {age:.0f}s old) — "
-                    "one life, one summon; retry shortly "
-                    "(a genuinely stale posture is adoptable after the grace window)",
-                )
+                # Another visit is opening (Codex review #6: no "retry shortly"): wait, without a
+                # deadline, until it registers or goes, then pass every gate again.
+                from .entity_phase import generation_of as _gen_of
+                from .entity_visits import STOPPED_VISIT_SENTENCE, VisitRefused, _wait_while
+
+                def _opening() -> bool:
+                    a2 = visiting_posture_age_s(read_entity_state(home_dir))
+                    with self._lock:
+                        registered = slug in self._by_slug
+                    return a2 is not None and a2 < float(EntityVisitHost.STALE_YIELD_GRACE_S) and not registered
+
+                try:
+                    _wait_while(_opening, self._registry.entities_dir, slug, _gen_of(self._registry.entities_dir, slug))
+                except VisitRefused:
+                    raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
+                return self.open(name, provider=provider, model=model, base_url=base_url, participants=participants,
+                                 context_window=context_window, shelf_size=shelf_size, enable_tools=enable_tools,
+                                 enable_workspace=enable_workspace)
             prior_state = {"state": "awake", "reason": ""}
         elif state.get("state") == "asleep":
             # B1 ruling (laurent 04:58; newborn shape c1503: doors WAKE, they

@@ -35,3 +35,12 @@
   written atomically with the answer before the session turn is saved, with the mirrors' completion recorded
   separately. A resend reads it directly (no bounded scan) and re-saves a session turn a crash left unsaved.
 - `stopped_use_resume` passes through the mention door's refusal mapping intact (review #6, mention half).
+- **No visit refusal outside the kill switch at the doors** (review #6).
+  - A live summon makes both doors wait, without a deadline, for its turn to end; it is no longer a 409
+    `summon_seat_live`.
+  - Another visit still opening makes the door wait until that open registers or goes, then pass every gate again;
+    no more "retry shortly".
+  - The same visitor opening their own live visit again (a reload, a second window) joins it: 200 `joined: true`,
+    still exactly one run.
+  - Every wait ends only on a Stop (generation).
+  - A different person opening while someone else's visit is live still answers 409 `visit_already_open`.

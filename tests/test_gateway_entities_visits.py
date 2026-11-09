@@ -418,10 +418,11 @@ def test_one_life_gate_consults_the_durable_store_after_amnesia(monkeypatch: pyt
         status = client.get("/api/gateway/entities/Castor/visit").json()
         assert status["open"] is True and status["run_id"] == run_id
 
-        # A second open refuses, naming the durable live run — never a second visit.
+        # A second open by the same visitor JOINS the durable live run (a visit never fails; Codex
+        # review 2026-11-09 #6) — never a second visit.
         second = client.post("/api/gateway/entities/Castor/visit/open", json={})
-        assert second.status_code == 409, second.text
-        assert run_id in second.json()["detail"]
+        assert second.status_code == 200, second.text
+        assert second.json()["run_id"] == run_id and second.json()["joined"] is True
 
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
 
@@ -435,8 +436,7 @@ def test_one_life_one_visit_is_durable(monkeypatch: pytest.MonkeyPatch):
         run_id = first.json()["run_id"]
 
         second = client.post("/api/gateway/entities/Castor/visit/open", json={})
-        assert second.status_code == 409
-        assert run_id in second.json()["detail"]  # names the live run
+        assert second.status_code == 200 and second.json()["run_id"] == run_id  # joins the live run
 
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
         third = client.post("/api/gateway/entities/Castor/visit/open", json={})
@@ -768,8 +768,11 @@ def test_concurrent_opens_mint_exactly_one_visit(monkeypatch: pytest.MonkeyPatch
         for t in threads:
             t.join()
 
+        # Both are the same visitor: the second JOINS the first (a visit never fails; Codex review
+        # 2026-11-09 #6) — still exactly ONE run is minted.
         codes = sorted(r.status_code for r in results)
-        assert codes == [200, 409], [r.status_code for r in results]
+        assert codes == [200, 200], [r.status_code for r in results]
+        assert len({r.json()["run_id"] for r in results}) == 1
         # Exactly one live visit exists.
         assert client.get("/api/gateway/entities/Castor/visit").json()["open"] is True
 
