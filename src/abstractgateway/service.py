@@ -803,6 +803,16 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
                 boot_warnings.append(f"skills shelf not seeded at {seeded.get('dest')}: {seeded.get('error')}")
         except Exception as e:  # noqa: BLE001
             boot_warnings.append(f"skills shelf seed failed: {type(e).__name__}: {e}")
+        # The runtime serves an activated skill's files only under the roots registered here
+        # (review 2026-11-09 finding 1): the curated shelf and the imported folder, from this
+        # gateway's own configuration. Not registered = no skill file is served past the
+        # workspace policies (fail closed), so a failure is a boot warning, never silent.
+        try:
+            from .skills_library import register_runtime_skill_roots
+
+            register_runtime_skill_roots(root_data_dir)
+        except Exception as e:  # noqa: BLE001
+            boot_warnings.append(f"skill roots not registered (activated skills' files will not be served): {type(e).__name__}: {e}")
 
         # 0958: a fresh install's seeded text route names AbstractCore's portable pick (LM Studio off
         # Apple silicon); on a server where that engine is missing and llama.cpp is installed, the

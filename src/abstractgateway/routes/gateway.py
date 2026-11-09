@@ -4306,6 +4306,28 @@ def _strip_client_workflow_policy(input_data: Dict[str, Any]) -> Dict[str, Any]:
     return input_data
 
 
+def _strip_client_host_stamps(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop what only the gateway writes from a client's `input_data` (beside workflow_policy).
+
+    Skills (review 2026-11-09 finding 1): `_runtime.skills_block` and `_runtime.skills_resolution`
+    name the skills whose files the runtime serves past the workspace policies, so only the
+    gateway's resolver writes them; `skills` keeps the requested NAMES only (a mapping's roots
+    never ride). The host repeats this for every start (hosts/bundle_host.py)."""
+    runtime_ns = input_data.get("_runtime")
+    if isinstance(runtime_ns, dict) and ({"skills_block", "skills_resolution"} & set(runtime_ns)):
+        runtime_ns = dict(runtime_ns)
+        runtime_ns.pop("skills_block", None)
+        runtime_ns.pop("skills_resolution", None)
+        input_data["_runtime"] = runtime_ns
+    if "skills" in input_data:
+        from ..skills_library import requested_skill_names
+
+        names = requested_skill_names(input_data.pop("skills"))
+        if names:
+            input_data["skills"] = names
+    return input_data
+
+
 def _public_run_workflow_selection(*, svc: Any, vars_obj: Dict[str, Any]) -> Dict[str, str]:
     """Return only the public identity from a gateway-signed workflow policy."""
 
@@ -9508,7 +9530,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
-        input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+        input_data = _strip_client_host_stamps(_strip_client_workflow_policy(dict(req.input_data or {})))
         _apply_conversation_opt_in(input_data, req.conversation)
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         if req.workspace is not None:
@@ -9718,7 +9740,7 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         raise HTTPException(status_code=400, detail="bundle_id and flow_id are required")
 
     catalog_input_data: Optional[Dict[str, Any]] = None
-    schedule_input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+    schedule_input_data = _strip_client_host_stamps(_strip_client_workflow_policy(dict(req.input_data or {})))
     # Validated like /runs/start, but the gateway streaming default is never
     # applied to a schedule (nobody watches a scheduled run live).
     _apply_run_stream_switch(schedule_input_data, interactive=False)

@@ -3327,32 +3327,36 @@ class WorkflowBundleGatewayHost:
         # trust-bypassed. An explicit caller tool ceiling is never widened
         # by skills selection; read_skill must be enabled by the caller.
         # Default-allowlist runs already see it via the logic registry.
-        raw_skills = vars0.get("skills")
-        if isinstance(raw_skills, list) and any(isinstance(s, str) and s.strip() for s in raw_skills):
-            if "skills_block" in rt_ns:
-                rt_ns.setdefault("skills_resolution", {})
-                rt_ns["skills_resolution"]["verdicts"] = list(
-                    rt_ns["skills_resolution"].get("verdicts") or []
-                ) + ["#FALLBACK input_data.skills ignored: the caller already set _runtime.skills_block"]
-            else:
-                try:
-                    from ..capability_inventories import resolve_run_skills
+        #
+        # The block and the resolution are HOST-WRITTEN only (review
+        # 2026-11-09 finding 1): the runtime serves an activated skill's files
+        # for the names they carry, so a caller's `_runtime.skills_block` /
+        # `_runtime.skills_resolution` is dropped, and `skills` keeps only the
+        # NAMES a caller asked for (a mapping's roots never ride); the
+        # resolver below writes both from this gateway's own shelf.
+        rt_ns.pop("skills_block", None)
+        rt_ns.pop("skills_resolution", None)
+        from ..skills_library import requested_skill_names
 
-                    resolution = resolve_run_skills(
-                        [str(s) for s in raw_skills if isinstance(s, str)], data_dir=Path(self.data_dir)
-                    )
-                except Exception as e:  # noqa: BLE001 - a broken shelf must not block the run
-                    resolution = {
-                        "requested": [str(s) for s in raw_skills if isinstance(s, str)],
-                        "active": [],
-                        "verdicts": [f"#FALLBACK skills resolution failed: {e}"],
-                        "skills_block": None,
-                        "resolved_tree_hashes": {},
-                    }
-                block = resolution.pop("skills_block", None)
-                if isinstance(block, str) and block.strip():
-                    rt_ns["skills_block"] = block
-                rt_ns["skills_resolution"] = resolution
+        raw_skills = requested_skill_names(vars0.pop("skills", None))
+        if raw_skills:
+            vars0["skills"] = list(raw_skills)
+            try:
+                from ..capability_inventories import resolve_run_skills
+
+                resolution = resolve_run_skills(list(raw_skills), data_dir=Path(self.data_dir))
+            except Exception as e:  # noqa: BLE001 - a broken shelf must not block the run
+                resolution = {
+                    "requested": list(raw_skills),
+                    "active": [],
+                    "verdicts": [f"#FALLBACK skills resolution failed: {e}"],
+                    "skills_block": None,
+                    "resolved_tree_hashes": {},
+                }
+            block = resolution.pop("skills_block", None)
+            if isinstance(block, str) and block.strip():
+                rt_ns["skills_block"] = block
+            rt_ns["skills_resolution"] = resolution
 
         # Best-effort: seed durable run vars with the gateway runtime defaults so VisualFlow
         # nodes (notably Agent nodes) can inherit provider/model without per-node wiring.

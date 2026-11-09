@@ -286,13 +286,19 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
     from .skills_library import shelf_roots
 
     skills_root = registry_dir / "skills"
+    roots = shelf_roots(skills_root)
+    # The shelf this resolution reads is the gateway's own (a setting changed since boot
+    # included): the runtime serves the active skills' files only under registered roots.
+    from abstractruntime.integrations.abstractcore.skill_roots import register_skill_roots
+
+    register_skill_roots(roots)
     try:
         registry = TrustRegistry.load(
             validations_path=registry_dir / "validations.yaml",
             advisories_path=registry_dir / "advisories.yaml",
             guidance_path=registry_dir / "guidance.yaml",
         )
-        selection = select_skills_for_context(registry, shelf_roots(skills_root), requested)
+        selection = select_skills_for_context(registry, roots, requested)
     except Exception as e:  # noqa: BLE001 - resolution failure is a labeled verdict
         out["verdicts"].append(f"#FALLBACK skill resolution failed: {e}")
         return out

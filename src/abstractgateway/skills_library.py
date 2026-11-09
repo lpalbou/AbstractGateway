@@ -74,6 +74,55 @@ def shelf_roots(skills_root: Path, data_dir: Optional[Path] = None) -> List[Path
     return roots
 
 
+def requested_skill_names(raw: Any) -> List[str]:
+    """The skill NAMES a run-start `skills` value asks for, and nothing else: a list of names, one
+    name, or the workforce mapping's `requested` then `active` names. A mapping's roots
+    (`shelf`, `imported_shelf`, `roots`, `env`) never ride (review 2026-11-09 finding 1); a value
+    that is not a plain name (a path) is dropped. The resolver gates whatever is left."""
+    if isinstance(raw, dict):
+        items: List[Any] = []
+        for key in ("requested", "active"):
+            value = raw.get(key)
+            items.extend(value if isinstance(value, (list, tuple)) else [value])
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = [raw]
+    out: List[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or name in {".", ".."} or "/" in name or "\\" in name:
+            continue
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def register_runtime_skill_roots(data_dir: Optional[Path] = None) -> List[str]:
+    """Tell AbstractRuntime which folders hold THIS gateway's skills (review 2026-11-09 finding 1).
+
+    The runtime serves a `read_file` inside an activated skill's folder before the workspace
+    policies refuse it, but only under roots its host registered (never from run vars, which a
+    client writes). Registered here: the curated shelf as `resolve_skills_shelf` resolves it now
+    (setting > environment > the seeded copy > a framework checkout), the seeded copy's
+    `<data dir>/skills/registry/skills` (seeded at start, so it may not exist yet) and the
+    imported folder `<data dir>/skills/imported`. Additive and idempotent; returns every root
+    registered in this process."""
+    from abstractruntime.integrations.abstractcore.skill_roots import register_skill_roots
+
+    from .capability_inventories import _repo_root_for_shelf
+    from .skills_shelf import resolve_skills_shelf, seeded_registry_dir
+
+    root = _data_dir(data_dir)
+    roots: List[Path] = [seeded_registry_dir(root) / "skills", imported_root(root)]
+    resolved = resolve_skills_shelf(root, checkout_root=_repo_root_for_shelf(root)).get("registry")
+    if resolved is not None:
+        roots.insert(0, Path(resolved) / "skills")
+    return register_skill_roots(roots)
+
+
 def _curated_skills_root() -> Optional[Path]:
     from .capability_inventories import _repo_root_for_shelf
     from .skills_union import _shelf_registry_dir
