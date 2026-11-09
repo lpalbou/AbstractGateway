@@ -161,3 +161,80 @@ def test_a_durable_visit_close_authors_what_formation_left_pending(monkeypatch: 
         drain.join(30)
         ep = _episodes(_registry().get_entity_runtime("castor").home.ms)[-1]
         assert ep.attributes.get("title") == TITLE and "pending" not in ep.attributes, ep.attributes
+
+
+class _StrictPool:
+    """The runtime's pooled client, as strict as the real one: generate(prompt, messages,
+    system_prompt, tools, media, params) only — structured output travels in params."""
+
+    def __init__(self) -> None:
+        self.structured: list = []
+
+    def generate(self, *, prompt="", messages=None, system_prompt=None, tools=None, media=None, params=None):
+        params = dict(params or {})
+        if params.get("response_schema") is not None:
+            self.structured.append(params)
+            return {"content": None, "data": {"title": TITLE, "summary": SUMMARY}, "model": None}
+        return {"content": "The tide comes in at dusk.", "model": params.get("_model")}
+
+
+def test_a_visit_through_the_pooled_client_forms_its_episode_authored(monkeypatch: pytest.MonkeyPatch):
+    """Live blocker 2026-11-09 (e2e-restart2): the gateway's shared model client (PoolGeneration)
+    refused `response_model`, so every visit-formed record went pending ("malformed", model None).
+    Here the summaries call goes through the POOL path — no client factory is faked."""
+    from abstractgateway import generation_pool
+
+    pool = _StrictPool()
+    monkeypatch.setattr(generation_pool, "principal_pool", lambda: pool)
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        rid = opened.json()["run_id"]
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{rid}/turn", json={"text": "when does the tide come in?"})
+        assert turned.status_code == 200, turned.text
+        ep = _episodes(_registry().get_entity_runtime("castor").home.ms)[-1]
+        assert ep.attributes.get("title") == TITLE and str(ep.object) == SUMMARY, ep.attributes
+        assert "pending" not in ep.attributes
+        assert pool.structured and pool.structured[0]["response_schema"]["required"] == ["title", "summary"]
+        client.post(f"/api/gateway/entities/Castor/visit/{rid}/close", json={"closed_by": "operator"})
+
+
+def test_a_failing_capability_call_is_reported_with_its_cause_and_model():
+    """The capability handler says what really failed (class, message, the model that answered) —
+    the runtime then files it as unavailable, never as a malformed answer."""
+    from types import SimpleNamespace
+
+    from abstractgateway.entities import EntityRegistry
+
+    class _Boom:
+        model_info = {"provider": "lmstudio", "model": "summ-1", "thinking": None}
+
+        def generate(self, **kw):
+            raise ConnectionError("endpoint refused")
+
+    reg = SimpleNamespace(capability_llm=lambda slug, cap: _Boom())
+    handler = EntityRegistry._entity_capability_llm_handler(reg, "castor", "summaries")
+    out = handler(None, SimpleNamespace(payload={"messages": [], "capability": "summaries"}), None)
+    assert str(getattr(out.status, "value", out.status)) == "failed"
+    assert "ConnectionError: endpoint refused" in out.error and "lmstudio/summ-1" in out.error
+
+
+def test_a_client_of_its_own_takes_structured_output_too(monkeypatch: pytest.MonkeyPatch):
+    """No pool (a host whose bundles have no LLM node): the client of its own is as strict as the
+    pool, and the adapter carries the response model the same way."""
+    from pydantic import BaseModel
+
+    from abstractgateway import entity_chat, generation_pool, model_host
+
+    class Authored(BaseModel):
+        title: str
+        summary: str
+
+    pool = _StrictPool()
+    monkeypatch.setattr(generation_pool, "principal_pool", lambda: None)
+    monkeypatch.setattr(model_host, "local_client", lambda **ctor: pool)
+    llm = entity_chat._RuntimeLLMAdapter("lmstudio", model="summ-1")
+    out = llm.generate(prompt="author it", response_model=Authored)
+    assert isinstance(out, Authored) and out.title == TITLE
+    assert llm.model_info["model"] == "summ-1"

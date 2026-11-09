@@ -372,6 +372,8 @@ class _RuntimeLLMAdapter:
         )
         self._provider = str(provider or "").strip()
         self._model = str(model or "").strip()
+        # Who answers (the authoring failure lines and receipts name it; never None).
+        self.model_info = {"provider": self._provider, "model": self._model, "thinking": str(thinking or "").strip() or None}
         # The mind's reasoning effort (substrate triple). Injected into each
         # call's params on the one wire name; None sends nothing.
         self._thinking = str(thinking or "").strip() or None
@@ -403,7 +405,13 @@ class _RuntimeLLMAdapter:
             params = dict(params)
             note = drop_unsupported_speculation(source, params, provider=self._provider, model=self._model)
             kwargs["params"] = params
-        out = self._client.generate(**kwargs)
+        from .generation_pool import PoolGeneration, structured_generate
+
+        if isinstance(self._client, PoolGeneration):
+            out = self._client.generate(**kwargs)
+        else:
+            # A client of its own takes structured output on the same wire as the pool.
+            out = structured_generate(self._client.generate, kwargs, provider=self._provider, model=self._model)
         if note is not None:
             from .speculation_guard import attach_note
 

@@ -18,3 +18,9 @@
 
 - **A message's numbers stay the mind's.** The visit turn stats (`stats.input_tokens` / `output_tokens`) leave out the
   summaries model's authoring call. Before, its unreported usage made the whole turn's numbers unknown.
+- **Structured output through the shared model client** (live blocker 2026-11-09: every visit-formed record went
+  pending). The pooled client (`PoolGeneration`) and a client of its own now take `response_model` (and
+  `response_schema` / `response_schema_name`) the way a direct client does: the schema rides the runtime's
+  `params.response_schema` and the answer comes back as the model's instance. Clients name who answers
+  (`model_info`), a structured result names its model, and a failing capability call is reported with its cause and
+  the model that failed (so the runtime files it as unavailable, never as a malformed answer).

@@ -23,6 +23,47 @@ logger = logging.getLogger(__name__)
 _PER_CALL_KEYS = ("base_url", "api_key")
 
 
+class StructuredOutputMissing(ValueError):
+    """A structured call (a response model) whose answer carried no parsed object."""
+
+
+def structured_generate(generate: Any, kwargs: Dict[str, Any], *, provider: str, model: str) -> Any:
+    """One `generate(**kwargs)` on a runtime client (the pool, or a client of its own), with
+    STRUCTURED OUTPUT the way a direct AbstractCore client takes it (live blocker 2026-11-09: every
+    visit-formed record went pending because the pooled client refused `response_model`).
+
+    - `response_model` (a pydantic class): its JSON schema rides `params.response_schema` /
+      `response_schema_name` (the runtime clients' wire; a proxy cannot carry a validator) and the
+      answer comes back as that class's instance, as a direct client returns it.
+    - `response_schema` / `response_schema_name` (a JSON schema): forwarded as is; the answer keeps
+      the runtime's shape (`data` holds the parsed object).
+    A structured answer without a parsed object raises StructuredOutputMissing naming the model."""
+    kw = dict(kwargs)
+    response_model = kw.pop("response_model", None)
+    schema = kw.pop("response_schema", None)
+    schema_name = kw.pop("response_schema_name", None)
+    if response_model is not None:
+        schema = response_model.model_json_schema()
+        schema_name = schema_name or getattr(response_model, "__name__", None)
+    if schema is not None:
+        params = dict(kw.get("params") or {})
+        params["response_schema"] = schema
+        if schema_name:
+            params["response_schema_name"] = str(schema_name)
+        kw["params"] = params
+    out = generate(**kw)
+    if response_model is None:
+        return out
+    if hasattr(out, "model_dump"):
+        return out
+    data = out.get("data") if isinstance(out, dict) else getattr(out, "data", None)
+    if not isinstance(data, dict):
+        raise StructuredOutputMissing(
+            f"the structured answer from {provider}/{model} carried no parsed object"
+        )
+    return response_model.model_validate(data)
+
+
 class PoolGeneration:
     """`generate(...)` on the runtime's pool for one provider/model (and its connection)."""
 
@@ -34,6 +75,8 @@ class PoolGeneration:
         self._provider = str(provider or "").strip()
         self._model = str(model or "").strip()
         self._connection = {k: v for k, v in (llm_kwargs or {}).items() if v not in (None, "")}
+        # Who answers (the authoring failure lines name it; never None).
+        self.model_info = {"provider": self._provider, "model": self._model, "thinking": None}
 
     def _connection_beyond_the_pools(self) -> Dict[str, Any]:
         """The connection keys the pool does not already use for this provider: a key equal to the
@@ -49,14 +92,23 @@ class PoolGeneration:
         return self._pool
 
     def generate(self, *, prompt: str = "", messages: Any = None, system_prompt: Any = None, tools: Any = None,
-                 media: Any = None, params: Optional[Dict[str, Any]] = None) -> Any:
+                 media: Any = None, params: Optional[Dict[str, Any]] = None, response_model: Any = None,
+                 response_schema: Any = None, response_schema_name: Optional[str] = None) -> Any:
+        """The pool's generate for this provider/model; structured output (`response_model`, or
+        `response_schema` + name) is carried as a direct client would (`structured_generate`)."""
         p = dict(params or {})
         p["_provider"] = self._provider
         p["_model"] = self._model
         for key, value in self._connection_beyond_the_pools().items():
             p.setdefault(key, value)
-        return self._pool.generate(prompt=prompt, messages=messages, system_prompt=system_prompt, tools=tools,
-                                   media=media, params=p)
+        kwargs: Dict[str, Any] = {"prompt": prompt, "messages": messages, "system_prompt": system_prompt,
+                                  "tools": tools, "media": media, "params": p}
+        if response_model is not None:
+            kwargs["response_model"] = response_model
+        if response_schema is not None:
+            kwargs["response_schema"] = response_schema
+            kwargs["response_schema_name"] = response_schema_name
+        return structured_generate(self._pool.generate, kwargs, provider=self._provider, model=self._model)
 
 
 def principal_pool() -> Optional[Any]:

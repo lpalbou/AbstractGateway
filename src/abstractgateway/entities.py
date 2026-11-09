@@ -334,6 +334,11 @@ def _llm_effect_generate(llm: Any, effect: Any, *, empty_message: str) -> Any:
         value = _field(key)
         if value is not None:
             result[key] = value
+    if "model" not in result:
+        # A structured answer (a parsed object) names no model: the client's own is the one that answered.
+        info = getattr(llm, "model_info", None)
+        if isinstance(info, dict) and info.get("model"):
+            result["model"] = str(info["model"])
     if not result["content"].strip() and not result.get("tool_calls"):
         return EffectOutcome.failed(empty_message)
     return EffectOutcome.completed(result)
@@ -1962,9 +1967,15 @@ class EntityRegistry:
                 llm = self.capability_llm(slug, capability)
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL ({capability}) refused: {e.detail}")
-            return _llm_effect_generate(
-                llm, effect, empty_message=f"LLM returned no content for the {capability} call",
-            )
+            info = getattr(llm, "model_info", None) or {}
+            who = f"{info.get('provider') or '?'}/{info.get('model') or '?'}"
+            try:
+                return _llm_effect_generate(
+                    llm, effect, empty_message=f"LLM returned no content for the {capability} call ({who})",
+                )
+            except Exception as e:  # noqa: BLE001 - said honestly to the runtime, never a malformed answer
+                logger.warning("LLM_CALL (%s) on %s failed: %s: %s", capability, who, type(e).__name__, e)
+                return EffectOutcome.failed(f"LLM_CALL ({capability}) on {who} failed: {type(e).__name__}: {e}")
 
         return handler
 
