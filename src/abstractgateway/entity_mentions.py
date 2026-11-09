@@ -412,6 +412,7 @@ def _record_session_turn(
     svc: Any, *, session_id: str, text: str, reply: str, principal: Any,
     author: Dict[str, Any], prompt_author: Dict[str, Any], provenance: Dict[str, Any],
     asked_at: str, repeat_of: Optional[str] = None, run_id: Optional[str] = None,
+    notices: Optional[List[Dict[str, Any]]] = None,
 ) -> Any:
     """The entity's reply as a turn of the session: one completed root run in the caller's plane.
     `created_at` is when the person's words arrived (`asked_at`), `updated_at` when the reply did,
@@ -439,7 +440,8 @@ def _record_session_turn(
         status=RunStatus.COMPLETED,
         current_node="done",
         vars=vars_obj,
-        output={"answer": reply},
+        # `notices`: what the entity's turn formed or staged (turn.notices; the session turn row reads it).
+        output={"answer": reply, "notices": [dict(n) for n in (notices or [])]},
         actor_id="gateway",
         session_id=session_id,
         created_at=asked_at,
@@ -641,6 +643,7 @@ def mention(
             except VisitRefused as e2:
                 raise _from_visit_refusal(e2, manifest, sid) from None
         reply = str(turned.get("reply") or "").strip()
+        reply_notices = [dict(n) for n in (turned.get("reply_notices") or []) if isinstance(n, dict)]
         status = str(turned.get("status") or "")
         if status == "failed" or not reply or turned.get("turn_error"):
             # A failed model call answers the visit turn with the error and the visit stays open
@@ -673,6 +676,7 @@ def mention(
             "repeat_of": repeated,
             "context": context_report,
             "reply": reply,
+            "notices": reply_notices,
             "visit": {
                 "run_id": run_id,
                 "turn_id": turn_id,
@@ -683,7 +687,7 @@ def mention(
             "mirrors": [],
         }
         turn_fields = {"text": text, "reply": reply, "author": author, "prompt_author": person_author(principal),
-                       "provenance": provenance, "asked_at": asked_at, "repeat_of": repeated}
+                       "provenance": provenance, "asked_at": asked_at, "repeat_of": repeated, "notices": reply_notices}
         # THE KILL SWITCH'S FENCE around every persistence step (review #2): the generation seen at
         # the door is checked and the answer written in ONE locked step — a Stop that landed since
         # (even between the turn and here) means nothing is recorded and nothing is mirrored. The
@@ -803,6 +807,7 @@ def _mirror_into_bound_visits(
                 row["error"] = f"{_display_name(registry.manifest_for(child.name))} could not answer this turn."
             else:
                 row["reply"] = str(turned.get("reply") or "")
+                row["notices"] = [dict(n) for n in (turned.get("reply_notices") or []) if isinstance(n, dict)]
         except VisitRefused as e:
             row["error"] = str(e.detail)
         out.append(row)

@@ -285,6 +285,49 @@ _TOOL_ARG_EXCERPT_CHARS = 200
 # an authed surface; 2026-07-08 ruling).
 
 
+# The visit close's formations of the staged elections (AbstractRuntime visit_workflow APPLY: one MEMORY_FORM per
+# election, turn id `t-reflect-<stage>-<run>-<i>`), by the turn id's stage.
+_CLOSE_FORMATIONS = (("t-reflect-interest-", "interest"), ("t-reflect-lesson-", "lesson"),
+                     ("t-reflect-realize-", "realization"))
+
+
+def close_notices(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """`[{kind, record_id, title, text}]`: each election staged during the visit that its close FORMED, read from
+    the run's own ledger, in formation order (the shape of turn.notices; `record_id` is the formed record's graph
+    id). A refused formation (no record) is not listed. The record's words and title come from the started row
+    (a completed row's large payload fields may be slimmed), its id from the completed row's result."""
+    rows: Dict[str, Dict[str, Any]] = {}
+    formed: Dict[str, List[str]] = {}
+    order: List[str] = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        effect = rec.get("effect") or {}
+        if str(effect.get("type") or "").lower() != "memory_form":
+            continue
+        payload = effect.get("payload") if isinstance(effect.get("payload"), dict) else {}
+        tid = str(payload.get("turn_id") or "")
+        if not any(tid.startswith(prefix) for prefix, _kind in _CLOSE_FORMATIONS):
+            continue
+        records_in = payload.get("records")
+        if tid not in rows and isinstance(records_in, list) and records_in and isinstance(records_in[0], dict):
+            rows[tid] = records_in[0]
+        result = rec.get("result")
+        if isinstance(result, dict) and str(rec.get("status") or "").lower() == "completed":
+            formed[tid] = [str(r) for r in (result.get("record_ids") or []) if str(r or "").strip()]
+            if tid not in order:
+                order.append(tid)
+    out: List[Dict[str, Any]] = []
+    for tid in order:
+        if not formed.get(tid):
+            continue
+        kind = next(k for prefix, k in _CLOSE_FORMATIONS if tid.startswith(prefix))
+        row = rows.get(tid) or {}
+        out.append({"kind": kind, "record_id": formed[tid][0], "title": str(row.get("title") or ""),
+                    "text": str(row.get("digest") or "")})
+    return out
+
+
 def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str], List[Dict[str, Any]]]:
     """Per-turn tool details folded from the run's OWN ledger (2026-07-18,
     laurent's "unacceptable error with tools": the durable lane served
@@ -594,7 +637,11 @@ def _compose_turn_probe(run_vars: Dict[str, Any], *, tool_details: Optional[List
         "memories_in_context": len(memories),
         "records_formed": formed_ids,
         "diary_entries": list(turn_ns.get("diary_meta") or []),
+        # `notices` stays the operator's log lines (strings); what the turn formed or staged is
+        # `reply_notices` (turn.notices, AbstractRuntime 09cbad7: [{kind, record_id, title, text?, staged?,
+        # visibility?}]), as the runtime serves it.
         "notices": list(turn_ns.get("notices") or []),
+        "reply_notices": [dict(n) for n in (turn_ns.get("reply_notices") or []) if isinstance(n, dict)],
         "participants": list(visit_vars.get("participants") or []),
         "system_prompt": str(visit_vars.get("system_base") or ""),
         "tool_details": list(tool_details or []),
@@ -1580,6 +1627,12 @@ class EntityVisitHost:
             if isinstance(msg, dict) and msg.get("role") == "assistant":
                 reply = str(msg.get("content") or "")
                 break
+        # The SERVED reply (AbstractRuntime 09cbad7: `_turn.reply`, the bracket markers its notices replace taken
+        # out; the history keeps the stored words with every marker, ADR 0054). A turn computed before that
+        # runtime has only the stored one.
+        served_reply = (((state.vars or {}).get("_turn") or {}).get("reply"))
+        if isinstance(served_reply, str):
+            reply = served_reply
         # Did THIS turn answer? (mentions-review D: a failed turn served the previous reply as if new.)
         # The history is a sliding window, so a count that did not grow with the window full is
         # read through the turn number instead.
@@ -1713,6 +1766,14 @@ class EntityVisitHost:
 
         status = str(getattr(state.status, "value", state.status))
         out: Dict[str, Any] = {"run_id": run_id, "status": status, "output": dict(state.output or {})}
+        if status == "completed":
+            # What the close formed of the elections its turns staged (lesson, interest, realization), with
+            # their records: a "forming" badge resolves to its record (turn.notices, 2026-11-09).
+            try:
+                out["notices"] = close_notices(er.ledger_store.list(run_id))
+            except Exception as e:  # noqa: BLE001 - the close stands; the list is said to be missing
+                out["notices"] = []
+                out["notices_error"] = f"#FALLBACK the formed records could not be read from the ledger: {e}"
         if status in ("completed", "failed", "cancelled"):
             self._finalize_terminal(er, manifest, run_id, state)
         return out

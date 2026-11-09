@@ -966,6 +966,9 @@ class EntityChatHost:
             "records_formed": list(report.formed),
             "diary_entries": list(report.diary),
             "notices": list(report.notices),
+            # What this turn formed or staged, beside the served reply (turn.notices, AbstractRuntime 09cbad7:
+            # TurnReport.reply_notices); `notices` above stays the operator's log lines.
+            "reply_notices": [dict(n) for n in report.reply_notices],
             "participants": list(hosted.session.participants),
             # The probe surface (maintainer, 2026-07-08: "probe the input
             # context and the outcomes"): every memory that entered the
