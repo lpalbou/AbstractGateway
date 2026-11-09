@@ -797,3 +797,72 @@ def test_an_aborted_open_keeps_the_sleep_as_it_was(spawned):
         assert (st["state"], st["reason"], st.get("wake_at")) == ("asleep", "resting", "2099-01-01T00:00:00+00:00")
         after = client.get("/api/gateway/entities/Castor/life_state").json()
         assert after["sleep"]["since"] == before["sleep"]["since"]
+
+
+def _host_kinds():
+    path = _home_dir().parent / ".host_stream" / "castor.jsonl"
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return [(r.get("payload") or {}).get("kind") for r in rows]
+
+
+@pytest.mark.parametrize("lane,writer", [("visit", "operator"), ("chat", "operator"), ("visit", "self")])
+def test_a_visit_closing_on_a_sleep_adds_only_the_visit_rows(spawned, lane, writer):
+    """castor and nerin carried "sleep -> sleep" phase_changed rows: each close wrote the sleep back
+    changed (reason, since, mode), so the snapshot moved without a phase change. The same sleep
+    continues unchanged: a visit nobody watched adds its open and close rows and nothing else (no
+    phase_changed, the contract has no sleep -> sleep edge), and the state's reason, mode, writer and
+    since are the ones from before it."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    procs = []
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        if writer == "self":  # his own nap after a dream: the loop is alive and owns it
+            from entity_fake_loop import spawn
+
+            procs.append(spawn(home, "between", 60))
+            write_entity_state(home, "asleep", reason="self-elected sleep: tired", written_by="self",
+                               mode="resting", wake_at="2099-01-01T00:00:00+00:00")
+        else:
+            write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator")
+        before = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert before["phase"] == "sleep"
+        st0 = read_entity_state(home)
+        kinds0 = _host_kinds()
+        if lane == "visit":
+            opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+            assert opened.status_code == 200, opened.text
+            closed = client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close",
+                                 json={"closed_by": "operator"})
+        else:
+            opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+            assert opened.status_code == 200, opened.text
+            closed = client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
+        assert closed.status_code == 200, closed.text
+        after = client.get("/api/gateway/entities/Castor/life_state").json()
+        added = _host_kinds()[len(kinds0):]
+        assert sorted(added) == ["session_closed", "summon"], added
+        assert after["rev"] == before["rev"] and after["since"] == before["since"]
+        assert after["sleep"] == before["sleep"]
+        st = read_entity_state(home)
+        assert {k: st.get(k) for k in ("state", "reason", "mode", "written_by", "wake_at")} == {
+            k: st0.get(k) for k in ("state", "reason", "mode", "written_by", "wake_at")}
+        assert not [m for m in _host_markers("phase_changed") if m.get("from") == m.get("to") == "sleep"]
+    for p in procs:
+        p.kill()
+
+
+def test_a_restore_onto_the_same_sleep_writes_nothing(spawned):
+    from abstractgateway import entity_phase
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        write_entity_state(home, "asleep", reason="resting", written_by="operator")
+        st0 = read_entity_state(home)
+        lines0 = (home / "state_history.jsonl").read_text(encoding="utf-8").count("\n")
+        entity_phase.continue_sleep(home.parent, "castor", dict(st0))
+        assert read_entity_state(home)["changed_at"] == st0["changed_at"]
+        assert (home / "state_history.jsonl").read_text(encoding="utf-8").count("\n") == lines0

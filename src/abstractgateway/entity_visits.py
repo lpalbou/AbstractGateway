@@ -1212,9 +1212,10 @@ class EntityVisitHost:
             # c343 seam: wake_at is first-class on the writer).
             "wake_at": str(state.get("wake_at") or ""),
             # The same sleep continues after the visit (contract-phases §4.4):
-            # who chose it and since when travel with it.
+            # who chose it, since when and its mode travel with it.
             "written_by": str(state.get("written_by") or ""),
             "changed_at": str(state.get("changed_at") or ""),
+            "mode": str(state.get("mode") or ""),
         }
         if state.get("state") == "asleep":
             if mode == "visiting" or "auto-yield" in reason:

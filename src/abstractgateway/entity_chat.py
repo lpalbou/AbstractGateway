@@ -654,6 +654,7 @@ class EntityChatHost:
             # The same sleep continues after the visit (contract-phases §4.4).
             "written_by": str(state.get("written_by") or ""),
             "changed_at": str(state.get("changed_at") or ""),
+            "mode": str(state.get("mode") or ""),
         }
         if state.get("state") == "asleep" and (mode == "visiting" or "auto-yield" in reason):
             # FRESHNESS GATE (wave adversary P1-1): a young posture may

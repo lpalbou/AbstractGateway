@@ -261,25 +261,31 @@ def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any]) -> None
     reason, who chose it and its wake time are written back unchanged, and the sidecar keeps its
     original start, so `since` stays where the sleep began however many visits came in between. The
     visits themselves are in the ledger (`summon` at the open, `session_closed` at the end), never in
-    the sleep's reason. Callers hold the phase lock and have checked the posture is theirs."""
+    the sleep's reason, so the published snapshot is the one from before the visit: no `phase_changed`
+    sleep -> sleep (the contract has no such edge). A standing state that already IS that sleep is
+    left alone (nothing written). Callers hold the phase lock and have checked the posture is
+    theirs."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
     home_dir = Path(entities_dir) / slug
+    reason = str(prior.get("reason") or "") or "operator sleep restored"
+    mode = str(prior.get("mode") or "")
+    mode = "" if mode == "visiting" else mode
+    wake_at = str(prior.get("wake_at") or "")  # bounded sleeps keep their deadline (runtime c343)
+    written_by = str(prior.get("written_by") or "operator")  # who chose it travels (contract-phases §4.4)
     with phase_lock(entities_dir, slug):
+        now = read_entity_state(home_dir)
+        if (str(now.get("state") or ""), str(now.get("reason") or ""), str(now.get("mode") or ""),
+                str(now.get("wake_at") or ""), str(now.get("written_by") or "operator")) == (
+                "asleep", reason, mode, wake_at, written_by):
+            return  # already this sleep: asleep is never written over the same asleep
         rec = read_record(entities_dir, slug)
         override = rec.get("sleep_since_override") if isinstance(rec.get("sleep_since_override"), dict) else None
         if override and prior.get("changed_at") and str(override.get("changed_at") or "") == str(prior.get("changed_at")):
             since = override.get("since")  # the prior state was itself a continued sleep: its origin
         else:
             since = prior.get("changed_at")
-        write_entity_state(
-            home_dir, "asleep",
-            reason=str(prior.get("reason") or "") or "operator sleep restored",
-            # Bounded sleeps keep their deadline (runtime c343).
-            wake_at=str(prior.get("wake_at") or ""),
-            # Who chose it travels with it (contract-phases §4.4).
-            written_by=str(prior.get("written_by") or "operator"),
-        )
+        write_entity_state(home_dir, "asleep", reason=reason, mode=mode, wake_at=wake_at, written_by=written_by)
         if since:
             rec["sleep_since_override"] = {"changed_at": read_entity_state(home_dir).get("changed_at"), "since": since}
             write_record(entities_dir, slug, rec)
