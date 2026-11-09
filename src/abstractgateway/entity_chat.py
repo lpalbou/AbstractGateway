@@ -974,76 +974,12 @@ class EntityChatHost:
     _LIFE_PHASES = ("visit", "work", "personal", "sleep")
 
     def life_state(self, name: str) -> Dict[str, Any]:
-        """The gateway-computed life phase — one mutually-exclusive answer the
-        observer consumes directly, in GRAPH WORDS (the /entities/spec/phases
-        vocabulary): a visit outranks everything (the loop is auto-yielded
-        under it — the yield posture IS a visit in progress); paused blocks
-        the phase axis (None + posture=paused); a running loop day is work
-        when a work order stands, else personal; a loop between days is
-        personal (the phase spans its rest windows) with posture=resting;
-        the floor is sleep (resting default — never an awake-idle dwelling,
-        laurent c203). `posture` carries the bookkeeping nuance the old
-        vocabulary served as phase words."""
-        from .entity_loop import loop_status
+        """The gateway-computed life phase: ONE derivation, `entity_phase` (contract-phases v2
+        §1.2) — this host only delegates, so no second fold can drift from /life_state."""
+        from .entity_phase import default_hosts, publish
 
-        manifest = self._registry.manifest_for(name)
-        home_dir = self._registry.entities_dir / manifest.slug
-
-        chat = self.status(name)
-        state = self._registry.state_of(name)
-        loop = loop_status(home_dir)
-        loop_running = bool(loop.get("running"))
-        loop_phase = str(loop.get("phase") or "")
-
-        posture: str
-        phase: Optional[str]
-        if chat.get("open"):
-            phase, posture = "visit", "visiting"
-        elif str(state.get("state") or "awake") == "paused":
-            phase, posture = None, "paused"
-        elif str(state.get("state") or "awake") == "asleep":
-            # mode=visiting is VISIT BOOKKEEPING (auto-yield / mid-open
-            # posture) — a visit is in progress on the durable lane, so the
-            # GRAPH word is visit; rendering it "asleep" fabricated the
-            # "went to sleep during personal" read of the 22:38 incident
-            # (entity forensics c2465 finding 3).
-            if str(state.get("mode") or "") == "visiting":
-                phase, posture = "visit", "yielded"
-            else:
-                phase, posture = "sleep", "asleep"
-        elif loop_running and loop_phase == "day":
-            # Work day when a standing order exists (the loop's own day gate
-            # reads the same file) — the /cognition fold's rule, mirrored so
-            # the two composites can never disagree on the same instant.
-            try:
-                from abstractruntime.identity.life import read_work_order
-
-                phase = "work" if read_work_order(home_dir) else "personal"
-            except Exception:  # noqa: BLE001
-                phase = "personal"
-            posture = "day"
-        elif loop_running:
-            phase, posture = "personal", "resting"
-        else:
-            # No process, no visit, not paused: sleep is the resting
-            # default. sleep_detail on /cognition carries the honesty
-            # nuance; here the word alone retires the awake floor.
-            phase, posture = "sleep", "resting"
-
-        return {
-            "entity_id": manifest.entity_id,
-            "phase": phase,
-            # The old vocabulary's nuance, verbatim — renderers that read
-            # visiting/yielded/resting/paused as words read posture now.
-            "posture": posture,
-            "chat_open": bool(chat.get("open")),
-            "chat_id": chat.get("chat_id"),
-            "state": state.get("state"),
-            "state_mode": state.get("mode"),
-            "state_reason": state.get("reason"),
-            "own_time_running": loop_running,
-            "own_time_phase": loop_phase or None,
-        }
+        _chat, visit = default_hosts()
+        return publish(self._registry, name, "observed", chat_host=self, visit_host=visit)
 
     @staticmethod
     def _restore_prior_state(home_dir: Any, prior_state: Dict[str, str], *, suffix: str, token: str = "") -> None:

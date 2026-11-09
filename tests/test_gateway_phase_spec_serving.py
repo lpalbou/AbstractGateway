@@ -137,7 +137,8 @@ def test_serving_boundary_phase_words_are_graph_words(monkeypatch: pytest.Monkey
 
     with TestClient(app, headers={"Authorization": "Bearer boundary-secret"}) as client:
         spec = client.get("/api/gateway/entities/spec/phases").json()["spec"]
-        graph_words = set(spec["phases"].keys())
+        # The four phases plus the two statuses outside the machine (v22 `statuses`: idle, stopped).
+        graph_words = set(spec["phases"].keys()) | set((spec.get("statuses") or {}).keys() or ("idle", "stopped"))
 
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
 
@@ -150,7 +151,7 @@ def test_serving_boundary_phase_words_are_graph_words(monkeypatch: pytest.Monkey
             if expect_alive:
                 assert cog["phase"] in graph_words, f"served {cog['phase']!r} is not a graph word"
             else:
-                assert cog["phase"] is None and cog["liveness"] == "stopped"
+                assert cog["phase"] == "stopped" and cog["liveness"] == "stopped"
 
 
 def test_operator_blueprint_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

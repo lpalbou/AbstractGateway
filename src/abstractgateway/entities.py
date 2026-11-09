@@ -2725,7 +2725,7 @@ class EntityRegistry:
                         "kind": kind,
                         "at": at,
                         "seq": m.get("seq"),
-                        "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state", "rev", "by", "change")},
+                        "details": {k: v for k, v in p.items() if k in ("reason", "session_id", "state", "prior_state", "rev", "by", "change", "from", "to", "cause")},
                     }
                 )
 

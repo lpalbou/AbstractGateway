@@ -105,8 +105,10 @@ def test_cognition_folds_billed_spend_from_the_home_run_ledger(monkeypatch: pyte
         # NOT a state" — the old None here rendered the awake-idle hanging
         # state he rejects). Idle folds to sleep, the resting default;
         # sleep_detail says it honestly runs no consolidation.
-        assert body["phase"] == "sleep"
-        assert body["sleep_detail"] == "resting"
+        # Idle is served as idle now (operator ruling 2026-11-08, contract-phases v2 §1.2): awake,
+        # reachable, nothing of his own running — no sleep_detail, it is not a sleep.
+        assert body["phase"] == "idle"
+        assert body.get("sleep_detail") is None
         assert body["phase_source"] == "actual"
         assert body["liveness"] == "alive"
         assert "frozen" not in body  # retired from the serve (c1559)
@@ -216,8 +218,9 @@ def test_phase_enum_is_the_ruled_closed_set_with_the_liveness_axis():
         # honestly detailed (never the awake-idle dwelling c203 rejects).
         assert client.post("/api/gateway/entities/Norns/state", json={"state": "awake"}).status_code == 200
         idle = client.get("/api/gateway/entities/Norns/cognition").json()
-        assert idle["phase"] == "sleep" and idle["phase"] in RULED
-        assert idle["sleep_detail"] == "resting"
+        # Idle is a served status since the 2026-11-08 ruling (contract-phases v2 §1.2).
+        assert idle["phase"] == "idle"
+        assert idle.get("sleep_detail") is None
         assert idle["liveness"] == "alive"
 
         assert client.post("/api/gateway/entities/Norns/state", json={"state": "asleep"}).status_code == 200
@@ -229,7 +232,7 @@ def test_phase_enum_is_the_ruled_closed_set_with_the_liveness_axis():
         paused = client.get("/api/gateway/entities/Norns/cognition").json()
         assert paused["liveness"] == "stopped"
         assert "frozen" not in paused  # retired — one axis, one spelling
-        assert paused["phase"] is None  # the kill switch is not a phase — nothing active
+        assert paused["phase"] == "stopped"  # the kill switch: a status outside the four phases
         assert paused["state"]["state"] == "paused"  # at-rest key unchanged (engraved)
         assert paused["state"]["liveness"] == "stopped"
 

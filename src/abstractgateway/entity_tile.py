@@ -89,6 +89,14 @@ _ENGRAVED_TWINS = {
 # anyone made (framework ADR 0052 §7: `recorded_default`).
 _IDENTITY_NOT_A_CHANGE_CAUSES = frozenset({"recorded_default"})
 _RULED_PHASES = ("visit", "work", "personal", "sleep")
+# The gateway's `phase_changed` announcements (contract-phases v2 §5) whose cause is a door act
+# already recorded as its own moment: the tile shows the act, never its echo.
+_DOOR_ACT_CAUSES = frozenset({
+    "visit_opened", "visit_closed", "chat_opened", "chat_closed", "summon_started", "toggle", "stop",
+    "resume", "retry", "operator_sleep", "operator_wake",
+})
+# What the tile's "now" may say (contract-phases v2 §1.1): the four phases plus the two statuses.
+_SERVED_PHASES = _RULED_PHASES + ("idle", "stopped")
 
 
 def entity_tile_contract() -> Dict[str, Any]:
@@ -292,6 +300,10 @@ def last_meaningful_moment(moments: Sequence[Mapping[str, Any]]) -> Optional[Dic
             to = str(details.get("to") or "")
             if to not in _RULED_PHASES:
                 continue  # a phase change to a word the tile cannot name is not shown as one
+            if details.get("from") is not None and str(details.get("from")) == to:
+                continue  # a new snapshot that is not a phase change (a toggle, a sub-object)
+            if str(details.get("cause") or "") in _DOOR_ACT_CAUSES:
+                continue  # the act itself is the moment (sleep, wake, pause, summon...), not its echo
             out["to"] = to
         if kind == "work_order_changed" and str(details.get("change") or "") in ("set", "cleared"):
             out["change"] = str(details.get("change"))
@@ -381,7 +393,7 @@ def compose_tile(
     state = now.get("st") if isinstance(now.get("st"), Mapping) else {}
     loop = now.get("loop") if isinstance(now.get("loop"), Mapping) else {}
     chat = now.get("chat") if isinstance(now.get("chat"), Mapping) else {}
-    tile_phase = phase if phase in _RULED_PHASES else "stopped"
+    tile_phase = phase if phase in _SERVED_PHASES else "stopped"
     out: Dict[str, Any] = {
         "tile_version": ENTITY_TILE_VERSION,
         "name": name,

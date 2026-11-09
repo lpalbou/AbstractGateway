@@ -142,9 +142,8 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         # A new moment lands in the marker stream: the cached moments are read again.
         woke = client.get("/api/gateway/entities/Tessa/tile").json()
         assert woke["last_moment"]["kind"] == "wake"
-        # Awake with nothing running is the resting default: phase sleep (IDLE-IS-SLEEP), state awake —
-        # the tile serves both so a client says "resting", never "asleep", right after a wake.
-        assert woke["now"]["phase"] == "sleep" and woke["now"]["state"] == "awake"
+        # Awake with nothing running is idle (operator ruling 2026-11-08; IDLE-IS-SLEEP retired).
+        assert woke["now"]["phase"] == "idle" and woke["now"]["state"] == "awake"
         assert client.post("/api/gateway/entities/Tessa/state", json={"state": "asleep", "reason": "rest"}).status_code == 200
         slept = client.get("/api/gateway/entities/Tessa/tile").json()
         assert slept["last_moment"]["kind"] == "sleep"

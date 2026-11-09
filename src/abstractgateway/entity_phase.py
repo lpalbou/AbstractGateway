@@ -423,6 +423,9 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
             visit = {"lane": "visit", "run_id": None, "chat_id": None, "session_id": None,
                      "participants": [m.group(1)] if m else [], "since": _iso(state.get("changed_at"))}
         visit["waiting_for"] = waiting
+        # The visitors only: the entity's own stamp is not someone it is with.
+        visit["participants"] = [p for p in visit["participants"] if str(p) != str(manifest.entity_id)
+                                 and not str(p).startswith(f"entity:{manifest.slug}")]
     elif work_live(facts):
         phase = "work"
         if seat is not None and not is_human_seat(seat):

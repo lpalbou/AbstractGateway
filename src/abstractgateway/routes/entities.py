@@ -1879,28 +1879,14 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     # answer omitted the visit arm — POST /state awake during an open visit
     # answered sleep while /cognition said visit); failures degrade with a
     # LABEL, never a silent missing field.
+    # The verb's answer names WHERE THE ENTITY SETTLED, from the ONE derivation
+    # (contract-phases v2 §6.2): stopped | visit | sleep | personal | work | idle.
     try:
-        from ..entity_loop import loop_status as _ls
+        from ..entity_phase import publish as _publish_phase
 
-        manifest = _registry().manifest_for(name)
-        home_dir2 = _registry().entities_dir / manifest.slug
-        state_after = str((result.get("state") or {}).get("state") or "awake")
-        visit_open = False
-        try:
-            visit_open = bool(_visit_host().status(name).get("open")) or bool(_chat_host().status(name).get("open"))
-        except Exception:  # noqa: BLE001 - hosts may be absent on hand-built services
-            pass
-        if state_after == "paused":
-            result["phase"] = None
-        elif visit_open:
-            result["phase"] = "visit"
-        elif state_after == "asleep":
-            result["phase"] = "sleep"
-        elif bool(_ls(home_dir2).get("running")):
-            result["phase"] = "personal"
-        else:
-            result["phase"] = "sleep"
-            result["phase_note"] = "no tasks running, no visit — resting (sleep is the default; the entity never dwells unphased)"
+        settled = _publish_phase(_registry(), name, {"asleep": "operator_sleep", "paused": "stop"}.get(target, "operator_wake"))
+        result["phase"] = settled.get("phase")
+        result["life_state"] = settled
     except Exception as e:  # noqa: BLE001 - the settled-phase note is garnish, never load-bearing
         result["phase_warning"] = f"#FALLBACK settled phase unavailable: {e}"
     return result
@@ -2468,45 +2454,27 @@ def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
     # gate behavior. `phase_source` labels the one approximation: a running
     # loop day with a standing work order reads as work (loop_status cannot
     # tell day kinds apart — runtime's day_kind is the exact fix).
+    # ONE DERIVATION (contract-phases v2 §6.2): the phase comes from entity_phase — the same
+    # snapshot /life_state serves, so /cognition, the tile and the phase bar never disagree.
+    # `stopped` (the kill switch) and `idle` (awake, nothing of its own running) are served words
+    # now; the old IDLE-IS-SLEEP fold painted an awake, visitable entity as asleep.
     phase_source = "actual"
     sleep_detail: Optional[str] = None
-    if stopped:
-        # The kill switch is NOT a phase — the liveness axis sits ABOVE the
-        # machine (adversary P0-6); the ONE legitimate no-phase render.
-        phase = None
-    elif bool(visit.get("open")) or chat_open:
-        phase = "visit"
-    elif state_word == "asleep":
-        phase = "sleep"
-        mode_word = str(st.get("mode") or "")
-        if mode_word == "dreaming":
-            sleep_detail = "dreaming"
-        elif st.get("wake_at"):
-            sleep_detail = "bounded"
-        else:
-            sleep_detail = "resting"
-    elif bool(loop.get("running")):
-        # A running loop is a work day when a work order stands (the loop's
-        # own day gate reads the same file — life.py day_phase), else
-        # personal. Approximation until loop_status carries day_kind.
-        try:
-            from abstractruntime.identity.life import read_work_order
+    phase: Optional[str]
+    try:
+        from ..entity_phase import publish as _publish_phase
 
-            if str(loop.get("phase") or "") == "day" and read_work_order(home_dir):
-                phase = "work"
-                phase_source = "derived"
-            else:
-                phase = "personal"
-        except Exception:
-            phase = "personal"
-    else:
-        # No process, no visit, not paused: the entity RESTS — sleep is the
-        # resting default (IDLE-IS-SLEEP; newborns are born asleep). This
-        # sleep runs no consolidation and never stamps runs (the deposit
-        # gate's phase==sleep refusal applies to FORMAL windows only —
-        # adversary P1-10); sleep_detail says so honestly.
-        phase = "sleep"
-        sleep_detail = "resting"
+        snap = _publish_phase(registry, name, "observed")
+        phase = str(snap.get("phase") or "") or None
+        if phase == "work" and (snap.get("work") or {}).get("kind") == "work_order" and not loop.get("day_kind"):
+            phase_source = "derived"
+        if phase == "sleep":
+            ends = (snap.get("sleep") or {}).get("ends")
+            mode_word = str(st.get("mode") or "")
+            sleep_detail = "dreaming" if mode_word == "dreaming" else ("bounded" if ends and ends != "when maintenance is done" else "resting")
+    except Exception as e:  # noqa: BLE001 - labeled, never a silent phase
+        warnings.append(f"#FALLBACK phase derivation unavailable: {e}")
+        phase = "stopped" if stopped else None
     # SETTLING (adversary P2-1): the state file is intent/authority; the loop
     # honors it at tick boundaries only — a fresh state write beside an older
     # loop heartbeat is "settling", not a contradiction. Lexicographic ISO
@@ -2897,52 +2865,24 @@ def _maybe_mark_grant_expired(registry: Any, manifest: Any, grant: Dict[str, Any
 
 
 @router.get("/{name}/life_state")
-def get_entity_life_state(name: str) -> Dict[str, Any]:
-    """The ONE composite life phase (observer ask, maintainer 2026-07-09):
-    the gateway collapses chat + operator-state + loop into a single
-    mutually-exclusive `phase` (visiting > paused > asleep > personal >
-    resting > awake) so clients render one chip and never re-derive
-    contradictory badges. `own_time_running` rides alongside for a
-    loop-alive indicator that does not fight the phase.
+def get_entity_life_state(name: str):
+    """The phase bar's one read (contract-phases v2 §1; operator ruling 2026-11-08).
 
-    DURABLE visits count (state-sources adversary P1-1): the chat host's
-    fold predates the /visit lane, so this route widens `visiting` with the
-    durable visit status — two composites disagreeing on the headline field
-    was the exact anti-pattern this endpoint exists to kill. /cognition is
-    the richer composite; this stays as the thin phase chip."""
-    try:
-        out = _chat_host().life_state(name)
-    except HTTPException:
-        raise
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    try:
-        durable = _visit_host().status(name)
-        if durable.get("open"):
-            # ONE GRAPH WORD (wave adversary P1-3): the hosted arm of this
-            # same endpoint serves phase="visit" (the c203 graph vocabulary)
-            # — this widening said "visiting", so one endpoint spoke two
-            # spellings of one axis depending on which lane the visit ran
-            # on. The nuance rides `posture` (spec v10
-            # NUANCE-NEVER-CONTRADICTS-PHASE; audit finding 2: widening
-            # phase alone left posture="resting" beside a live durable
-            # visit — clients preferring the ruled nuance-posture rendered
-            # "personal · resting" beside a live chat).
-            out["phase"] = "visit"
-            out["posture"] = "visiting"
-            out["visit_run_id"] = durable.get("run_id")
-    except Exception as e:  # noqa: BLE001
-        # LABELED downgrade (entity forensics c2465 finding 1): a broken
-        # visit host silently painting the chat-host phase over an OPEN
-        # durable visit was the two-composites-two-honesty-standards hole
-        # (/cognition labels the same failure). The chip stays served —
-        # but the reader can now SEE the fold failed.
-        out["warnings"] = list(out.get("warnings") or []) + [
-            f"#FALLBACK durable-visit fold unavailable ({e}) — phase reflects chat host + operator state only"
-        ]
-    return out
+    `phase` is exactly one of visit | work | personal | sleep | stopped | idle, derived in ONE
+    place (`entity_phase.derive`, shared with /cognition and the tile); `toggles` are the work and
+    personal permissions; `stopped` is the kill switch; `since` is the phase's entry; `sentence`
+    one plain line (no clock time); `next`, `blocked` (with a `retry` action), `can` (what a person
+    may ask for now, each with its sentence when not allowed) and the `visit`/`work`/`sleep`
+    sub-objects. `rev` versions the whole snapshot (monotonic per home, across restarts); a new
+    rev is announced once as a `phase_changed` host marker on the replay stream. The existing
+    fields (posture, chat_open, chat_id, state, state_mode, state_reason, own_time_running,
+    own_time_phase, visit_run_id) keep their meaning; posture gains "idle".
+
+    A read is also the observation point: a change made inside the own-time loop (or a timer
+    expiry, a crashed loop) is versioned and announced by the read that finds it."""
+    if _phase_manifest_or_none(name) is None:
+        return _not_found(name)
+    return _life_state_body(name)
 
 
 # ------------------------------------------------------------ phases (contract-phases v2)
@@ -2971,6 +2911,22 @@ def _phase_refusal(status: int, code: str, message: str, life_state: Optional[Di
     )
 
 
+def _work_off_refusal(registry: Any, manifest: Any, what: str, *, entity_id: Optional[str] = None) -> Optional[HTTPException]:
+    """409 `work_off` when the entity's Work toggle is off (contract-phases v2 §6.2, §7); None
+    when work is allowed. The current run is never touched: it finishes."""
+    from ..entity_phase import work_allowed
+
+    if work_allowed(registry, manifest.slug):
+        return None
+    message = f"Work is off for him; turn Work on to {what}."
+    return HTTPException(
+        status_code=409,
+        detail={"refused": True, "reason_code": "work_off", "message": message, "reasons": [message],
+                **({"entity_id": entity_id} if entity_id else {})},
+        headers={"X-Gateway-Error-Code": "work_off"},
+    )
+
+
 def _phase_manifest_or_none(name: str) -> Any:
     try:
         return _registry().manifest_for(name)
@@ -2995,6 +2951,39 @@ def _life_state_body(name: str, cause: str = "observed") -> Dict[str, Any]:
     from ..entity_phase import publish
 
     return publish(_registry(), name, cause)
+
+
+@router.put("/{name}/life_state/toggles")
+async def put_entity_life_state_toggles(name: str, request: Request):
+    """The phase bar's permissions (contract-phases v2 §2): `{work?: bool, personal?: bool}`.
+    A toggle ALLOWS a phase, it never forces one: personal on starts own time when nothing else
+    holds the phase (else when it frees); personal off ends own time at the loop's next boundary
+    and never puts him to sleep; work off refuses new work at the entity's admission points and
+    lets the current run finish. Same values again = a no-op."""
+    from .. import entity_phase
+
+    manifest = _phase_manifest_or_none(name)
+    if manifest is None:
+        return _not_found(name)
+    body = await _json_object(request)
+    if body is None:
+        return _phase_refusal(422, "invalid_body", _PHASE_SENTENCES["invalid_body"],
+                              await off_loop("light", _life_state_body, name))
+    if not body or set(body) - {"work", "personal"} or any(type(v) is not bool for v in body.values()):
+        return _phase_refusal(422, "invalid_toggles", _PHASE_SENTENCES["invalid_toggles"],
+                              await off_loop("light", _life_state_body, name))
+    registry = _registry()
+    try:
+        return await off_loop("heavy", lambda: entity_phase.set_toggles(
+            registry, name, work=body.get("work"), personal=body.get("personal")))
+    except entity_phase.ToggleRefused as e:
+        if e.code == "entity_archived":
+            from ..entity_access import EntityArchivedError
+
+            message = EntityArchivedError(manifest.slug).message
+        else:
+            message = _PHASE_SENTENCES["stopped_use_resume"]
+        return _phase_refusal(409, e.code, message, await off_loop("light", _life_state_body, name))
 
 
 @router.post("/{name}/lifecycle")
@@ -3467,11 +3456,14 @@ def summon_entity(name: str, req: SummonEntityRequest):
 
     principal = current_gateway_principal()
     caller_id = principal.user_id if principal is not None else "operator"
+    from ..entity_settings_access import _is_entity_principal
+
     out = _summon_core(
         name,
         req,
         caller_id=caller_id,
         caller_kind=normalize_caller_kind(req.caller_kind),
+        caller_is_person=principal is None or not _is_entity_principal(principal),
     )
     if out.get("queued"):
         # Queued admission is 202 (contract §2): accepted for processing,
@@ -3489,6 +3481,7 @@ def _summon_core(
     from_queue_id: Optional[str] = None,
     svc: Any = None,
     registry: Any = None,
+    caller_is_person: bool = False,
 ) -> Dict[str, Any]:
     """The whole summon door, identity-explicit.
 
@@ -3592,6 +3585,9 @@ def _summon_core(
             status_code=409,
             detail={
                 "refused": True,
+                # The phase bar's code + sentence (contract-phases v2 §7), beside the old reasons.
+                "reason_code": "stopped_use_resume",
+                "message": "Stopped. Resume him first.",
                 "reasons": [
                     f"#REFUSED summon: {home.entity_id} is paused — the kill switch"
                     + (f" ({entity_state.get('reason')})" if entity_state.get("reason") else "")
@@ -3601,6 +3597,13 @@ def _summon_core(
                 "state": entity_state,
             },
         )
+    # WORK OFF (contract-phases v2 §6.2): a summon is work unless it is an interactive person's
+    # own conversation — a person principal that declares itself human. The declaration alone
+    # never qualifies, and a queued admission re-checks here at dequeue.
+    if not (caller_is_person and caller_kind == "human"):
+        refusal = _work_off_refusal(registry, home.manifest, "send him requests", entity_id=home.entity_id)
+        if refusal is not None:
+            raise refusal
     if state_word == "asleep":
         # VISITING POSTURE GUARD (mutual-exclusivity wave, audit finding 3 —
         # the /loop/start registration-window pattern applied): a summon's
@@ -5015,6 +5018,10 @@ def put_entity_work_order(name: str, req: PutWorkOrderRequest) -> Dict[str, Any]
     home_dir = registry.entities_dir / manifest.slug
 
     order_text = (req.order or "").strip()
+    if not req.clear:
+        refusal = _work_off_refusal(registry, manifest, "give him a work order")
+        if refusal is not None:
+            raise refusal
     if not req.clear and not order_text:
         raise HTTPException(
             status_code=400,
@@ -6466,6 +6473,9 @@ def post_entity_task(name: str, req: PostTaskRequest) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
+    refusal = _work_off_refusal(registry, manifest, "hand him a task")
+    if refusal is not None:
+        raise refusal
     actor = _task_actor()
     title = str(req.title or "").strip()
     if not title:

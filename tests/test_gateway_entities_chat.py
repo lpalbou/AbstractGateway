@@ -514,10 +514,10 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
         # Newborn = sleep (artifact initial_phase); wake for the idle leg.
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-        # state=awake, no loop, no visit -> SLEEP, the resting default
-        # (laurent c203: awake never renders as a dwelling phase).
+        # state=awake, no loop, no visit -> IDLE: awake, reachable, nothing of his own running
+        # (operator ruling 2026-11-08, contract-phases v2 §1.2: retires the c203 IDLE-IS-SLEEP fold).
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] == "sleep" and ls["own_time_running"] is False
+        assert ls["phase"] == "idle" and ls["own_time_running"] is False
 
         # A visit outranks everything and reads as exactly one phase.
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
@@ -533,7 +533,7 @@ def test_life_state_is_one_mutually_exclusive_phase(monkeypatch: pytest.MonkeyPa
 
         client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["phase"] in ("sleep", "personal")  # graph words only
+        assert ls["phase"] in ("idle", "personal")  # back to what the toggles allow
 
 
 def test_set_sleep_closes_an_open_visit(monkeypatch: pytest.MonkeyPatch):
