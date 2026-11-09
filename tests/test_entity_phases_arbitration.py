@@ -178,12 +178,18 @@ def test_a_visit_taking_the_phase_during_a_spawn_wins(monkeypatch: pytest.Monkey
         rows = []
         real_kill = entity_phase._kill_loop
         monkeypatch.setattr(entity_phase, "_kill_loop", lambda *a, **k: rows.append(real_kill(*a, **k)) or rows[-1])
+        entity_phase.set_resume_to(_registry(), "castor", "personal")  # as the operator's toggle does
         out = entity_phase.reconcile(_registry(), "castor", "test", operator=True)
-        assert out["own_time"] is False and out["reason"] == "visit"
-        deadline = time.monotonic() + 6
-        while procs[0].poll() is None and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert procs[0].poll() is not None
+        # The visit wins without a Stop (Codex review 2 #8): the new loop holds at the visiting
+        # posture; nothing hard-stops it, the grant and the way back stay.
+        from abstractruntime.identity.life import read_personal_grant, read_resume_to
+
+        assert out["own_time"] is True and out["reason"] == "held_by_visit"
+        assert rows == [], "a visit-yield used the kill switch's hard stop"
+        assert read_personal_grant(_home())["mode"] == "until_revoked"
+        assert read_resume_to(_home())["phase"] == "personal"
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "visit"
+        procs[0].kill()
 
 
 def test_a_visit_opening_during_the_maintenance_pass_is_never_torn_down(monkeypatch: pytest.MonkeyPatch):
@@ -370,3 +376,26 @@ def test_one_lock_with_the_runtime_and_no_state_write_over_a_stop(monkeypatch: p
             reg.set_state(name="castor", state="asleep", reason="late operator sleep")
         assert read_entity_state(_home())["state"] == before
         del entities_mod
+
+
+def test_a_stop_between_the_preflight_and_the_start_never_misses_the_new_visit(monkeypatch: pytest.MonkeyPatch):
+    """Codex review 2 #8: _start_leg ignored the generation its preflight saw, so a Stop landing in
+    between could miss the new run. Its registration is fenced: the open is refused as stopped and
+    nothing is left live."""
+    from abstractruntime.identity.life import bump_lifecycle_generation
+
+    from abstractgateway.entity_visits import EntityVisitHost
+
+    real_pre = EntityVisitHost._preflight
+
+    def _pre_then_stop(self, *a, **k):
+        out = real_pre(self, *a, **k)
+        bump_lifecycle_generation(_home(), written_by="test")  # the Stop's fence lands here
+        return out
+
+    monkeypatch.setattr(EntityVisitHost, "_preflight", _pre_then_stop)
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        r = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert r.status_code == 409 and r.json()["code"] == "stopped_use_resume", r.text
+        assert client.get("/api/gateway/entities/Castor/visit").json().get("open") is False

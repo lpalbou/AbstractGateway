@@ -48,3 +48,7 @@
   its join to the other visit happen under its lifecycle lock, and the generation is checked again right before the
   mirrored turn: a Stop of the mentioned entity carries none of his words into another visit. (A Stop landing
   while the visited entity is already answering cannot cancel that other entity's turn.)
+- **Visit admission is fenced end to end** (Codex review 2 #8). A visit's run becomes visible to Stop in one fenced
+  step with the generation its preflight saw (a Stop in between refuses the open and cancels the run). A visit
+  taking the phase while own time is being started is not a Stop: the new loop holds at the visiting posture and
+  keeps its grant and its way back, instead of being hard-stopped.

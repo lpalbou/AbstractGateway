@@ -1440,7 +1440,19 @@ class EntityVisitHost:
             # The operator's word before this visit touched the state —
             # durable in the run so a fresh host restores it at terminal.
             visit_ns["prior_state"] = dict(pre.get("prior_state") or {"state": "awake", "reason": ""})
-            er.run_store.save(run)
+            # REGISTRATION IS FENCED (Codex review 2 #8): the stamped run becomes visible to Stop in
+            # one step with the check of the generation the preflight saw, so a Stop between the
+            # preflight and here can never miss it; a moved generation cancels the unregistered run.
+            from .entity_phase import GenerationMoved, fenced
+
+            try:
+                with fenced(registry.entities_dir, slug, int(pre.get("generation") or 0)):
+                    er.run_store.save(run)
+            except GenerationMoved:
+                from .entity_phase import _cancel_tree
+
+                _cancel_tree(er.runtime, er.run_store, run_id)
+                raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
             state_after = self._drive(er, wf, run_id, max_steps=_OPEN_MAX_TICKS)
         except Exception:

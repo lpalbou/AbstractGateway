@@ -1602,8 +1602,14 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         visited = int(rec.get("admission_seq") or 0) != admission
         write_record(entities_dir, slug, rec)
     if visited and pid and not moved:
-        _kill_loop(home_dir, {}, "a visit took the phase during the start")
-        return {"own_time": False, "pid": None, "reason": "visit"}
+        # A visit took the phase while the loop was being spawned (review #9): the visit wins — and
+        # this is NOT a Stop (Codex review 2 #8). The new loop's own gate holds at the visiting
+        # posture (a held state goes to the state gate before any leg, runtime 101ba5f), so it runs
+        # nothing under the visit and its way back is kept: no hard stop, no revoke, no cleared
+        # return. It resumes when the visit closes.
+        _marker(registry, manifest, "personal_started", {"channel": "reconcile", "cause": cause, "pid": pid,
+                                                         "held_by": "visit"})
+        return {"own_time": True, "pid": pid, "reason": "held_by_visit"}
     if moved and pid:
         # A Stop landed while the loop was being spawned: the new loop never outlives the fence
         # (through the same verified, serialized hard stop as the kill switch).
