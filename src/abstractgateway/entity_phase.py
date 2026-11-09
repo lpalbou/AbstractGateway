@@ -1901,10 +1901,17 @@ def maintenance_may_write(registry: Any, slug: str, generation: int) -> bool:
 
 
 def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optional[str] = None,
-                     superseded: bool = False, chat_host: Any = None, visit_host: Any = None) -> str:
+                     superseded: bool = False, cancelled_after: Optional[str] = None,
+                     chat_host: Any = None, visit_host: Any = None) -> str:
     """The operator sleep's pass returned: wake + reconcile, unless a Stop moved the generation
     (nothing written) or a visit holds the posture (the wake runs at the visit's close).
-    Returns the outcome word: woke | stopped | after_visit | not_ours."""
+    Returns the outcome word: woke | stopped | after_visit | not_ours.
+
+    `cancelled_after` (memory's sleep_pass: the night ended early, after that stage): the pass did
+    not run to its end. It yielded to a visit (`yielded`) or stopped on its hard check, e.g. an
+    unreadable lifecycle generation (`cancelled`). Its receipt is `last_pass`, never
+    `last_maintenance`: only a pass that ran to its end is the home's last maintenance, the
+    boundary the idle sleep counts from (24 h / 500 memories)."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
     manifest = registry.manifest_for(name)
@@ -1916,10 +1923,18 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
         mine = isinstance(rec.get("maintenance"), dict) and rec["maintenance"].get("generation") == int(generation)
         # The receipt of THIS pass (review #8): a failure or a superseded pass is always recorded.
         stopped_by_switch = int(rec.get("generation") or 0) != int(generation)
-        rec["last_maintenance"] = {"generation": int(generation), "at": _now_iso(),
-                                   "status": ("cancelled" if stopped_by_switch else
-                                              "superseded" if superseded else ("failed" if failed else "done")),
-                                   "error": failed}
+        ended_early = bool(cancelled_after) and not stopped_by_switch and not superseded
+        if ended_early:
+            st_now = read_entity_state(home_dir)
+            yielded = str(st_now.get("state") or "") == "asleep" and str(st_now.get("mode") or "") == "visiting"
+            rec["last_pass"] = {"generation": int(generation), "at": _now_iso(),
+                                "status": "yielded" if yielded else "cancelled",
+                                "cancelled_after": str(cancelled_after), "error": failed}
+        else:
+            rec["last_maintenance"] = {"generation": int(generation), "at": _now_iso(),
+                                       "status": ("cancelled" if stopped_by_switch else
+                                                  "superseded" if superseded else ("failed" if failed else "done")),
+                                       "error": failed}
         if stopped_by_switch:
             # A clean terminal record: the pass ended under the kill switch, by the operator.
             rec["last_maintenance"].update({"reason": "kill_switch", "by": "operator"})

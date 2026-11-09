@@ -214,7 +214,8 @@ def _sleep(registry: Any, look: Dict[str, Any], hosts: Tuple[Any, Any]) -> Dict[
     dream_out = result["dream"]
     outcome = maintenance_done(registry, slug, int(dream_out["generation"]),
                                failed=(str(dream_out.get("error")) if dream_out.get("error") else None),
-                               superseded=bool(dream_out.get("superseded")))
+                               superseded=bool(dream_out.get("superseded")),
+                               cancelled_after=(str(dream_out["cancelled_after"]) if dream_out.get("cancelled_after") else None))
     return {"slug": slug, "action": "idle_sleep", "maintenance": outcome, **due}
 
 

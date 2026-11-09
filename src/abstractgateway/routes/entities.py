@@ -1871,6 +1871,7 @@ def set_entity_state(name: str, req: SetEntityStateRequest, response: Response =
                 _registry(), name, int(dream_out["generation"]),
                 failed=(str(dream_out.get("error")) if dream_out.get("error") else None),
                 superseded=bool(dream_out.get("superseded")),
+                cancelled_after=(str(dream_out["cancelled_after"]) if dream_out.get("cancelled_after") else None),
             )
         except Exception as e:  # noqa: BLE001 - labelled, never a silent sleep
             result["maintenance_warning"] = f"#FALLBACK maintenance completion failed: {e}"
