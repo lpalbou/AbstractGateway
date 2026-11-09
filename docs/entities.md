@@ -96,7 +96,7 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities` | List homes. |
 | GET | `/api/gateway/entities/{name}` | Inspect: the folded identity core, recent diary gists, top standings, and the wake reasons — open questions (curiosity), open problems (something wrong), incubating ideas (direction). Pure reads — inspecting never counts as the entity *using* its memory. |
 | GET | `/api/gateway/entities/{name}/card` | The identity card ("something to know our companion"): the engine compositor's sections — identity, age+context, current state (a window, never a point), likes/dislikes (G+ and G− separate; ambivalence preserved), open/resolved questions (resolution is the entity's own act), key moments, discoveries — each with provenance, plus gateway overlays (name/age, operator state, mind substrate, host moments). `?as_of=<seq>` anchors the card at a journal moment ("who was he at seq 500"). Interest, lesson and key-moment briefs carry their [stored understanding](#a-records-stored-understanding-who-wrote-these-words). Pure reads. |
-| GET | `/api/gateway/entities/{name}/tile` | What one small card about an entity shows, and nothing more (about 2 KB instead of up to 90 KB): name, look, age, mind (its model); what it is doing now (`now.phase`: sleep, visit, personal, work or stopped; `now.state`, the operator state under it — `awake` under `sleep` is the resting default; `busy`; `since`; `trouble: {kind: "own_time_failed"}` when its own time stopped after repeated failures); its newest interests (`into_lately`), its newest open problem or question (`on_its_mind`), its latest lesson, its last meaningful moment (`last_moment.kind` from a closed set: summon, session_closed, sleep, wake, pause, personal_started, personal_stop_requested, personal_frozen, phase_changed, substrate_changed, night_voice, work_order_changed, task_inbox_changed, identity_changed) and counts. The roster (`GET /entities`) advertises it as `reads.tile`; a client that does not find it there reads the card. Pure read; a source that cannot be read costs its facts with a labelled warning, never the tile; a held home answers 409. |
+| GET | `/api/gateway/entities/{name}/tile` | What one small card about an entity shows, and nothing more (about 2 KB instead of up to 90 KB): name, look, age, mind (its model); what it is doing now (`now.phase`: visit, work, personal, sleep, idle or stopped; `now.state`, the operator state under it; `busy`; `since`; `trouble: {kind: "own_time_failed"}` when its own time stopped after repeated failures); its newest interests (`into_lately`), its newest open problem or question (`on_its_mind`), its latest lesson, its last meaningful moment (`last_moment.kind` from a closed set: summon, session_closed, sleep, wake, pause, personal_started, personal_stop_requested, personal_frozen, phase_changed, substrate_changed, night_voice, work_order_changed, task_inbox_changed, identity_changed) and counts. The roster (`GET /entities`) advertises it as `reads.tile`; a client that does not find it there reads the card. Pure read; a source that cannot be read costs its facts with a labelled warning, never the tile; a held home answers 409. |
 | GET | `/api/gateway/entities/{name}/verify` | Verify the book's hash chain, the graph projections against the book, the spark document against the engrammed marker, and the manifest. |
 | POST | `/api/gateway/entities/{name}/summon` | Summon the entity into a work session (below). |
 | POST | `/api/gateway/entities/{name}/chat/open` | Open a hosted conversation (the web chat backend; same turn loop as `entity chat`). Auto-yields the entity's own-time loop like `--pause-loop`; one live session per home; a refused prelude aborts verbatim. The gateway never caps the entity's output: the model works at its full capacity (the former `max_output_tokens` field is ignored and the response then carries a one-line `deprecation`). |
@@ -106,6 +106,62 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
 | GET | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances` | What it has done (runs, successes, failures, tokens, per kind of task), how far it can be trusted per kind of task (with how many outcomes that rests on), and the entities and humans it met. Derived from its home's records; nothing is stored. See [API: track record, reputation and acquaintances](./api.md#track-record-reputation-and-acquaintances). |
+
+## Phases, toggles and the kill switch
+
+An entity is in exactly one of four activity phases: **visit** (a person is talking with it), **work**
+(an automation, an agent's request or its work order), **personal** (its own time) or **sleep**
+(maintenance). Two statuses sit outside the four phases:
+- **idle**: awake and reachable, with nothing of its own running;
+- **stopped**: the kill switch.
+
+`work` and `personal` are **toggles**: permissions, not orders. Personal on lets the entity have its
+own time whenever nothing else holds the phase. Work on lets new work in. The gateway starts own time
+itself, when a visit or chat closes, a request ends, the work order is cleared, a toggle changes, the
+entity is resumed, or an operator sleep's maintenance is done. It never starts own time under a visit,
+a sleep, work, or the kill switch. If own time stops unexpectedly, the phase is `idle` with a
+`blocked` reason and a **retry** action; nothing restarts it behind your back. Sleep is entered only by
+the operator's sleep or by the entity's own decision. A sleep is never followed by another sleep.
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/api/gateway/entities/{name}/life_state` | The phase bar's one read. `phase` (`visit`, `work`, `personal`, `sleep`, `idle` or `stopped`), `toggles {work, personal}`, `stopped`, `since` (when this phase began), `sentence` (one plain line, no clock time), `next`, `blocked {code, sentence, action}`, `can {visit, sleep_now, toggle_work, toggle_personal}` (each `{allowed, sentence}`), the `visit`, `work` and `sleep` details, and `rev`. `rev` goes up whenever anything in the answer changes and never goes down, even across restarts. Every field is always present; `null` when it does not apply. |
+| PUT | `/api/gateway/entities/{name}/life_state/toggles` | `{work?: bool, personal?: bool}` (admin). Personal off ends own time at the loop's next step and never puts the entity to sleep. Work off refuses new work (`work_off`) at the summon door, the task inbox and the work order; the run in progress finishes. |
+| POST | `/api/gateway/entities/{name}/lifecycle` | `{action: "stop" \| "resume" \| "retry"}` (admin). **stop** is instant and unconditional: everything stops, open visits close, live runs are cancelled, the own-time process is killed. The answer lists each item with its outcome; press it again to retry anything left over. **resume** wakes the entity (never into a sleep) and restarts what the toggles allow. **retry** restarts own time after a crash. |
+
+A visit never fails, in every phase and every sleep: the door opens at once and the entity joins as
+soon as it finishes the step in progress or its maintenance pass. While a visit lasts the phase is
+`visit`. When it closes, the entity returns to what it was doing: an interrupted sleep continues as
+the same sleep, and personal or work resumes if its toggle is on. **Stopped is the one exception**:
+the visit door answers 409 `stopped_use_resume` "Stopped. Resume to visit."
+
+Every change reaches open clients on the entity's replay stream (`GET .../replay/stream`) as a host
+envelope with `payload.kind: "phase_changed"`: `{name, from, to, phase, toggles, stopped, since, rev,
+cause, sentence}`. Keep the highest `rev` and re-read `life_state` for the details. Changes made
+inside the own-time loop arrive the same way.
+
+The older routes keep working and name their successor (`Deprecation: true` and a `Link` header):
+- `POST .../state {state: "paused"}` and `POST .../loop/stop {mode: "freeze"}` are the kill switch;
+- `restore` (or `awake` while stopped) is resume;
+- `POST .../loop/start` and `PUT .../personal-grant` turn personal on (`loop/start` remembers its
+  parameters, and is deferred, never refused, while a visit, work or a sleep holds the phase);
+- a graceful `POST .../loop/stop` turns personal off.
+
+`POST .../state {state: "sleep"}` is the operator's sleep. With `dream: true` the maintenance pass
+runs and the entity wakes when it is done. The sleep no longer turns personal off or clears the work
+order. It is refused during a visit (`in_visit`) and right after a sleep (`already_asleep`).
+
+| Status | `code` | When |
+|---|---|---|
+| 409 | `stopped_use_resume` | Stopped: resume first |
+| 409 | `work_off` | Work is off: no new work is admitted |
+| 409 | `in_visit` | The operator sleep while a visit is open (a visit is never ended implicitly) |
+| 409 | `already_asleep` | The operator sleep right after (or during) a sleep |
+| 422 | `invalid_body`, `invalid_toggles`, `invalid_action` | The request body |
+| 404 | `entity_not_found` | No such entity (`life_state: null`) |
+
+These refusals carry `{code, detail: {reason_code, message, life_state}}` and the
+`X-Gateway-Error-Code` header.
 
 ### The entity's mind and voice
 
@@ -447,8 +503,8 @@ Errors (`{detail, code}` plus the `X-Gateway-Error-Code` header):
 | Status | `code` | When |
 |---|---|---|
 | 404 | `entity_not_found` | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
-| 409 | `in_another_conversation` | The entity's visit belongs to another conversation; `session_id` and the sentence name it. It is free again when that conversation ends or after 5 idle minutes |
-| 409 | `entity_paused`, `entity_asleep` | The visit door's own refusals |
+| 409 | `in_another_conversation` | The entity is in another conversation. Only one of your own conversations is ever named (`session_id`); another account's never is. It is free again when that conversation ends or after 5 idle minutes |
+| 409 | `stopped_use_resume` | The entity is stopped (the kill switch) |
 | 503 | `entity_cannot_answer` | Its mind cannot be resolved (no model chosen), or the turn gave no reply |
 
 **Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each

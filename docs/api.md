@@ -209,12 +209,13 @@ a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
 tells a restored conversation how its workflow was chosen.
 
 `limits` is the iteration budget the start applied:
-`{max_iterations, source: "request" | "gateway_default" | "builtin"}`. The
-app's own value wins (`input_data._limits.max_iterations`, or the flat
+`{max_iterations, source: "request" | "gateway_default" | "workflow" | "builtin"}`.
+The app's own value wins (`input_data._limits.max_iterations`, or the flat
 `max_iterations` older apps send); else the gateway default
-`agents.max_iterations` is written to `_limits.max_iterations`; else
-`source: "builtin"` with `max_iterations: null`: the workflow's own limit
-applies (20 for the built-in agent). The same receipt is kept on the run as
+`agents.max_iterations` is written to `_limits.max_iterations`; else the
+workflow's own limit (its start pin's default, else the value its Agent and
+subflow nodes agree on; `max_iterations: null` when they disagree) with
+`source: "workflow"`; else `source: "builtin"`, the framework default 50. The same receipt is kept on the run as
 `input_data._gateway_limits` (written by the gateway; a value sent by the
 client is replaced). Every app reads the default from
 `GET /api/gateway/discovery/capabilities` →
@@ -501,8 +502,10 @@ outcome is recorded as a labeled verdict in `_runtime.skills_resolution`
 (`requested`/`active`/`verdicts`/`resolved_tree_hashes`) — nothing is
 silently dropped. Agent-node subruns inherit the block verbatim with
 `read_skill` appended to explicit child allowlists (empty allowlists keep
-registry defaults). A caller-supplied `_runtime.skills_block` is never
-overwritten; the selection is then ignored with a labeled verdict.
+registry defaults). A caller-supplied `_runtime.skills_block` or
+`_runtime.skills_resolution` is dropped, and of a `skills` mapping only the
+requested skill names are kept: the gateway's trust-gated resolver alone writes
+the block, and only folders under the gateway's own skill roots are readable.
 
 The gateway serves the corpus every Docs assistant grounds on (the kit's `DocsAssistantDrawer` in the console and the apps):
 
