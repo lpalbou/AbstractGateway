@@ -1733,6 +1733,47 @@ def _max_iterations_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+# Defaults a fresh install stores once (operator decision D2, 2026-11-09): `{key: {value, at}}`, so
+# a seed is never repeated and a later clear stays cleared.
+SEEDED_DEFAULTS_KEY = "seeded_defaults"
+
+
+def seed_fresh_install_defaults(data_dir: Path) -> List[str]:
+    """"50 everywhere" on a fresh install (operator decision D2, 2026-11-09). The ladder puts a
+    workflow's own budget above the framework default, and the shipped basic-agent and goal-agent
+    bundles still bake 20, so an unset `agents.max_iterations` gave their runs 20 on a fresh
+    install; the live 50 was a hand-stored setting. On a fresh data dir (its first run not
+    completed and nothing stored for the key) this stores `agents.max_iterations` =
+    DEFAULT_MAX_ITERATIONS through the console's own door (`write_runtime_config`, actor
+    `first-run`) and records the seed under `seeded_defaults`, once: an existing install is never
+    touched and a later clear is never undone. Returns the keys it stored; never raises."""
+    from .first_run import first_run_state
+
+    data_dir = Path(data_dir)
+    try:
+        if first_run_state(data_dir).get("completed"):
+            return []
+        with store_lock(data_dir):
+            stored = _read_store(data_dir, strict=True)
+            seeded = stored.get(SEEDED_DEFAULTS_KEY)
+            seeded = dict(seeded) if isinstance(seeded, dict) else {}
+            agents = stored.get("agents") if isinstance(stored.get("agents"), dict) else {}
+            if MAX_ITERATIONS_DEFAULT_KEY in seeded or "max_iterations" in agents:
+                return []
+            write_runtime_config(data_dir, {MAX_ITERATIONS_DEFAULT_KEY: BUILTIN_MAX_ITERATIONS}, actor="first-run")
+            stored = _read_store(data_dir, strict=True)
+            seeded[MAX_ITERATIONS_DEFAULT_KEY] = {"value": BUILTIN_MAX_ITERATIONS, "at": _now_iso()}
+            stored[SEEDED_DEFAULTS_KEY] = seeded
+            _write_store(data_dir, stored)
+            return [MAX_ITERATIONS_DEFAULT_KEY]
+    except Exception:  # noqa: BLE001 - a corrupt store or a read-only disk: the resolver reports the rest
+        import logging
+
+        logging.getLogger("abstractgateway.runtime_config").warning(
+            "the fresh-install iteration default could not be stored", exc_info=True)
+        return []
+
+
 def resolve_max_iterations_default(data_dir: Path) -> Optional[int]:
     """The stored gateway iteration default, or None when none is stored."""
     return _max_iterations_default_payload(_read_store(Path(data_dir)))["value"]

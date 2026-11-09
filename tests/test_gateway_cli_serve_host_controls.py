@@ -183,3 +183,21 @@ def test_startup_failure_exits_with_uvicorn_code(monkeypatch: pytest.MonkeyPatch
     assert exc.value.code == 3
     # The straggler belt exits with that code, never 0 (systemd Restart=on-failure, OVH 2026-10-28).
     assert belt == [3]
+
+
+def test_serve_on_a_fresh_data_dir_stores_the_iteration_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator decision D2 (2026-11-09): "50 everywhere" holds on a fresh install, where the shipped
+    basic-agent bundle bakes 20 and the ladder puts the workflow's own value above the framework
+    default. `serve` on a fresh data dir stores agents.max_iterations = 50 through the settings door."""
+    from abstractruntime import DEFAULT_MAX_ITERATIONS
+
+    from abstractgateway.runtime_config import read_runtime_config, resolve_run_iteration_limit
+    from abstractgateway.users import gateway_data_dir_from_env
+
+    data_dir = gateway_data_dir_from_env()
+    assert resolve_run_iteration_limit(None, data_dir)["source"] == "builtin"  # nothing stored yet
+    _serve(monkeypatch)
+    assert resolve_run_iteration_limit(None, data_dir) == {"max_iterations": DEFAULT_MAX_ITERATIONS,
+                                                           "source": "gateway_default"}
+    row = read_runtime_config(data_dir)["agents"]["max_iterations"]
+    assert row["value"] == DEFAULT_MAX_ITERATIONS and row["source"] == "stored"

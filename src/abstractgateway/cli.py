@@ -758,6 +758,16 @@ def _record_serve_stop() -> None:
         pass
 
 
+def _seed_fresh_install(data_dir: Path) -> None:
+    """A fresh data dir stores the framework defaults the console would (operator decision D2:
+    the iteration limit is 50 everywhere, also for a bundle that bakes its own smaller value)."""
+    from .runtime_config import BUILTIN_MAX_ITERATIONS, seed_fresh_install_defaults
+
+    if seed_fresh_install_defaults(data_dir):
+        _stderr(f"Iteration limit: {BUILTIN_MAX_ITERATIONS} stored for this new install "
+                "(`abstractgateway config set agents.max_iterations N` changes it)")
+
+
 def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     """`serve --backlog-root PATH` / `--exec-runner on|off`.
 
@@ -1500,6 +1510,7 @@ def main(argv: list[str] | None = None) -> None:
                 args.no_tray_reason = _why
                 _stderr(f"Desktop tray: not started ({_why}; pass --no-tray to say so explicitly)")
         record_serve_bind(_serve_data_dir, _bind)
+        _seed_fresh_install(_serve_data_dir)
         _apply_backlog_launch_flags(args, _serve_data_dir)
         # The bind host decides host-safety defaults inside the app (engine
         # installs are allowed by default on a loopback bind, and otherwise
