@@ -2415,6 +2415,17 @@ class EntityRegistry:
                 lease_warning = "#FALLBACK runtime predates the home lease; dream pass ran without the writer mutex"
 
             if dream_result is None:
+                # The kill switch's fence (contract-phases §3.3): the pass runs under the
+                # generation it started with; its `finally` restores its own sleep only when no
+                # Stop landed and no visit took the posture meanwhile.
+                from .entity_phase import maintenance_may_write, maintenance_started
+
+                maintenance_generation = maintenance_started(self, manifest.slug)
+                # The sleep is announced BEFORE the pass runs (contract-phases §4.3): every open
+                # app shows "resting for maintenance" while this request is still working.
+                from .entity_phase import safe_publish
+
+                safe_publish(self, manifest.slug, "operator_sleep")
                 try:
                     # PRESENT-TENSE mode (entity forensics c2465 ask 3): the
                     # dreaming badge is true only WHILE the pass runs — it
@@ -2436,9 +2447,16 @@ class EntityRegistry:
                     if lease_warning:
                         dream_result["warning"] = lease_warning
                 finally:
-                    written = write_entity_state(home_dir, "asleep", reason=reason)
+                    if maintenance_may_write(self, manifest.slug, maintenance_generation):
+                        written = write_entity_state(home_dir, "asleep", reason=reason)
+                    else:
+                        from abstractruntime.identity.life import read_entity_state as _read_state
+
+                        written = _read_state(home_dir)
                     if lease is not None:
                         lease.release()
+                    if isinstance(dream_result, dict):
+                        dream_result["generation"] = maintenance_generation
 
         # The moment enters the observable story (family="host"); marker
         # kinds are the VERBS (sleep/wake/pause) — moments, not states.

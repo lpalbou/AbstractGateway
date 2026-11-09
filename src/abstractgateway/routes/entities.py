@@ -2940,6 +2940,94 @@ def get_entity_life_state(name: str) -> Dict[str, Any]:
     return out
 
 
+# ------------------------------------------------------------ phases (contract-phases v2)
+# The phase bar's routes (operator ruling 2026-11-08; root untracked/entity-phases-2026-11-08/
+# CONTRACT-phases.md): POST /lifecycle (the kill switch: stop | resume | retry) and
+# PUT /life_state/toggles. Both are admin-only (security/authorization.py) and read their raw
+# body themselves, so a malformed body answers the contract's 422, never FastAPI's list shape.
+
+_PHASE_SENTENCES = {
+    "invalid_body": "The request body is not valid JSON.",
+    "invalid_toggles": "Say which to change: work, personal or both, each true or false.",
+    "invalid_action": "The action is stop, resume or retry.",
+    "stopped_use_resume": "Stopped. Resume him first, then choose what he may do.",
+}
+
+
+def _phase_refusal(status: int, code: str, message: str, life_state: Optional[Dict[str, Any]]):
+    """Every new-route refusal: `{code, detail: {reason_code, message, life_state}}` plus the
+    X-Gateway-Error-Code header (contract-phases §7)."""
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=status,
+        content={"code": code, "detail": {"reason_code": code, "message": message, "life_state": life_state}},
+        headers={"X-Gateway-Error-Code": code},
+    )
+
+
+def _phase_manifest_or_none(name: str) -> Any:
+    try:
+        return _registry().manifest_for(name)
+    except (KeyError, ValueError):
+        return None
+
+
+def _not_found(name: str):
+    return _phase_refusal(404, "entity_not_found", f"There is no entity named {name}.", None)
+
+
+async def _json_object(request: Request) -> Optional[Dict[str, Any]]:
+    try:
+        raw = await request.body()
+        data = json.loads(raw.decode("utf-8") if raw else "")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _life_state_body(name: str, cause: str = "observed") -> Dict[str, Any]:
+    from ..entity_phase import publish
+
+    return publish(_registry(), name, cause)
+
+
+@router.post("/{name}/lifecycle")
+async def post_entity_lifecycle(name: str, request: Request):
+    """The kill switch (contract-phases §3): `stop` is instant and unconditional (fence first,
+    cancellation signalled at once, each teardown on its own, a per-item report); `resume`
+    clears stopped and re-derives from the toggles (never restores a sleep); `retry` re-runs the
+    gateway's reconcile after a crash or a failed start."""
+    from ..entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
+    from .. import entity_phase
+
+    manifest = _phase_manifest_or_none(name)
+    if manifest is None:
+        return _not_found(name)
+    body = await _json_object(request)
+    if body is None:
+        return _phase_refusal(422, "invalid_body", _PHASE_SENTENCES["invalid_body"],
+                              await off_loop("light", _life_state_body, name))
+    action = body.get("action")
+    reason = body.get("reason")
+    if action not in ("stop", "resume", "retry") or set(body) - {"action", "reason"} or (
+        reason is not None and not isinstance(reason, str)
+    ):
+        return _phase_refusal(422, "invalid_action", _PHASE_SENTENCES["invalid_action"],
+                              await off_loop("light", _life_state_body, name))
+    registry = _registry()
+    if action in ("resume", "retry"):
+        try:
+            refuse_if_entity_archived(manifest.slug, users_path=users_path_of(registry))
+        except EntityArchivedError as e:
+            return _phase_refusal(409, "entity_archived", e.message, await off_loop("light", _life_state_body, name))
+    if action == "stop":
+        return await off_loop("heavy", lambda: entity_phase.stop(registry, name, reason=str(reason or "")))
+    if action == "resume":
+        return await off_loop("heavy", lambda: entity_phase.resume(registry, name))
+    return await off_loop("heavy", lambda: entity_phase.retry(registry, name))
+
+
 
 # Track record, reputation, acquaintances (ADR 0052 sections 5, 6 and 11; framework backlog 1119):
 # derived by the runtime from the home's own records, passed through unchanged
@@ -3079,6 +3167,8 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
             enable_workspace=req.enable_workspace,
         )
     except ChatOpenRefused as e:
+        if e.code:
+            return _visit_refused_response(e)
         raise HTTPException(status_code=e.status, detail=e.detail)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
@@ -3126,6 +3216,8 @@ async def entity_chat_turn(name: str, chat_id: str, req: ChatTurnRequest) -> Dic
             lambda: _chat_host().turn(chat_id, req.text, speaker=req.speaker)
         )
     except ChatOpenRefused as e:
+        if e.code:
+            return _visit_refused_response(e)
         raise HTTPException(status_code=e.status, detail=e.detail)
     except RuntimeError as e:
         # The driver's memory-failure posture: the failed turn formed
@@ -3152,6 +3244,8 @@ def entity_chat_transcript(name: str, chat_id: str) -> Dict[str, Any]:
     try:
         return _chat_host().transcript(chat_id)
     except ChatOpenRefused as e:
+        if e.code:
+            return _visit_refused_response(e)
         raise HTTPException(status_code=e.status, detail=e.detail)
 
 
@@ -3167,6 +3261,8 @@ async def close_entity_chat(name: str, chat_id: str, req: Optional[CloseChatRequ
             _chat_host().close, chat_id, reflect=bool(req.reflect) if req is not None else True
         )
     except ChatOpenRefused as e:
+        if e.code:
+            return _visit_refused_response(e)
         raise HTTPException(status_code=e.status, detail=e.detail)
     # CLOSE FIRES THE QUEUE HEAD (queue contract invariant 11) — background
     # thread: the closing response never waits on the next summon executing.
@@ -6621,6 +6717,8 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
     try:
         mind = resolve_entity_mind(req.provider, req.model, home_dir=home_dir)
     except ChatOpenRefused as e:
+        if e.code:
+            return _visit_refused_response(e)
         raise HTTPException(status_code=e.status, detail=e.detail)
     provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
     base_url = entity_base_url(provider, req.base_url, mind_base_url=mind["base_url"])

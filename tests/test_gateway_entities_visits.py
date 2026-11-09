@@ -605,12 +605,12 @@ def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.Mon
         assert "operator rest" in str(st2.get("reason", ""))
 
 
-def test_operator_sleep_gates_an_open_visits_turns(monkeypatch: pytest.MonkeyPatch):
-    """State-sources adversary P0-2: an operator sleep that raced/failed the
-    teardown used to leave a durable visit accepting billed turns under
-    /state=asleep. The turn gate now refuses non-awake states (the visiting
-    yield posture stays open — that sleep is the visit's own)."""
-    _install_scripted_llm(monkeypatch, ["Hello.", "Reflection."])
+def test_an_operator_sleep_never_refuses_an_open_visits_turns(monkeypatch: pytest.MonkeyPatch):
+    """A visit never fails (operator 2026-11-09, root ADR-0027; contract-phases §6.1): the old
+    gate refused an open visit's turns under an operator `asleep` (state-sources adversary P0-2).
+    An operator sleep no longer lands on a visit (409 `in_visit` at the sleep door); a sleep
+    written out of band leaves the visit answering. Stopped stays the one refusal."""
+    _install_scripted_llm(monkeypatch, ["Hello.", "Still here.", "Reflection."])
     from abstractruntime.identity.life import write_entity_state
 
     with _client() as client:
@@ -619,16 +619,12 @@ def test_operator_sleep_gates_an_open_visits_turns(monkeypatch: pytest.MonkeyPat
         assert opened.status_code == 200, opened.text
         run_id = opened.json()["run_id"]
 
-        # Simulate the raced teardown: the operator's asleep lands while the
-        # visit is still open (direct write = the race's end state).
-        write_entity_state(_home_dir(), "asleep", reason="operator sleep raced the teardown")
+        write_entity_state(_home_dir(), "asleep", reason="an operator sleep written out of band")
 
         turned = client.post(
             f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "still there?"}
         )
-        assert turned.status_code == 409, turned.text
-        assert "asleep by the operator" in turned.json()["detail"]
-        # Close stays exempt (the teardown IS a close).
+        assert turned.status_code == 200, turned.text
         closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
         assert closed.status_code == 200, closed.text
 
@@ -738,7 +734,8 @@ def test_turn_refuses_after_a_failed_pause_teardown(monkeypatch: pytest.MonkeyPa
             f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "still there?"}
         )
         assert refused.status_code == 409
-        assert "paused" in refused.json()["detail"]
+        assert refused.json()["detail"] == "Stopped. Resume to visit."
+        assert refused.json()["code"] == "stopped_use_resume"
 
         # Close (closed_by=pause) is still allowed — the teardown IS a close.
         frozen = client.post(

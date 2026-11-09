@@ -338,10 +338,13 @@ def entity_base_url(provider: str, explicit: Optional[str] = None, *, mind_base_
 class ChatOpenRefused(Exception):
     """A refusal with an HTTP status shape (409 conflicts, 400 bad asks)."""
 
-    def __init__(self, status: int, detail: str) -> None:
+    def __init__(self, status: int, detail: str, *, code: str = "") -> None:
         super().__init__(detail)
         self.status = int(status)
         self.detail = detail
+        # A stable machine code beside the sentence (served as {detail, code}
+        # by the routes when set; contract-phases §7).
+        self.code = str(code or "").strip()
 
 
 class _RuntimeLLMAdapter:
@@ -593,7 +596,9 @@ class EntityChatHost:
         mode = str(state.get("mode") or "")
         reason = str(state.get("reason") or "")
         if state.get("state") == "paused":
-            raise ChatOpenRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}")
+            from .entity_visits import STOPPED_VISIT_SENTENCE
+
+            raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         # THE VISITING POSTURE IS UNCONDITIONAL (mutual-exclusivity wave,
         # laurent dm#94 via entity's write audit finding 1): a visit opened
@@ -626,6 +631,9 @@ class EntityChatHost:
             "state": str(state.get("state") or "awake"),
             "reason": reason,
             "wake_at": str(state.get("wake_at") or ""),
+            # The same sleep continues after the visit (contract-phases §4.4).
+            "written_by": str(state.get("written_by") or ""),
+            "changed_at": str(state.get("changed_at") or ""),
         }
         if state.get("state") == "asleep" and (mode == "visiting" or "auto-yield" in reason):
             # FRESHNESS GATE (wave adversary P1-1): a young posture may
@@ -662,13 +670,21 @@ class EntityChatHost:
             # A VISIT NEVER FAILS (operator 2026-11-09, root ADR-0027): no
             # limit on this wait — the durable lane's rule (entity_visits),
             # the posture held while it waits.
-            from .entity_visits import hold_visiting_posture
+            from .entity_visits import STOPPED_VISIT_SENTENCE, VisitRefused, hold_visiting_posture
 
-            await_loop_quiescent(
-                home_dir, timeout_seconds=None,
-                sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
-            )
+            try:
+                await_loop_quiescent(
+                    home_dir, timeout_seconds=None,
+                    sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
+                )
+            except VisitRefused:
+                # The kill switch landed while the door waited (contract-phases §3.3).
+                raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
             yielded = True
+        if read_entity_state(home_dir).get("state") == "paused":
+            from .entity_visits import STOPPED_VISIT_SENTENCE
+
+            raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         # One writer per home (plan item 1, GW-A): the visit IS a write
         # window. Acquired AFTER the auto-yield (the loop's day lease is
@@ -688,6 +704,10 @@ class EntityChatHost:
                 try:
                     lease = acquire_directory_lease(home_dir, holder="visit-host")
                 except DirectoryLeaseHeld as e:
+                    if read_entity_state(home_dir).get("state") == "paused":
+                        from .entity_visits import STOPPED_VISIT_SENTENCE
+
+                        raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
                     if not logged:
                         logger.info("visit waits for the home's writer to finish: %s", e)
                         logged = True

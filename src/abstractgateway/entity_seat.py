@@ -287,10 +287,21 @@ def door_decision(
 
 def cancel_run_tree(runtime: Any, run_store: Any, run_id: str, *, reason: str) -> list[str]:
     """Cancel a run and its descendants (root first — the runner's
-    apply-to-tree shape). cancel_run is terminal-guarded runtime-side, so
-    the walk is idempotent and a completed child is returned unchanged.
-    Returns the run ids actually flipped to cancelled."""
-    cancelled: list[str] = []
+    apply-to-tree shape). Returns the run ids actually flipped to cancelled
+    (the seat preemption's shape); `cancel_run_tree_outcomes` carries every
+    run's outcome, failures included."""
+    return [o["run_id"] for o in cancel_run_tree_outcomes(runtime, run_store, run_id, reason=reason)
+            if o["outcome"] == "cancelled"]
+
+
+def cancel_run_tree_outcomes(runtime: Any, run_store: Any, run_id: str, *, reason: str) -> list[Dict[str, Any]]:
+    """Cancel a run and its descendants, root first, and return ONE outcome
+    per run (the kill switch's per-item report, contract-phases §3.1):
+    `{run_id, outcome: cancelled|already_terminal|missing|failed, code, error}`.
+    cancel_run is terminal-guarded runtime-side, so the walk is idempotent
+    (a repeated Stop re-signals safely). A child enumeration that fails is an
+    outcome too (`run_children_unknown`), never a swallowed log line."""
+    outcomes: list[Dict[str, Any]] = []
     seen: set[str] = set()
     queue = [str(run_id)]
     list_children = getattr(run_store, "list_children", None)
@@ -299,24 +310,31 @@ def cancel_run_tree(runtime: Any, run_store: Any, run_id: str, *, reason: str) -
         if rid in seen:
             continue
         seen.add(rid)
+        before = _run_status(run_store, rid)
         try:
-            before = _run_status(run_store, rid)
             runtime.cancel_run(rid, reason=reason)
-            if before is not None and before not in _TERMINAL:
-                cancelled.append(rid)
+            if before is None:
+                outcomes.append({"run_id": rid, "outcome": "missing", "code": None, "error": None})
+            elif before in _TERMINAL:
+                outcomes.append({"run_id": rid, "outcome": "already_terminal", "code": None, "error": None})
+            else:
+                outcomes.append({"run_id": rid, "outcome": "cancelled", "code": None, "error": None})
         except KeyError:
+            outcomes.append({"run_id": rid, "outcome": "missing", "code": None, "error": None})
             continue  # already gone — nothing to preempt
-        except Exception:
-            logger.warning("preempt cancel failed for run %s (walk continues)", rid, exc_info=True)
+        except Exception as e:  # noqa: BLE001
+            outcomes.append({"run_id": rid, "outcome": "failed", "code": "run_cancel_failed",
+                             "error": f"This run could not be cancelled: {e}"})
         if callable(list_children):
             try:
                 for child in list_children(parent_run_id=rid) or []:
                     cid = getattr(child, "run_id", None)
                     if isinstance(cid, str) and cid:
                         queue.append(cid)
-            except Exception:
-                pass
-    return cancelled
+            except Exception as e:  # noqa: BLE001
+                outcomes.append({"run_id": rid, "outcome": "failed", "code": "run_children_unknown",
+                                 "error": f"The runs this one started could not be listed: {e}"})
+    return outcomes
 
 
 def build_summon_seat_probe(run_store: Any, entities_dir: Path) -> Callable[[str], Optional[Dict[str, Any]]]:

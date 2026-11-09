@@ -111,6 +111,19 @@ def _woken_reason() -> str:
     return WOKEN_BY_VISIT_REASON
 
 
+# The one visit refusal (operator 2026-11-09; contract-phases §6.1, §7).
+STOPPED_VISIT_SENTENCE = "Stopped. Resume to visit."
+
+
+def _stopped(home_dir: Any) -> bool:
+    from abstractruntime.identity.life import read_entity_state
+
+    try:
+        return read_entity_state(home_dir).get("state") == "paused"
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def hold_visiting_posture(home_dir: Any, *, reason: str, token: str) -> Any:
     """The door's wait poll (`await_loop_quiescent`'s sleep_fn): sleep, then put
     the door's visiting posture back if another writer replaced it while the
@@ -121,6 +134,10 @@ def hold_visiting_posture(home_dir: Any, *, reason: str, token: str) -> Any:
     def _poll(seconds: float) -> None:
         time.sleep(seconds)
         now = read_entity_state(home_dir)
+        if now.get("state") == "paused":
+            # The kill switch landed while the door waited: the wait ends now
+            # (contract-phases §3.3), the open answers stopped_use_resume.
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
         if (
             token
             and token not in str(now.get("reason") or "")
@@ -993,39 +1010,20 @@ class EntityVisitHost:
             raise VisitRefused(409, e.message, code="entity_archived") from None
 
     def _refuse_if_paused(self, manifest: Any, *, verb: str) -> None:
-        """Non-awake states gate an ALREADY-OPEN visit too: if the teardown
-        failed (lease held, close raced) or a fresh open slipped into the
-        sleep-write window, the badge alone must still stop cognition —
-        open() checks state, and so do turn/tick. Close is deliberately NOT
-        gated (the teardown IS a close).
-
-        ASLEEP gates too (state-sources adversary P0-2): an OPERATOR sleep
-        that raced the teardown used to leave a durable visit accepting
-        billed turns under /state=asleep — the route's own promise ("asleep/
-        paused must actually STOP an open visit, not just flip a badge") was
-        pause-only in code. The visiting-yield posture (mode=visiting) is
-        the visit's OWN sleep and stays open."""
+        """STOPPED is the one refusal (operator 2026-11-09: a visit never fails,
+        except under the kill switch; contract-phases §6.1). It gates an
+        ALREADY-OPEN visit too: if a teardown failed or an open slipped into
+        the stop's window, the state alone must still stop cognition — open()
+        checks it, and so do turn/tick. Close is deliberately NOT gated (the
+        teardown IS a close). No sleep refusal: an operator sleep no longer
+        tears a visit down (409 `in_visit` at the sleep door), and a visit
+        opens in every sleep."""
         from abstractruntime.identity.life import read_entity_state
 
         self._refuse_if_archived(manifest.slug)
         state = read_entity_state(self._registry.entities_dir / manifest.slug)
-        word = str(state.get("state") or "")
-        if word == "paused":
-            reason = str(state.get("reason") or "") or "no reason recorded"
-            raise VisitRefused(
-                409,
-                f"{manifest.entity_id} is paused (hard freeze): {reason} — "
-                f"this visit cannot {verb}; close it (closed_by=pause) or wake him first",
-                code="entity_paused",
-            )
-        if word == "asleep" and str(state.get("mode") or "") != "visiting":
-            reason = str(state.get("reason") or "") or "no reason recorded"
-            raise VisitRefused(
-                409,
-                f"{manifest.entity_id} is asleep by the operator: {reason} — "
-                f"this visit cannot {verb}; close it or wake him first",
-                code="entity_asleep",
-            )
+        if str(state.get("state") or "") == "paused":
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
     # ------------------------------------------------- shared leg machinery
     def _preflight(self, name: str, participants: Optional[List[str]], *, visit_id: str = "") -> Dict[str, Any]:
@@ -1111,7 +1109,7 @@ class EntityVisitHost:
         mode = str(state.get("mode") or "")
         reason = str(state.get("reason") or "")
         if state.get("state") == "paused":
-            raise VisitRefused(409, f"{manifest.entity_id} is paused (hard freeze): {reason or 'no reason recorded'}", code="entity_paused")
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         yielded = False
         woke_for_visit = False
@@ -1127,6 +1125,10 @@ class EntityVisitHost:
             # A BOUNDED sleep keeps its deadline through the visit (runtime
             # c343 seam: wake_at is first-class on the writer).
             "wake_at": str(state.get("wake_at") or ""),
+            # The same sleep continues after the visit (contract-phases §4.4):
+            # who chose it and since when travel with it.
+            "written_by": str(state.get("written_by") or ""),
+            "changed_at": str(state.get("changed_at") or ""),
         }
         if state.get("state") == "asleep":
             if mode == "visiting" or "auto-yield" in reason:
@@ -1184,6 +1186,11 @@ class EntityVisitHost:
                 sleep_fn=hold_visiting_posture(home_dir, reason=posture_reason, token=visit_token),
             )
             yielded = True
+        # The wait is cancellation-aware (contract-phases §3.3): a Stop that
+        # landed while the door waited ends the open here, never a visit under
+        # the kill switch.
+        if read_entity_state(home_dir).get("state") == "paused":
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         return {
             "manifest": manifest, "slug": slug, "home_dir": home_dir, "er": er,
@@ -1570,6 +1577,18 @@ class EntityVisitHost:
             self._finalize_terminal(er, manifest, run_id, state)
         return out
 
+    def finalize_cancelled(self, name: str, run_id: str) -> None:
+        """The kill switch cancelled this visit's run mid-turn (contract-phases
+        §3.1): run the terminal duty a close would have run (the ownership-
+        checked restore, which leaves the stop standing, and session_closed)."""
+        registry = self._registry
+        manifest = registry.manifest_for(name)
+        er = registry.get_entity_runtime(manifest.slug)
+        state = er.run_store.load(run_id)
+        if state is None:
+            raise VisitRefused(404, f"unknown visit run {run_id!r}", code="visit_not_found")
+        self._finalize_terminal(er, manifest, run_id, state)
+
     # ------------------------------------------------------------------ tick
     def tick(self, name: str, run_id: str) -> Dict[str, Any]:
         """Drive-to-park, no payload (walkthrough step 5b: a mid-turn KILL
@@ -1756,6 +1775,9 @@ class EntityVisitHost:
             # recorded "v0"). Every run SERVES the react graph now — the
             # field documents birth, it no longer selects.
             "workflow_arm": str(visit_vars.get("workflow_arm") or "v0"),
+            # The phase bar's visit facts (contract-phases §1.3): who is in the visit, since when.
+            "participants": [str(p) for p in (visit_vars.get("participants") or stamp.get("participants") or [])],
+            "created_at": getattr(run, "created_at", None),
         }
 
     # -------------------------------------------------------------- internal
@@ -1947,6 +1969,8 @@ class EntityVisitHost:
             except DirectoryLeaseHeld as e:
                 if getattr(self._no_wait, "on", False):
                     raise VisitRefused(409, str(e), code="home_lease_held")
+                if _stopped(Path(er.home.home_dir)):
+                    raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
                 if not logged:
                     logger.info("visit waits for the home's writer to finish: %s", e)
                     logged = True

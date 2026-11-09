@@ -281,6 +281,10 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     #   - loop/start|stop:  own-time lifecycle (start = spend; stop kept in
     #                       the same family — repeatedly stopping an entity's
     #                       own time is meddling with its life)
+    #   - lifecycle, life_state/toggles: the phase bar's kill switch and its
+    #                       work/personal permissions (contract-phases §2-§3,
+    #                       operator ruling 2026-11-08) — the same lifecycle
+    #                       family as state and loop/*
     #   - workspace/mounts: NOT in the signed N1 list, added by the same rule
     #                       that already admin-gates /api/gateway/files — a
     #                       mount whitelists a HOST directory into the
@@ -288,7 +292,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(
         resource="entities",
         reason_code="admin_required",
-        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|capability-map|tasks|tasks/[^/]+/status|work-order|candidates/[^/]+/(promote|reject)|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts)$",
+        pattern=r"^/api/gateway/entities/[^/]+/(state|reembed|capability-map|tasks|tasks/[^/]+/status|work-order|candidates/[^/]+/(promote|reject)|personal-grant|maintenance-window|loop/start|loop/stop|workspace/mounts|lifecycle|life_state/toggles)$",
         methods=("POST", "PUT", "PATCH", "DELETE"),
     ),
     # An entity's SETTINGS (operator ruling 2026-10-08, R16.5 "the creator configures their

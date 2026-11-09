@@ -257,6 +257,14 @@ HOST_MARKER_KINDS = (
     "queue_admitted",
     "queue_stepped_away",
     "queue_reaped",
+    # phase_changed (entity phases, operator ruling 2026-11-08; root
+    # untracked/entity-phases-2026-11-08/CONTRACT-phases.md §5): the
+    # gateway's one announcement of a new life_state snapshot — the Entity
+    # app's live surface is this stream. One marker per rev (dedup_field
+    # "rev"); payload {name, from, to, phase, toggles, stopped, since, rev,
+    # generation, cause, sentence}. `from == to` is a rev bump that is not a
+    # phase change (a toggle, a sub-object): biography readers skip it.
+    "phase_changed",
 )
 
 _marker_lock = threading.Lock()

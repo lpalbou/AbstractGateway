@@ -278,8 +278,8 @@ def test_one_life_one_summon_and_paused_refusal(monkeypatch: pytest.MonkeyPatch)
         ).status_code == 200
         refused = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert refused.status_code == 409
-        assert "paused" in refused.json()["detail"]
-        assert "maintenance window" in refused.json()["detail"]
+        # Stopped is the one visit refusal (contract-phases §6.1): a sentence + a stable code.
+        assert refused.json() == {"detail": "Stopped. Resume to visit.", "code": "stopped_use_resume"}
 
 
 def test_visiting_mode_passes_through_state_and_card(monkeypatch: pytest.MonkeyPatch):

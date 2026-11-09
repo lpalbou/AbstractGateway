@@ -273,6 +273,11 @@ def mention(
     manifest = registry.manifest_for(entity)  # KeyError -> 404
     visitor = f"person:{str(getattr(principal, 'user_id', '') or '').strip() or 'operator'}"
     repeated = _check_repeat_of(svc, sid, repeat_of)
+    from .entity_phase import generation_of
+
+    # The kill switch's fence (contract-phases §3.3): a Stop that lands while this mention's turn
+    # runs moves the generation, and the answer is then neither recorded nor mirrored.
+    generation = generation_of(registry.entities_dir, manifest.slug)
     with _session_lock(sid):
         er = registry.get_entity_runtime(manifest.slug)
         live = visit_host._live_visit_run(er)
@@ -307,6 +312,10 @@ def mention(
         if status == "failed" or not reply:
             why = str(turned.get("error") or "") or "the turn produced no reply"
             raise MentionRefused(503, f"{_display_name(manifest)} cannot answer: {why}", code=CODE_CANNOT_ANSWER)
+        if generation_of(registry.entities_dir, manifest.slug) != generation:
+            from .entity_visits import STOPPED_VISIT_SENTENCE
+
+            raise MentionRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume", session_id=sid)
         turn_id = str(turned.get("turn_id") or "") or None
         visit_ns = ((er.run_store.load(run_id).vars or {}).get("_runtime") or {}).get("entity") or {}
         author = entity_author(registry, manifest)
