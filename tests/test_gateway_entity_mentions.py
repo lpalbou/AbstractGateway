@@ -358,3 +358,23 @@ def test_two_mentions_in_one_message_the_second_reads_the_first_and_nothing_mirr
         hypnos_prompt = str(llm.calls[1])
         assert "Castor (entity): Castor: the bridge holds." in hypnos_prompt
         assert second.json()["context"]["turns"] == 1
+
+
+def test_repeat_of_rides_the_runs_list_rows(monkeypatch):
+    """Mentions contract §3: `repeat_of` rides GET /runs. The listing's rows come from the run index
+    (no vars), so the mention turn's row lacked it; every row now says it: the mention turn names the
+    agent turn it repeats, the agent turn says null."""
+    _install_llm(monkeypatch, ["Castor here."])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        sid = "sess-mention-list"
+        agent_rid = _seed_agent_turn(sid, "@Castor does the bridge hold?")
+        r = _mention(client, sid, "@Castor does the bridge hold?", repeat_of=agent_rid)
+        assert r.status_code == 200, r.text
+        mention_rid = r.json()["run_id"]
+        for params in ({"session_id": sid}, {"session_id": sid, "root_only": "true"}, {"limit": 200}):
+            page = client.get("/api/gateway/runs", params=params)
+            assert page.status_code == 200, page.text
+            rows = {i["run_id"]: i for i in page.json()["items"]}
+            assert rows[mention_rid]["repeat_of"] == agent_rid, (params, rows[mention_rid])
+            assert "repeat_of" in rows[agent_rid] and rows[agent_rid]["repeat_of"] is None

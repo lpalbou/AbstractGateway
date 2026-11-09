@@ -10308,6 +10308,27 @@ async def run_session_kind_migrations(svc: Any) -> None:
     await off_loop("heavy", run_pending_migrations, svc.config.data_dir, _rows)  # a whole-index listing
 
 
+def _attach_repeat_of(items: List[Dict[str, Any]], run_store: Any) -> None:
+    """`repeat_of` on every GET /runs row (mentions contract §3: the client folds a mention turn
+    that repeats the person's own agent turn by it). A row read from the run index carries no vars;
+    only the mention door's turns can carry the key (a client copy is dropped at /runs/start), so
+    those rows alone are read whole, on the served page only. Every other index row says null."""
+    from abstractruntime.core.turn_author import prompt_repeat_of
+
+    from ..entity_mentions import MENTION_WORKFLOW_ID
+
+    for item in items:
+        if "repeat_of" in item:
+            continue  # a summary built from the run itself already carries it
+        value = None
+        if str(item.get("workflow_id") or "") == MENTION_WORKFLOW_ID and item.get("run_id"):
+            try:
+                value = prompt_repeat_of(getattr(run_store.load(str(item["run_id"])), "vars", None))
+            except Exception:  # noqa: BLE001 - an unreadable run is a row without the fold
+                value = None
+        item["repeat_of"] = value
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -10702,6 +10723,7 @@ async def list_runs(
         if scan_truncated:
             has_more = True
         items = items[int(offset): int(offset) + int(limit)]
+        _attach_repeat_of(items, rs)
 
         if bool(include_metrics):
             # Totals of each listed run AND its sub-runs, from the ledger (run_metrics.py).
