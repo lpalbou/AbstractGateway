@@ -151,3 +151,83 @@ def test_only_the_owner_plane_can_archive_a_session(two_users) -> None:
     assert c.post(f"/api/gateway/sessions/{sid}/archive", headers=alice).status_code == 200
     mine = c.get(listing, headers=alice).json()
     assert mine["items"] == [] and mine["archived_sessions"] == 1
+
+
+def _helper_in_session(session_id: str, tmp_path: Path):
+    """A dev server an agent started in this conversation: registered where AbstractRuntime's local_helper_start
+    puts it (the session scope of the calling run, `helper_scope`; the start itself is the runtime's own test)."""
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    import time
+
+    from abstractruntime.integrations.abstractcore.local_helper_tools import (
+        LocalHelperProcess,
+        get_local_helper_registry,
+        helper_scope,
+        namespaced_helper_id,
+    )
+
+    from abstractruntime.integrations.abstractcore.local_helper_tools import register_session_scope
+
+    from abstractgateway.service import get_gateway_service
+
+    # This hermetic host serves no tool-running workflow, so its runtime was built without the factory's
+    # helper wiring (a tools/LLM host registers it in register_shell_session_teardown): register it here.
+    register_session_scope(get_gateway_service().host.runtime)
+    turn = chat_run(session_id=session_id, created_at="2026-11-09T08:00:00+00:00")
+    save_runs(turn)
+    scope = helper_scope(turn.run_id)
+    assert scope.startswith("session:") and scope.endswith(f":{session_id}"), scope
+    log = tempfile.NamedTemporaryFile(mode="w+", suffix=".log", delete=False, dir=tmp_path)
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdout=log, stderr=subprocess.STDOUT,
+                            start_new_session=(os.name == "posix"))
+    get_local_helper_registry().put(LocalHelperProcess(
+        key=namespaced_helper_id(scope, "main"), helper_id="main", process=proc, log_path=Path(log.name), log_handle=log,
+        working_directory=None, ready_port=None, ready_url=None, ready_text=None, local_url=None, created_at=time.time()))
+    return proc.pid, None
+
+
+def _gone(pid: int) -> bool:
+    import os
+    import time
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        time.sleep(0.05)
+    return False
+
+
+def test_archiving_a_conversation_stops_the_helpers_its_agent_started(client: TestClient, tmp_path: Path) -> None:
+    """Helpers outlive each turn (operator decision 2026-11-09), never the conversation: archiving it stops them."""
+    import sys
+
+    if sys.platform.startswith("win"):
+        pytest.skip("POSIX process groups")
+    pid, _port = _helper_in_session("s-dev", tmp_path)
+    r = client.post("/api/gateway/sessions/s-dev/archive", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["helpers_stopped"] == 1
+    assert _gone(pid), "the conversation's dev server outlived its archive"
+
+
+def test_the_gateway_stopping_stops_every_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    if sys.platform.startswith("win"):
+        pytest.skip("POSIX process groups")
+    gateway_env(monkeypatch, tmp_path)
+    from abstractgateway.app import app
+
+    with TestClient(app):
+        pid, _port = _helper_in_session("s-left-open", tmp_path)
+    assert _gone(pid), "a dev server outlived the gateway"

@@ -1950,6 +1950,11 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         if bridge3 is not None:
             _stage("agora bridge stop", bridge3.stop)
         _stage("runner drain", service.runner.stop)
+        # The conversations' local helpers (dev servers an agent started) outlive their turns, never
+        # the gateway: they run in their own process groups, so they are stopped here.
+        from abstractruntime.integrations.abstractcore.local_helper_tools import get_local_helper_registry
+
+        _stage("local helpers stop", get_local_helper_registry().close_all)
         chat_host = getattr(service, "entity_chat_host", None)
         if chat_host is not None:
             # Reflect + close live visits FIRST (they hold their own home

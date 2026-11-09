@@ -80,7 +80,13 @@ def _act(svc: Any, session_id: str, actor: str, archive: bool) -> Dict[str, Any]
         raise HTTPException(status_code=404, detail={"reason_code": "session_not_found", "message": f"Session {session_id} does not exist."})
     try:
         if archive:
-            return archive_session(svc.config.data_dir, session_id, by=actor)
+            out = archive_session(svc.config.data_dir, session_id, by=actor)
+            # The conversation's helpers (dev servers its agent started, AbstractRuntime
+            # local_helper_start) end with it: they outlive each turn, never the conversation.
+            from abstractruntime.integrations.abstractcore.local_helper_tools import close_session_helpers
+
+            out["helpers_stopped"] = close_session_helpers(svc.host.runtime, session_id)
+            return out
         return unarchive_session(svc.config.data_dir, session_id, by=actor)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
