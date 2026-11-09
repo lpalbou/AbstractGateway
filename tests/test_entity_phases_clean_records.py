@@ -168,3 +168,63 @@ def test_a_parked_visit_stopped_ends_cancelled_never_completed(monkeypatch: pyte
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
         run = _registry().get_entity_runtime("castor").run_store.load(run_id)
         assert str(getattr(run.status, "value", run.status)) == "cancelled" and run.error == KILL_SWITCH_REASON
+
+
+def test_stop_reaches_every_effect_boundary(monkeypatch: pytest.MonkeyPatch):
+    """Codex review 2 #2 (runtime ab060bf): a Stop landing during a hosted turn's model call stops
+    the turn at its next boundary — nothing formed, a clean stopped-by-the-operator record; the
+    maintenance pass and the authoring drainer are told to stop too."""
+    import abstractmemory
+    from abstractruntime.identity import authoring as authoring_mod
+    from abstractruntime.identity.life import bump_lifecycle_generation
+
+    from abstractgateway import entity_authoring, entity_chat
+
+    from abstractgateway.routes.entities import _registry as _reg_of
+
+    home = lambda: _reg_of().entities_dir / "castor"  # noqa: E731
+
+    class _StopDuringTheCall:
+        def generate(self, **kwargs):
+            if kwargs.get("response_model") is None:
+                bump_lifecycle_generation(home(), written_by="test")  # Stop lands mid-call
+            return type("R", (), {"content": "An answer nobody should keep."})()
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: _StopDuringTheCall())
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened.status_code == 200, opened.text
+        chat_id = opened.json()["chat_id"]
+        r = client.post(f"/api/gateway/entities/Castor/chat/{chat_id}/turn", json={"text": "hello"})
+        assert r.status_code == 409 and r.json()["code"] == "stopped_use_resume", r.text
+        client.post(f"/api/gateway/entities/Castor/chat/{chat_id}/close")
+
+        # The pass: should_continue says stop once the generation moves.
+        seen = {}
+
+        def _pass(*args, **kwargs):
+            seen["pass"] = kwargs.get("should_continue")
+            return {"ok": True}
+
+        monkeypatch.setattr(abstractmemory, "sleep_pass", _pass)
+        from abstractgateway.routes.entities import _registry as reg
+
+        reg().set_state(name="castor", state="asleep", reason="maintenance", dream=True)
+        assert callable(seen.get("pass"))
+        bump_lifecycle_generation(home(), written_by="test")
+        assert seen["pass"]() is False
+
+        # The drainer: should_stop says stop once the generation moves.
+        def _drain(*args, **kwargs):
+            seen["drain"] = kwargs.get("should_stop")
+            return {"authored": 0, "deferred": 0, "failed": 0, "considered": 0}
+
+        monkeypatch.setattr(authoring_mod, "drain_authoring", _drain)
+        from abstractruntime.identity.life import write_entity_state
+
+        write_entity_state(home(), "awake", reason="test")
+        entity_authoring.drain_after_close(reg(), "castor")
+        assert callable(seen.get("drain")) and seen["drain"]() is False
+        bump_lifecycle_generation(home(), written_by="test")
+        assert seen["drain"]() is True

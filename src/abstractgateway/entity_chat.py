@@ -812,6 +812,11 @@ class EntityChatHost:
             # The models other than the mind (the summaries capability authors every record's title
             # and summary at formation, runtime 4eefddb): without it every turn forms pending records.
             session.llm_for_capability = self._registry.capability_llm_factory(slug)
+            # CANCELLATION AT EVERY EFFECT BOUNDARY (Codex review 2 #2; runtime ab060bf): once a Stop
+            # moves the lifecycle generation this session's turn runs no further tool, model call,
+            # formation or authoring, and raises TurnCancelled.
+            _entities_dir, _open_generation = self._registry.entities_dir, generation
+            session.cancel_check = lambda: generation_of(_entities_dir, slug) != _open_generation
         except SystemExit as e:
             # A refused prelude aborts the summon — the reasons travel verbatim.
             if lease is not None:
@@ -920,10 +925,25 @@ class EntityChatHost:
             # bills tokens home-direct; /cognition's `working` reads this so
             # the "am I spending?" surface is true DURING chat turns.
             hosted.turn_in_flight = True
+            from abstractruntime.identity.chat import TurnCancelled
+
             try:
                 reply, report = hosted.session.turn(
                     user_text, **({"speaker_label": speaker_label} if speaker_label else {})
                 )
+            except TurnCancelled as cancelled:
+                # The kill switch stopped this turn: a clean record, stopped by the operator — never
+                # a failure, never a reply (nothing of the turn was formed).
+                from .entity_phase import KILL_SWITCH_REASON
+                from .entity_visits import STOPPED_VISIT_SENTENCE
+
+                hosted.transcript.append({
+                    "turn_id": getattr(getattr(cancelled, "report", None), "turn_id", None),
+                    "speaker": speaker_label or (hosted.session.participants[0] if hosted.session.participants else "person:operator"),
+                    "text": user_text, "reply": None, "status": "cancelled", "reason": KILL_SWITCH_REASON,
+                    "cancelled_by": "operator", "at": datetime.now(timezone.utc).isoformat(),
+                })
+                raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
             finally:
                 hosted.turn_in_flight = False
             hosted.last_activity = _time.monotonic()
@@ -1105,6 +1125,7 @@ class EntityChatHost:
             return {"outcome": "not_open", "chat_id": None}
         try:
             hosted.session.yield_check = lambda: True
+            hosted.session.cancel_check = lambda: True  # no further effect of the turn (runtime ab060bf)
         except Exception:  # noqa: BLE001 - a session without the seam still closes after its turn
             pass
         # Its close record says what ended it: cancelled by the operator's kill switch.

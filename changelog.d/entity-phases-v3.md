@@ -39,3 +39,8 @@
   with the loop's own state and `phases.yaml` writes; the lifecycle generation is the runtime's
   (`read_lifecycle_generation`, bumped by every Stop through `bump_lifecycle_generation` and by the runtime's hard
   stop). The operator's state write (`POST …/state`) is fenced on it: a Stop landing meanwhile is never written over.
+- **Stop reaches every effect boundary** (Codex review 2 #2; AbstractRuntime ab060bf). A hosted chat turn checks
+  the lifecycle generation at each boundary (`ChatSession.cancel_check`): after a Stop it runs no further tool, model
+  call, formation or authoring, and its record says cancelled, by the operator (the turn answers 409
+  `stopped_use_resume`). The operator's maintenance pass stops at its next stage on a Stop or a visitor
+  (`should_continue`), and the authoring drainer stops before any further call or write (`should_stop`).

@@ -2492,10 +2492,25 @@ class EntityRegistry:
                     if not maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
                                                       lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")):
                         raise _MaintenanceSuperseded()
+                    def _pass_may_continue() -> bool:
+                        # The pass stops at its next stage when a Stop moved the generation or a
+                        # visitor took the posture (Codex review 2 #2): nothing further is written.
+                        from .entity_phase import generation_of as _gen_now
+
+                        try:
+                            if _gen_now(self.entities_dir, manifest.slug) != maintenance_generation:
+                                return False
+                            st_now = read_entity_state(home_dir)
+                            return not (st_now.get("state") == "asleep" and st_now.get("mode") == "visiting")
+                        except Exception:  # noqa: BLE001 - an unreadable check never kills a pass
+                            return True
+
+                    pass_kwargs = {"should_continue": _pass_may_continue} if _night_is_full else {}
                     result = _night_pass(
                         home.memory,
                         scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
                         owner_id=eid,
+                        **pass_kwargs,
                     )
                     dream_result = dict(result) if isinstance(result, dict) else {"result": result}
                     if not _night_is_full:

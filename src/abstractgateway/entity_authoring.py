@@ -51,7 +51,10 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
         except DirectoryLeaseHeld:
             return {"skipped": "home_busy"}
         try:
+            from .entity_phase import generation_of
+
             home = registry.get_entity_runtime(slug).home
+            entry_generation = generation_of(registry.entities_dir, slug)
 
             def _diary_text(entry_id: str) -> Optional[str]:
                 entry = home.diary.get_entry(entry_id) if entry_id else None
@@ -68,6 +71,8 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
                 window="visit",
                 diary_text=_diary_text,
                 out=lambda line: logger.info("authoring drain %s: %s", slug, line),
+                # A Stop since the drain began: no further call, and nothing written after it.
+                should_stop=lambda: generation_of(registry.entities_dir, slug) != entry_generation,
             )
         finally:
             lease.release()
