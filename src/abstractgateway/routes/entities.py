@@ -1726,7 +1726,7 @@ def set_entity_state(name: str, req: SetEntityStateRequest, response: Response =
         return _legacy(_ep.stop(_registry(), name, reason=str(req.reason or "").strip(), via="POST /entities/{name}/state"))
     if target == "awake" and _now_word == "paused":
         _deprecate(response, "lifecycle")
-        return _legacy(_ep.resume(_registry(), name))
+        return _legacy(_ep.resume(_registry(), name, reason=str(req.reason or "").strip(), via="POST /entities/{name}/state"))
     if target == "asleep":
         _snap = _ep.publish(_registry(), name, "observed")
         _can = (_snap.get("can") or {}).get("sleep_now") or {}
@@ -3038,7 +3038,7 @@ async def post_entity_lifecycle(name: str, request: Request):
     if action == "stop":
         return await off_loop("heavy", lambda: entity_phase.stop(registry, name, reason=str(reason or "")))
     if action == "resume":
-        return await off_loop("heavy", lambda: entity_phase.resume(registry, name))
+        return await off_loop("heavy", lambda: entity_phase.resume(registry, name, reason=str(reason or "")))
     return await off_loop("heavy", lambda: entity_phase.retry(registry, name))
 
 

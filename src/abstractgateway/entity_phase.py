@@ -1449,10 +1449,12 @@ def _stop_chat(chat_host: Any, name: str, cancelled: Dict[str, Any]) -> Dict[str
     return _item("chat", out.get("chat_id"), str(out.get("outcome") or "not_open"))
 
 
-def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: Any = None, visit_host: Any = None) -> Dict[str, Any]:
+def resume(registry: Any, name: str, *, reason: str = "", actor: Optional[str] = None, chat_host: Any = None,
+           visit_host: Any = None, via: str = "POST /entities/{name}/lifecycle") -> Dict[str, Any]:
     """Clear stopped and write awake (never a sleep): he comes back IDLE, always (v3 D3). Nothing
     from before the Stop is restored; own time comes back only when the operator gives it again,
-    and a queued job then moves him to work (reconcile, never an operator act here)."""
+    and a queued job then moves him to work (reconcile, never an operator act here). The operator's
+    `reason` is kept, as Stop keeps its own: in the state's reason and on the wake marker."""
     from abstractruntime.identity.life import (
         personal_grant_refusal,
         read_entity_state,
@@ -1471,10 +1473,12 @@ def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: 
     entities_dir = Path(registry.entities_dir)
     home_dir = entities_dir / slug
     actor = actor or _actor()
+    reason = str(reason or "").strip()
+    via = via.replace("{name}", slug)
     with phase_lock(entities_dir, slug):
         already = str(read_entity_state(home_dir).get("state") or "") != "paused"
         if not already:
-            write_entity_state(home_dir, "awake", reason=f"resumed [by {actor} via POST /entities/{slug}/lifecycle]")
+            write_entity_state(home_dir, "awake", reason=f"resumed{(': ' + reason) if reason else ''} [by {actor} via {via}]")
             rec = read_record(entities_dir, slug)
             rec["maintenance"] = None
             rec["stop_outstanding"] = []
@@ -1487,7 +1491,7 @@ def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: 
             write_record(entities_dir, slug, rec)
     started = {"own_time": False, "pid": None}
     if not already:
-        _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "paused", "reason": "resumed", "by": actor})
+        _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "paused", "reason": reason or "resumed", "by": actor})
         if revoked_at_resume:
             _marker(registry, manifest, "personal_grant_revoked",
                     {"mode": "disabled", "revoked_by": "kill_switch", "by": actor, "channel": "resume"})

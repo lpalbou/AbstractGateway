@@ -616,3 +616,29 @@ def test_the_stop_receipt_lists_only_the_runs_it_found_live(monkeypatch: pytest.
                     holder="agent:coder", holder_kind="agent")
         again = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
         assert [i for i in again.json()["items"] if i["item"] == "run"] == []
+
+
+def test_resume_keeps_its_reason_as_stop_keeps_its_own():
+    """Resume dropped the operator's reason (the state said only "resumed [by ...]"). It is kept,
+    in the state's reason and on the wake marker, on both doors (lifecycle and the legacy state)."""
+    from abstractruntime.identity.life import read_entity_state
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop", "reason": "a test"}).status_code == 200
+        r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume", "reason": "back to work"})
+        assert r.status_code == 200, r.text
+        st = read_entity_state(_home_dir())
+        assert st["state"] == "awake" and st["reason"].startswith("resumed: back to work [by person:")
+        path = _home_dir().parent / ".host_stream" / "castor.jsonl"
+        wakes = [json.loads(x)["payload"] for x in path.read_text(encoding="utf-8").splitlines()
+                 if x.strip() and (json.loads(x).get("payload") or {}).get("kind") == "wake"]
+        assert wakes[-1]["reason"] == "back to work" and wakes[-1]["prior_state"] == "paused"
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        legacy = client.post("/api/gateway/entities/Castor/state", json={"state": "awake", "reason": "by the old door"})
+        assert legacy.status_code == 200, legacy.text
+        assert read_entity_state(_home_dir())["reason"].startswith("resumed: by the old door [by person:")
+        # No reason: the plain word, as before.
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"}).status_code == 200
+        assert read_entity_state(_home_dir())["reason"].startswith("resumed [by person:")
