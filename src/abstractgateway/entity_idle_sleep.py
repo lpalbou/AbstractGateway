@@ -62,7 +62,7 @@ def last_maintenance_done(home_dir: Path, rec: Dict[str, Any]) -> Optional[str]:
 
 def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """The threshold that fired, with its receipt, or None."""
-    from abstractmemory import records_since_maintenance
+    from abstractruntime.integrations.abstractmemory.memory_facade import records_since_maintenance
     from abstractruntime.identity.cognition_profile import sleep_thresholds
 
     from .entities import DIARY_SCOPE, LIFE_SCOPE, SELF_SCOPE
