@@ -88,6 +88,12 @@
 - **Operator sleep only changes the phase** (§4.3). It no longer disarms the personal grant or clears the standing
   work order: v17's OPERATOR-SLEEP-IS-ABSOLUTE composite is retired by the 2026-11-08 ruling.
 
+- `POST /entities/{name}/state {state: "sleep"}` is refused during a visit (409 `in_visit`, "He is in a visit; end
+  it to let him sleep."; it no longer tears the visit down) and while already asleep (409 `already_asleep`).
+  `POST /state awake` hands the phase back to the toggles (reconcile).
+- The kill switch records `personal_frozen` when it killed a live loop. It calls the runtime's hard stop only when a
+  loop is alive: the hard stop writes the status as the calling process, and a second one would signal the gateway.
+
 ### Deprecated
 
 - **The old lifecycle routes are mapped onto the phase model** and answer `Deprecation: true` with a successor `Link`
@@ -102,11 +108,3 @@
     (200 `{started: false, deferred: true, life_state}`) while a visit, work or a sleep holds the phase: a running
     sleep is never cut short. While stopped it answers `stopped_use_resume`.
   - `PUT .../personal-grant` is the personal toggle: it reconciles and its answer carries `life_state`.
-
-### Changed (lifecycle doors)
-
-- `POST /entities/{name}/state {state: "sleep"}` is refused during a visit (409 `in_visit`, "He is in a visit; end
-  it to let him sleep."; it no longer tears the visit down) and while already asleep (409 `already_asleep`).
-  `POST /state awake` hands the phase back to the toggles (reconcile).
-- The kill switch records `personal_frozen` when it killed a live loop. It calls the runtime's hard stop only when a
-  loop is alive: the hard stop writes the status as the calling process, and a second one would signal the gateway.
