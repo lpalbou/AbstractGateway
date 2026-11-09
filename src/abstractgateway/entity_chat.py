@@ -1016,6 +1016,7 @@ class EntityChatHost:
                 home_dir, target,
                 reason=(f"{reason} {suffix}".strip() if reason else suffix),
                 wake_at=wake_at,
+                written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
             )
         except Exception:  # noqa: BLE001
             pass
@@ -1055,6 +1056,8 @@ class EntityChatHost:
         open's pending-lookback salvage recovers, never memories.
         """
         deadline = time.monotonic() + max(0.0, float(budget_s))
+        # Shutdown is not a visit's end: no own time is started while the gateway stops.
+        self._shutting_down = True
         with self._lock:
             hosted_all = [h for h in self._sessions.values() if not h.closed]
         for h in hosted_all:
@@ -1137,6 +1140,8 @@ class EntityChatHost:
                             reason=(str(prior.get("reason") or "") or "operator sleep restored")
                             + f" (visit ended: {len(hosted.session.reports)} turns)",
                             wake_at=str(prior.get("wake_at") or ""),
+                            # The same sleep continues (contract-phases §4.4): who chose it travels.
+                            written_by=str(prior.get("written_by") or "operator"),
                         )
                     else:
                         # Wake-cue seeding (maintainer escalation 2026-07-09,
@@ -1176,6 +1181,13 @@ class EntityChatHost:
             hosted, "session_closed",
             details={"session_id": hosted.session.session_id, "turns": len(hosted.session.reports)},
         )
+        # Back to the previous phase where the toggles allow it; the gateway restarts own time
+        # when personal is on (contract-phases v2 §4.2, §4.4).
+        if not getattr(self, "_shutting_down", False):
+            from .entity_phase import after_visit_closed, default_hosts
+
+            after_visit_closed(self._registry, hosted.entity_slug, dict(hosted.prior_state or {}), cause="chat_closed",
+                               chat_host=self, visit_host=default_hosts()[1])
         out: Dict[str, Any] = {"summary": summary, "turns": len(hosted.session.reports)}
         if reflection:
             out["reflection"] = {

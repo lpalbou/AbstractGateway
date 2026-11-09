@@ -485,6 +485,14 @@ class GatewayRunner:
 
     def _stream_run(self, run: Any) -> None:
         """run.started (+ trigger.event) / run.finished for a just-SAVED run state."""
+        if run is not None:
+            st0 = getattr(run, "status", None)
+            if str(getattr(st0, "value", st0) or "").lower() in ("completed", "failed", "cancelled"):
+                # An entity's summon (work) ended: the gateway reconciles its own time
+                # (contract-phases v2 §4.2). Never raises; a background thread does the work.
+                from .entity_phase import note_run_terminal
+
+                note_run_terminal(run)
         stream = self._user_stream
         if stream is None or run is None:
             return

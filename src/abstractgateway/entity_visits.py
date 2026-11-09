@@ -111,6 +111,15 @@ def _woken_reason() -> str:
     return WOKEN_BY_VISIT_REASON
 
 
+def _chat_host_or_none() -> Any:
+    try:
+        from .entity_phase import default_hosts
+
+        return default_hosts()[0]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # The one visit refusal (operator 2026-11-09; contract-phases §6.1, §7).
 STOPPED_VISIT_SENTENCE = "Stopped. Resume to visit."
 
@@ -208,6 +217,7 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
             home_dir, target,
             reason=(f"{reason} {suffix}".strip() if reason else suffix),
             wake_at=wake_at,
+            written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
         )
     except Exception:  # noqa: BLE001
         pass
@@ -2039,6 +2049,7 @@ class EntityVisitHost:
         registry = self._registry
         home_dir = registry.entities_dir / manifest.slug
         wake_warning: Optional[str] = None
+        prior: Dict[str, Any] = {}
         try:
             st = read_entity_state(home_dir)
             word = str(st.get("state") or "")
@@ -2081,6 +2092,8 @@ class EntityVisitHost:
                         reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
                         # Bounded sleeps keep their deadline (runtime c343).
                         wake_at=str(prior.get("wake_at") or ""),
+                        # The same sleep continues: who chose it travels with it (contract-phases §4.4).
+                        written_by=str(prior.get("written_by") or "operator"),
                     )
                 elif owned:
                     write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
@@ -2107,6 +2120,12 @@ class EntityVisitHost:
         )
         with self._lock:
             self._specs.pop(run_id, None)
+        # A visit's close returns to the previous phase where the toggles allow it, and the
+        # gateway restarts own time when personal is on (contract-phases v2 §4.4, §4.2).
+        from .entity_phase import after_visit_closed
+
+        after_visit_closed(registry, manifest.slug, prior or None, visit_host=self,
+                           chat_host=_chat_host_or_none())
 
     @staticmethod
     def _journal_seq(er: Any) -> Optional[int]:

@@ -1688,22 +1688,12 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
     reason_in = str(req.reason or "").strip()
     stamp = f"[by {actor} via POST /entities/{name}/state]"
-    # OPERATOR-SLEEP-IS-ABSOLUTE (laurent dm#127, spec v17 — "sleep is sleep,
-    # it can't wake up on personal time if I put it to sleep"): the operator
-    # sleep click is a COMPOSITE act — asleep + personal grant DISARMED +
-    # standing work orders CLEARED, ONE act named in ONE biography moment.
-    # After it, no machine path wakes into personal or work (the v13
-    # need-check finds a bare desk and re-sleeps — no new suppression
-    # machinery). Tonight's incident (Ephemeral woke to personal 1h after an
-    # operator sleep) was precisely the missing disarm: the ~1h bounded-sleep
-    # wake landed on a still-armed July-15 grant. The composite reason names
-    # all three so the single host marker is self-describing.
+    # SLEEP ONLY CHANGES THE PHASE (operator ruling 2026-11-08, contract-phases v2 §4.3; retires
+    # v17's OPERATOR-SLEEP-IS-ABSOLUTE composite): the operator's sleep no longer disarms the
+    # personal grant nor clears the standing work order. With `dream: true` the maintenance pass
+    # runs, and when it is done he wakes and the gateway reconciles from the toggles.
     is_operator_sleep = target == "asleep"
-    if is_operator_sleep:
-        composite_note = "operator sleep (v17): personal grant disarmed + standing orders cleared — sleep is sleep"
-        stamped_reason = f"{reason_in} {composite_note} {stamp}".strip() if reason_in else f"{composite_note} {stamp}"
-    else:
-        stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
+    stamped_reason = f"{reason_in} {stamp}".strip() if reason_in else stamp
     closed: Optional[Dict[str, Any]] = None
     closed_durable: Optional[Dict[str, Any]] = None
     # AWAKE UNDER A LIVE VISIT IS REFUSED (mutual-exclusivity wave, laurent
@@ -1739,51 +1729,6 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
                     "which tears it down"
                 ),
             )
-    # COMPOSITE DISARM FIRST (v17 crash-safety): for an operator sleep, disarm
-    # the personal grant and clear standing orders BEFORE writing asleep. The
-    # ordering is the crash invariant — a crash AFTER disarm but BEFORE the
-    # state write leaves a BARE DESK (no grant, no order, still awake), which
-    # the v13 need-check re-sleeps; the reverse order (asleep first) is the
-    # exact bug tonight's incident hit (asleep + armed grant → the ~1h
-    # bound woke into personal). If the disarm itself fails (corrupt
-    # phases.yaml), we REFUSE the sleep rather than write asleep over an
-    # armed grant — the operator repairs the file and retries (same
-    # loud-refuse discipline write_personal_grant already enforces).
-    composite: Dict[str, Any] = {}
-    if is_operator_sleep:
-        try:
-            from abstractruntime.identity.life import (
-                archive_work_order,
-                read_personal_grant,
-                read_work_order,
-                write_personal_grant,
-            )
-
-            manifest_c = _registry().manifest_for(name)
-            home_dir_c = _registry().entities_dir / manifest_c.slug
-            prior_grant = read_personal_grant(home_dir_c)
-            if str(prior_grant.get("mode") or "disabled") != "disabled":
-                write_personal_grant(home_dir_c, mode="disabled", granted_by=actor)
-                composite["grant_disarmed"] = {
-                    "was_mode": prior_grant.get("mode"),
-                    "was_granted_by": prior_grant.get("granted_by"),
-                }
-            standing_order = read_work_order(home_dir_c)
-            if standing_order:
-                archive_work_order(home_dir_c, verdict=f"cleared by operator sleep {stamp}")
-                composite["work_order_cleared"] = True
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-        except Exception as e:  # noqa: BLE001 - a corrupt grant file must not become asleep+armed
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"operator sleep could not disarm {name}'s personal grant "
-                    f"({e}); refusing to sleep over an armed grant — repair "
-                    "phases.yaml and retry (sleep-is-absolute needs the disarm to land)"
-                ),
-            )
-
     # STATE WRITES FIRST (state-sources adversary P0-2, trigger b): the state
     # file is the coordination authority — writing it before the teardown
     # makes the visit gates (open/turn/tick check asleep+paused) refuse any
@@ -1853,10 +1798,20 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
             # visit was open" — the state flipped, the gates protect
             # cognition, but the response says what actually happened.
             closed_durable = {"error": f"#FALLBACK durable teardown errored: {e}", "teardown_failed": True}
-    if composite:
-        # Surface the composite in the response so the operator sees the sleep
-        # DID disarm/clear (not a silent side effect).
-        result["composite_sleep"] = composite
+    # MAINTENANCE DONE (contract-phases v2 §4.3): the operator sleep's pass returned — he wakes
+    # and the gateway reconciles, unless a Stop landed (generation moved: nothing written) or a
+    # visit took the posture (the wake runs at the visit's close).
+    dream_out = result.get("dream") if isinstance(result.get("dream"), dict) else None
+    if target == "asleep" and dream_out and dream_out.get("generation") is not None and not dream_out.get("skipped"):
+        try:
+            from ..entity_phase import maintenance_done
+
+            result["maintenance"] = maintenance_done(
+                _registry(), name, int(dream_out["generation"]),
+                failed=(str(dream_out.get("error")) if dream_out.get("error") else None),
+            )
+        except Exception as e:  # noqa: BLE001 - labelled, never a silent sleep
+            result["maintenance_warning"] = f"#FALLBACK maintenance completion failed: {e}"
     if closed is not None:
         result["closed_visit"] = {"turns": closed.get("turns"), "summary": closed.get("summary")}
     if closed_durable is not None:
@@ -5057,6 +5012,14 @@ def put_entity_work_order(name: str, req: PutWorkOrderRequest) -> Dict[str, Any]
         # Archive the standing order (verdict names the operator's clear),
         # then it is gone from the live path — personal returns next day-open.
         archive_work_order(home_dir, verdict=f"cleared by {actor}")
+        # The order no longer holds the phase: own time may start (contract-phases v2 §4.2).
+        from ..entity_phase import reconcile, safe_publish
+
+        try:
+            reconcile(registry, name, "work_ended")
+        except Exception:  # noqa: BLE001 - the clear itself landed
+            logger.exception("reconcile after the work order was cleared failed for %s", name)
+        safe_publish(registry, name, "work_ended")
         return get_entity_work_order(name)
     try:
         (home_dir / WORK_ORDER_FILENAME).write_text(order_text + "\n", encoding="utf-8")

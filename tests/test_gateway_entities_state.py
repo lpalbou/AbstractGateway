@@ -68,38 +68,29 @@ def test_state_writes_carry_server_derived_principal_provenance():
         assert r2.json()["state"]["reason"] == "[by person:admin via POST /entities/Castor/state]"
 
 
-def test_operator_sleep_is_composite_disarms_grant_and_clears_orders():
-    """OPERATOR-SLEEP-IS-ABSOLUTE (laurent dm#127, spec v17): the sleep click
-    is ONE composite act — asleep + personal grant DISARMED + standing work
-    orders CLEARED — so no machine path wakes into personal/work afterward.
-    Tonight's incident: Ephemeral woke to personal ~1h after an operator
-    sleep because the sleep wrote asleep-only and left a standing grant armed."""
+def test_operator_sleep_only_changes_the_phase():
+    """The operator ruling of 2026-11-08 (contract-phases v2 §4.3) retires v17's composite sleep
+    (OPERATOR-SLEEP-IS-ABSOLUTE): the sleep click no longer disarms the personal grant nor clears
+    the standing work order. Sleep changes the phase; the toggles and the order stand."""
     from abstractruntime.identity.life import read_personal_grant, read_work_order, write_personal_grant
 
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        # Arm a standing personal grant + a work order the way the live box carried them.
         import abstractgateway.routes.entities as ent
 
         manifest = ent._registry().manifest_for("Castor")
         home = ent._registry().entities_dir / manifest.slug
         write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
         (home / "work_order.md").write_text("stand up the daily report", encoding="utf-8")
-        assert read_personal_grant(home).get("mode") == "until_revoked"
-        assert read_work_order(home) is not None
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
-        # The operator sleep click.
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "asleep", "reason": "goodnight"})
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["state"]["state"] == "asleep"
-        # Composite surfaced + effective on disk.
-        assert body["composite_sleep"]["grant_disarmed"]["was_mode"] == "until_revoked"
-        assert body["composite_sleep"]["work_order_cleared"] is True
-        assert read_personal_grant(home).get("mode") == "disabled", "grant must be disarmed by the operator sleep"
-        assert read_work_order(home) is None, "standing order must be cleared by the operator sleep"
-        # One biography moment names all three (the composite reason).
-        assert "sleep is sleep" in body["state"]["reason"]
+        assert "composite_sleep" not in body
+        assert read_personal_grant(home).get("mode") == "until_revoked"
+        assert read_work_order(home) is not None
 
 
 def test_operator_sleep_without_grant_or_order_is_plain():
@@ -137,6 +128,11 @@ def test_state_verbs_door_and_markers():
         assert body["state"]["state"] == "asleep"
         assert body["prior"]["state"] == "awake"
         assert isinstance(body["dream"], dict)  # ran (quiet nights are valid)
+        # He wakes when the maintenance is done (contract-phases v2 §4.3).
+        assert body["maintenance"] == "woke"
+        assert client.get("/api/gateway/entities/Castor/state").json()["state"] == "awake"
+        # A plain operator sleep (no pass) for the summon-wakes-a-sleeper pin below.
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "asleep"}).status_code == 200
 
         # THE LIVENESS GATE (laurent 16:12: reachability rides the liveness
         # axis — the a2a 0008 no-summon window is RETIRED): a sleeping-but-
@@ -182,7 +178,8 @@ def test_state_verbs_door_and_markers():
         # (skills_selection_changed — laurent seq 156) precede the state
         # verbs; filter to the state-verb vocabulary this test owns.
         state_kinds = [k for k in kinds if k in ("wake", "sleep", "pause")]
-        assert state_kinds == ["wake", "sleep", "pause", "wake"]
+        # (the dream sleep ends with its own wake when maintenance is done, contract-phases v2 §4.3)
+        assert state_kinds == ["wake", "sleep", "wake", "sleep", "pause", "wake"]
         # The sleep marker carries the dream result (observable story) —
         # find it by kind (birth markers shift fixed line numbers).
         sleep_line = next(

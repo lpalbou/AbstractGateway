@@ -1220,7 +1220,8 @@ def after_visit_closed(registry: Any, slug: str, prior: Optional[Dict[str, Any]]
             if (
                 maint
                 and maint.get("status") == "done_pending_wake"
-                and int(maint.get("generation") or -1) == int(rec.get("generation") or 0)
+                and maint.get("generation") is not None
+                and int(maint["generation"]) == int(rec.get("generation") or 0)
                 and str(st.get("state") or "") == "asleep"
                 and str(st.get("mode") or "") != "visiting"
             ):
@@ -1289,6 +1290,9 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
             return "not_ours"  # a summon or a wake already ended this sleep
         reason = "maintenance done; awake" + (f" (the pass failed: {failed})" if failed else "")
         write_entity_state(home_dir, "awake", reason=reason)
+    # The wake is a moment of his life like any other (the sleep that ends has its own marker).
+    _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "asleep", "reason": "maintenance done",
+                                         **({"failed": failed} if failed else {})})
     reconcile(registry, name, "maintenance_done", chat_host=chat_host, visit_host=visit_host)
     return "woke"
 

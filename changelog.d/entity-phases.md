@@ -41,6 +41,25 @@
   - The body is validated by the handler: 422 `invalid_body` or `invalid_toggles`. While stopped: 409
     `stopped_use_resume`.
 
+- **The gateway owns own time** (contract v2 §4). Reconcile starts the own-time loop when `personal` is on and nothing
+  else holds the phase.
+  - Triggers: a durable visit's close (normal or idle reaper), a hosted chat's close, a summon run's end (runner hook),
+    the work order being cleared, a graceful loop stop completing, a toggle, resume, retry, and an operator sleep's
+    maintenance being done.
+  - Never under a visit (open or opening), a running sleep, live work, the kill switch, or an archived entity.
+  - Never twice: a spawn claim in the sidecar. A Stop that lands during the spawn kills the new loop.
+  - No automatic respawn after a crash: the read shows `blocked {loop_crashed, action: retry}`.
+  - Gateway shutdown never starts own time.
+- **A visit's close returns to the previous phase** (§4.4). An interrupted sleep continues as the same sleep, keeping
+  who chose it (`written_by`), its wake time and its original `since`. Both lanes restore `written_by`.
+- **An operator sleep wakes when its maintenance is done** (`POST /state {state: sleep, dream: true}`; §4.3). The
+  sleep is announced before the pass. When the pass returns he wakes and the gateway reconciles, unless a Stop moved
+  the generation (nothing written) or a visit took the posture (the wake then runs at the visit's close). The response
+  carries `maintenance: woke | after_visit | stopped | not_ours`.
+- **The replay stream observes changes made inside the loop** (§5). When the home's `state`, `loop_status` or
+  `phases.yaml` moves, and on every heartbeat, an open `/replay/stream` re-derives the snapshot. A new rev reaches the
+  client as its `phase_changed` envelope, and a reconnect with `Last-Event-ID` redelivers it.
+
 ### Changed
 
 - **Stopped is the one visit refusal** (operator 2026-11-09: a visit never fails). Both visit doors and the mention door
@@ -54,3 +73,5 @@
   the kill switch, `phase` is `stopped` instead of `null`. The tile's last moment skips a `phase_changed` echo of an
   act that is its own moment.
 - The summon door's paused refusal also carries `reason_code: stopped_use_resume` and a `message`.
+- **Operator sleep only changes the phase** (§4.3). It no longer disarms the personal grant or clears the standing
+  work order: v17's OPERATOR-SLEEP-IS-ABSOLUTE composite is retired by the 2026-11-08 ruling.
