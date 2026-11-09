@@ -233,8 +233,10 @@ def test_a_mention_answer_landing_after_a_stop_is_neither_recorded_nor_mirrored(
         )
 
 
-def test_resume_writes_awake_never_a_sleep_and_restarts_own_time(monkeypatch: pytest.MonkeyPatch):
-    from abstractruntime.identity.life import read_entity_state, write_entity_state, write_personal_grant
+def test_resume_writes_awake_never_a_sleep_and_restores_own_time(monkeypatch: pytest.MonkeyPatch):
+    """Resume restores the phase the Stop interrupted while its grant is on (operator 2026-11-09);
+    it never restores a sleep."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
 
     from abstractgateway import entity_phase
 
@@ -248,7 +250,10 @@ def test_resume_writes_awake_never_a_sleep_and_restarts_own_time(monkeypatch: py
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home_dir = _home_dir()
-        write_personal_grant(home_dir, mode="until_revoked", granted_by="person:admin")
+        write_entity_state(home_dir, "awake", reason="woken")
+        # The operator gives own time (starts at once), later puts him to sleep, then stops him.
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
+        assert spawned == ["castor"]
         write_entity_state(home_dir, "asleep", reason="operator sleep")
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
 
@@ -256,11 +261,28 @@ def test_resume_writes_awake_never_a_sleep_and_restarts_own_time(monkeypatch: py
         assert r.status_code == 200, r.text
         assert r.json()["already"] is False
         assert read_entity_state(home_dir)["state"] == "awake"  # the sleep before the stop is gone
-        assert spawned == ["castor"] and r.json()["started"] == {"own_time": True, "pid": 4242}
+        assert spawned == ["castor", "castor"] and r.json()["started"] == {"own_time": True, "pid": 4242}
 
         again = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert again.status_code == 200 and again.json()["already"] is True
-        assert spawned == ["castor"]
+        assert spawned == ["castor", "castor"]
+
+
+def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest.MonkeyPatch):
+    from abstractruntime.identity.life import write_entity_state, write_personal_grant
+
+    from abstractgateway import entity_phase
+
+    spawned = []
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p: spawned.append(m.slug) or {"pid": 1})
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        write_entity_state(_home_dir(), "awake", reason="woken")
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")  # granted, never run
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
+        assert r.status_code == 200 and r.json()["phase"] == "idle"
+        assert spawned == []
 
 
 def test_lifecycle_body_errors_and_unknown_entity():

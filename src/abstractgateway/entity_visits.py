@@ -1178,6 +1178,11 @@ class EntityVisitHost:
         posture_reason = (f"in conversation with {visitor} {visit_token}".strip()) + (
             " (auto-yield)" if loop_alive else ""
         )
+        # The phase this visit interrupts is observed BEFORE the posture lands (resume_to): its
+        # close returns there while the operator's grant still allows it (operator 2026-11-09).
+        from .entity_phase import safe_publish
+
+        safe_publish(registry, name, "observed", visit_host=self, chat_host=_chat_host_or_none())
         write_entity_state(
             home_dir, "asleep",
             reason=posture_reason,

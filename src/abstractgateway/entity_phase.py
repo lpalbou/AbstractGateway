@@ -15,10 +15,12 @@ switch, the state word `paused` on the wire).
 - `stop` / `resume` are the kill switch. Stop bumps the home's `generation` FIRST (the fence), so
   a writer that started before the stop (a maintenance pass, a reconcile spawn, a visit restore, a
   mention persist) re-checks it and gives up instead of undoing the stop.
-- `reconcile` starts own time when `personal` is on and nothing else holds the phase; the gateway
-  owns that restart (after a visit or chat closes, a summon ends, a toggle, a resume, the end of an
-  operator sleep's maintenance). There is no automatic respawn after a crash: the read shows
-  `blocked {loop_crashed}` with a `retry` action.
+- `reconcile` RESTORES the phase an interruption took over (`resume_to`), and only while that
+  phase's grant is still on (operator 2026-11-09: "own time can only be given and removed by the
+  operator ... if granted, when there are transitions to other states, it can go back to that
+  state"). It never starts own time from idle by itself; only the operator's own act does (his
+  toggle turning personal on, his loop/start, his retry). A crashed loop is never restarted
+  automatically: the read shows `blocked {loop_crashed}` with a `retry` action.
 
 The sidecar `<entities_dir>/.life_phase/<slug>.json` is gateway bookkeeping, outside the home (the
 `.host_stream` / `.live_summons` class). It is written atomically under a per-home flock, and the
@@ -69,6 +71,11 @@ _DEFAULT_RECORD: Dict[str, Any] = {
     "stop_outstanding": [],
     "maintenance": None,
     "sleep_since_override": None,
+    # The phase to return to after an interruption (operator 2026-11-09): "personal" or "work" while
+    # that own-time phase was running when a visit, a sleep, a request or a Stop interrupted it;
+    # None otherwise. ONE writer: `_note_resume_to` (publish's observation, the operator's toggles,
+    # a deferred start). Reconcile only ever RESTORES it, and only while its grant is still on.
+    "resume_to": None,
 }
 
 
@@ -150,6 +157,24 @@ def write_record(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
     tmp = path.with_suffix(f".tmp-{secrets.token_hex(4)}")
     tmp.write_text(json.dumps(rec, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _note_resume_to(rec: Dict[str, Any], value: Optional[str]) -> bool:
+    """THE one writer of `resume_to` (callers hold the phase lock and write the record)."""
+    value = value if value in ("personal", "work") else None
+    if rec.get("resume_to") == value:
+        return False
+    rec["resume_to"] = value
+    return True
+
+
+def set_resume_to(registry: Any, slug: str, value: Optional[str]) -> None:
+    """The operator's own acts (a toggle, a deferred start) name the phase to return to."""
+    entities_dir = Path(registry.entities_dir)
+    with phase_lock(entities_dir, slug):
+        rec = read_record(entities_dir, slug)
+        if _note_resume_to(rec, value):
+            write_record(entities_dir, slug, rec)
 
 
 def generation_of(entities_dir: Path, slug: str) -> int:
@@ -640,6 +665,24 @@ def publish(
         semantic = {k: v for k, v in snap.items() if k not in _SEMANTIC_EXCLUDE}
         semantic["since"] = since
         semantic["generation"] = int(rec.get("generation") or 0)
+        # resume_to follows what own time is doing: running personal/work names itself; own time
+        # ending WITHOUT an interruption (personal/work straight to idle: its own end, the operator's
+        # toggle, a crash) clears it; an interruption (visit, sleep, a request, a Stop) keeps it.
+        new_phase = snap["phase"]
+        own_kind = "personal" if new_phase == "personal" else (
+            "work" if new_phase == "work" and (snap.get("work") or {}).get("kind") == "work_order" else None)
+        resume_changed = False
+        if own_kind:
+            resume_changed = _note_resume_to(rec, own_kind)
+        elif new_phase == "idle" and prev_phase in ("personal", "work"):
+            resume_changed = _note_resume_to(rec, None)
+        elif (new_phase == "idle" and prev_phase in ("visit", "sleep", "work") and rec.get("resume_to")
+              and cause in ("observed", "grant_expired")):
+            # An interruption ended where the gateway has no write point (a self sleep's end, a
+            # request's end seen on read): restore what it interrupted.
+            follow_up = "restore"
+        if resume_changed and prev == semantic:
+            write_record(entities_dir, slug, rec)
         if prev != semantic:
             rec["rev"] = int(rec.get("rev") or 0) + 1
             rec["snapshot"] = semantic
@@ -666,7 +709,8 @@ def publish(
     if follow_up:
         try:
             reconcile(registry, name, follow_up, chat_host=chat_host, visit_host=visit_host)
-            return publish(registry, name, follow_up, chat_host=chat_host, visit_host=visit_host)
+            return publish(registry, name, "own_time_started" if follow_up == "restore" else follow_up,
+                           chat_host=chat_host, visit_host=visit_host)
         except Exception:  # noqa: BLE001 - the read stays served
             logger.exception("reconcile after own time ended failed for %s", slug)
     return body
@@ -807,6 +851,8 @@ def stop(
     actor = actor or _actor()
     via = via.replace("{name}", slug)
 
+    # The phase the Stop interrupts is observed first (resume_to): Resume restores it.
+    safe_publish(registry, name, "observed", chat_host=chat_host, visit_host=visit_host)
     # 1. FENCE: generation first, then the paused write (every door refuses from here on).
     with phase_lock(entities_dir, slug):
         rec = read_record(entities_dir, slug)
@@ -1077,8 +1123,12 @@ def set_toggles(
         loop = loop_status(home_dir)
         if bool(loop.get("running")) and str(loop.get("day_kind") or "") == "work":
             stop_loop(home_dir, reason=f"work turned off by {actor}", requested_by="operator")
+    if changed["personal"] is not None:
+        # The operator's own act names the phase to return to (personal on) or retires it (off).
+        set_resume_to(registry, slug, "personal" if personal else None)
     if changed["work"] is not None or changed["personal"] is not None:
-        reconcile(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host)
+        reconcile(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host,
+                  operator=bool(changed["personal"] is not None and personal))
     body = publish(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host)
     body["changed"] = changed
     return body
@@ -1095,8 +1145,15 @@ def work_allowed(registry: Any, slug: str) -> bool:
 
 
 # --------------------------------------------------------------------------- reconcile
-def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, visit_host: Any = None) -> Dict[str, Any]:
-    """The gateway owns own time (contract §4). Idempotent; returns {own_time, pid, reason}."""
+def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, visit_host: Any = None,
+              operator: bool = False) -> Dict[str, Any]:
+    """Restore own time after an interruption (contract §4; operator 2026-11-09). Idempotent;
+    returns {own_time, pid, reason}.
+
+    The target is `resume_to` (the phase the interruption took over), restored only while its
+    grant is still on. `operator=True` is the operator's own act (his toggle turning personal on,
+    his start, his retry): the target is then personal whenever the grant is on. Nothing else ever
+    starts own time from idle, and a crashed loop is never restarted without the operator."""
     from abstractruntime.identity.life import write_entity_state
 
     if chat_host is None and visit_host is None:
@@ -1133,10 +1190,20 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
             return {"own_time": False, "pid": None, "reason": "work"}
         if loop_alive:
             return {"own_time": False, "pid": None, "reason": "running"}
+        target = "personal" if operator else rec.get("resume_to")
+        if target not in ("personal", "work"):
+            return {"own_time": False, "pid": None, "reason": "idle"}  # nothing was interrupted
         if not facts["personal"]:
+            # The loop runs only under the operator's grant (work days too): revoked = stay idle.
             return {"own_time": False, "pid": None, "reason": "personal_off"}
+        if target == "work" and (not bool(rec.get("work", True)) or not facts["work_order"]):
+            return {"own_time": False, "pid": None, "reason": "work_off"}
         if not bool(rec.get("work", True)) and facts["work_order"]:
             return {"own_time": False, "pid": None, "reason": "work_order_waits_for_runtime"}
+        loop_facts = facts["loop"]
+        crashed = "process is gone" in str(loop_facts.get("note") or "") or str(loop_facts.get("stopped_by") or "") == "failures"
+        if crashed and not operator:
+            return {"own_time": False, "pid": None, "reason": "loop_crashed"}
         claim = rec.get("spawning") if isinstance(rec.get("spawning"), dict) else None
         if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
             return {"own_time": False, "pid": None, "reason": "spawning"}
@@ -1211,7 +1278,7 @@ def retry(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any = 
         rec = read_record(entities_dir, manifest.slug)
         rec["start_error"] = None
         write_record(entities_dir, manifest.slug, rec)
-    started = reconcile(registry, name, "retry", chat_host=chat_host, visit_host=visit_host)
+    started = reconcile(registry, name, "retry", chat_host=chat_host, visit_host=visit_host, operator=True)
     body = publish(registry, name, "retry", chat_host=chat_host, visit_host=visit_host)
     body.update({
         "action": "retry", "already": False, "took_ms": int((time.monotonic() - t0) * 1000),

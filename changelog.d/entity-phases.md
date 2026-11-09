@@ -41,15 +41,19 @@
   - The body is validated by the handler: 422 `invalid_body` or `invalid_toggles`. While stopped: 409
     `stopped_use_resume`.
 
-- **The gateway owns own time** (contract v2 §4). Reconcile starts the own-time loop when `personal` is on and nothing
-  else holds the phase.
-  - Triggers: a durable visit's close (normal or idle reaper), a hosted chat's close, a summon run's end (runner hook),
-    the work order being cleared, a graceful loop stop completing, a toggle, resume, retry, and an operator sleep's
-    maintenance being done.
+- **Own time is the operator's to give; the gateway restores it after an interruption** (contract v2 §4; operator
+  clarification 2026-11-09).
+  - The sidecar's `resume_to` (`personal | work | null`, one writer) names the own-time phase an interruption took
+    over: a visit or chat, a sleep, a request, a Stop.
+  - Reconcile RESTORES it only while that phase's grant is still on. It does so after a visit or chat closes (normal
+    or idle reaper), a spontaneous sleep ends, a request ends (runner hook), the work order is cleared, an operator
+    sleep's maintenance is done, a resume, or a wake.
+  - It never starts own time from idle by itself. Only the operator's own act does: the personal toggle, `loop/start`,
+    `PUT /personal-grant`, retry.
   - Never under a visit (open or opening), a running sleep, live work, the kill switch, or an archived entity.
   - Never twice: a spawn claim in the sidecar. A Stop that lands during the spawn kills the new loop.
-  - No automatic respawn after a crash: the read shows `blocked {loop_crashed, action: retry}`.
-  - Gateway shutdown never starts own time.
+  - A crashed loop is never restarted without the operator: the read shows `blocked {loop_crashed, action: retry}`.
+  - A graceful stop that completes ends own time and clears `resume_to`. Gateway shutdown never starts own time.
 - **A visit's close returns to the previous phase** (§4.4). An interrupted sleep continues as the same sleep, keeping
   who chose it (`written_by`), its wake time and its original `since`. Both lanes restore `written_by`.
 - **An operator sleep wakes when its maintenance is done** (`POST /state {state: sleep, dream: true}`; §4.3). The

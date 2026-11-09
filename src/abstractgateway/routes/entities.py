@@ -6682,6 +6682,8 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
 
         if _pgr(_rpg(home_dir)) is not None:
             _apply_personal_grant(registry, manifest, mode="until_revoked", expires_at=None)
+        # The operator's start names own time as the phase to return to when the phase frees.
+        _ep.set_resume_to(registry, manifest.slug, "personal")
         return {"started": False, "deferred": True, "status": loop_status(home_dir),
                 "life_state": _ep.publish(registry, name, "toggle")}
 
@@ -7116,7 +7118,9 @@ def put_personal_grant(name: str, req: PutPersonalGrantRequest, response: Respon
 
         if bool(_ls_g(home_dir).get("running")):
             _stop_g(home_dir, reason="personal turned off (personal-grant)", requested_by="operator")
-    _ep.reconcile(registry, name, "toggle")
+    _on = str(req.mode or "") != "disabled"
+    _ep.set_resume_to(registry, manifest.slug, "personal" if _on else None)
+    _ep.reconcile(registry, name, "toggle", operator=_on)
     out = get_personal_grant(name)
     out["life_state"] = _ep.publish(registry, name, "toggle")
     return out

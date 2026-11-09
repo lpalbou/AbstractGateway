@@ -115,13 +115,16 @@ An entity is in exactly one of four activity phases: **visit** (a person is talk
 - **idle**: awake and reachable, with nothing of its own running;
 - **stopped**: the kill switch.
 
-`work` and `personal` are **toggles**: permissions, not orders. Personal on lets the entity have its
-own time whenever nothing else holds the phase. Work on lets new work in. The gateway starts own time
-itself, when a visit or chat closes, a request ends, the work order is cleared, a toggle changes, the
-entity is resumed, or an operator sleep's maintenance is done. It never starts own time under a visit,
-a sleep, work, or the kill switch. If own time stops unexpectedly, the phase is `idle` with a
-`blocked` reason and a **retry** action; nothing restarts it behind your back. Sleep is entered only by
-the operator's sleep or by the entity's own decision. A sleep is never followed by another sleep.
+`work` and `personal` are **toggles**: permissions, not orders. **Own time is yours to give and to take
+back.** Turning personal on starts it; neither the gateway nor the entity ever grants it. Work on lets
+new work in.
+
+When something interrupts own time (a visit, a sleep, a request, Stop), the gateway brings the entity
+back to it afterwards, as long as personal is still on. It never starts own time for an entity that
+was not in it, and never under a visit, a sleep, work or the kill switch. If own time stops
+unexpectedly, the phase is `idle` with a `blocked` reason and a **retry** action; nothing restarts it
+behind your back. Sleep is entered only by the operator's sleep or by the entity's own decision. A
+sleep is never followed by another sleep.
 
 | Method | Path | What it does |
 |--------|------|--------------|
@@ -132,7 +135,7 @@ the operator's sleep or by the entity's own decision. A sleep is never followed 
 A visit never fails, in every phase and every sleep: the door opens at once and the entity joins as
 soon as it finishes the step in progress or its maintenance pass. While a visit lasts the phase is
 `visit`. When it closes, the entity returns to what it was doing: an interrupted sleep continues as
-the same sleep, and personal or work resumes if its toggle is on. **Stopped is the one exception**:
+the same sleep, and own time resumes if it was running and its toggle is still on. **Stopped is the one exception**:
 the visit door answers 409 `stopped_use_resume` "Stopped. Resume to visit."
 
 Every change reaches open clients on the entity's replay stream (`GET .../replay/stream`) as a host

@@ -84,6 +84,9 @@ def test_state_paused_is_the_kill_switch_and_restore_is_resume(spawned):
 
     with _client() as client:
         _born(client)
+        from abstractruntime.identity.life import write_entity_state
+
+        write_entity_state(_home_dir(), "awake", reason="woken")  # own time runs (not the newborn's sleep)
         write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         threading.Thread(target=proc.wait, daemon=True).start()

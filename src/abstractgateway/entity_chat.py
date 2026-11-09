@@ -660,6 +660,10 @@ class EntityChatHost:
             woke_for_visit = True
         loop_alive = bool(read_loop_status(home_dir).get("running"))
         posture_reason = f"in conversation with {visitor} {visit_token}" + (" (auto-yield)" if loop_alive else "")
+        # The phase this visit interrupts is observed BEFORE the posture lands (resume_to).
+        from .entity_phase import default_hosts, safe_publish
+
+        safe_publish(self._registry, name, "observed", chat_host=self, visit_host=default_hosts()[1])
         write_entity_state(
             home_dir, "asleep",
             reason=posture_reason,
