@@ -2494,20 +2494,32 @@ class EntityRegistry:
                                                       lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming",
                                                                                  written_by=written_by)):
                         raise _MaintenanceSuperseded()
+                    def _pass_cancelled() -> bool:
+                        # The hard Stop (Codex review 3 #5): the lifecycle generation moved. FAIL
+                        # CLOSED: a generation that cannot be read is a Stop, never "not stopped".
+                        from abstractruntime.identity.life import read_lifecycle_generation
+
+                        try:
+                            return int(read_lifecycle_generation(home_dir)) != int(maintenance_generation)
+                        except Exception:  # noqa: BLE001 - unreadable = stopped
+                            return True
+
                     def _pass_may_continue() -> bool:
                         # The pass stops at its next stage when a Stop moved the generation or a
                         # visitor took the posture (Codex review 2 #2): nothing further is written.
-                        from .entity_phase import generation_of as _gen_now
-
+                        if _pass_cancelled():
+                            return False
                         try:
-                            if _gen_now(self.entities_dir, manifest.slug) != maintenance_generation:
-                                return False
                             st_now = read_entity_state(home_dir)
-                            return not (st_now.get("state") == "asleep" and st_now.get("mode") == "visiting")
-                        except Exception:  # noqa: BLE001 - an unreadable check never kills a pass
-                            return True
+                        except Exception:  # noqa: BLE001 - unreadable ends the pass (fail closed)
+                            return False
+                        return not (st_now.get("state") == "asleep" and st_now.get("mode") == "visiting")
 
-                    pass_kwargs = {"should_continue": _pass_may_continue} if _night_is_full else {}
+                    # `cancelled` is memory's hard Stop check, consulted again right before the night's
+                    # completion marker (memory f310865): a night stopped during its final stage records
+                    # no completion. `should_continue` is the graceful yield at its stage boundaries.
+                    pass_kwargs = ({"should_continue": _pass_may_continue, "cancelled": _pass_cancelled}
+                                   if _night_is_full else {})
                     result = _night_pass(
                         home.memory,
                         scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
