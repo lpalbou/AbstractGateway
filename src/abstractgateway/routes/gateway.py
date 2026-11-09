@@ -4312,13 +4312,20 @@ def _strip_client_host_stamps(input_data: Dict[str, Any]) -> Dict[str, Any]:
     Skills (review 2026-11-09 finding 1): `_runtime.skills_block` and `_runtime.skills_resolution`
     name the skills whose files the runtime serves past the workspace policies, so only the
     gateway's resolver writes them; `skills` keeps the requested NAMES only (a mapping's roots
-    never ride). The host repeats this for every start (hosts/bundle_host.py)."""
+    never ride). The host repeats this for every start (hosts/bundle_host.py).
+
+    Entity stamp (review 2026-11-09 finding 3): `_runtime.entity` is minted and signed by the
+    entity doors for the run they open, never by a client; a client copy would label the agent's
+    reply as an entity's (turn authors) and claim an entity's memory routes. Dropped."""
     runtime_ns = input_data.get("_runtime")
-    if isinstance(runtime_ns, dict) and ({"skills_block", "skills_resolution"} & set(runtime_ns)):
-        runtime_ns = dict(runtime_ns)
-        runtime_ns.pop("skills_block", None)
-        runtime_ns.pop("skills_resolution", None)
+    client_only = {"skills_block", "skills_resolution", "entity"}
+    if isinstance(runtime_ns, dict) and (client_only & set(runtime_ns)):
+        runtime_ns = {k: v for k, v in runtime_ns.items() if k not in client_only}
         input_data["_runtime"] = runtime_ns
+    meta = input_data.get("_meta")
+    if isinstance(meta, dict) and ({"repeat_of", "mention"} & set(meta)):
+        # Mention-route-only keys (see _stamp_run_origin); /runs/schedule targets never pass there.
+        input_data["_meta"] = {k: v for k, v in meta.items() if k not in ("repeat_of", "mention")}
     if "skills" in input_data:
         from ..skills_library import requested_skill_names
 
@@ -9470,10 +9477,15 @@ def _stamp_run_origin(input_data: Dict[str, Any], *, kind: str, principal: Gatew
     # Turn authors are host-written too (entity mentions, 2026-11-08): a client-sent author is
     # dropped (a client never labels a reply as an entity's), and a person's prompt is theirs,
     # under the account's display name.
-    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY
+    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY, REPEAT_OF_KEY
 
     meta.pop(AUTHOR_KEY, None)
     meta.pop(PROMPT_AUTHOR_KEY, None)
+    # `repeat_of` (a turn repeating another's words: clients fold it, a mention's quote skips it)
+    # and `mention` (the mention door's provenance) are written only by the mention route, after
+    # it validated them (review 2026-11-09 finding 3); a client copy is dropped.
+    meta.pop(REPEAT_OF_KEY, None)
+    meta.pop("mention", None)
     if kind == "person":
         from ..entity_mentions import person_author
 
