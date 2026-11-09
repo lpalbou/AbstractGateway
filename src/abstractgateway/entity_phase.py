@@ -1136,7 +1136,7 @@ def stop(
     for old in prior_outstanding:
         if old.get("item") == "run" and old.get("id"):
             runtime, store = _run_owner(registry, slug, str(old.get("store") or "gateway"), svc)
-            for o in _cancel_tree(runtime, store, str(old["id"])):
+            for o in _live_outcomes(_cancel_tree(runtime, store, str(old["id"]))):
                 items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store=old.get("store")))
                 if o["outcome"] == "cancelled":
                     cancelled["runs"].append(o["run_id"])
@@ -1158,7 +1158,7 @@ def stop(
         seat_run = None
     if seat_run:
         runtime, store = _run_owner(registry, slug, "gateway", svc)
-        outcomes = _cancel_tree(runtime, store, seat_run)
+        outcomes = _live_outcomes(_cancel_tree(runtime, store, seat_run))
         for o in outcomes:
             items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store="gateway"))
             if o["outcome"] == "cancelled":
@@ -1178,7 +1178,7 @@ def stop(
         if True:
             try:
                 er = registry.get_entity_runtime(slug)
-                for o in _cancel_tree(er.runtime, er.run_store, visit_run):
+                for o in _live_outcomes(_cancel_tree(er.runtime, er.run_store, visit_run)):
                     items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store="home"))
                     if o["outcome"] == "cancelled":
                         cancelled["runs"].append(o["run_id"])
@@ -1245,6 +1245,14 @@ def _cancel_tree(runtime: Any, run_store: Any, run_id: str) -> List[Dict[str, An
     # kill switch ends is CANCELLED, reason kill_switch, by the operator — the runtime stops an
     # effect in flight and closes its ledger record as `cancelled` naming who asked.
     return cancel_run_tree_outcomes(runtime, run_store, run_id, reason=KILL_SWITCH_REASON, cancelled_by="operator")
+
+
+def _live_outcomes(outcomes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The Stop receipt lists the runs the Stop found LIVE only: the ones it cancelled and the ones
+    it could not (a failure the next Stop retries). A run that had already finished (the summon
+    seat outlives its run; a visit's completed turns) or that is gone is not part of the receipt:
+    it was never stopped."""
+    return [o for o in outcomes if o.get("outcome") in ("cancelled", "failed")]
 
 
 def _queue_stop(entities_dir: Path, slug: str) -> Dict[str, Any]:

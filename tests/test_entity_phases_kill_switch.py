@@ -582,3 +582,37 @@ def test_an_unverifiable_loop_is_never_taken_for_dead(monkeypatch: pytest.Monkey
         assert (row["outcome"], row["code"]) == ("failed", "loop_unverified") and signalled == []
     finally:
         proc.kill()
+
+
+def test_the_stop_receipt_lists_only_the_runs_it_found_live(monkeypatch: pytest.MonkeyPatch):
+    """The summon seat outlives its run: a Stop after a finished summon listed that run (and a
+    pruned one) in its receipt. Only the runs the Stop found live are listed: the open visit it
+    cancelled, never a run that had already ended or is gone."""
+    from abstractruntime.core.models import RunState, RunStatus
+
+    from abstractgateway import entity_chat, entity_phase
+    from abstractgateway.entity_seat import record_seat
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: _ScriptedLLM(["(unused)"]))
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        _runtime, store = entity_phase._run_owner(_registry(), "castor", "gateway")
+        store.save(RunState(run_id="summon-done", workflow_id="w", status=RunStatus.COMPLETED, current_node="end", vars={}))
+        record_seat(_registry().entities_dir, "castor", run_id="summon-done", session_id="s-1",
+                    holder="agent:coder", holder_kind="agent")
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        visit_run = opened.json()["run_id"]
+        stop = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        assert stop.status_code == 200, stop.text
+        runs = [i for i in stop.json()["items"] if i["item"] == "run"]
+        assert runs and all(i["outcome"] in ("cancelled", "failed") for i in runs), runs
+        assert "summon-done" not in {i["id"] for i in runs}
+        assert visit_run in {i["id"] for i in runs} and stop.json()["cancelled"]["runs"] == [i["id"] for i in runs
+                                                                                            if i["outcome"] == "cancelled"]
+        # The seat names a run that is gone (pruned): nothing is listed for it either.
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"}).status_code == 200
+        record_seat(_registry().entities_dir, "castor", run_id="pruned-run", session_id="s-2",
+                    holder="agent:coder", holder_kind="agent")
+        again = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        assert [i for i in again.json()["items"] if i["item"] == "run"] == []
