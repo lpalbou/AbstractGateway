@@ -103,7 +103,8 @@ def test_state_paused_is_the_kill_switch_and_restore_is_resume(spawned):
         _deprecated(back, "/lifecycle")
         assert back.json()["action"] == "resume"
         assert read_entity_state(_home_dir())["state"] == "awake"
-        assert len(spawned) == 1
+        # Resume is idle (v3 D3): the kill switch took his own time back.
+        assert back.json()["phase"] == "idle" and spawned == []
 
 
 def test_the_operator_sleep_refuses_during_a_visit_and_after_a_sleep(monkeypatch: pytest.MonkeyPatch):

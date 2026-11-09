@@ -232,12 +232,15 @@ def test_a_mention_answer_landing_after_a_stop_is_neither_recorded_nor_mirrored(
         )
 
 
-def test_resume_writes_awake_never_a_sleep_and_restores_own_time(monkeypatch: pytest.MonkeyPatch):
-    """Resume restores the phase the Stop interrupted while its grant is on (operator 2026-11-09);
-    it never restores a sleep."""
-    from abstractruntime.identity.life import read_entity_state, write_entity_state
+def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatch):
+    """v3 D3 (operator 2026-11-09: "personal time is never given back during a resume, it is
+    considered cancelled if it was given before"): Stop revokes the grant (revoked_by kill_switch),
+    forgets where to return, and says so in its receipt; Resume writes awake (never a sleep) and he
+    is idle — own time only when the operator gives it again."""
+    from abstractruntime.identity.life import read_entity_state, read_personal_grant, write_entity_state
 
     from abstractgateway import entity_phase
+    from abstractgateway.entity_replay import read_host_markers
 
     spawned = []
 
@@ -249,22 +252,33 @@ def test_resume_writes_awake_never_a_sleep_and_restores_own_time(monkeypatch: py
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home_dir = _home_dir()
-        write_entity_state(home_dir, "awake", reason="woken")
         # The operator gives own time (starts at once), later puts him to sleep, then stops him.
         assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
         assert spawned == ["castor"]
         write_entity_state(home_dir, "asleep", reason="operator sleep")
-        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        stopped = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        assert stopped.status_code == 200, stopped.text
+        assert stopped.json()["own_time_revoked"] is True
+        row = {i["item"]: i for i in stopped.json()["items"]}["own_time"]
+        assert (row["outcome"], row["sentence"]) == ("revoked", "Own time was revoked.")
+        assert read_personal_grant(home_dir)["mode"] == "disabled"
+        markers = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
+                   if (m.get("payload") or {}).get("kind") == "personal_grant_revoked"]
+        assert markers and markers[-1]["revoked_by"] == "kill_switch"
+        assert entity_phase.read_record(_registry().entities_dir, "castor").get("resume_to") is None
 
         r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert r.status_code == 200, r.text
         assert r.json()["already"] is False
         assert read_entity_state(home_dir)["state"] == "awake"  # the sleep before the stop is gone
-        assert spawned == ["castor", "castor"] and r.json()["started"] == {"own_time": True, "pid": 4242}
+        assert r.json()["phase"] == "idle" and r.json()["toggles"]["personal"] is False
+        assert spawned == ["castor"] and r.json()["started"] == {"own_time": False, "pid": None}
 
         again = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert again.status_code == 200 and again.json()["already"] is True
-        assert spawned == ["castor", "castor"]
+        # A second Stop has nothing left to revoke: no row claims it.
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()["own_time_revoked"] is False
+        assert spawned == ["castor"]
 
 
 def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest.MonkeyPatch):

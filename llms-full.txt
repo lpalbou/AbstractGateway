@@ -10678,8 +10678,8 @@ An entity is in exactly one of four activity phases: **visit** (a person is talk
 back.** Turning personal on starts it; neither the gateway nor the entity ever grants it. Work on lets
 new work in.
 
-When something interrupts own time (a visit, a sleep, a request, Stop), the gateway brings the entity
-back to it afterwards, as long as personal is still on. It never starts own time for an entity that
+When something interrupts own time (a visit, a sleep, a request), the gateway brings the entity
+back to it afterwards, as long as personal is still on. Stop is different: it takes own time back. It never starts own time for an entity that
 was not in it, and never under a visit, a sleep, work or the kill switch. If own time stops
 unexpectedly, the phase is `idle` with a `blocked` reason and a **retry** action; nothing restarts it
 behind your back. When own time ends because it was asked to (personal or work turned off, a removed
@@ -10692,7 +10692,7 @@ sleep is never followed by another sleep.
 |--------|------|--------------|
 | GET | `/api/gateway/entities/{name}/life_state` | The phase bar's one read. `phase` (`visit`, `work`, `personal`, `sleep`, `idle` or `stopped`), `toggles {work, personal}`, `stopped`, `since` (when this phase began), `sentence` (one plain line, no clock time), `next`, `blocked {code, sentence, action}`, `can {visit, sleep_now, toggle_work, toggle_personal}` (each `{allowed, sentence}`), the `visit`, `work` and `sleep` details, and `rev`. `rev` goes up whenever anything in the answer changes and never goes down, even across restarts. Every field is always present; `null` when it does not apply. |
 | PUT | `/api/gateway/entities/{name}/life_state/toggles` | `{work?: bool, personal?: bool}` (admin). Personal off ends own time at the loop's next step and never puts the entity to sleep. Work off refuses new work (`work_off`) at the summon door, the task inbox and the work order; the run in progress finishes. |
-| POST | `/api/gateway/entities/{name}/lifecycle` | `{action: "stop" \| "resume" \| "retry"}` (admin). **stop** is instant and unconditional: everything stops, open visits close, live runs are cancelled, the own-time process is killed. The answer lists each item with its outcome; press it again to retry anything left over. When the own-time process could not be stopped, its row says why. **resume** wakes the entity (never into a sleep) and restarts what the toggles allow. **retry** restarts own time after a crash. |
+| POST | `/api/gateway/entities/{name}/lifecycle` | `{action: "stop" \| "resume" \| "retry"}` (admin). **stop** is instant and unconditional: everything stops, open visits close, live runs are cancelled, the own-time process is killed, and **own time is revoked** (personal turns off; the answer's `own_time_revoked` and its `own_time` row, "Own time was revoked."). The answer lists each item with its outcome; press it again to retry anything left over. When the own-time process could not be stopped, its row says why. **resume** wakes the entity (never into a sleep) and it is `idle`: nothing from before the Stop comes back, and own time only when you turn personal on again. **retry** restarts own time after a crash. |
 
 A visit never fails, in every phase and every sleep: the door opens at once and the entity joins as
 soon as it finishes the step in progress or its maintenance pass. While a visit lasts the phase is

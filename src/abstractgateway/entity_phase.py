@@ -54,6 +54,8 @@ GATE_SLEEP_WRITERS = ("grant-gate", "day-gate", "need-check")
 MAINTENANCE_ENDS = "when maintenance is done"
 # The one wording of a kill-switch ending on every record it leaves (runs, visits, chats, passes).
 KILL_SWITCH_REASON = "kill_switch: stopped by the operator"
+# The Stop receipt's own-time row (v3 D3): the kill switch takes his own time back.
+OWN_TIME_REVOKED_SENTENCE = "Own time was revoked."
 # A spawn claim older than this is a crashed claimant; a new reconcile may spawn.
 SPAWN_CLAIM_TTL_S = 30.0
 # loop_status.stopped_by values that mean "the loop ended because it was asked to".
@@ -943,8 +945,17 @@ def stop(
     visit_host: Any = None,
     svc: Any = None,
 ) -> Dict[str, Any]:
-    """The kill switch (contract §3.1): fence, signal, tear down, report per item."""
-    from abstractruntime.identity.life import read_entity_state, request_loop_stop, write_entity_state
+    """The kill switch (contract §3.1): fence, signal, tear down, report per item. It also takes back
+    his own time (v3 D3, operator 2026-11-09): the grant is revoked and nothing is remembered to
+    return to — Resume brings him back idle, and own time only when the operator gives it again."""
+    from abstractruntime.identity.life import (
+        personal_grant_refusal,
+        read_entity_state,
+        read_personal_grant,
+        request_loop_stop,
+        write_entity_state,
+        write_personal_grant,
+    )
 
     t0 = time.monotonic()
     if chat_host is None and visit_host is None:
@@ -956,22 +967,23 @@ def stop(
     actor = actor or _actor()
     via = via.replace("{name}", slug)
 
-    # 1. FENCE FIRST (review 2026-11-09 #4): under the lock, the phase the Stop interrupts is noted
-    # (resume_to, for Resume — never a publish that could reconcile), then the generation moves
-    # and paused is written: from here on every door and every fenced writer refuses.
+    # 1. FENCE FIRST (review 2026-11-09 #4): under the lock the generation moves and paused is
+    # written: from here on every door and every fenced writer refuses. Own time is taken back in
+    # the same step (v3 D3): the grant is revoked and `resume_to` cleared, so nothing restarts it.
+    revoked = False
+    revoke_error: Optional[str] = None
     with phase_lock(entities_dir, slug):
         rec = read_record(entities_dir, slug)
         already = str(read_entity_state(home_dir).get("state") or "") == "paused"
         prior_outstanding = list(rec.get("stop_outstanding") or [])
-        if not already:
-            try:
-                before = derive(gather(registry, name, chat_host=chat_host, visit_host=visit_host), rec)
-                if before["phase"] == "personal":
-                    _note_resume_to(rec, "personal")
-                elif before["phase"] == "work" and (before.get("work") or {}).get("kind") == "work_order":
-                    _note_resume_to(rec, "work")
-            except Exception:  # noqa: BLE001 - the stop never waits on an observation
-                logger.exception("stop: the interrupted phase of %s could not be observed", slug)
+        _note_resume_to(rec, None)
+        try:
+            if personal_grant_refusal(read_personal_grant(home_dir)) is None:
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch")
+                revoked = True
+        except Exception as e:  # noqa: BLE001 - reported on its row; the stop goes on
+            revoke_error = str(e)
+            logger.exception("stop: the personal grant of %s could not be revoked", slug)
         rec["generation"] = int(rec.get("generation") or 0) + 1
         maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
         if maint and maint.get("status") == "running":
@@ -988,6 +1000,13 @@ def stop(
 
     items: List[Dict[str, Any]] = []
     cancelled = {"visits": [], "chats": [], "runs": [], "loop_pid": None}
+    if revoked:
+        _marker(registry, manifest, "personal_grant_revoked",
+                {"mode": "disabled", "revoked_by": "kill_switch", "by": actor, "channel": "kill_switch"})
+        items.append(_item("own_time", None, "revoked", None, OWN_TIME_REVOKED_SENTENCE))
+    elif revoke_error:
+        items.append(_item("own_time", None, "failed", "grant_revoke_failed",
+                           f"His own time could not be taken back: {revoke_error}"))
 
     # 2a. A REPEATED STOP RETRIES what the last one could not finish (review #5), in the store the
     # item came from — a cancelled root no longer appears in live discovery, its failed child does
@@ -1082,6 +1101,7 @@ def stop(
         "loop_signal": {"killed_sigterm": "sigterm", "killed_sigkill": "sigkill"}.get(str(loop_item.get("outcome") or "")),
         "started": {"own_time": False, "pid": None},
         "marker_seq": pause_seq,
+        "own_time_revoked": revoked,
     })
     if pause_error:
         body["warning"] = f"#FALLBACK state applied but the host marker failed: {pause_error}"
@@ -1274,7 +1294,9 @@ def _stop_chat(chat_host: Any, name: str, cancelled: Dict[str, Any]) -> Dict[str
 
 
 def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: Any = None, visit_host: Any = None) -> Dict[str, Any]:
-    """Clear stopped, write awake (never a sleep), reconcile from the toggles (contract §3.2)."""
+    """Clear stopped and write awake (never a sleep): he comes back IDLE, always (v3 D3). Nothing
+    from before the Stop is restored; own time comes back only when the operator gives it again,
+    and a queued job then moves him to work (reconcile, never an operator act here)."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
     t0 = time.monotonic()
