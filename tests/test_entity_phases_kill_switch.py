@@ -241,7 +241,7 @@ def test_resume_writes_awake_never_a_sleep_and_restores_own_time(monkeypatch: py
 
     spawned = []
 
-    def _fake_start(registry, manifest, params):
+    def _fake_start(registry, manifest, params, return_to=None):
         spawned.append(manifest.slug)
         return {"pid": 4242}
 
@@ -273,7 +273,7 @@ def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest
     from abstractgateway import entity_phase
 
     spawned = []
-    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p: spawned.append(m.slug) or {"pid": 1})
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         write_entity_state(_home_dir(), "awake", reason="woken")
@@ -396,6 +396,14 @@ def test_the_hard_stop_never_signals_the_gateway_itself_and_stops_once(monkeypat
         monkeypatch.setattr(entity_loop, "freeze_loop", lambda home_dir, **kw: {"frozen": True})
         row = entity_phase._kill_loop(home, {}, "test")
         assert row["outcome"] == "failed" and row["code"] == "loop_still_alive"
+
+        # (d) the runtime's own refusal (2026-11-09: it signals only a verified loop of this home)
+        # is said in the Stop receipt, never swallowed.
+        monkeypatch.setattr(entity_loop, "freeze_loop", lambda home_dir, **kw: {
+            "killed": False, "pid": proc2.pid, "signal": None, "reason": "not a loop started for this home"})
+        row = entity_phase._kill_loop(home, {}, "test")
+        assert row["outcome"] == "failed" and row["code"] == "loop_still_alive"
+        assert "not a loop started for this home" in row["sentence"]
         proc2.kill()
 
 
@@ -408,7 +416,7 @@ def test_stop_fences_before_it_observes_anything(monkeypatch: pytest.MonkeyPatch
     from abstractgateway import entity_phase
 
     spawned = []
-    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p: spawned.append(m.slug) or {"pid": 1})
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home_dir()

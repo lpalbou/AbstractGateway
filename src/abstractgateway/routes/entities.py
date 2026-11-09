@@ -6854,6 +6854,7 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
             rest_minutes=req.rest_minutes,
             shelf_size=(int(shelf_size) if shelf_size is not None else None),
             context_window=int(context_window),
+            return_to="personal",  # the operator's own start: own time is what it returns to
         )
     except RuntimeError as e:
         # Spawn/lease failure from the loop process — surface it structured so

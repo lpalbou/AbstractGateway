@@ -48,17 +48,26 @@ class _ScriptedLLM:
         return self._Reply("Fine.")
 
 
+class _Spawns(list):
+    """The faked spawns (slugs), plus the `return_to` each was told (runtime seam 2026-11-09)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.return_to: list = []
+
+
 @pytest.fixture
 def spawned(monkeypatch: pytest.MonkeyPatch):
     from abstractgateway import entity_phase
 
-    calls = []
+    calls = _Spawns()
     lock = threading.Lock()
 
-    def _fake_start(registry, manifest, params):
+    def _fake_start(registry, manifest, params, return_to=None):
         time.sleep(0.2)  # a real spawn takes a moment: concurrent reconciles overlap here
         with lock:
             calls.append(manifest.slug)
+            calls.return_to.append(return_to)
         return {"pid": 7000 + len(calls)}
 
     monkeypatch.setattr(entity_phase, "start_own_time", _fake_start)
@@ -298,7 +307,7 @@ def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.
 
     procs = []
 
-    def _start_then_stop(registry, manifest, params):
+    def _start_then_stop(registry, manifest, params, return_to=None):
         from entity_fake_loop import spawn
 
         proc = spawn(_home_dir(), "day", 60)
@@ -460,3 +469,65 @@ def test_a_request_interrupting_own_time_keeps_the_way_back(spawned):
         live["on"] = False
         client.get("/api/gateway/entities/Castor/life_state")  # the read sees the request end first
         assert spawned == ["castor", "castor"], "the interrupted own time was not restored"
+
+
+def test_the_child_is_told_where_own_time_returns(spawned):
+    """Runtime seam (2026-11-09, `spawn_loop_process(return_to=)`): the operator's own act starts
+    personal time; a restore names the remembered phase — personal, or work when work was what
+    the interruption took over. Without it the child decides from its own record alone."""
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
+        assert spawned == ["castor"] and spawned.return_to == ["personal"]  # the operator's act
+
+
+def test_a_restore_tells_the_child_the_remembered_phase(spawned, own_time):
+    from abstractgateway import entity_phase
+
+    with _client() as client:
+        proc = own_time.start(client)
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        own_time.end(proc)
+        client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
+        assert spawned.return_to[-1] == "personal"  # the restore of an interrupted personal time
+
+        # The interruption took over a work day: the restore names work.
+        (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
+        reg = _registry()
+        with entity_phase.phase_lock(reg.entities_dir, "castor"):
+            rec = entity_phase.read_record(reg.entities_dir, "castor")
+            rec["resume_to"] = "work"
+            rec.pop("spawning", None)
+            entity_phase.write_record(reg.entities_dir, "castor", rec)
+        before = len(spawned)
+        assert entity_phase.reconcile(reg, "castor", "test")["own_time"] is True
+        assert len(spawned) == before + 1 and spawned.return_to[-1] == "work"
+
+
+def test_start_loop_hands_return_to_to_the_runtime(monkeypatch, tmp_path):
+    from abstractruntime.identity import life
+
+    from abstractgateway import entity_loop
+
+    seen = {}
+    monkeypatch.setattr(life, "spawn_loop_process", lambda home, **kw: seen.update(kw) or {"pid": 1})
+    monkeypatch.setattr(entity_loop, "loop_status", lambda home: {"running": False})
+    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m", return_to="personal")
+    assert seen.get("return_to") == "personal"
+
+
+@pytest.mark.parametrize("stopped_by", ["no_return", "work_off", "edge_removed"])
+def test_a_loop_that_ends_on_purpose_hands_the_phase_back(spawned, own_time, stopped_by):
+    """The runtime batch's stop words (2026-11-09) are requested ends, never crashes: the gateway
+    repairs the gate sleep the loop left (he is awake and reachable), shows no crash, and does
+    not restart own time by itself."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        proc = own_time.start(client)
+        write_entity_state(_home_dir(), "asleep", reason="own time ended", written_by="loop")
+        own_time.end(proc, stopped_by=stopped_by)
+        body = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert read_entity_state(_home_dir())["state"] == "awake", "the gate sleep was left in place"
+        assert body["phase"] == "idle" and (body.get("blocked") or {}).get("code") != "loop_crashed"
+        assert spawned == []

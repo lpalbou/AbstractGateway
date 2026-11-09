@@ -196,7 +196,8 @@ def test_seed_is_the_50k_token_window_without_message_or_char_caps(tmp_path: Pat
     )
     messages = run.vars["context"]["messages"]
     assert len(messages) == 60
-    assert all(m["content"] == answer.strip() for m in messages[1::2])
+    # The stored bytes, whitespace included (AbstractRuntime 123342f: an answer replays byte for byte).
+    assert all(m["content"] == answer for m in messages[1::2])
     note = run.vars["_runtime"]["session_history"]
     assert note["seeded"] == 60
     assert note["max_tokens"] == 50_000 and note["policy"] == "most_recent_whole_turns"
@@ -219,10 +220,10 @@ def test_seed_drops_the_oldest_whole_turns_past_50k_tokens_and_says_so(tmp_path:
     assert note["dropped_messages"] == 40 - len(messages) > 0
     # Whole turns, newest kept: the next older turn would not have fit.
     pair = estimate_message_tokens({"role": "user", "content": "question 0"}) + estimate_message_tokens(
-        {"role": "assistant", "content": answer.strip()}
+        {"role": "assistant", "content": answer}
     )
     assert note["replayed_tokens"] + pair > 50_000
-    assert messages[-2]["content"] == "question 19" and messages[-1]["content"] == answer.strip()
+    assert messages[-2]["content"] == "question 19" and messages[-1]["content"] == answer
     assert messages[0]["content"].startswith("[#TRUNCATION: ")
     assert "the most recent 50000 tokens" in messages[0]["content"]
 

@@ -57,7 +57,10 @@ KILL_SWITCH_REASON = "kill_switch: stopped by the operator"
 # A spawn claim older than this is a crashed claimant; a new reconcile may spawn.
 SPAWN_CLAIM_TTL_S = 30.0
 # loop_status.stopped_by values that mean "the loop ended because it was asked to".
-REQUESTED_STOPS = ("stop_command", "stop_file", "operator", "personal_disarmed", "personal_off", "kill_switch", "settled_desk")
+REQUESTED_STOPS = ("stop_command", "stop_file", "operator", "personal_disarmed", "personal_off", "kill_switch", "settled_desk",
+                   # the runtime batch's own words (2026-11-09): work turned off, a removed edge, and a
+                   # loop that found no own time to return to (it exits idle) — none of them a crash.
+                   "work_off", "edge_removed", "no_return")
 
 _DEFAULT_RECORD: Dict[str, Any] = {
     "rev": 0,
@@ -1227,7 +1230,11 @@ def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> D
             reported = res.get("killed") if isinstance(res, dict) else None
             gone = _target_gone(target)
             if reported is False or not gone:
-                return _item("loop", pid, "failed", "loop_still_alive", "His own-time process did not stop; press Stop again.")
+                # The runtime's own refusal (it signals only a verified loop of this home) is said
+                # plainly — never a success it did not see.
+                why = str((res or {}).get("reason") or "").strip()
+                sentence = "His own-time process did not stop; press Stop again." + (f" ({why})" if why else "")
+                return _item("loop", pid, "failed", "loop_still_alive", sentence)
             return _item("loop", pid, "killed_sigkill" if (res or {}).get("escalated_to_sigkill") else "killed_sigterm")
     except Exception as e:  # noqa: BLE001
         return _item("loop", None, "failed", "loop_still_alive", f"His own-time process could not be stopped: {e}")
@@ -1427,6 +1434,7 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
             return {"own_time": False, "pid": None, "reason": "spawning"}
         admission = int(rec.get("admission_seq") or 0)
+        spawn_return_to = "personal" if operator else target
         rec["spawning"] = {"at": time.time(), "generation": generation, "cause": cause}
         write_record(entities_dir, slug, rec)
         params = dict(rec.get("own_time_params") or {})
@@ -1434,7 +1442,9 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
     pid = None
     error: Optional[str] = None
     try:
-        started = start_own_time(registry, manifest, params)
+        # The child is told which own-time phase it returns to: personal for the operator's own act,
+        # the remembered phase for a restore (runtime seam `return_to`).
+        started = start_own_time(registry, manifest, params, return_to=spawn_return_to)
         pid = started.get("pid")
     except Exception as e:  # noqa: BLE001 - reported as blocked, never raised at the trigger
         error = str(getattr(e, "detail", "") or e) or e.__class__.__name__
@@ -1463,7 +1473,7 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
     return {"own_time": True, "pid": pid, "reason": cause}
 
 
-def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_to: Optional[str] = None) -> Dict[str, Any]:
     """Spawn the own-time loop with the remembered `loop/start` parameters, else the entity's own
     mind and the defaults (one mind per entity)."""
     from .entity_chat import DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW, entity_base_url, resolve_entity_mind
@@ -1482,6 +1492,7 @@ def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any]) -> Dict
         rest_minutes=float(params.get("rest_minutes") if params.get("rest_minutes") is not None else 30.0),
         shelf_size=(int(params["shelf_size"]) if params.get("shelf_size") is not None else None),
         context_window=int(params.get("context_window") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW),
+        return_to=return_to,
     )
 
 

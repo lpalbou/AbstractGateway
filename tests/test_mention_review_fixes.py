@@ -293,6 +293,28 @@ def test_a_stop_after_the_answer_carries_nothing_into_another_visit(monkeypatch)
         assert len(llm.calls) == 2, "Nerin was asked to answer a mirrored turn after Castor was stopped"
 
 
+def test_a_failed_mirrored_turn_is_answered_and_the_visit_stays_open(monkeypatch):
+    """Runtime 1306804 (gateway slice finding 2026-11-09: a failed mirrored turn ended the visited
+    entity's visit): the visited entity's failed model call answers THAT turn with the error, the
+    mirror row shows it as the turn's answer, and the visit goes on."""
+    llm = _install(monkeypatch, ["Nerin: the tide is low.", "Castor: noted.", RuntimeError("provider exploded"),
+                                 "Nerin: still here."])
+    with _client() as client:
+        _create(client, "Nerin")
+        _create(client, "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={})
+        sid, rid = opened.json()["session_id"], opened.json()["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "how is the tide?"}).status_code == 200
+        r = _mention(client, sid, "@Castor what do you think?")
+        assert r.status_code == 200, r.text
+        (row,) = r.json()["mirrors"]
+        assert row["reply"].startswith("This turn could not be answered:") and "exploded" in row["turn_error"]
+        assert client.get("/api/gateway/entities/Nerin/visit").json().get("open") is True
+        nxt = client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "and now?"})
+        assert nxt.status_code == 200 and nxt.json()["reply"] == "Nerin: still here.", nxt.text
+        assert len(llm.calls) == 4
+
+
 def test_a_mention_id_survives_a_crash_between_the_answer_and_the_session_turn(monkeypatch):
     from abstractgateway import entity_mentions
 

@@ -1562,6 +1562,13 @@ class EntityVisitHost:
             "turn_n": int(visit_vars.get("turn_n") or 0),
             "status": status,
         }
+        # A turn whose model call failed is ANSWERED by the runtime with the error (AbstractRuntime
+        # 1306804: ANSWER_USER level error, the visit parks and stays open). `_turn` is cleared at
+        # every turn's start, so its `model_error` belongs to THIS turn: say so, never as a reply
+        # the entity chose.
+        turn_error = str((((state.vars or {}).get("_turn") or {}).get("model_error")) or "").strip()
+        if answered and turn_error:
+            out["turn_error"] = turn_error
         # PROBE PAYLOAD PARITY (cutover gap 1, entity c1318/gateway c1320):
         # the hosted chat lane serves driver-authored transparency on every
         # turn (tools_ran, memories with born_at/origin, system_prompt); the

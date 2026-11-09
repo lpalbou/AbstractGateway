@@ -203,6 +203,8 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         assert r.status_code == 200, r.text
         assert calls["shelf_size"] == 50
         assert calls["context_window"] == 65536
+        # The operator's own start tells the child it returns to personal time (runtime seam 2026-11-09).
+        assert calls["return_to"] == "personal"
 
         # The removed environment variables change nothing (round 3).
         monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE", "32")

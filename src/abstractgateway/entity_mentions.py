@@ -612,8 +612,10 @@ def mention(
                 raise _from_visit_refusal(e2, manifest, sid) from None
         reply = str(turned.get("reply") or "").strip()
         status = str(turned.get("status") or "")
-        if status == "failed" or not reply:
-            why = str(turned.get("error") or "") or "the turn produced no reply"
+        if status == "failed" or not reply or turned.get("turn_error"):
+            # A failed model call answers the visit turn with the error and the visit stays open
+            # (runtime 1306804); the mention's caller gets the plain sentence, never the error.
+            why = str(turned.get("turn_error") or turned.get("error") or "") or "the turn produced no reply"
             logger.warning("mention: %s cannot answer: %s", manifest.slug, why)
             raise _cannot_answer(manifest, sid)
         from .entity_phase import GenerationMoved, fenced
@@ -696,7 +698,8 @@ def _mirror_into_bound_visits(
     words read `<name> (entity): <reply>` (`speaker_line`, from the author field). The visited
     entity answers that turn like any other. One row per bound visit:
     `{entity_id, run_id, turn_id, reply}` or `{entity_id, run_id, error}` (a refusal there never
-    undoes the mention, it is stated)."""
+    undoes the mention, it is stated); a turn the visited entity's model failed carries the
+    runtime's answer for it as `reply` plus `turn_error`, and that visit stays open."""
     from abstractruntime.core.turn_author import speaker_line
 
     out: list = []
@@ -738,7 +741,12 @@ def _mirror_into_bound_visits(
             turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
                                      speaker=str(mentioned.entity_id))
             row["turn_id"] = str(turned.get("turn_id") or "") or None
-            if turned.get("status") == "failed" or not turned.get("answered"):
+            if turned.get("turn_error"):
+                # The visited entity's model call failed on THIS turn: the runtime answered it with
+                # the error and its visit stays open (runtime 1306804). That answer is the row's.
+                row["reply"] = f"This turn could not be answered: {turned['turn_error']}"
+                row["turn_error"] = str(turned["turn_error"])
+            elif turned.get("status") == "failed" or not turned.get("answered"):
                 # The visited entity did not answer THIS turn: never its previous reply (review D).
                 row["reply"] = None
                 logger.warning("mirrored turn into %s failed: %s", child.name, turned.get("error"))

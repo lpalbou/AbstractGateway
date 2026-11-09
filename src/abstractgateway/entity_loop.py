@@ -47,7 +47,11 @@ def start_loop(
     rest_minutes: float = 30.0,
     shelf_size: Optional[int] = None,
     context_window: Optional[int] = None,
+    return_to: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """`return_to` (runtime seam, operator 2026-11-09): the own-time phase this start returns to —
+    "personal" for the operator's own act (his toggle, loop/start, Retry), the remembered phase for a
+    restore; None = the child decides from the home's own record (`--return-to none`)."""
     from abstractruntime.identity.life import spawn_loop_process
 
     # Wake entry point: an archived entity never runs its loop (round 3; entity_access.py).
@@ -128,6 +132,7 @@ def start_loop(
         shelf_size=shelf_size,
         context_window=context_window,
         endpoint_profile=endpoint_profile,
+        return_to=return_to,
     )
 
 
