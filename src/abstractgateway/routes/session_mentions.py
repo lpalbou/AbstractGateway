@@ -63,6 +63,15 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
         raise HTTPException(status_code=422, detail="session_id is required")
     if not str(req.text or "").strip():
         raise HTTPException(status_code=422, detail="text is empty: say something to the entity")
+    from ..entities import entity_slug
+
+    try:
+        entity_slug(req.entity)
+    except ValueError:
+        # A name no entity can have ('@Castor', a reserved word such as 'auth') is simply not an
+        # entity: the same 404 as a missing or hidden one, never a 500 carrying internal text
+        # (review 2026-11-09 finding 4). A malformed body is FastAPI's 422.
+        return _not_found(req.entity)
     registry = _registry()
     try:
         # A hidden entity answers EXACTLY like a missing one (RBAC ruling 2026-10-01): same 404, same
