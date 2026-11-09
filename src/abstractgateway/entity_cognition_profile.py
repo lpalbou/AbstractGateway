@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 # A running own-time loop reads the recall width when it starts; the GET says so.
 RECALL_APPLIES_TO_RUNNING_LOOP = "on restart"
 
-_PUT_BLOCKS = ("capabilities", "recall", "rebuild", "lookback")
+_PUT_BLOCKS = ("capabilities", "recall", "rebuild", "lookback", "sleep")
 
 
 class CognitionProfileRefused(Exception):
@@ -113,6 +113,13 @@ def cognition_profile_view(home_dir: Path) -> Dict[str, Any]:
             "sources": dict(rebuild["sources"]),
         },
         "lookback": {"context": profile["lookback"]["context"], "source": profile["lookback"]["source"]},
+        # When an IDLE entity goes to sleep (contract v3 D2): hours since his last completed sleep, or
+        # new memories formed since it — whichever comes first.
+        "sleep": {
+            "after_hours": int(profile["sleep"]["after_hours"]),
+            "after_events": int(profile["sleep"]["after_events"]),
+            "sources": dict(profile["sleep"]["sources"]),
+        },
         "mind": mind,
     }
 
@@ -169,16 +176,18 @@ def plan_cognition_profile_put(
         validate_lookback_context,
         validate_sensitivity,
         validate_shelf_size,
+        validate_sleep_after_events,
+        validate_sleep_after_hours,
     )
 
     from .entity_settings_access import REASON_NOT_OFFERED
 
     if not isinstance(body, Mapping):
-        raise CognitionProfileRefused(400, "Send an object with capabilities, recall, rebuild or lookback.")
+        raise CognitionProfileRefused(400, "Send an object with capabilities, recall, rebuild, lookback or sleep.")
     unknown = [str(k) for k in body.keys() if k not in _PUT_BLOCKS]
     if unknown:
         raise CognitionProfileRefused(
-            400, f"Unknown field {unknown[0]!r}: send capabilities, recall, rebuild or lookback."
+            400, f"Unknown field {unknown[0]!r}: send capabilities, recall, rebuild, lookback or sleep."
         )
     old = stored_cognition_profile(Path(home_dir))
     new = copy.deepcopy(old)
@@ -218,6 +227,7 @@ def plan_cognition_profile_put(
             ("recall", {"shelf_size": validate_shelf_size}),
             ("rebuild", {"sensitivity": validate_sensitivity, "cap_per_turn": validate_cap_per_turn}),
             ("lookback", {"context": validate_lookback_context}),
+            ("sleep", {"after_hours": validate_sleep_after_hours, "after_events": validate_sleep_after_events}),
         ):
             if block not in body:
                 continue
@@ -226,6 +236,7 @@ def plan_cognition_profile_put(
                 "recall": '{"shelf_size": 50}',
                 "rebuild": '{"sensitivity": 0.5, "cap_per_turn": 3}',
                 "lookback": '{"context": "day"}',
+                "sleep": '{"after_hours": 24, "after_events": 500}',
             }[block]
             if not isinstance(raw, Mapping):
                 raise CognitionProfileRefused(400, f"{block} must be an object, for example {example}.")

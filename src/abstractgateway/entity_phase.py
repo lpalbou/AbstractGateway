@@ -48,6 +48,8 @@ PHASES = ("visit", "work", "personal", "sleep", "stopped", "idle")
 ACTIVITY_PHASES = ("visit", "work", "personal", "sleep")
 # Sleeps the entity chose itself (its loop's own writers).
 SELF_SLEEP_WRITERS = ("self", "personal-cycle", "sleep-bound")
+# The idle sweep's sleep (contract v3 D2): his own sleep, entered by the gateway from idle.
+IDLE_SWEEP_WRITER = "idle-sweep"
 # Sleeps the old loop gate wrote when it found nothing to do (root 1178): until the runtime batch
 # they are not sleep at all — the entity is awake and reachable (contract §1.2).
 GATE_SLEEP_WRITERS = ("grant-gate", "day-gate", "need-check")
@@ -465,6 +467,8 @@ def _sleep_kind(state: Dict[str, Any], loop_alive: bool) -> Optional[str]:
     if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") == "visiting":
         return None
     writer = str(state.get("written_by") or "operator")
+    if writer == IDLE_SWEEP_WRITER:
+        return "self"  # the idle thresholds' sleep is his own, with no loop running (contract v3 D2)
     if writer == "operator":
         return "operator"
     if writer in SELF_SLEEP_WRITERS and loop_alive:
@@ -1781,7 +1785,7 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
         if mine:
             rec["maintenance"] = None
         write_record(entities_dir, slug, rec)
-        if str(st.get("state") or "") != "asleep" or str(st.get("written_by") or "operator") != "operator":
+        if str(st.get("state") or "") != "asleep" or str(st.get("written_by") or "operator") not in ("operator", IDLE_SWEEP_WRITER):
             return "not_ours"  # a summon or a wake already ended this sleep
         reason = "maintenance done; awake" + (f" (the pass failed: {failed})" if failed else "")
         write_entity_state(home_dir, "awake", reason=reason)

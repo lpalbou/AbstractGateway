@@ -82,6 +82,8 @@ def _sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, respawns: List[Di
         return {"pid": 4242}
 
     monkeypatch.setattr("abstractgateway.entity_loop.start_loop", _fake_start_loop)
+    # The idle -> sleep step rides the same sweep (contract v3 D2); this file tests the repair half.
+    monkeypatch.setattr("abstractgateway.entity_idle_sleep.idle_sweep_one", lambda registry, slug: None)
     monkeypatch.setattr(
         "abstractgateway.entity_chat.resolve_substrate",
         # Contract-faithful triple: (provider, model, thinking). Request

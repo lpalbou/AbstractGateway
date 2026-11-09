@@ -112,6 +112,8 @@ def test_get_without_a_file_shows_the_mind_everywhere_and_the_defaults(world) ->
             "sources": {"sensitivity": "default", "cap_per_turn": "default"},
         },
         "lookback": {"context": "day", "source": "default"},
+        # When an idle entity sleeps (contract v3 D2): the runtime's defaults.
+        "sleep": {"after_hours": 24, "after_events": 500, "sources": {"after_hours": "default", "after_events": "default"}},
         "mind": {**mind, "source": "gateway"},
     }
     assert not (world["home"] / "cognition.yaml").exists()

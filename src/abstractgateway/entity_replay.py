@@ -84,6 +84,8 @@ MARKER_FLOOD_REWARN_EVERY = 100
 # 0007 — reads are visible events).
 HOST_MARKER_KINDS = (
     "summon",
+    # The idle sweep's sleep (contract v3 D2): which threshold fired and which clock it read.
+    "idle_sleep",
     "prelude_refused",
     "session_closed",
     "sleep",

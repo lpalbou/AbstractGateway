@@ -168,6 +168,17 @@ def sweep_entity_repairs(registry: Any) -> List[Dict[str, Any]]:
             logger.warning("need-check failed for %s: %s", slug, e)
         if check is not None:
             actions.append(check)
+        # IDLE -> SLEEP by the Mind's thresholds, else the authoring drainer (contract v3 D2): one
+        # home after another, each sleep run to its end before the next home is looked at.
+        try:
+            from .entity_idle_sleep import idle_sweep_one
+
+            idle = idle_sweep_one(registry, slug)
+        except Exception as e:  # noqa: BLE001
+            idle = {"slug": slug, "action": "idle_sweep", "error": f"{type(e).__name__}: {e}"}
+            logger.warning("idle sweep failed for %s: %s", slug, e)
+        if idle is not None:
+            actions.append(idle)
     return actions
 
 

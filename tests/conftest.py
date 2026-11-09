@@ -714,6 +714,10 @@ def _no_real_own_time_process(request: pytest.FixtureRequest, monkeypatch: pytes
     # child process (`python -m abstractruntime.identity.life`) that would outlive the test and call
     # a model. Only the process creation is stubbed here; the whole admission path still runs. A test
     # that needs the real child marks itself `real_loop_spawn`.
+    # The background repair/idle sweeper each app start would launch is off too: from a test it wakes
+    # minutes later over a finished test's homes (the idle sweep opens them — a slow fd leak across
+    # a long session). The sweeper's functions are tested by calling them directly.
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", "0")
     if request.node.get_closest_marker("real_loop_spawn") is not None:
         return
     try:

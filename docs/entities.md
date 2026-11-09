@@ -127,7 +127,11 @@ was not in it, and never under a visit, a sleep, work or the kill switch. If own
 unexpectedly, the phase is `idle` with a `blocked` reason and a **retry** action; nothing restarts it
 behind your back. When own time ends because it was asked to (personal or work turned off, a removed
 step, or nothing of its own left to return to), that is not a crash: the entity is awake and
-reachable, `idle`, with no `blocked` reason. Sleep is entered only by the operator's sleep or by the entity's own decision. The entity's own sleep has no set
+reachable, `idle`, with no `blocked` reason. Sleep is entered only by the operator's sleep, by the entity's own decision, or, while it is idle, once
+its Mind's sleep thresholds are reached (`sleep.after_hours` since its last completed sleep, or
+`sleep.after_events` new memories since it; the gateway checks every few minutes and puts one entity
+to sleep at a time). Such a sleep is its own (`sleep.kind` `self`, its `reason` names the threshold);
+when its maintenance is done it is idle again. The entity's own sleep has no set
 time: its `sleep.ends` is "when maintenance is done". A
 sleep is never followed by another sleep.
 
@@ -239,6 +243,7 @@ in **Settings → mind / voice**.
 | `rebuild.sensitivity`: how easily a new memory or a surprise makes it revisit what it already understood | 0.5 | number 0 to 1 |
 | `rebuild.cap_per_turn`: memory rebuilds a turn may run at most (0 = only while it rests) | 3 | whole number 0 to 10 |
 | `lookback.context`: what the look-back at the end of a tick of its own time sees | `day` | `day`: the whole day so far (about constant new tokens per look-back with a prefix cache); `tick`: this tick's exchange plus a recap of the day's 12 latest earlier moments |
+| `sleep.after_hours`, `sleep.after_events`: when an idle entity goes to sleep on its own | 24, 500 | whole numbers; hours 1 to 720, events 1 or more. Counted since its last completed sleep: hours, or new memories formed |
 
 Talking always uses the mind. A visit (`chat/open`), a durable visit, a summon
 and the start of its own time use `recall.shelf_size` when the request names no

@@ -2390,6 +2390,7 @@ class EntityRegistry:
         state: str,
         reason: str = "",
         dream: bool = False,
+        written_by: str = "operator",
     ) -> Dict[str, Any]:
         """The sleep/wake/pause verbs (a2a 0008, ask 2 — the gateway's door
         half). Writes through the runtime's SINGLE state writer
@@ -2425,7 +2426,7 @@ class EntityRegistry:
         try:
             with fenced(self.entities_dir, manifest.slug, entry_generation):
                 prior = read_entity_state(home_dir)
-                written = write_entity_state(home_dir, state2, reason=reason)
+                written = write_entity_state(home_dir, state2, reason=reason, written_by=written_by)
         except GenerationMoved:
             raise ValueError("stopped: the kill switch landed while this state change was on its way") from None
 
@@ -2490,7 +2491,8 @@ class EntityRegistry:
                     # for a whole sleep conflates dreaming with napping. Set
                     # before, clear after (state stays asleep either way).
                     if not maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
-                                                      lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming")):
+                                                      lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming",
+                                                                                 written_by=written_by)):
                         raise _MaintenanceSuperseded()
                     def _pass_may_continue() -> bool:
                         # The pass stops at its next stage when a Stop moved the generation or a
@@ -2532,7 +2534,7 @@ class EntityRegistry:
                     # Checked and written in ONE locked step (review #1): a Stop or a visit landing
                     # between the check and the write is never overwritten.
                     maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
-                                               lambda: write_entity_state(home_dir, "asleep", reason=reason))
+                                               lambda: write_entity_state(home_dir, "asleep", reason=reason, written_by=written_by))
                     written = _read_state(home_dir)
                     if lease is not None:
                         lease.release()
