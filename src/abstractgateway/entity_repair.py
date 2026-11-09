@@ -140,11 +140,13 @@ def sweep_entity_repairs(registry: Any) -> List[Dict[str, Any]]:
     except (TypeError, ValueError):
         cadence_h = 6.0
 
+    idle_slugs: List[str] = []
     for row in rows:
         slug = str(row.get("slug") or "")
         entity_id = str(row.get("entity_id") or "")
         if not slug or not entity_id or row.get("error"):
             continue
+        idle_slugs.append(slug)
         home_dir = Path(registry.entities_dir) / slug
         try:
             action = _sweep_one(
@@ -168,17 +170,15 @@ def sweep_entity_repairs(registry: Any) -> List[Dict[str, Any]]:
             logger.warning("need-check failed for %s: %s", slug, e)
         if check is not None:
             actions.append(check)
-        # IDLE -> SLEEP by the Mind's thresholds, else the authoring drainer (contract v3 D2): one
-        # home after another, each sleep run to its end before the next home is looked at.
-        try:
-            from .entity_idle_sleep import idle_sweep_one
+    # IDLE -> SLEEP by the Mind's thresholds, else the authoring drainer (contract v3 D2), once the
+    # repairs are done: ONE sleep per sweep, the due home waiting longest first (Codex review 3 #11).
+    try:
+        from .entity_idle_sleep import idle_sweep
 
-            idle = idle_sweep_one(registry, slug)
-        except Exception as e:  # noqa: BLE001
-            idle = {"slug": slug, "action": "idle_sweep", "error": f"{type(e).__name__}: {e}"}
-            logger.warning("idle sweep failed for %s: %s", slug, e)
-        if idle is not None:
-            actions.append(idle)
+        actions.extend(idle_sweep(registry, idle_slugs))
+    except Exception as e:  # noqa: BLE001
+        actions.append({"action": "idle_sweep", "error": f"{type(e).__name__}: {e}"})
+        logger.warning("idle sweep failed: %s", e)
     return actions
 
 

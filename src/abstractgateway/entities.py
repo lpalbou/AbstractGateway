@@ -2391,6 +2391,7 @@ class EntityRegistry:
         reason: str = "",
         dream: bool = False,
         written_by: str = "operator",
+        admission: Optional[Tuple[int, Callable[[], Optional[str]]]] = None,
     ) -> Dict[str, Any]:
         """The sleep/wake/pause verbs (a2a 0008, ask 2 — the gateway's door
         half). Writes through the runtime's SINGLE state writer
@@ -2401,7 +2402,14 @@ class EntityRegistry:
 
         Operator channel only by construction: this method is reached
         through the CLI and the authenticated admin HTTP surface;
-        workplaces have no path to it (tier rule)."""
+        workplaces have no path to it (tier rule).
+
+        `admission` = (generation, admit): the idle sweep's own sleep
+        (entity_idle_sleep, Codex review 3 #1/#10). The fence uses the
+        generation its idle check read, the home's writer is reserved
+        before the posture changes, and `admit()` (its idle check again,
+        None = admitted) runs under the lifecycle lock; a refusal raises
+        SleepNotAdmitted with nothing written."""
         from abstractruntime.identity.life import ENTITY_STATES, read_entity_state, write_entity_state
 
         state2 = str(state or "").strip().lower()
@@ -2423,15 +2431,48 @@ class EntityRegistry:
         from .entity_phase import GenerationMoved, fenced, generation_of
 
         entry_generation = generation_of(self.entities_dir, manifest.slug)
+        admit: Optional[Callable[[], Optional[str]]] = None
+        reserved: Any = None
+        reserved_generation: Optional[int] = None
+        reserved_home: Any = None
+        if admission is not None:
+            # The idle sweep's sleep: no fresh generation (a Stop during its evaluation would become the
+            # sleep's own), and the writer taken BEFORE the posture (a held home is not put to sleep at all:
+            # a sleep without its pass would never end).
+            if not dream or state2 != "asleep":
+                raise ValueError("an admission reserves a sleep's maintenance pass (state='asleep', dream=True)")
+            from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
+
+            from .entity_idle_sleep import SleepNotAdmitted
+            from .entity_phase import maintenance_started
+
+            entry_generation, admit = int(admission[0]), admission[1]
+            reserved_home = self.get_home(manifest.slug)  # before the reservation: nothing can fail between it and the pass
+            try:
+                reserved = acquire_directory_lease(home_dir, holder="dream")
+            except DirectoryLeaseHeld:
+                raise SleepNotAdmitted("home_busy") from None
         try:
             with fenced(self.entities_dir, manifest.slug, entry_generation):
+                refusal = admit() if admit is not None else None
+                if refusal:
+                    raise SleepNotAdmitted(refusal)
                 prior = read_entity_state(home_dir)
                 written = write_entity_state(home_dir, state2, reason=reason, written_by=written_by)
-        except GenerationMoved:
-            raise ValueError("stopped: the kill switch landed while this state change was on its way") from None
+                if admit is not None:
+                    # Recorded in the same locked step: the pass runs under the admission's generation.
+                    reserved_generation = maintenance_started(self, manifest.slug)
+        except BaseException as e:
+            if reserved is not None:
+                reserved.release()
+            if isinstance(e, GenerationMoved):
+                if admit is not None:
+                    raise SleepNotAdmitted("stopped") from None
+                raise ValueError("stopped: the kill switch landed while this state change was on its way") from None
+            raise
 
         dream_result: Optional[Dict[str, Any]] = None
-        home = self.get_home(manifest.slug)
+        home = reserved_home if reserved_home is not None else self.get_home(manifest.slug)
         if dream:
             # W3 canonical night (wave-4 dispatch c3291; adversary A's
             # two-different-nights divergence): the operator sleep verb runs
@@ -2457,13 +2498,14 @@ class EntityRegistry:
             # is idempotent (the runtime's loop-side dream window words its
             # refusal identically). Older runtimes without storage.lease
             # run leaseless with a labeled warning.
-            lease: Any = None
+            lease: Any = reserved  # the idle sweep's sleep reserved it before its posture
             lease_warning: Optional[str] = None
             try:
                 from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
 
                 try:
-                    lease = acquire_directory_lease(self.entities_dir / manifest.slug, holder="dream")
+                    if lease is None:
+                        lease = acquire_directory_lease(self.entities_dir / manifest.slug, holder="dream")
                 except DirectoryLeaseHeld as e:
                     dream_result = {
                         "skipped": True,
@@ -2478,7 +2520,8 @@ class EntityRegistry:
                 # Stop landed and no visit took the posture meanwhile.
                 from .entity_phase import maintenance_started, maintenance_write_if_owner
 
-                maintenance_generation = maintenance_started(self, manifest.slug)
+                maintenance_generation = (reserved_generation if reserved_generation is not None
+                                          else maintenance_started(self, manifest.slug))
                 # The sleep is announced BEFORE the pass runs (contract-phases §4.3): every open
                 # app shows "resting for maintenance" while this request is still working.
                 from .entity_phase import safe_publish

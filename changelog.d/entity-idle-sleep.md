@@ -6,5 +6,5 @@
   either is reached since its last completed sleep (AbstractMemory `records_since_maintenance`, seeded with the home's
   own last completed maintenance so existing homes do not all sleep at once). The sleep is its own (`kind: self`,
   the reason names the threshold), runs its maintenance pass and ends idle; host marker `idle_sleep` records the
-  threshold, the counts and which clock fired (`boundary_source`). Homes due together sleep one after another. An
-  idle home under its thresholds gets the authoring drainer instead.
+  threshold, the counts and which clock fired (`boundary_source`). One home sleeps per sweep, the one waiting
+  longest first. An idle home under its thresholds gets the authoring drainer instead.
