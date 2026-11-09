@@ -64,7 +64,7 @@ def _client() -> TestClient:
     return TestClient(app, headers={"Authorization": f"Bearer {_TOKEN}"})
 
 
-def _seed_agent_turn(session_id: str) -> str:
+def _seed_agent_turn(session_id: str, prompt: str = "hello") -> str:
     """An agent turn as /runs/start stores one (origin, prompt author, workflow selection)."""
     from abstractruntime.core.models import RunState, RunStatus
     from abstractruntime.core.turn_author import author_for
@@ -74,7 +74,7 @@ def _seed_agent_turn(session_id: str) -> str:
     run = RunState(
         run_id="agent-turn-1", workflow_id="basic-agent@0.0.5:81795ea9", status=RunStatus.COMPLETED, current_node="done",
         vars={
-            "prompt": "hello", "context": {"task": "hello", "messages": []},
+            "prompt": prompt, "context": {"task": prompt, "messages": []},
             "workflow_selection": {"workflow_id": "basic-agent@0.0.5:81795ea9", "name": "Basic Agent"},
             "_meta": {"origin": {"kind": "person", "actor": "default:admin", "client": "assistant", "ref": {}},
                       "prompt_author": author_for("person", "admin")},
@@ -96,9 +96,9 @@ def test_mention_is_a_visit_turn_in_the_home_and_a_turn_of_the_session(monkeypat
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         sid = "sess-mention-a"
-        agent_rid = _seed_agent_turn(sid)
-
-        # The same message started the agent turn: the mention repeats its words (repeat_of).
+        # The same message started the agent turn (its prompt is these very words): the mention
+        # repeats them (repeat_of must name the caller's own turn carrying the same words).
+        agent_rid = _seed_agent_turn(sid, "@Castor does the bridge hold?")
         assert _mention(client, sid, "@Castor hi", repeat_of="not-a-turn").status_code == 422
         r = _mention(client, sid, "@Castor does the bridge hold?", repeat_of=agent_rid)
         assert r.status_code == 200, r.text
@@ -198,7 +198,9 @@ def test_unknown_entity_is_404_and_an_unresolvable_mind_is_503(monkeypatch):
         monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "", "model": "", "base_url": None, "reasoning": None})
         r = _mention(client, "sess-x", "@Castor hi")
         assert r.status_code == 503, r.text
-        assert r.json()["code"] == "entity_cannot_answer" and r.json()["detail"].startswith("Castor cannot answer")
+        assert r.json()["code"] == "entity_cannot_answer"
+        # A plain sentence: the resolver's own words go to the log, never to the person (review 2026-11-09).
+        assert r.json()["detail"] == "Castor cannot answer right now. Try again in a moment."
 
 
 def test_entity_author_keeps_null_keys_when_the_home_has_no_identity(monkeypatch):

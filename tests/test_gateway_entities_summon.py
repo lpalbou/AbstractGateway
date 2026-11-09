@@ -753,3 +753,23 @@ def test_an_entity_visit_workspace_never_leaves_the_home(tmp_path):
     for escape in ("../../run_x.json", "../../../data", str(tmp_path / "data" / "run_x.json")):
         with pytest.raises(PermissionError):
             ws._route(escape)
+
+
+def test_summon_drops_a_client_repeat_of_and_mention(client: TestClient):
+    """Review 2026-11-09 finding 3, summon half: `_meta.repeat_of` and `_meta.mention` are written
+    only by the mention route after it validated them; a summon caller's copies are dropped (the
+    /runs/start rule, gateway 0093590f)."""
+    assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+    r = client.post(
+        "/api/gateway/entities/Castor/summon",
+        json={"prompt": "hello there", "bundle_id": "min", "flow_id": "root",
+              "input_data": {"provider": "mock", "model": "mock-model",
+                             "_meta": {"repeat_of": "someone-elses-turn", "mention": {"visit_run_id": "forged"}}}},
+    )
+    assert r.status_code == 200, r.text
+    from abstractgateway.service import get_gateway_service
+
+    run = get_gateway_service().host.run_store.load(r.json()["run_id"])
+    meta = (run.vars or {}).get("_meta") or {}
+    assert "repeat_of" not in meta and "mention" not in meta

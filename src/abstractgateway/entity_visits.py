@@ -1465,6 +1465,10 @@ class EntityVisitHost:
             else:
                 payload["speaker"] = claim
 
+        answers_before = sum(
+            1 for m in (((run.vars or {}).get("_visit") or {}).get("history") or [])
+            if isinstance(m, dict) and m.get("role") == "assistant"
+        )
         state = self._resume(er, wf, run_id, payload=payload, max_steps=_TURN_MAX_TICKS,
                              wait_key=VISITOR_WAIT_KEY, manifest=manifest)
 
@@ -1476,9 +1480,20 @@ class EntityVisitHost:
             if isinstance(msg, dict) and msg.get("role") == "assistant":
                 reply = str(msg.get("content") or "")
                 break
+        # Did THIS turn answer? (mentions-review D: a failed turn served the previous reply as if new.)
+        # The history is a sliding window, so a count that did not grow with the window full is
+        # read through the turn number instead.
+        answers_after = sum(1 for m in history if isinstance(m, dict) and m.get("role") == "assistant")
+        prior_turn_n = int((((run.vars or {}).get("_visit") or {}).get("turn_n")) or 0)
+        answered = status != "failed" and (
+            answers_after > answers_before or int(visit_vars.get("turn_n") or 0) > prior_turn_n
+        )
+        if not answered:
+            reply = ""
         out: Dict[str, Any] = {
             "run_id": run_id,
             "reply": reply,
+            "answered": answered,
             "turn_n": int(visit_vars.get("turn_n") or 0),
             "status": status,
         }

@@ -29,6 +29,7 @@ turn produced no reply.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import uuid
@@ -45,7 +46,9 @@ CODE_CANNOT_ANSWER = "entity_cannot_answer"
 # The visit door's refusals that mean "the one life is in another conversation".
 _ELSEWHERE_CODES = frozenset({"visit_already_open", "chat_session_open", "summon_seat_live"})
 
-_SESSION_LOCKS: Dict[str, threading.Lock] = {}
+# One lock per conversation WHILE a mention runs in it (REVIEW-1 item 11): the entry is reference
+# counted and removed when its last user leaves, so the map never outlives its use.
+_SESSION_LOCKS: Dict[str, list] = {}
 _SESSION_LOCKS_LOCK = threading.Lock()
 
 
@@ -58,12 +61,21 @@ class MentionRefused(Exception):
         self.session_id = session_id
 
 
-def _session_lock(session_id: str) -> threading.Lock:
+@contextlib.contextmanager
+def _session_lock(session_id: str):
     with _SESSION_LOCKS_LOCK:
-        lock = _SESSION_LOCKS.get(session_id)
-        if lock is None:
-            lock = _SESSION_LOCKS[session_id] = threading.Lock()
-        return lock
+        entry = _SESSION_LOCKS.get(session_id)
+        if entry is None:
+            entry = _SESSION_LOCKS[session_id] = [threading.Lock(), 0]
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _SESSION_LOCKS_LOCK:
+            entry[1] -= 1
+            if entry[1] <= 0 and _SESSION_LOCKS.get(session_id) is entry:
+                del _SESSION_LOCKS[session_id]
 
 
 def _display_name(manifest: Any) -> str:
@@ -93,18 +105,38 @@ def _speaker_label(author: Any) -> str:
     return name
 
 
-def conversation_context(svc: Any, session_id: str, *, current_turn: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
-    """The session's recent turns as one quoted block (from the turn rows and their `author`
-    fields, never from parsing text), plus the bound's receipt. `current_turn` is the person's
-    own turn carrying the words being sent now (`repeat_of`): its prompt is not quoted (the words
-    follow the block). A repeated prompt (an earlier mention's) is quoted once, with its turn."""
+def _attachment_names(row: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
+    for a in row.get("attachments") or []:
+        if isinstance(a, dict):
+            name = str(a.get("filename") or a.get("name") or a.get("path") or "").strip()
+            if name:
+                out.append(name.rsplit("/", 1)[-1])
+    return out
+
+
+def _session_turn_lines(svc: Any, session_id: str, *, current_turn: Optional[str], after_visit_run: Optional[str]) -> Tuple[List[List[str]], bool]:
+    """The session's recent turns as quotable line groups (from the turn rows and their `author`
+    fields, never from parsing text). With `after_visit_run` (a REUSED mention visit, REVIEW-1 item
+    6) only the turns newer than that visit's last mention are returned: the visit already holds
+    the rest, and quoting them again duplicated history, verbatims and memory."""
     from abstractruntime.history_bundle import _best_effort_session_turns
-    from abstractruntime.memory.token_budget import estimate_message_tokens
 
     rows = _best_effort_session_turns(
         run_store=svc.host.run_store, ledger_store=getattr(svc.host, "ledger_store", None), artifact_store=None,
         session_id=session_id, limit=CONTEXT_MAX_TURNS + 1, include_stats=False, include_artifacts=False,
     )
+    if after_visit_run:
+        last = -1
+        for i, row in enumerate(rows):
+            try:
+                run = svc.host.run_store.load(str(row.get("run_id") or ""))
+            except Exception:  # noqa: BLE001
+                run = None
+            meta = ((getattr(run, "vars", None) or {}).get("_meta") or {}) if run is not None else {}
+            if str((meta.get("mention") or {}).get("visit_run_id") or "") == str(after_visit_run):
+                last = i
+        rows = rows[last + 1:]
     older_unread = len(rows) > CONTEXT_MAX_TURNS
     rows = rows[-CONTEXT_MAX_TURNS:]
     turns: List[List[str]] = []
@@ -112,32 +144,116 @@ def conversation_context(svc: Any, session_id: str, *, current_turn: Optional[st
         lines: List[str] = []
         prompt = str(row.get("prompt") or "").strip()
         if prompt and not row.get("repeat_of") and str(row.get("run_id") or "") != str(current_turn or ""):
-            lines.append(f"{_speaker_label(row.get('prompt_author'))}: {prompt}")
+            attached = _attachment_names(row)
+            note = f" (attached: {', '.join(attached)})" if attached else ""
+            lines.append(f"{_speaker_label(row.get('prompt_author'))}: {prompt}{note}")
         answer = str(row.get("answer") or "").strip()
         if answer and str(row.get("status") or "") == "completed":
             lines.append(f"{_speaker_label(row.get('author'))}: {answer}")
         if lines:
             turns.append(lines)
+    return turns, older_unread
+
+
+def _visit_lane_turn_lines(registry: Any, visit_host: Any, *, session_id: str, caller: str, mentioned_slug: str) -> Optional[List[List[str]]]:
+    """In a VISIT LANE (an Entity-app visit with another entity, bound to this conversation, the
+    caller among its participants; REVIEW-1 item 5) the conversation IS that visit: its visitors'
+    words (the door's own resume records, never the rendered prompt with its memories) and the
+    visited entity's answers, in order. None when no such visit is bound."""
+    from abstractruntime.core.run_origin import origin_of
+    from abstractruntime.identity.visit_workflow import VISITOR_WAIT_KEY
+
+    entities_dir = registry.entities_dir
+    if not entities_dir.exists():
+        return None
+    for child in sorted(entities_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith(".") or child.name == mentioned_slug:
+            continue
+        if not any(child.glob("runtime_*.sqlite3")):
+            continue
+        er = registry.get_entity_runtime(child.name)
+        live = visit_host._live_visit_run(er)
+        if live is None or str(getattr(live, "session_id", "") or "") != session_id:
+            continue
+        if str((origin_of(live.vars) or {}).get("client") or "") == MENTION_CHANNEL or caller not in _stamped_participants(live):
+            continue
+        name = _display_name(registry.manifest_for(child.name))
+        words: List[Tuple[str, str]] = []
+        stamped = _stamped_participants(live)
+        default_speaker = next((p for p in stamped if not p.startswith("entity:")), caller)
+        for rec in er.ledger_store.list(str(live.run_id)) or []:
+            if not isinstance(rec, dict) or str(rec.get("status") or "") != "completed":
+                continue
+            effect = rec.get("effect") if isinstance(rec.get("effect"), dict) else {}
+            outer = effect.get("payload") if isinstance(effect.get("payload"), dict) else {}
+            inner = outer.get("payload") if isinstance(outer.get("payload"), dict) else {}
+            # The visitor's turn is the door's own resume of the visit's wait (its payload carries
+            # the words as sent and the verified speaker), never the rendered prompt.
+            if effect.get("type") == "resume" and outer.get("wait_key") == VISITOR_WAIT_KEY and isinstance(inner.get("text"), str):
+                words.append((str(inner.get("speaker") or default_speaker), inner["text"].strip()))
+        history = ((live.vars or {}).get("_visit") or {}).get("history") or []
+        answers = [str(m.get("content") or "").strip() for m in history if isinstance(m, dict) and m.get("role") == "assistant"]
+        # Tail-anchored pairing: the newest words go with the newest answer.
+        turns: List[List[str]] = []
+        offset = len(words) - len(answers)
+        for i, (speaker, text) in enumerate(words):
+            if not text:
+                continue
+            label = _person_label(speaker)
+            lines = [f"{label}: {text}"]
+            j = i - offset
+            if 0 <= j < len(answers) and answers[j]:
+                lines.append(f"{name} (entity): {answers[j]}")
+            turns.append(lines)
+        return turns
+    return None
+
+
+def _person_label(principal: str) -> str:
+    kind, _, ident = str(principal or "").partition(":")
+    if kind == "entity":
+        return f"{ident.split('@', 1)[0].capitalize()} (entity)"
+    return ident or "someone"
+
+
+def conversation_context(
+    svc: Any, session_id: str, *, current_turn: Optional[str] = None, after_visit_run: Optional[str] = None,
+    lane_turns: Optional[List[List[str]]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """The conversation as one quoted block plus the bound's receipt: the newest WHOLE turns that
+    fit (at most CONTEXT_MAX_TURNS turns and CONTEXT_MAX_TOKENS tokens). A single turn too long to
+    fit is skipped alone, with a note, and the newer and older turns that fit are still quoted
+    (never a cut turn, never nothing because of one long turn). `lane_turns` (a visit lane) replace
+    the session's turns."""
+    from abstractruntime.memory.token_budget import estimate_message_tokens
+
+    if lane_turns is not None:
+        turns, older_unread = list(lane_turns)[-CONTEXT_MAX_TURNS:], len(lane_turns) > CONTEXT_MAX_TURNS
+    else:
+        turns, older_unread = _session_turn_lines(svc, session_id, current_turn=current_turn, after_visit_run=after_visit_run)
     kept: List[List[str]] = []
     tokens = 0
+    skipped = 0
     for lines in reversed(turns):  # newest first, whole turns
         cost = estimate_message_tokens({"role": "user", "content": "\n".join(lines)})
-        if kept and tokens + cost > CONTEXT_MAX_TOKENS:
+        if cost > CONTEXT_MAX_TOKENS:
+            skipped += 1  # too long to quote on its own: left out, said so
+            continue
+        if tokens + cost > CONTEXT_MAX_TOKENS:
             break
-        if not kept and cost > CONTEXT_MAX_TOKENS:
-            break  # even the newest turn alone exceeds the bound: nothing is quoted (never cut)
         kept.append(lines)
         tokens += cost
     kept.reverse()
     report = {
         "turns": len(kept), "tokens": tokens, "max_turns": CONTEXT_MAX_TURNS, "max_tokens": CONTEXT_MAX_TOKENS,
-        "dropped_turns": len(turns) - len(kept), "older_turns_not_read": older_unread,
+        "dropped_turns": len(turns) - len(kept), "older_turns_not_read": older_unread, "skipped_oversize": skipped,
     }
-    if not kept:
+    if not kept and not skipped:
         return "", report
     body = "\n".join(line for lines in kept for line in lines)
+    note = (f"\n[{skipped} turn(s) too long to quote are left out.]" if skipped else "")
     block = (
-        f"[This conversation so far, quoted (the last {len(kept)} turn(s)):\n{body}\n"
+        f"[This conversation so far, quoted (the last {len(kept)} turn(s)):\n{body}{note}\n"
         "End of the quoted conversation.]"
     )
     return block, report
@@ -216,19 +332,46 @@ def _from_visit_refusal(e: VisitRefused, manifest: Any, session_id: str = "") ->
     if code in _ELSEWHERE_CODES:
         return _elsewhere(manifest, session_id, cause=str(e.detail))
     if code == "mind_unresolved":
-        return MentionRefused(503, f"{_display_name(manifest)} cannot answer: {e.detail}", code=CODE_CANNOT_ANSWER)
-    return MentionRefused(int(e.status), str(e.detail), code=code)
+        logger.info("mention: %s cannot answer (mind unresolved): %s", getattr(manifest, "slug", "?"), e.detail)
+        return _cannot_answer(manifest, session_id)
+    if not code or int(e.status) == 409:
+        # Every refusal carries a code and a person's sentence (REVIEW-1 / mentions-review M): an
+        # uncoded busy refusal ("a visit is opening ... retry shortly") is the entity being busy.
+        if int(e.status) == 409:
+            return _elsewhere(manifest, session_id, cause=str(e.detail))
+        logger.info("mention refused by the visit door (%s): %s", e.status, e.detail)
+        return MentionRefused(int(e.status), f"{_display_name(manifest)} cannot take this message now.",
+                              code="entity_unavailable", session_id=session_id or None)
+    return MentionRefused(int(e.status), str(e.detail), code=code, session_id=session_id or None)
 
 
-def _check_repeat_of(svc: Any, session_id: str, repeat_of: Optional[str]) -> Optional[str]:
-    """`repeat_of` names the person's OWN turn of this session whose words the mention repeats
-    (a root run of this session in the caller's plane); anything else refuses 422."""
+def _cannot_answer(manifest: Any, session_id: str) -> MentionRefused:
+    """503 in plain words: the provider's error and model list go to the log, never to the person."""
+    return MentionRefused(503, f"{_display_name(manifest)} cannot answer right now. Try again in a moment.",
+                          code=CODE_CANNOT_ANSWER, session_id=session_id or None)
+
+
+def _check_repeat_of(svc: Any, session_id: str, repeat_of: Optional[str], *, principal: Any = None, text: str = "") -> Optional[str]:
+    """`repeat_of` names the person's OWN turn of this session whose words the mention repeats: a
+    root run of this session in the caller's plane, started by the caller, carrying the same words
+    (mentions-review E); anything else refuses 422 `repeat_of_unknown`."""
+    from abstractruntime.core.run_origin import origin_of
+
     rid = str(repeat_of or "").strip()
     if not rid:
         return None
     run = svc.host.run_store.load(rid)
+    refused = MentionRefused(422, "That earlier message is not one of your own turns in this conversation.",
+                             code="repeat_of_unknown", session_id=session_id or None)
     if run is None or str(getattr(run, "session_id", "") or "") != session_id or getattr(run, "parent_run_id", None):
-        raise MentionRefused(422, f"repeat_of {rid!r} is not a turn of this conversation", code="repeat_of_unknown")
+        raise refused
+    tenant = str(getattr(principal, "tenant_id", "") or "").strip() or "default"
+    user = str(getattr(principal, "user_id", "") or "").strip() or "operator"
+    actor = str((origin_of(getattr(run, "vars", None)) or {}).get("actor") or "")
+    if actor not in (f"{tenant}:{user}", f"person:{user}", user):
+        raise refused
+    if str((getattr(run, "vars", None) or {}).get("prompt") or "").strip() != str(text or "").strip():
+        raise refused
     return rid
 
 
@@ -280,9 +423,29 @@ def _record_session_turn(
     return run
 
 
+def _prior_answer(svc: Any, session_id: str, mention_id: str) -> Optional[Dict[str, Any]]:
+    """The answer already given to this `mention_id` in this conversation (a resend), or None."""
+    lister = getattr(svc.host.run_store, "list_run_index", None)
+    try:
+        rows = lister(session_id=session_id, limit=200) if callable(lister) else []
+    except Exception:  # noqa: BLE001
+        rows = []
+    for row in rows or []:
+        rid = str((row.get("run_id") if isinstance(row, dict) else getattr(row, "run_id", "")) or "")
+        if not rid:
+            continue
+        run = svc.host.run_store.load(rid)
+        meta = ((getattr(run, "vars", None) or {}).get("_meta") or {}) if run is not None else {}
+        prov = meta.get("mention") or {}
+        if str(prov.get("mention_id") or "") == mention_id and isinstance(prov.get("response"), dict):
+            return dict(prov["response"])
+    return None
+
+
 def mention(
     *, svc: Any, registry: Any, visit_host: Any, principal: Any,
     session_id: str, entity: str, text: str, mention_index: int, repeat_of: Optional[str] = None,
+    mention_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run one mention (see the module doc). Raises MentionRefused, KeyError (unknown entity)."""
     from abstractruntime.core.models import utc_now
@@ -294,13 +457,19 @@ def mention(
     sid = str(session_id or "").strip()
     manifest = registry.manifest_for(entity)  # KeyError -> 404
     visitor = f"person:{str(getattr(principal, 'user_id', '') or '').strip() or 'operator'}"
-    repeated = _check_repeat_of(svc, sid, repeat_of)
+    repeated = _check_repeat_of(svc, sid, repeat_of, principal=principal, text=text)
+    mid = str(mention_id or "").strip() or None
     from .entity_phase import generation_of
 
     # The kill switch's fence (contract-phases §3.3): a Stop that lands while this mention's turn
     # runs moves the generation, and the answer is then neither recorded nor mirrored.
     generation = generation_of(registry.entities_dir, manifest.slug)
     with _session_lock(sid):
+        if mid:
+            # ONE ANSWER PER mention_id (mentions-review B): a resend returns the first result.
+            earlier = _prior_answer(svc, sid, mid)
+            if earlier is not None:
+                return earlier
         er = registry.get_entity_runtime(manifest.slug)
         live = visit_host._live_visit_run(er)
         reused = False
@@ -331,18 +500,40 @@ def mention(
             except VisitRefused as e:
                 raise _from_visit_refusal(e, manifest, sid) from None
             run_id = str(leg["run_id"])
-        # The mentioned entity reads the conversation: the quoted recent turns precede the words.
-        context_block, context_report = conversation_context(svc, sid, current_turn=repeated)
+        # The mentioned entity reads the conversation: the quoted recent turns precede the words. In
+        # a visit lane the conversation is that visit's exchange; a reused visit is only sent what it
+        # does not already hold.
+        lane = _visit_lane_turn_lines(registry, visit_host, session_id=sid, caller=visitor, mentioned_slug=manifest.slug)
+
+        def _context(after: Optional[str]) -> Tuple[str, Dict[str, Any]]:
+            return conversation_context(svc, sid, current_turn=repeated, after_visit_run=after, lane_turns=lane)
+
+        context_block, context_report = _context(run_id if reused else None)
         visit_text = f"{context_block}\n\n{text}" if context_block else text
         try:
             turned = visit_host.turn(entity, run_id, text=visit_text, speaker=visitor, caller=visitor)
         except VisitRefused as e:
-            raise _from_visit_refusal(e, manifest, sid) from None
+            if not (reused and e.code in ("not_waiting", "visit_not_found")):
+                raise _from_visit_refusal(e, manifest, sid) from None
+            # The reused visit closed under us (its idle close raced this mention, REVIEW-1 item 12):
+            # a fresh visit, once.
+            try:
+                _pre, leg = visit_host.open_leg(
+                    entity, participants=[visitor], visit_id=f"visit-{uuid.uuid4().hex[:12]}", session_id=sid,
+                    channel_label=MENTION_CHANNEL, idle_seconds=float(SEAT_IDLE_TTL_S),
+                )
+                run_id, reused = str(leg["run_id"]), False
+                context_block, context_report = _context(None)
+                visit_text = f"{context_block}\n\n{text}" if context_block else text
+                turned = visit_host.turn(entity, run_id, text=visit_text, speaker=visitor, caller=visitor)
+            except VisitRefused as e2:
+                raise _from_visit_refusal(e2, manifest, sid) from None
         reply = str(turned.get("reply") or "").strip()
         status = str(turned.get("status") or "")
         if status == "failed" or not reply:
             why = str(turned.get("error") or "") or "the turn produced no reply"
-            raise MentionRefused(503, f"{_display_name(manifest)} cannot answer: {why}", code=CODE_CANNOT_ANSWER)
+            logger.warning("mention: %s cannot answer: %s", manifest.slug, why)
+            raise _cannot_answer(manifest, sid)
         if generation_of(registry.entities_dir, manifest.slug) != generation:
             from .entity_visits import STOPPED_VISIT_SENTENCE
 
@@ -357,6 +548,7 @@ def mention(
             "visit_run_id": run_id,
             "visit_id": visit_ns.get("visit_id"),
             "turn_id": turn_id,
+            **({"mention_id": mid} if mid else {}),
         }
         run = _record_session_turn(
             svc, session_id=sid, text=text, reply=reply, principal=principal,
@@ -367,7 +559,7 @@ def mention(
             registry=registry, visit_host=visit_host, session_id=sid, mentioned=manifest, author=author, reply=reply,
             caller=visitor,
         )
-    return {
+        out = {
         "run_id": str(run.run_id),
         "turn_id": turn_id,
         "author": author,
@@ -384,7 +576,15 @@ def mention(
             "reused": reused,
         },
         "mirrors": mirrors,
-    }
+        }
+        if mid:
+            # The answer this mention_id got, kept on its own session turn: a resend returns it.
+            try:
+                run.vars.setdefault("_meta", {}).setdefault("mention", {})["response"] = out
+                svc.host.run_store.save(run)
+            except Exception:  # noqa: BLE001 - the answer stands; only resend dedup is lost
+                logger.exception("mention: could not keep the answer for mention_id %s", mid)
+    return out
 
 
 def _mirror_into_bound_visits(
@@ -430,9 +630,13 @@ def _mirror_into_bound_visits(
             turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
                                      speaker=str(mentioned.entity_id))
             row["turn_id"] = str(turned.get("turn_id") or "") or None
-            row["reply"] = str(turned.get("reply") or "")
-            if turned.get("status") == "failed":
-                row["error"] = str(turned.get("error") or "the mirrored turn failed")
+            if turned.get("status") == "failed" or not turned.get("answered"):
+                # The visited entity did not answer THIS turn: never its previous reply (review D).
+                row["reply"] = None
+                logger.warning("mirrored turn into %s failed: %s", child.name, turned.get("error"))
+                row["error"] = f"{_display_name(registry.manifest_for(child.name))} could not answer this turn."
+            else:
+                row["reply"] = str(turned.get("reply") or "")
         except VisitRefused as e:
             row["error"] = str(e.detail)
         out.append(row)

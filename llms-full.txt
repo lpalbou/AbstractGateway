@@ -5618,7 +5618,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](docs/maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
-| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt); 404 `entity_not_found` (unknown or hidden entity, identical answers), 409 `in_another_conversation`, 503 `entity_cannot_answer` | [entities.md](docs/entities.md#mentioning-an-entity-from-any-chat) |
+| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index, mention_id?, repeat_of?}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt; `mention_id` makes a resend return the first answer); 404 `entity_not_found` (unknown, hidden or invalid name, identical answers), 409 `in_another_conversation` / `stopped_use_resume`, 422 `repeat_of_unknown`, 503 `entity_cannot_answer` (a plain sentence) | [entities.md](docs/entities.md#mentioning-an-entity-from-any-chat) |
 | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
@@ -11002,20 +11002,27 @@ client picks the entity from `GET /entities` (a structured choice: the gateway n
 ```bash
 curl -X POST http://localhost:8080/api/gateway/sessions/$SESSION_ID/mentions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0, "repeat_of": "<the agent turn run id, optional>"}'
+  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0, "mention_id": "<optional>", "repeat_of": "<the agent turn run id, optional>"}'
 ```
+
+`mention_id` (optional) is your own id for this mention. Sending it again (a double submit, a retry
+after a lost response) returns the first answer; the entity is never asked twice.
 
 What happens:
 
 1. **You are the visitor.** The speaker is the signed-in person, never a name the client sends.
-2. **One life, one visit.** The entity's live visit is reused when it belongs to this
-   conversation. With none, a visit is opened for this conversation; it closes on its own
-   (with the usual reflection) after 5 minutes without a mention.
+2. **One life, one visit.** The entity's live visit is reused only when this door opened it, in
+   this conversation, for you. With none, a visit is opened for this conversation; it closes on
+   its own (with the usual reflection) after 5 minutes without a mention. If that close lands just
+   as you mention again, a fresh visit opens.
 3. **The entity reads the conversation and lives it at home.** Your text is a turn of that
    visit, preceded by the conversation's recent turns quoted with who said them
    (`Laurent: ...`, `Agent (Basic Agent): ...`, `Castor (entity): ...`; built from each turn's
    `author`, never from the text): the newest whole turns, at most 12 turns and 8,000 tokens,
-   whichever comes first (the answer's `context` states what was quoted and what was left out).
+   whichever comes first. A turn too long to quote on its own is left out, with a note, and the
+   others are still quoted. Attachments are named (`(attached: contract.pdf)`). A reused visit is
+   sent only the turns newer than its last mention: it already holds the rest. The answer's
+   `context` states what was quoted and what was left out (`skipped_oversize` included).
    The entity's own ledger, memory and artifacts hold the episode, quote included, exactly like
    a visit from the Entity app.
 4. **The answer is a turn of your conversation.** The reply is recorded in the session (a
@@ -11027,7 +11034,8 @@ Several mentions in one message are separate requests, in order (`mention_index`
 each its own turn.
 
 **The same words, once.** When the message also started the conversation's agent turn, send
-that turn's run id as `repeat_of`: the mention turn keeps the words as its prompt (history and
+that turn's run id as `repeat_of` (it must be your own turn of this conversation, with the same
+words): the mention turn keeps the words as its prompt (history and
 replay stay whole user/answer pairs, so the agent still hears the entity's reply) and is marked
 `repeat_of` on every surface, so a client shows the person's words once and folds the entity's
 answer under them. A `repeat_of` that is not a turn of this conversation answers 422
@@ -11035,11 +11043,13 @@ answer under them. A `repeat_of` that is not a turn of this conversation answers
 the reply came (`updated_at`), so the answer always sorts after the question.
 
 **In a visit.** When the conversation is the live visit of the entity you are visiting (an
-Entity-app visit with Nerin, `session_id` = the one `visit/open` returned), the mentioned entity's reply is also a turn
+Entity-app visit with Nerin, `session_id` = the one `visit/open` returned), the mentioned entity reads
+THAT visit's exchange (your words and Nerin's answers) as the conversation, and its reply is also a turn
 of THAT visit, spoken by the mentioned entity: the door adds `entity:castor` to the visit's signed
 participants, then sends `Castor (entity): <reply>` as a visit turn with that speaker. Nerin hears
 it and answers it like any visitor's words; his home's ledger and memory keep it. The answer lists
-these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`, or `error` when that visit refused;
+these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`; `reply` is Nerin's answer to THIS turn,
+or `null` with an `error` sentence when he could not answer it;
 `[]` in a plain chat: two entities mentioned in one chat never mirror into each other).
 
 The answer (200):
@@ -11057,14 +11067,16 @@ The answer (200):
  "mirrors": []}
 ```
 
-Errors (`{detail, code}` plus the `X-Gateway-Error-Code` header):
+Errors (`{detail, code, session_id}` plus the `X-Gateway-Error-Code` header; `session_id` is always your
+own conversation):
 
 | Status | `code` | When |
 |---|---|---|
 | 404 | `entity_not_found` | No such entity, or one this account may not see (a member mentions only the entities they created; a hidden entity answers like a missing one) |
 | 409 | `in_another_conversation` | The entity is in another conversation. Only one of your own conversations is ever named (`session_id`); another account's never is. It is free again when that conversation ends or after 5 idle minutes |
 | 409 | `stopped_use_resume` | The entity is stopped (the kill switch) |
-| 503 | `entity_cannot_answer` | Its mind cannot be resolved (no model chosen), or the turn gave no reply |
+| 422 | `repeat_of_unknown` | `repeat_of` is not your own turn of this conversation with the same words |
+| 503 | `entity_cannot_answer` | "Castor cannot answer right now. Try again in a moment.": its mind cannot be resolved (no model chosen), or the turn gave no reply (the cause is in the gateway log, never in the sentence) |
 
 **Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each
 bundle's `run`), `GET /runs/{id}`, the replay view's user and assistant messages, and the

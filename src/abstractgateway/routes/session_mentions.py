@@ -21,6 +21,11 @@ class MentionRequest(BaseModel):
     entity: str = Field(..., min_length=1, max_length=200, description="The entity's name (as `GET /entities` lists it)")
     text: str = Field(..., description="The message as typed (the entity receives it as the visit turn)")
     mention_index: int = Field(default=0, ge=0, description="0, 1, 2... for several mentions in one message, sent in order")
+    mention_id: Optional[str] = Field(
+        default=None, min_length=1, max_length=200,
+        description="The client's id for THIS mention: a resend with the same id returns the first answer, never a "
+                    "second one (a double submit, a retry after a lost response)",
+    )
     repeat_of: Optional[str] = Field(
         default=None, max_length=200,
         description="The run id of the person's own turn of this conversation that already carries these words "
@@ -92,6 +97,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
             text=req.text,
             mention_index=int(req.mention_index),
             repeat_of=req.repeat_of,
+            mention_id=req.mention_id,
         )
     except KeyError:
         return _not_found(req.entity)
@@ -101,6 +107,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
         if e.code:
             body["code"] = e.code
             headers = {"X-Gateway-Error-Code": e.code}
-        if e.code == "in_another_conversation":
-            body["session_id"] = e.session_id
+        # Every refusal names the caller's own conversation (never another account's): the
+        # client always knows which conversation the sentence is about.
+        body["session_id"] = e.session_id or sid
         return JSONResponse(status_code=e.status, content=body, headers=headers)

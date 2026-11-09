@@ -3772,11 +3772,15 @@ def _summon_core(
     }
     # Who speaks (entity mentions, 2026-11-08): the summoned entity answers; host-written, a
     # client-sent author is replaced.
-    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY
+    from abstractruntime.core.turn_author import AUTHOR_KEY, PROMPT_AUTHOR_KEY, REPEAT_OF_KEY
 
     from ..entity_mentions import entity_author
 
     input_data["_meta"].pop(PROMPT_AUTHOR_KEY, None)
+    # repeat_of / mention are written only by the mention route after it validated them (review
+    # 2026-11-09 finding 3, the summon half of 0093590f's /runs/start rule).
+    input_data["_meta"].pop(REPEAT_OF_KEY, None)
+    input_data["_meta"].pop("mention", None)
     input_data["_meta"][AUTHOR_KEY] = entity_author(registry, home.manifest)
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")

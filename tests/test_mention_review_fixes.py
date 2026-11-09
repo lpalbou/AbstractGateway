@@ -1,0 +1,237 @@
+"""Mentions, the 2026-11-09 review debt (REVIEW-1 items 5, 6, 11, 12; mentions-review probes B, C, D,
+E, F, G, G2, L, M): what the mentioned entity reads (the visit lane's own exchange; only what a
+reused visit does not already hold; an oversize turn skipped alone; attachments named), one answer per
+`mention_id`, a mirror that reports its own new answer or its error, plain refusals that always carry
+a code and the caller's session, `repeat_of` only for the caller's own turn with the same words, the
+reuse racing the idle close, and per-session locks that do not outlive their use. Hermetic gateway,
+scripted mind."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.basic
+
+pytest.importorskip("abstractmemory")
+pytest.importorskip("abstractruntime.identity.visit_workflow")
+
+_TOKEN = "mention-review-fixes-secret"
+
+
+@pytest.fixture(autouse=True)
+def _gateway_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind",
+                        lambda: {"provider": "lmstudio", "model": "test-model", "base_url": None, "reasoning": None})
+
+
+class _LLM:
+    class _Reply:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    def __init__(self, replies) -> None:
+        self._replies = list(replies)
+        self.calls: list = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        if not self._replies:
+            raise AssertionError("scripted LLM exhausted")
+        reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return self._Reply(reply)
+
+
+def _install(monkeypatch, replies) -> _LLM:
+    from abstractgateway import entity_chat
+
+    llm = _LLM(replies)
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+    return llm
+
+
+def _spark(name: str) -> dict:
+    from abstractmemory import DEFAULT_SPARK_TEMPLATE
+
+    spark = copy.deepcopy(dict(DEFAULT_SPARK_TEMPLATE))
+    spark["name"] = name
+    spark["spark"] = 1
+    return spark
+
+
+def _client() -> TestClient:
+    from abstractgateway.app import app
+
+    return TestClient(app, headers={"Authorization": f"Bearer {_TOKEN}"})
+
+
+def _create(client, name="Castor"):
+    assert client.post("/api/gateway/entities", json={"name": name, "spark": _spark(name)}).status_code == 201
+
+
+def _mention(client, sid, text, *, entity="Castor", **extra):
+    return client.post(f"/api/gateway/sessions/{sid}/mentions", json={"entity": entity, "text": text, "mention_index": 0, **extra})
+
+
+def _last_user_text(llm) -> str:
+    msgs = llm.calls[-1].get("messages") or []
+    users = [m for m in msgs if m.get("role") == "user"]
+    return str(users[-1].get("content") if users else llm.calls[-1].get("prompt") or "")
+
+
+def test_session_locks_do_not_outlive_their_use(monkeypatch):
+    from abstractgateway import entity_mentions
+
+    _install(monkeypatch, ["Castor: one."])
+    with _client() as client:
+        _create(client)
+        assert _mention(client, "sess-locks", "@Castor hi").status_code == 200
+        assert "sess-locks" not in entity_mentions._SESSION_LOCKS
+
+
+def test_a_reused_visit_is_only_sent_what_it_does_not_already_hold(monkeypatch):
+    llm = _install(monkeypatch, ["Castor: UNIQUE-ANSWER-ONE.", "Castor: two."])
+    with _client() as client:
+        _create(client)
+        assert _mention(client, "sess-requote", "@Castor UNIQUE-QUESTION-ONE").status_code == 200
+        r = _mention(client, "sess-requote", "@Castor and next?")
+        assert r.status_code == 200, r.text
+        assert r.json()["visit"]["reused"] is True
+        assert r.json()["context"]["turns"] == 0
+        assert "[This conversation so far" not in _last_user_text(llm)
+
+
+def test_in_a_visit_lane_the_mentioned_entity_reads_that_visits_exchange(monkeypatch):
+    llm = _install(monkeypatch, ["Nerin: the tide is LOW-TIDE-FACT.", "Castor: noted.", "Nerin: ok."])
+    with _client() as client:
+        _create(client, "Nerin")
+        _create(client, "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        sid, rid = opened.json()["session_id"], opened.json()["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "how is the tide?"}).status_code == 200
+        r = _mention(client, sid, "@Castor what do you think?")
+        assert r.status_code == 200, r.text
+        assert r.json()["context"]["turns"] >= 1
+        castor_call = next(c for c in llm.calls if "what do you think" in str(c))
+        assert "LOW-TIDE-FACT" in str(castor_call)
+
+
+def test_an_oversize_turn_is_skipped_alone_and_attachments_are_named(monkeypatch):
+    from abstractgateway import entity_mentions
+
+    llm = _install(monkeypatch, ["Castor: ok."])
+    monkeypatch.setattr(entity_mentions, "CONTEXT_MAX_TOKENS", 200)
+    rows = [
+        {"run_id": "r1", "prompt": "SMALL-OLD question", "answer": "small old answer", "status": "completed",
+         "prompt_author": None, "author": None, "attachments": [{"$artifact": "a1", "filename": "contract.pdf"}]},
+        {"run_id": "r2", "prompt": "HUGE " + "word " * 2000, "answer": "x", "status": "completed",
+         "prompt_author": None, "author": None},
+        {"run_id": "r3", "prompt": "SMALL-NEW question", "answer": "small new answer", "status": "completed",
+         "prompt_author": None, "author": None},
+    ]
+    monkeypatch.setattr("abstractruntime.history_bundle._best_effort_session_turns", lambda **kw: list(rows))
+    with _client() as client:
+        _create(client)
+        r = _mention(client, "sess-big", "@Castor hi")
+        assert r.status_code == 200, r.text
+        ctx = r.json()["context"]
+        assert ctx["turns"] == 2 and ctx["skipped_oversize"] == 1
+        text = _last_user_text(llm)
+        assert "SMALL-NEW" in text and "SMALL-OLD" in text and "HUGE" not in text
+        assert "contract.pdf" in text
+        assert "too long to quote" in text
+
+
+def test_one_answer_per_mention_id(monkeypatch):
+    llm = _install(monkeypatch, ["Castor: first.", "Castor: a duplicate that must never be asked for."])
+    with _client() as client:
+        _create(client)
+        a = _mention(client, "sess-idem", "@Castor once", mention_id="m-1")
+        b = _mention(client, "sess-idem", "@Castor once", mention_id="m-1")
+        assert a.status_code == 200 and b.status_code == 200, (a.text, b.text)
+        assert b.json() == a.json()
+        assert len(llm.calls) == 1
+
+
+def test_a_failed_answer_is_a_plain_sentence_with_a_code(monkeypatch):
+    _install(monkeypatch, [RuntimeError("provider exploded: models a,b,c")])
+    with _client() as client:
+        _create(client)
+        r = _mention(client, "sess-503", "@Castor hi")
+        assert r.status_code == 503, r.text
+        assert r.json()["code"] == "entity_cannot_answer"
+        assert r.json()["detail"] == "Castor cannot answer right now. Try again in a moment."
+        assert "exploded" not in r.text and r.json()["session_id"] == "sess-503"
+
+
+def test_every_refusal_carries_a_code_and_the_callers_session(monkeypatch):
+    from abstractgateway.entity_mentions import _from_visit_refusal
+    from abstractgateway.entity_visits import VisitRefused
+
+    class _M:
+        name = "Castor"
+        slug = "castor"
+
+    for e in (VisitRefused(409, "a visit is opening on entity:castor (visiting posture 3s old) — retry shortly"),
+              VisitRefused(409, "a hosted chat session is already open on entity:castor", code="chat_session_open")):
+        out = _from_visit_refusal(e, _M(), "sess-x")
+        assert out.code and out.session_id == "sess-x"
+        assert "entity:castor" not in out.detail
+
+
+def test_repeat_of_must_be_the_callers_own_turn_with_the_same_words(monkeypatch):
+    from abstractruntime.core.models import RunState, RunStatus
+    from abstractruntime.core.run_origin import origin_for
+
+    from abstractgateway.service import get_gateway_service
+
+    _install(monkeypatch, ["Castor: ok."])
+    with _client() as client:
+        _create(client)
+
+        def _seed(rid, prompt, actor):
+            get_gateway_service().host.run_store.save(RunState(
+                run_id=rid, workflow_id="w", status=RunStatus.COMPLETED, current_node="done",
+                vars={"prompt": prompt, "_meta": {"origin": origin_for("person", actor=actor, client="assistant")}},
+                output={"answer": "a"}, created_at="2026-11-09T10:00:00+00:00", updated_at="2026-11-09T10:00:00+00:00",
+                actor_id="gateway", session_id="sess-rep"))
+
+        _seed("mine-other-words", "something else", "default:admin")
+        _seed("someone-elses", "@Castor hello", "default:bob")
+        _seed("mine", "@Castor hello", "default:admin")
+        for rid in ("mine-other-words", "someone-elses"):
+            r = _mention(client, "sess-rep", "@Castor hello", repeat_of=rid)
+            assert r.status_code == 422 and r.json()["code"] == "repeat_of_unknown", rid
+        assert _mention(client, "sess-rep", "@Castor hello", repeat_of="mine").status_code == 200
+
+
+def test_a_reuse_racing_the_idle_close_opens_a_fresh_visit(monkeypatch):
+    from abstractgateway.entity_visits import EntityVisitHost
+
+    _install(monkeypatch, ["Castor: one.", "(the closing look-back)", "Castor: two.", "spare", "spare"])
+    real_turn = EntityVisitHost.turn
+    state = {"raced": False}
+
+    def _turn(self, name, run_id, **kw):
+        if not state["raced"] and state.get("first_done"):
+            state["raced"] = True
+            self.close(name, run_id, closed_by="operator", reason="idle close raced the mention")
+        out = real_turn(self, name, run_id, **kw)
+        state["first_done"] = True
+        return out
+
+    monkeypatch.setattr(EntityVisitHost, "turn", _turn)
+    with _client() as client:
+        _create(client)
+        first = _mention(client, "sess-race", "@Castor one")
+        assert first.status_code == 200, first.text
+        second = _mention(client, "sess-race", "@Castor two")
+        assert second.status_code == 200, second.text
+        assert second.json()["visit"]["reused"] is False
+        assert second.json()["visit"]["run_id"] != first.json()["visit"]["run_id"]
