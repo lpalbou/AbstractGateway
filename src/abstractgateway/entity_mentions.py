@@ -85,6 +85,36 @@ def _display_name(manifest: Any) -> str:
     return identity_display_name(manifest)
 
 
+def mentioned_entities_line(names: List[str]) -> str:
+    """The one context line the conversation's own agent gets when the person's message mentions
+    entities (operator agreed 2026-11-09): whether the message also addresses the agent is the
+    agent's judgment (never a text rule here), and it never speaks for a mentioned entity."""
+    return (f"The mentioned entities ({', '.join(names)}) answer for themselves; answer only the part "
+            "addressed to you, or say nothing with an empty reply.")
+
+
+def agent_mention_context(registry: Any, entities: List[str]) -> Dict[str, Any]:
+    """`_runtime.mentions` for the conversation's own agent turn: the entities the person's message
+    mentions (the composer's chips, as sent to the mention door; never parsed from the text),
+    resolved to `{entity_id, name}` with their display names, and the context line. Raises KeyError
+    naming the entity that does not exist or is hidden from the caller (the door's 404)."""
+    from fastapi import HTTPException
+
+    from .entity_access import require_entity_visible
+
+    resolved: List[Dict[str, Any]] = []
+    for raw in entities:
+        try:
+            require_entity_visible(str(raw), registry=registry)
+            manifest = registry.manifest_for(str(raw))
+        except (HTTPException, KeyError, ValueError):
+            raise KeyError(str(raw)) from None
+        if any(r["entity_id"] == manifest.entity_id for r in resolved):
+            continue  # an entity named twice is one entity
+        resolved.append({"entity_id": manifest.entity_id, "name": _display_name(manifest)})
+    return {"entities": resolved, "line": mentioned_entities_line([r["name"] for r in resolved])}
+
+
 # The conversation a mentioned entity reads (the chip promises "<name> will read this
 # conversation's history"): the newest whole turns, at most this many and this many tokens,
 # whichever bound comes first. Whole turns only: a turn is never cut.

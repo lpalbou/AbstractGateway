@@ -2723,6 +2723,15 @@ class StartRunRequest(_SpeculationControlRequest):
             "session when the session has no choice yet. Same as input_data.workspace."
         ),
     )
+    mentions: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "The entities this message mentions: the composer's chips (names or slugs, as sent to "
+            "POST /sessions/{id}/mentions), never parsed from the text. The conversation's agent is told they "
+            "answer for themselves and answers only the part addressed to it, or says nothing with an empty "
+            "reply (an empty reply shows no answer). A name that is not a visible entity is 404 `entity_not_found`."
+        ),
+    )
     kind: Optional[str] = Field(
         default=None,
         description=(
@@ -4318,7 +4327,9 @@ def _strip_client_host_stamps(input_data: Dict[str, Any]) -> Dict[str, Any]:
     entity doors for the run they open, never by a client; a client copy would label the agent's
     reply as an entity's (turn authors) and claim an entity's memory routes. Dropped."""
     runtime_ns = input_data.get("_runtime")
-    client_only = {"skills_block", "skills_resolution", "entity"}
+    # `mentions`: written from the request's validated `mentions` (the entities answer for
+    # themselves), never taken from a client's _runtime.
+    client_only = {"skills_block", "skills_resolution", "entity", "mentions"}
     if isinstance(runtime_ns, dict) and (client_only & set(runtime_ns)):
         runtime_ns = {k: v for k, v in runtime_ns.items() if k not in client_only}
         input_data["_runtime"] = runtime_ns
@@ -9561,6 +9572,20 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_host_stamps(_strip_client_workflow_policy(dict(req.input_data or {})))
+        if req.mentions:
+            # The message is addressed to entities too: its own agent is told they answer for
+            # themselves (the line rides _runtime.mentions; the host adds it after the history).
+            from ..entity_mentions import agent_mention_context
+            from .entities import _registry as _entity_registry
+
+            try:
+                mention_ctx = await off_loop("light", agent_mention_context, _entity_registry(), list(req.mentions))
+            except KeyError as e:
+                from .session_mentions import _not_found as _mention_not_found
+
+                return _mention_not_found(str(e.args[0]) if e.args else "")
+            if mention_ctx["entities"]:
+                _ensure_input_runtime_namespace(input_data)["mentions"] = mention_ctx
         _apply_conversation_opt_in(input_data, req.conversation)
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         if req.workspace is not None:

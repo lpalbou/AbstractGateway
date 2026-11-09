@@ -3038,6 +3038,24 @@ class WorkflowBundleGatewayHost:
             }
 
     @staticmethod
+    def _add_mentions_line(vars0: Dict[str, Any], rt_ns: Dict[str, Any]) -> None:
+        """A message that mentions entities (`_runtime.mentions`, written by /runs/start from the
+        request's chips): the agent reads one context line after the conversation's history, right
+        before the person's words: the entities answer for themselves, it answers only what is
+        addressed to it or says nothing. Added after the seed, so it is never taken for a client
+        transcript, and never replayed into a later turn (history is read from the turns)."""
+        mentions = rt_ns.get("mentions") if isinstance(rt_ns, dict) else None
+        line = str((mentions or {}).get("line") or "").strip() if isinstance(mentions, dict) else ""
+        if not line:
+            return
+        ctx0 = vars0.get("context")
+        if not isinstance(ctx0, dict):
+            ctx0 = {}
+            vars0["context"] = ctx0
+        messages = ctx0.get("messages") if isinstance(ctx0.get("messages"), list) else []
+        ctx0["messages"] = [*messages, {"role": "system", "content": line}]
+
+    @staticmethod
     def _normalize_seeded_context(
         vars0: Dict[str, Any],
         ctx0: Optional[Dict[str, Any]],
@@ -3498,6 +3516,7 @@ class WorkflowBundleGatewayHost:
 
         if sid and _bool_text(vars0.get("use_session_history")) is True:
             self._seed_session_history(vars0=vars0, rt_ns=rt_ns, session_id=sid)
+        self._add_mentions_line(vars0, rt_ns)
 
         self._normalize_agent_loop_input(vars0)
 
