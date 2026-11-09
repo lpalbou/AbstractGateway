@@ -130,14 +130,11 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Pollux", "spark": _spark("Pollux")}).status_code == 201
 
-        # A newborn sleeps until woken: the start ARMS the grant and own time is deferred to the
-        # wake (contract-phases v2 §6.3: a running sleep is never cut short by a start).
+        # A newborn is idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running): the start arms the grant and own time starts at once.
         r = client.post("/api/gateway/entities/Pollux/loop/start", json={})
         assert r.status_code == 200, r.text
-        assert r.json()["started"] is False and r.json()["deferred"] is True
-        woke = client.post("/api/gateway/entities/Pollux/state", json={"state": "awake"})
-        assert woke.status_code == 200, woke.text
-        assert spawned == ["pollux"], "the wake hands the phase to the toggles: own time starts"
+        assert r.json()["started"] is True
+        assert spawned == ["pollux"]
 
         # The grant was armed BY the start, attributed to the principal.
         g = client.get("/api/gateway/entities/Pollux/personal-grant").json()

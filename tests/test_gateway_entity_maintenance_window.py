@@ -67,9 +67,9 @@ def test_hold_refuses_every_door_and_survives_restart(tmp_path) -> None:
         status = client.get("/api/gateway/entities/Castor/maintenance-window").json()
         assert status["held"] is True and status["reason"] == "doctoring"
 
-        # The operator state file is untouched underneath (newborn=asleep).
+        # The operator state file is untouched underneath (newborn = awake, idle).
         state = client.get("/api/gateway/entities/Castor/state").json()
-        assert state["state"] == "asleep"
+        assert state["state"] == "awake"
 
     # RESTART: a fresh app/registry over the same data root still refuses —
     # the hold is a file in the home, not process memory.
@@ -83,10 +83,10 @@ def test_hold_refuses_every_door_and_survives_restart(tmp_path) -> None:
         )
         assert closed.status_code == 200 and closed.json()["held"] is False
 
-        # Doors serve again; Castor is still asleep (no wake at completion).
+        # Doors serve again; Castor's state is untouched by the window (a newborn is awake, idle).
         cog3 = client2.get("/api/gateway/entities/Castor/cognition")
         assert cog3.status_code == 200, cog3.text
-        assert cog3.json()["state"]["state"] == "asleep"
+        assert cog3.json()["state"]["state"] == "awake"
 
 
 def test_window_moments_land_as_host_markers(tmp_path) -> None:

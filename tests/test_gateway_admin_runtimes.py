@@ -50,8 +50,8 @@ def test_inventory_lists_default_and_entity_planes_with_liveness() -> None:
         ent = next(row for row in rows if row["kind"] == "entity")
         assert ent["runtime_id"] == "runtime_vesta"
         assert ent["entity"] == "vesta"
-        # Newborn = sleep (c1503); sleep is ALIVE on the liveness axis (c1559).
-        assert ent["state"] == "asleep" and ent["liveness"] == "alive"
+        # Newborn = idle, awake (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running); alive on the liveness axis.
+        assert ent["state"] == "awake" and ent["liveness"] == "alive"
         assert isinstance(ent.get("size_bytes"), int)
 
         default = next(row for row in rows if row["kind"] == "default")

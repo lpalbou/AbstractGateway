@@ -101,8 +101,8 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
         assert _TILE_KEYS <= set(tile), set(tile) ^ _TILE_KEYS
         assert tile["tile_version"] == 1 and tile["name"] == "Tessa" and tile["slug"] == "tessa"
         assert tile["age_days"] == 0
-        # Newborns are born asleep (c1503): the phase is a ruled word, since its birth state.
-        assert tile["now"]["phase"] == "sleep" and tile["now"]["busy"] is False and tile["now"]["trouble"] is None
+        # Newborns start idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running).
+        assert tile["now"]["phase"] == "idle" and tile["now"]["busy"] is False and tile["now"]["trouble"] is None
         assert tile["now"]["since"]
         assert tile["into_lately"] == [] and tile["on_its_mind"] is None and tile["latest_lesson"] is None
         assert tile["counts"] == {"open_questions": 0, "open_problems": 0, "lessons": 0, "interests": 0, "sleeps": tile["counts"]["sleeps"]}
@@ -113,7 +113,7 @@ def test_tile_serves_what_a_card_shows_and_nothing_else():
 
         assert avatar_catalog()[tile["look"]["style"]].get("status") != "retired"
         assert tile["look"]["style_requested"] == tile["look"]["style"] or avatar_catalog()[tile["look"]["style_requested"]].get("status") == "retired"
-        assert tile["now"]["state"] == "asleep"
+        assert tile["now"]["state"] == "awake"  # a newborn starts idle (operator ruling 2026-11-09)
 
         _form("interest", "tides", "what the tide keeps and what it takes back", turn="t1")
         _form("interest", "lighthouses", "why a light that only warns is still a kind of welcome", turn="t2",

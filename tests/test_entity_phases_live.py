@@ -93,7 +93,7 @@ def test_a_change_made_inside_the_loop_reaches_an_open_stream_and_survives_a_rec
 
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "sleep"
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "idle"  # a newborn starts idle
 
         async def _scenario():
             resp = await stream_entity_replay(_Req(), "Castor", since_seq=0.0, families=None, enrich=False,
@@ -101,15 +101,15 @@ def test_a_change_made_inside_the_loop_reaches_an_open_stream_and_survives_a_rec
             gen = resp.body_iterator
             try:
                 # The backlog (the newborn's own phase marker included) drains first.
-                await _read_until(gen, lambda e: _is_phase(e, "sleep"))
-                # The loop process writes the state file itself: no gateway route is involved.
-                write_entity_state(_home_dir(), "awake", reason="the loop woke on its own", written_by="self")
-                seen = await _read_until(gen, lambda e: _is_phase(e, "idle"))
+                await _read_until(gen, lambda e: _is_phase(e, "idle"))
+                # Another process writes the state file itself: no gateway route is involved.
+                write_entity_state(_home_dir(), "asleep", reason="put to rest outside the gateway")
+                seen = await _read_until(gen, lambda e: _is_phase(e, "sleep"))
                 ident, env = seen[-1]
                 payload = env["payload"]
-                assert payload["from"] == "sleep" and payload["phase"] == "idle"
+                assert payload["from"] == "idle" and payload["phase"] == "sleep"
                 assert payload["cause"] == "observed" and payload["rev"] >= 2
-                assert payload["sentence"] == "Awake and reachable; nothing of his own is running."
+                assert payload["sentence"] == "Asleep until you wake him."
                 before_ident = seen[-2][0] if len(seen) > 1 else None
             finally:
                 await gen.aclose()
@@ -118,7 +118,7 @@ def test_a_change_made_inside_the_loop_reaches_an_open_stream_and_survives_a_rec
                                                heartbeat_s=5.0, poll_s=0.05, last_event_id=before_ident)
             gen2 = resp2.body_iterator
             try:
-                again = await _read_until(gen2, lambda e: _is_phase(e, "idle"))
+                again = await _read_until(gen2, lambda e: _is_phase(e, "sleep"))
                 assert again[-1][1]["payload"]["rev"] == payload["rev"]
             finally:
                 await gen2.aclose()

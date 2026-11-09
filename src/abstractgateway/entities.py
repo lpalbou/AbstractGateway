@@ -1329,21 +1329,17 @@ class EntityRegistry:
             principal, principal_warnings = self._ensure_entity_principal(manifest)
             warnings.extend(principal_warnings)
 
-            # NEWBORN = SLEEP (laurent 13:46 totality (c); artifact
-            # spec/entity_phases.json initial_phase + newborn_shape c1503):
-            # the birth state is asleep — sleep is the ground the life
-            # starts from; the phase derivation folds it to sleep. The doors
-            # WAKE, they don't refuse (B1 + c1503): the first visit wakes a
-            # newborn, so this closes no path in. Only genuinely NEW homes
-            # (created=True) — an idempotent re-create never re-sleeps a
-            # living entity.
+            # NEWBORN = IDLE (operator ruling 2026-11-09, superseding the c1503 birth sleep): a new
+            # entity starts awake and reachable with nothing of its own running; own time starts
+            # only when the operator gives it. Only genuinely NEW homes (created=True) — an
+            # idempotent re-create never touches a living entity's state.
             if bool(result.created):
                 try:
                     from abstractruntime.identity.life import write_entity_state
 
                     write_entity_state(
-                        home_dir, "asleep",
-                        reason="newborn — sleep is the birth phase (visit or wake to begin)",
+                        home_dir, "awake",
+                        reason="newborn — awake and reachable; own time starts when the operator gives it",
                     )
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"#FALLBACK newborn birth state not written: {e}")

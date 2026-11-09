@@ -62,3 +62,8 @@
     `session_closed` marker says `status: cancelled` and the reason.
   - A hosted chat closes with `status: cancelled, closed_by: kill_switch, by: operator`.
   - A maintenance pass ends with the receipt `last_maintenance {status: cancelled, reason: kill_switch, by: operator}`.
+
+### Changed
+
+- **A newborn entity starts idle** (operator ruling 2026-11-09). It is awake and reachable, with nothing of its own
+  running, and own time starts when the operator gives it. Before, newborns were born asleep (the c1503 birth sleep).

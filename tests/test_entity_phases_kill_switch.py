@@ -291,7 +291,7 @@ def test_lifecycle_body_errors_and_unknown_entity():
                           headers={"Content-Type": "application/json"})
         assert bad.status_code == 422 and bad.json()["code"] == "invalid_body"
         assert bad.json()["detail"]["reason_code"] == "invalid_body"
-        assert bad.json()["detail"]["life_state"]["phase"] == "sleep"  # a newborn is born asleep
+        assert bad.json()["detail"]["life_state"]["phase"] == "idle"  # a newborn starts idle
         assert bad.json()["detail"]["life_state"]["rev"] >= 1
         for body in ({"action": "pause"}, {"action": "stop", "extra": 1}, ["stop"]):
             r = client.post("/api/gateway/entities/Castor/lifecycle", json=body)

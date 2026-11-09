@@ -253,8 +253,9 @@ def test_identity_card_composes_a_life():
         door_sleeps = [r for r in sleep_reasons if "host under load" in r]
         assert len(door_sleeps) == 1, sleep_reasons  # door dedup held across a minute boundary
         assert "[by person:admin via POST /entities/Castor/state]" in door_sleeps[0]
-        assert [r for r in sleep_reasons if r.startswith("newborn")] == [births[0]["reason"]], sleep_reasons  # the birth moment is its own
-        assert len(sleep_reasons) == 2, sleep_reasons
+        # The birth moment is its own — a WAKE now (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running).
+        assert ("wake", births[0]["reason"]) in state_moments, state_moments
+        assert len(sleep_reasons) == 1, sleep_reasons
         assert ("wake", "loop resumed runtime-side") in state_moments
 
 

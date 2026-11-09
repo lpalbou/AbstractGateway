@@ -99,17 +99,18 @@ def _markers(home_dir):
     return [r["payload"] for r in rows if (r.get("payload") or {}).get("kind") == "phase_changed"]
 
 
-def test_every_field_is_present_and_a_newborn_is_asleep_until_woken():
+def test_every_field_is_present_and_a_newborn_is_idle():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         body = _ls(client)
         assert NEW_KEYS | OLD_KEYS <= set(body)
-        assert body["phase"] == "sleep" and body["stopped"] is False
+        # A newborn starts idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running).
+        assert body["phase"] == "idle" and body["stopped"] is False
         assert body["toggles"] == {"work": True, "personal": False}
-        assert body["sleep"]["kind"] == "operator" and body["sleep"]["ends"] is None
-        assert body["sentence"] == "Asleep until you wake him."
+        assert body["sleep"] is None
+        assert body["sentence"] == "Awake and reachable; nothing of his own is running."
         assert body["visit"] is None and body["work"] is None and body["blocked"] is None
-        assert body["can"]["sleep_now"] == {"allowed": False, "sentence": "He is already resting; a sleep cannot follow a sleep."}
+        assert body["can"]["sleep_now"] == {"allowed": True, "sentence": None}
         assert body["can"]["visit"] == {"allowed": True, "sentence": None}
         assert body["rev"] >= 1 and body["since"]
 
@@ -219,13 +220,13 @@ def test_rev_versions_the_snapshot_survives_a_restart_and_is_announced_once_per_
         home = _home_dir()
         a = _ls(client)
         assert _ls(client) == a  # nothing changed: same rev, same content
-        write_entity_state(home, "awake", reason="woken")
+        write_entity_state(home, "asleep", reason="rest")  # a newborn starts idle; now a sleep
         b = _ls(client)
-        assert b["rev"] == a["rev"] + 1 and b["phase"] == "idle"
+        assert b["rev"] == a["rev"] + 1 and b["phase"] == "sleep"
         marks = _markers(home)
         assert [m["rev"] for m in marks] == sorted({m["rev"] for m in marks})  # one per rev, in order
         last = marks[-1]
-        assert last["rev"] == b["rev"] and last["from"] == "sleep" and last["to"] == "idle"
+        assert last["rev"] == b["rev"] and last["from"] == "idle" and last["to"] == "sleep"
         assert last["toggles"] == b["toggles"] and last["sentence"] == b["sentence"] and last["since"] == b["since"]
 
         # A crash between the rev write and the marker: the next read announces it.

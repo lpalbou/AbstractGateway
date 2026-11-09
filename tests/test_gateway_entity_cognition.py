@@ -85,9 +85,9 @@ def test_cognition_folds_billed_spend_from_the_home_run_ledger(monkeypatch: pyte
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
-        # Newborn = sleep (c1503); the cold read says so, then wake.
+        # Newborn = idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running).
         newborn = client.get("/api/gateway/entities/Castor/cognition").json()
-        assert newborn["phase"] == "sleep" and newborn["state"]["state"] == "asleep"
+        assert newborn["phase"] == "idle" and newborn["state"]["state"] == "awake"
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
         # Before any cognition: zeros, honest, no crash on an empty home store.
@@ -208,10 +208,9 @@ def test_phase_enum_is_the_ruled_closed_set_with_the_liveness_axis():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Norns", "spark": _spark("Norns")}).status_code == 201
 
-        # Newborn = sleep (the artifact's initial_phase, folded from the
-        # birth state create() writes — c1503). Sleep is ALIVE (reachable).
+        # Newborn = idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running): alive, reachable.
         born = client.get("/api/gateway/entities/Norns/cognition").json()
-        assert born["phase"] == "sleep" and born["phase"] in RULED
+        assert born["phase"] == "idle"
         assert born["liveness"] == "alive"
 
         # state=awake with nothing running: the resting default — sleep,
@@ -270,9 +269,9 @@ def test_liveness_rides_every_operator_facing_state_serve():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Vesta", "spark": _spark("Vesta")}).status_code == 201
 
-        # Newborn asleep => alive on all three serves.
+        # Newborn awake (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running) => alive on all three serves.
         st = client.get("/api/gateway/entities/Vesta/state").json()
-        assert st["state"] == "asleep" and st["liveness"] == "alive"
+        assert st["state"] == "awake" and st["liveness"] == "alive"
         rows = client.get("/api/gateway/entities").json()["entities"]
         mine = next(r for r in rows if r.get("slug") == "vesta")
         assert mine["state"]["liveness"] == "alive"

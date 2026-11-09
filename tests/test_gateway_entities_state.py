@@ -110,10 +110,9 @@ def test_state_verbs_door_and_markers():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
-        # NEWBORN = SLEEP (laurent 13:46 totality (c); artifact
-        # initial_phase; c1503 shape): create() writes the birth sleep.
+        # NEWBORN = IDLE (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running): create() writes the birth state awake.
         r = client.get("/api/gateway/entities/Castor/state")
-        assert r.status_code == 200 and r.json()["state"] == "asleep"
+        assert r.status_code == 200 and r.json()["state"] == "awake"
         assert "newborn" in r.json()["reason"]
 
         # The operator's first wake begins the life's awake stretch.
