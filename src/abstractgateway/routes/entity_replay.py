@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -606,6 +607,26 @@ def _collect_replay_chunk(
     return out, pos, exhausted
 
 
+_PHASE_FILES = ("state", "loop_status", "phases.yaml")
+
+
+def _phase_files_signature(home_dir: Path) -> tuple:
+    out = []
+    for name in _PHASE_FILES:
+        try:
+            st = (home_dir / name).stat()
+            out.append((name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append((name, None, None))
+    return tuple(out)
+
+
+def _observe_phase(registry: Any, slug: str) -> None:
+    from ..entity_phase import safe_publish
+
+    safe_publish(registry, slug, "observed")
+
+
 @router.get("/{name}/replay/stream")
 async def stream_entity_replay(
     request: Request,
@@ -696,6 +717,9 @@ async def stream_entity_replay(
                 while (marker_floor + 1) in delivered_lines:
                     marker_floor += 1
         last_emit = asyncio.get_event_loop().time()
+        home_dir_for_phase = Path(registry.entities_dir) / home.manifest.slug
+        phase_sig = _phase_files_signature(home_dir_for_phase)
+        phase_seen_at = last_emit
         while True:
             if await request.is_disconnected():
                 return
@@ -738,6 +762,16 @@ async def stream_entity_replay(
                 if await request.is_disconnected():
                     return  # dead tail mid-backlog: stop, don't finish the walk
             if include_host:
+                # THE PHASE BAR'S LIVE SURFACE (contract-phases v2 §5): a change made inside the
+                # own-time loop (it chose to sleep, a day opened, it died) has no gateway write
+                # point. When the home's state / loop status / grant files move — and on every
+                # heartbeat, for a process that died without a write — the stream re-derives the
+                # snapshot; a new rev lands as a `phase_changed` marker read just below.
+                now_t = asyncio.get_event_loop().time()
+                sig = _phase_files_signature(home_dir_for_phase)
+                if sig != phase_sig or (now_t - phase_seen_at) >= float(heartbeat_s):
+                    phase_sig, phase_seen_at = sig, now_t
+                    await off_loop("light", _observe_phase, registry, home.manifest.slug)
                 for envelope in await off_loop("light",
                     read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
                 ):
