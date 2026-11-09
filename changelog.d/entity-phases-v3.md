@@ -24,3 +24,6 @@
 - **A job never erases the own time it interrupted** (Codex review 2 #6). The queue's work day no longer overwrites
   `resume_to = personal`, and a remembered `work` return is never turned into own time just because the grant
   stands.
+- **Nothing gives own time back across a Stop** (Codex review 2 #7). The deprecated `PUT …/personal-grant` is
+  refused while stopped (409 `stopped_use_resume`), checked and armed in one step under the lifecycle lock; Resume
+  forgets the way back and revokes any grant armed meanwhile, so it always lands in idle.

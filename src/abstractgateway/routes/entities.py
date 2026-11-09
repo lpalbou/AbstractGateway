@@ -7106,8 +7106,20 @@ def put_personal_grant(name: str, req: PutPersonalGrantRequest, response: Respon
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     _deprecate(response, "life_state/toggles")
-    _apply_personal_grant(registry, manifest, mode=req.mode, expires_at=req.expires_at)
     home_dir = registry.entities_dir / manifest.slug
+    from abstractruntime.identity.life import read_entity_state as _rs_g
+
+    # The same stopped-aware admission as the toggles (Codex review 2 #7): checked and armed in ONE
+    # step under the lifecycle lock, so a Stop can never be followed by a grant it did not see.
+    with _ep.phase_lock(registry.entities_dir, manifest.slug):
+        if str(_rs_g(home_dir).get("state") or "") == "paused":
+            message = _PHASE_SENTENCES["stopped_use_resume"]
+            raise HTTPException(
+                status_code=409,
+                detail={"refused": True, "reason_code": "stopped_use_resume", "message": message, "reasons": [message]},
+                headers={"X-Gateway-Error-Code": "stopped_use_resume"},
+            )
+        _apply_personal_grant(registry, manifest, mode=req.mode, expires_at=req.expires_at)
     if str(req.mode or "") == "disabled":
         from ..entity_loop import loop_status as _ls_g, stop_loop as _stop_g
 

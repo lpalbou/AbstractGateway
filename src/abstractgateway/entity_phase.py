@@ -1339,7 +1339,15 @@ def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: 
     """Clear stopped and write awake (never a sleep): he comes back IDLE, always (v3 D3). Nothing
     from before the Stop is restored; own time comes back only when the operator gives it again,
     and a queued job then moves him to work (reconcile, never an operator act here)."""
-    from abstractruntime.identity.life import read_entity_state, write_entity_state
+    from abstractruntime.identity.life import (
+        personal_grant_refusal,
+        read_entity_state,
+        read_personal_grant,
+        write_entity_state,
+        write_personal_grant,
+    )
+
+    revoked_at_resume = False
 
     t0 = time.monotonic()
     if chat_host is None and visit_host is None:
@@ -1356,10 +1364,19 @@ def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: 
             rec = read_record(entities_dir, slug)
             rec["maintenance"] = None
             rec["stop_outstanding"] = []
+            # Resume lands in idle, always (v3 D3; Codex review 2 #7): nothing remembered from before
+            # the Stop, and a grant armed meanwhile by any path is considered cancelled.
+            _note_resume_to(rec, None)
+            if personal_grant_refusal(read_personal_grant(home_dir)) is None:
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch")
+                revoked_at_resume = True
             write_record(entities_dir, slug, rec)
     started = {"own_time": False, "pid": None}
     if not already:
         _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "paused", "reason": "resumed", "by": actor})
+        if revoked_at_resume:
+            _marker(registry, manifest, "personal_grant_revoked",
+                    {"mode": "disabled", "revoked_by": "kill_switch", "by": actor, "channel": "resume"})
         started = reconcile(registry, name, "resume", chat_host=chat_host, visit_host=visit_host)
     body = publish(registry, name, "resume", chat_host=chat_host, visit_host=visit_host)
     body.update({

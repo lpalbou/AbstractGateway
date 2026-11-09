@@ -521,3 +521,29 @@ def test_a_repeated_stop_retries_what_the_last_one_could_not_finish(monkeypatch:
         assert calls == ["root", "child"]
         assert second["complete"] is True
         assert entity_phase.read_record(reg.entities_dir, "castor")["stop_outstanding"] == []
+
+
+def test_nothing_gives_own_time_back_across_a_stop(monkeypatch: pytest.MonkeyPatch):
+    """Codex review 2 #7: the deprecated grant route armed personal while stopped and Resume then
+    reconciled into own time. The legacy route is stopped-aware like the toggles, and Resume lands
+    in idle whatever was armed meanwhile."""
+    from abstractruntime.identity.life import read_personal_grant, write_personal_grant
+
+    from abstractgateway import entity_phase
+
+    spawned = []
+    monkeypatch.setattr(entity_phase, "start_own_time",
+                        lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        r = client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"})
+        assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "stopped_use_resume", r.text
+        assert read_personal_grant(_home_dir())["mode"] == "disabled"
+
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="someone")  # armed by another path
+        entity_phase.set_resume_to(_registry(), "castor", "personal")
+        back = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
+        assert back.status_code == 200, back.text
+        assert back.json()["phase"] == "idle" and back.json()["toggles"]["personal"] is False
+        assert read_personal_grant(_home_dir())["mode"] == "disabled" and spawned == []
