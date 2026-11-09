@@ -319,3 +319,31 @@ def test_a_mention_id_survives_a_crash_between_the_answer_and_the_session_turn(m
         from abstractgateway.service import get_gateway_service
 
         assert get_gateway_service().host.run_store.load(again.json()["run_id"]) is not None
+
+
+def test_a_reused_mention_in_a_visit_lane_never_requotes_the_lane(monkeypatch):
+    """Codex review #13: with a visit lane, the reuse cursor was ignored and every mention resent
+    the whole exchange into the mentioned entity's visit."""
+    llm = _install(monkeypatch, ["Nerin: the tide is LOW-TIDE-FACT.", "Castor: noted.", "Nerin: thanks Castor.",
+                                 "Castor: still here.", "Nerin: ok."])
+    with _client() as client:
+        _create(client, "Nerin")
+        _create(client, "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={})
+        sid, rid = opened.json()["session_id"], opened.json()["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{rid}/turn", json={"text": "how is the tide?"}).status_code == 200
+        first = _mention(client, sid, "@Castor what do you think?")
+        assert first.status_code == 200 and first.json()["context"]["turns"] >= 1, first.text
+        second = _mention(client, sid, "@Castor and now?")
+        assert second.status_code == 200 and second.json()["visit"]["reused"] is True, second.text
+        # Everything in the lane is already in Castor's visit: nothing is quoted again (Castor may
+        # still REMEMBER it — recall is memory, not a re-sent quote).
+        assert second.json()["context"]["turns"] == 0
+        castor_second = next(c for c in reversed(llm.calls) if "and now?" in str(c))
+        assert "Nerin: the tide is LOW-TIDE-FACT." not in _last_user_text_of(castor_second).split("MEMORIES")[0]
+
+
+def _last_user_text_of(call) -> str:
+    msgs = call.get("messages") or []
+    users = [m for m in msgs if m.get("role") == "user"]
+    return str(users[-1].get("content") if users else call.get("prompt") or "")

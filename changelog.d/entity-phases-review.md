@@ -50,3 +50,6 @@
 - **The self-repair sweeper no longer respawns crashed or culled loops** (review #11). It records the death once,
   tells the operator and marks the biography; the loop stays down (`blocked {loop_crashed, action: retry}`) until the
   operator's Retry. The loop-less need-check (work orders) is unchanged pending the work redesign.
+- **A reused mention in a visit lane never re-quotes the lane** (review #13). A per-entity, per-visit cursor kept with
+  the conversation's mention record skips the lane turns the mentioned entity's visit already holds, mirrored turn
+  included.

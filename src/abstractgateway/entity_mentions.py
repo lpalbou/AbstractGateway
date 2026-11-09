@@ -474,6 +474,36 @@ def _idem_write(svc: Any, session_id: str, mention_id: str, update: Dict[str, An
         _os.replace(tmp, path)
 
 
+def _lane_cursor(svc: Any, session_id: str, key: str) -> int:
+    import json as _json
+
+    try:
+        data = _json.loads(_idem_path(svc, session_id).read_text(encoding="utf-8"))
+        return int(((data or {}).get("lane_cursors") or {}).get(key) or 0)
+    except (OSError, ValueError, TypeError):
+        return 0
+
+
+def _set_lane_cursor(svc: Any, session_id: str, key: str, value: int) -> None:
+    import json as _json
+    import os as _os
+
+    path = _idem_path(svc, session_id)
+    with _IDEM_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault("session_id", session_id)
+        data.setdefault("lane_cursors", {})[key] = int(value)
+        tmp = path.with_suffix(f".tmp-{uuid.uuid4().hex[:8]}")
+        tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _os.replace(tmp, path)
+
+
 def _prior_answer(svc: Any, session_id: str, mention_id: str, principal: Any = None) -> Optional[Dict[str, Any]]:
     """The answer already given to this `mention_id` in this conversation (a resend), or None. A
     session turn a crash left unsaved is saved again from the record."""
@@ -550,9 +580,15 @@ def mention(
         # a visit lane the conversation is that visit's exchange; a reused visit is only sent what it
         # does not already hold.
         lane = _visit_lane_turn_lines(registry, visit_host, session_id=sid, caller=visitor, mentioned_slug=manifest.slug)
+        # A REUSED mention visit already holds what earlier mentions quoted from the visit lane: the
+        # per-entity source-visit cursor (review #13) skips those turns.
+        lane_key = f"{manifest.slug}|{run_id}" if lane is not None else None
 
         def _context(after: Optional[str]) -> Tuple[str, Dict[str, Any]]:
-            return conversation_context(svc, sid, current_turn=repeated, after_visit_run=after, lane_turns=lane)
+            turns = lane
+            if turns is not None and after and lane_key:
+                turns = turns[_lane_cursor(svc, sid, lane_key):]
+            return conversation_context(svc, sid, current_turn=repeated, after_visit_run=after, lane_turns=turns)
 
         context_block, context_report = _context(run_id if reused else None)
         visit_text = f"{context_block}\n\n{text}" if context_block else text
@@ -632,6 +668,15 @@ def mention(
             caller=visitor, generation=generation,
         )
         out["mirrors"] = mirrors
+        if lane_key is not None:
+            # Everything in the visit lane now (the mirrored turn included) is held by the visit
+            # this mention used: the next reuse quotes only what comes after.
+            try:
+                after_lane = _visit_lane_turn_lines(registry, visit_host, session_id=sid, caller=visitor,
+                                                    mentioned_slug=manifest.slug) or []
+                _set_lane_cursor(svc, sid, f"{manifest.slug}|{run_id}", len(after_lane))
+            except Exception:  # noqa: BLE001 - a lost cursor only re-quotes
+                logger.exception("mention: the visit-lane cursor could not be recorded")
         if mid:
             try:
                 _idem_write(svc, sid, mid, {"mirrors": mirrors})  # the mirrors' completion, recorded on its own
