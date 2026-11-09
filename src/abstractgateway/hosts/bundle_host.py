@@ -3055,6 +3055,24 @@ class WorkflowBundleGatewayHost:
             return
         ctx["task"] = prompt
 
+    def _complete_iteration_receipt(self, vars0: Dict[str, Any], workflow_id: str) -> None:
+        """A `/runs/start` receipt that found no request and no stored default (`builtin`) names
+        the workflow's own budget when its entry flow authors one (source `workflow`; review
+        2026-11-09 finding 2): that value, not 50, is what AbstractRuntime applies then
+        (`runtime_config.workflow_iteration_limit` reads it the same way)."""
+        receipt = vars0.get("_gateway_limits")
+        if not isinstance(receipt, dict) or receipt.get("source") != "builtin":
+            return
+        try:
+            from ..run_default_tools import entry_visualflow
+            from ..runtime_config import workflow_iteration_limit
+
+            authored, value = workflow_iteration_limit(entry_visualflow(self, workflow_id))
+        except Exception:  # noqa: BLE001 - an unreadable flow keeps the honest builtin receipt
+            return
+        if authored:
+            vars0["_gateway_limits"] = {"max_iterations": value, "source": "workflow"}
+
     def _complete_workflow_selection(self, vars0: Dict[str, Any], workflow_id: str) -> None:
         """Fill `workflow_selection` (how this run's workflow was chosen) with
         what the host resolved, when the caller left the identity open
@@ -3273,6 +3291,7 @@ class WorkflowBundleGatewayHost:
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         vars0 = dict(input_data or {})
         self._complete_workflow_selection(vars0, workflow_id)
+        self._complete_iteration_receipt(vars0, workflow_id)
         # A run started without `tools` gets the start-node default plus the email tools
         # when this user's Agent email tools are active (run_default_tools.py; 0.7.0 E2E F2).
         from ..run_default_tools import apply_default_email_tools

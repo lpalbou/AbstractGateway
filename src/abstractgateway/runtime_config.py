@@ -31,7 +31,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---- One writer at a time -----------------------------------------------
 # Every write is read-modify-replace of the whole store. Two writers at once
@@ -1768,11 +1768,69 @@ def _write_max_iterations_default(stored: Dict[str, Any], raw: Any, applied: Dic
         stored.pop("agents", None)
 
 
+def _iteration_value(raw: Any) -> Optional[int]:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 1 else None
+
+
+def workflow_iteration_limit(visualflow: Any) -> Tuple[bool, Optional[int]]:
+    """(the workflow authors its own budget?, that budget) for an entry VisualFlow, read the way
+    AbstractRuntime applies it when nothing is requested and no gateway default is stored
+    (review 2026-11-09 finding 2): the On Flow Start `max_iterations` pin default when the start
+    node authors one; else the values its Agent and subflow nodes author (an unwired pin default,
+    else an Agent node's config). One agreed value -> that value; several, or some nodes with none
+    -> (True, None) (the receipt then says "the workflow's own limit"); none -> (False, None)."""
+    if not isinstance(visualflow, dict):
+        return False, None
+    nodes = [n for n in (visualflow.get("nodes") or []) if isinstance(n, dict)]
+    edges = [e for e in (visualflow.get("edges") or []) if isinstance(e, dict)]
+    entry_id = visualflow.get("entryNode")
+
+    def _kind(node: Dict[str, Any]) -> str:
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        return str(data.get("nodeType") or node.get("type") or "")
+
+    def _data(node: Dict[str, Any]) -> Dict[str, Any]:
+        return node.get("data") if isinstance(node.get("data"), dict) else {}
+
+    entry = next((n for n in nodes if n.get("id") == entry_id), None)
+    if entry is not None and _kind(entry) == "on_flow_start":
+        pins = _data(entry).get("pinDefaults")
+        value = _iteration_value(pins.get("max_iterations")) if isinstance(pins, dict) else None
+        if value is not None:
+            return True, value
+    wired = {str(e.get("target")) for e in edges if e.get("targetHandle") == "max_iterations"}
+    values: List[Optional[int]] = []
+    for node in nodes:
+        kind = _kind(node)
+        if kind not in ("agent", "subflow"):
+            continue
+        data = _data(node)
+        pins = data.get("pinDefaults") if isinstance(data.get("pinDefaults"), dict) else {}
+        config = data.get("agentConfig") if isinstance(data.get("agentConfig"), dict) else {}
+        value = None if str(node.get("id")) in wired else _iteration_value(pins.get("max_iterations"))
+        if value is None and kind == "agent":
+            value = _iteration_value(config.get("max_iterations"))
+        values.append(value)
+    authored = {v for v in values if v is not None}
+    if not authored:
+        return False, None
+    if len(authored) == 1 and None not in values:
+        return True, authored.pop()
+    return True, None
+
+
 def resolve_run_iteration_limit(requested: Any, data_dir: Path) -> Dict[str, Any]:
     """THE iteration-limit ladder for a run the gateway starts: the request's value >
-    the stored gateway default > the framework default (AbstractRuntime
-    DEFAULT_MAX_ITERATIONS, 50). Returns the receipt apps show:
-    {max_iterations, source: request|gateway_default|builtin}."""
+    the stored gateway default > [the workflow's own value: the host completes the receipt
+    with source "workflow" once it knows the workflow, `workflow_iteration_limit`] >
+    the framework default (AbstractRuntime DEFAULT_MAX_ITERATIONS, 50). Returns the receipt
+    apps show: {max_iterations, source: request|gateway_default|workflow|builtin}."""
     if isinstance(requested, int) and not isinstance(requested, bool) and requested >= 1:
         return {"max_iterations": int(requested), "source": "request"}
     stored = resolve_max_iterations_default(Path(data_dir))

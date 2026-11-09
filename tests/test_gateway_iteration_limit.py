@@ -177,3 +177,107 @@ console.log(JSON.stringify([out]));
     assert out["local"]["calls"] == 0 and "whole number of 1 or more" in out["local"]["saved"]["text"]
     assert out["notKept"]["tone"] == "err" and "reports 12" in out["notKept"]["text"]
     assert out["refused"] == {"tone": "err", "head": "Not saved", "text": "agents.max_iterations is a whole number of 1 or more (got 0)"}
+
+
+# ---- review 2026-11-09 finding 2: one order, and a receipt that says what runs ----------------
+
+
+def _write_budget_bundle(bundles_dir, write_llm_bundle) -> None:
+    """The live flow with an On Flow Start `max_iterations` pin that authors 5 (the workflow's own value)."""
+    import zipfile
+
+    write_llm_bundle(bundles_dir, bundle_id="budget", flow_id="root")
+    path = bundles_dir / "budget.flow"
+    with zipfile.ZipFile(path) as z:
+        manifest, flow = json.loads(z.read("manifest.json")), json.loads(z.read("flows/root.json"))
+    start = flow["nodes"][0]["data"]
+    start["outputs"].append({"id": "max_iterations", "label": "max_iterations", "type": "number"})
+    start["pinDefaults"] = {"max_iterations": 5}
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        z.writestr("flows/root.json", json.dumps(flow))
+
+
+@pytest.fixture
+def budget_bundle(monkeypatch):
+    """Requested BEFORE `gw`: the hermetic gateway then loads the `budget` bundle beside `live`."""
+    import test_gateway_live_delta_stream as live
+
+    original = live._write_llm_bundle
+
+    def both(bundles_dir, **kw):
+        original(bundles_dir, **kw)
+        _write_budget_bundle(bundles_dir, original)
+
+    monkeypatch.setattr(live, "_write_llm_bundle", both)
+
+
+def _start_bundle(client, bundle_id, **input_data):
+    r = client.post("/api/gateway/runs/start", headers=HEADERS,
+                    json={"bundle_id": bundle_id, "flow_id": "root", "input_data": input_data})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_one_order_and_an_honest_receipt(budget_bundle, gw) -> None:  # noqa: F811
+    """request > gateway default > the workflow's own value > 50, and the receipt names the rung."""
+    client, _ = gw
+    _Ctl.reset(hold=False)
+    # Nothing requested, nothing stored: the workflow's own start pin (5) runs, and the receipt says so.
+    own = _start_bundle(client, "budget", prompt="a")
+    assert own["limits"] == {"max_iterations": 5, "source": "workflow"}
+    own_vars = _run_vars(own["run_id"])
+    assert own_vars["_gateway_limits"] == {"max_iterations": 5, "source": "workflow"}
+    assert own_vars["_limits"]["max_iterations_declared"] is False, "nothing declared: the workflow's value may apply"
+    # A workflow that authors nothing: the framework default.
+    assert _start_bundle(client, "live", prompt="b")["limits"] == {"max_iterations": 50, "source": "builtin"}
+    # The person's request beats the workflow's value and is DECLARED to the runtime.
+    asked = _start_bundle(client, "budget", prompt="c", _limits={"max_iterations": 100, "max_iterations_declared": False})
+    assert asked["limits"] == {"max_iterations": 100, "source": "request"}
+    asked_limits = _run_vars(asked["run_id"])["_limits"]
+    assert asked_limits["max_iterations"] == 100 and asked_limits["max_iterations_declared"] is True, (
+        "a client never sets the runtime's declared stamp itself"
+    )
+    # The flat pin older clients send is a request too, written where the runtime reads it.
+    flat = _start_bundle(client, "budget", prompt="d", max_iterations=7)
+    assert flat["limits"] == {"max_iterations": 7, "source": "request"}
+    assert _run_vars(flat["run_id"])["_limits"]["max_iterations"] == 7
+    # A stored gateway default beats the workflow's own value.
+    assert client.post(CFG, headers=HEADERS, json={"agents": {"max_iterations": 12}}).status_code == 200
+    stored = _start_bundle(client, "budget", prompt="e")
+    assert stored["limits"] == {"max_iterations": 12, "source": "gateway_default"}
+    assert _run_vars(stored["run_id"])["_limits"]["max_iterations_declared"] is True
+
+
+def test_the_workflow_value_is_read_the_way_the_runtime_applies_it() -> None:
+    import zipfile
+    from pathlib import Path
+
+    from abstractgateway.runtime_config import workflow_iteration_limit
+
+    def flow(start_default=None, agents=(), wired=()):
+        start = {"id": "s", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "pinDefaults": {}}}
+        if start_default is not None:
+            start["data"]["pinDefaults"]["max_iterations"] = start_default
+        nodes = [start]
+        for i, (kind, pin, cfg) in enumerate(agents):
+            data = {"nodeType": kind, "pinDefaults": {} if pin is None else {"max_iterations": pin}, "agentConfig": {}}
+            if cfg is not None:
+                data["agentConfig"]["max_iterations"] = cfg
+            nodes.append({"id": f"a{i}", "type": kind, "data": data})
+        edges = [{"source": "s", "sourceHandle": "max_iterations", "target": t, "targetHandle": "max_iterations"} for t in wired]
+        return {"entryNode": "s", "nodes": nodes, "edges": edges}
+
+    assert workflow_iteration_limit(flow(5)) == (True, 5)
+    assert workflow_iteration_limit(flow(agents=[("agent", 20, None)])) == (True, 20)
+    assert workflow_iteration_limit(flow(agents=[("agent", None, 20)])) == (True, 20)
+    assert workflow_iteration_limit(flow(agents=[("subflow", 24, None)])) == (True, 24)
+    assert workflow_iteration_limit(flow(agents=[("agent", 20, None)], wired=["a0"])) == (False, None), "a wired pin's default never applies"
+    assert workflow_iteration_limit(flow(agents=[("agent", 20, None), ("agent", 30, None)])) == (True, None)
+    assert workflow_iteration_limit(flow(agents=[("agent", 20, None), ("agent", None, None)])) == (True, None)
+    assert workflow_iteration_limit(flow(agents=[("agent", None, None)])) == (False, None)
+    assert workflow_iteration_limit(None) == (False, None)
+    shipped = Path(__file__).resolve().parents[1] / "flows" / "bundles" / "basic-agent.flow"
+    with zipfile.ZipFile(shipped) as z:
+        root = json.loads(z.read("flows/81795ea9.json"))
+    assert workflow_iteration_limit(root) == (True, 20), "the shipped basic-agent authors 20 on its start pin"

@@ -4903,27 +4903,45 @@ def _data_dir_workspace_problem(
 def _apply_run_iteration_default(input_data: Dict[str, Any]) -> Dict[str, Any]:
     """The iteration budget of an interactive `POST /runs/start` (`agents.max_iterations`).
 
-    The client's own value wins (`input_data._limits.max_iterations`, or the flat
-    `max_iterations` pin older clients send); else the stored gateway default is written to
-    `_limits.max_iterations`; else nothing is added and the runtime seeds its own default, the
-    same constant (source `builtin`, AbstractRuntime DEFAULT_MAX_ITERATIONS, 50). An Agent node
-    whose own config sets `max_iterations` still wins inside that workflow.
-    The receipt is recorded on the run (`input_data._gateway_limits`, server-written only)
-    and returned as `limits` so an app can say "Last run: 50 iterations"."""
+    ONE order (review 2026-11-09 finding 2): the client's own value (`input_data._limits.
+    max_iterations`, or the flat `max_iterations` pin older clients send) > the stored gateway
+    default > the workflow's own value > the framework default (AbstractRuntime
+    DEFAULT_MAX_ITERATIONS, 50). A request or the stored default is written to
+    `_limits.max_iterations`, which AbstractRuntime then treats as DECLARED (it beats every
+    start-pin, Agent-node pin and Agent-node config value); with neither, nothing is written, the
+    workflow's own value applies, and the host completes the receipt (source `workflow`, or
+    `builtin` when the workflow authors none; hosts/bundle_host.py). The receipt is recorded on the
+    run (`input_data._gateway_limits`, server-written only) and returned as `limits` so an app can
+    say "Last run: 50 iterations"."""
     from ..runtime_config import resolve_run_iteration_limit
 
     input_data.pop("_gateway_limits", None)  # server-written only
     raw_limits = input_data.get("_limits")
+    if isinstance(raw_limits, dict) and "max_iterations_declared" in raw_limits:
+        raw_limits = {k: v for k, v in raw_limits.items() if k != "max_iterations_declared"}  # the runtime's own stamp
+        input_data["_limits"] = raw_limits
     requested = raw_limits.get("max_iterations") if isinstance(raw_limits, dict) else None
     if requested is None:
         requested = input_data.get("max_iterations")
     receipt = resolve_run_iteration_limit(requested, gateway_data_dir_from_env())
-    if receipt["source"] == "gateway_default":
+    if receipt["source"] in ("request", "gateway_default"):
         limits = dict(raw_limits) if isinstance(raw_limits, dict) else {}
         limits["max_iterations"] = receipt["max_iterations"]
         input_data["_limits"] = limits
     input_data["_gateway_limits"] = dict(receipt)
     return receipt
+
+
+def _limits_after_start(svc: Any, run_id: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    """The `limits` receipt as the host completed it on the run (a workflow's own value)."""
+    try:
+        run = svc.host.run_store.load(str(run_id))
+        receipt = (getattr(run, "vars", None) or {}).get("_gateway_limits")
+        if isinstance(receipt, dict) and receipt.get("source"):
+            return dict(receipt)
+    except Exception:  # noqa: BLE001 - the start succeeded; report what is known
+        pass
+    return dict(fallback)
 
 
 def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -> None:
@@ -9701,7 +9719,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         run_id=str(run_id),
         runner_warning=_runner_inactive_warning(svc),
         resolved_workflow=resolved_workflow,
-        limits=run_limits,
+        limits=_limits_after_start(svc, str(run_id), run_limits),
     )
 
 

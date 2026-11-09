@@ -6,7 +6,10 @@ On Flow Start node carries a `max_iterations` pin with the authored default 20, 
 Agent node: a run that set only `_limits.max_iterations` (the field the gateway default and the
 kit write) used to get the pin default 20 in the child instead. The real react loop (abstractagent)
 runs here against a scripted model that always asks for another tool step, so the number of
-cycles the child performs is the budget it actually obeyed."""
+cycles the child performs is the budget it actually obeyed.
+
+ONE order (review 2026-11-09 finding 2): request > gateway default > the workflow's own value
+(this bundle's start pin authors 20) > DEFAULT_MAX_ITERATIONS (50)."""
 
 from __future__ import annotations
 
@@ -61,9 +64,11 @@ def _tool_ok(run: RunState, effect: Effect, default_next_node: Optional[str]) ->
     )
 
 
-def _child_cycles(input_vars: Dict[str, Any]) -> tuple[int, Dict[str, Any]]:
+def _child_cycles(input_vars: Dict[str, Any], edit=None) -> tuple[int, Dict[str, Any]]:
     with zipfile.ZipFile(BUNDLE) as z:
         flows = {json.loads(z.read(n))["id"]: json.loads(z.read(n)) for n in z.namelist() if n.startswith("flows/")}
+    if edit is not None:
+        edit(flows[ROOT_FLOW])
     reg = WorkflowRegistry()
     for raw in flows.values():
         reg.register(compile_visualflow(raw))
@@ -112,7 +117,35 @@ def test_the_flat_pin_older_clients_send_still_counts() -> None:
     assert (cycles, limits["max_iterations"]) == (7, 7)
 
 
-def test_no_request_gets_the_framework_default_50() -> None:
-    assert DEFAULT_MAX_ITERATIONS == 50
+def _node(flow: Dict[str, Any], node_id: str) -> Dict[str, Any]:
+    return next(n for n in flow["nodes"] if n["id"] == node_id)
+
+
+def _no_start_pin_default(flow: Dict[str, Any]) -> None:
+    _node(flow, "node-1")["data"]["pinDefaults"].pop("max_iterations")
+
+
+def _agent_pin_20_unwired(flow: Dict[str, Any]) -> None:
+    _no_start_pin_default(flow)
+    flow["edges"] = [e for e in flow["edges"] if not (e.get("target") == "node-2" and e.get("targetHandle") == "max_iterations")]
+    _node(flow, "node-2")["data"].setdefault("pinDefaults", {})["max_iterations"] = 20
+
+
+def test_no_request_runs_the_workflows_own_value() -> None:
+    """basic-agent authors 20 on its start pin: with nothing requested or stored, that applies."""
     cycles, limits = _child_cycles({})
+    assert (cycles, limits["max_iterations"]) == (20, 20)
+
+
+def test_nothing_anywhere_gets_the_framework_default_50() -> None:
+    assert DEFAULT_MAX_ITERATIONS == 50
+    cycles, limits = _child_cycles({}, edit=_no_start_pin_default)
     assert (cycles, limits["max_iterations"]) == (50, 50)
+
+
+def test_the_request_beats_an_agent_nodes_own_value() -> None:
+    """rt_probe/probe3.py on the real loop: Agent-node pin default 20, request 100 -> 100 cycles."""
+    cycles, limits = _child_cycles({"_limits": {"max_iterations": 100}}, edit=_agent_pin_20_unwired)
+    assert (cycles, limits["max_iterations"]) == (100, 100)
+    cycles, limits = _child_cycles({}, edit=_agent_pin_20_unwired)
+    assert (cycles, limits["max_iterations"]) == (20, 20)
