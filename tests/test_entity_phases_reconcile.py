@@ -619,3 +619,113 @@ def test_a_work_return_never_becomes_own_time_because_a_grant_stands(spawned):
         write_resume_to(_home_dir(), "work", written_by="loop")
         assert entity_phase.reconcile(_registry(), "castor", "observed")["own_time"] is False
         assert spawned == []
+
+
+# --------------------------------------------------------------------------- a restart is not a Stop
+def _restart_pass():
+    """The gateway-start pass, as the service factory runs it once per process."""
+    from abstractgateway import entity_phase
+
+    entity_phase._RESTART_PASSES.clear()
+    return entity_phase.resume_after_restart(_registry())
+
+
+@pytest.mark.parametrize("left_by", ["stop_command", "crashed"])
+def test_a_gateway_restart_resumes_own_time_where_the_grant_is_armed(spawned, own_time, left_by):
+    """Operator decision D5 (2026-11-09): a gateway restart is not a Stop. The loop the restart took
+    down (a graceful stop before it, or killed with it: the status names a gone process) comes back
+    without a Retry while the personal grant stands; a second pass in the same process does
+    nothing."""
+    with _client() as client:
+        proc = own_time.start(client)
+        if left_by == "crashed":
+            proc.kill()
+            proc.wait(5)  # the status still says `between` for a pid that is gone
+        else:
+            own_time.end(proc, stopped_by="stop_command")
+        rows = _restart_pass()
+        assert spawned == ["castor"] and spawned.return_to == ["personal"], rows
+        assert [r["action"] for r in rows if r["slug"] == "castor"] == ["resumed"]
+        from abstractgateway import entity_phase
+
+        assert entity_phase.resume_after_restart(_registry()) == []  # once per process
+        assert spawned == ["castor"]
+
+
+def test_a_restart_never_resumes_a_stopped_home_or_idle_without_a_grant(spawned):
+    from abstractruntime.identity.life import write_entity_state, write_personal_grant
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)  # idle, no grant
+        rows = _restart_pass()
+        assert spawned == [] and [r["reason"] for r in rows if r["slug"] == "castor"] == ["no_grant"]
+        body = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert body["phase"] == "idle" and body["next"] is None
+        # Stopped with a grant standing (written behind the kill switch's back): the Stop's word stands.
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        write_entity_state(_home_dir(), "paused", reason="stop")
+        rows = _restart_pass()
+        assert spawned == [] and [r["reason"] for r in rows if r["slug"] == "castor"] == ["stopped"]
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "stopped"
+
+
+def test_a_visit_standing_at_the_restart_hands_own_time_back_at_its_close(spawned, own_time):
+    """The restart finds him in a visit, his loop killed with the gateway: the visit keeps the phase,
+    and its close restores own time (not refused as a crash)."""
+    with _client() as client:
+        proc = own_time.start(client)
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        assert opened.status_code == 200, opened.text
+        proc.kill()
+        proc.wait(5)
+        rows = _restart_pass()
+        assert spawned == [] and [r["reason"] for r in rows if r["slug"] == "castor"] == ["visit"]
+        closed = client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close",
+                             json={"closed_by": "operator"})
+        assert closed.status_code == 200, closed.text
+        assert spawned == ["castor"]
+
+
+def test_a_stop_after_the_restart_cancels_its_pending_restore(spawned, own_time):
+    """The restart's restore lives under the generation it was made in: after a Stop, a remembered
+    own time (written back by anyone) finds the crashed loop refused again, never the restart's
+    pass."""
+    from abstractgateway import entity_phase
+
+    with _client() as client:
+        proc = own_time.start(client)
+        opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+        proc.kill()
+        proc.wait(5)
+        _restart_pass()
+        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
+        # Awake again by a path that is not the Resume route (the CLI's restore writes the state).
+        from abstractruntime.identity.life import write_entity_state, write_personal_grant
+
+        write_entity_state(_home_dir(), "awake", reason="restored by hand")
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        entity_phase.set_resume_to(_registry(), "castor", "personal")
+        (_home_dir() / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
+        assert entity_phase.reconcile(_registry(), "castor", "test")["reason"] == "loop_crashed"
+        assert spawned == []
+        del opened
+
+
+def test_the_service_start_runs_the_restart_pass(monkeypatch: pytest.MonkeyPatch):
+    """The factory wiring: the pass runs at the gateway's start (in its own thread), on the
+    service's registry and hosts; it is off with the background sweeps."""
+    from abstractgateway import entity_phase, entity_repair
+
+    seen = []
+    monkeypatch.setattr(entity_repair, "start_repair_sweeper", lambda registry, **kw: None)
+    monkeypatch.setattr(entity_phase, "resume_after_restart",
+                        lambda registry, **kw: seen.append((registry, kw)) or [])
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", "1")
+    with _client():
+        deadline = time.monotonic() + 5
+        while not seen and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(seen) == 1 and seen[0][0] is _registry()
+        assert seen[0][1]["chat_host"] is not None and seen[0][1]["visit_host"] is not None
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", "0")
+    assert entity_phase.start_restart_resume(object()) is None

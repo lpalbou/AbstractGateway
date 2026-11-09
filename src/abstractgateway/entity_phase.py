@@ -86,6 +86,12 @@ _DEFAULT_RECORD: Dict[str, Any] = {
     # None otherwise. ONE writer: `_note_resume_to` (publish's observation, the operator's toggles,
     # a deferred start). Reconcile only ever RESTORES it, and only while its grant is still on.
     "resume_to": None,
+    # A gateway restart is not a Stop (operator decision D5, 2026-11-09): the start pass leaves
+    # `{generation, at}` here for a home whose grant is armed and whose loop is down, so the restore
+    # it asks for (now, or when the interruption standing at the start ends) is not refused as a
+    # crash: the restart is what took the loop down. Only valid under the generation it names (a
+    # Stop moves it); cleared once a start is attempted or nothing is left to restore.
+    "restart_resume": None,
 }
 
 
@@ -1565,16 +1571,20 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
             if _note_resume_to(rec, None):
                 write_record(entities_dir, slug, rec)
         if target not in ("personal", "work"):
+            if rec.get("restart_resume") is not None:
+                rec["restart_resume"] = None
+                write_record(entities_dir, slug, rec)
             return {"own_time": False, "pid": None, "reason": "idle"}  # nothing was interrupted
         if target == "personal" and not facts["personal"]:
             # The grant was revoked meanwhile: stay idle, and the remembered phase is retired with
-            # the interruption.
-            if not operator and _note_resume_to(rec, None):
+            # the interruption (and the restart's restore with it).
+            if not operator and (_note_resume_to(rec, None) | (rec.get("restart_resume") is not None)):
+                rec["restart_resume"] = None
                 write_record(entities_dir, slug, rec)
             return {"own_time": False, "pid": None, "reason": "personal_off"}
         loop_facts = facts["loop"]
         crashed = "process is gone" in str(loop_facts.get("note") or "") or str(loop_facts.get("stopped_by") or "") == "failures"
-        if crashed and not operator:
+        if crashed and not operator and not _restart_pending(rec, generation):
             return {"own_time": False, "pid": None, "reason": "loop_crashed"}
         claim = rec.get("spawning") if isinstance(rec.get("spawning"), dict) else None
         if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
@@ -1584,6 +1594,7 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         # returns to the remembered phase or ends idle); the operator's act names personal.
         spawn_return_to = None if target == "work" else ("personal" if operator else target)
         rec["spawning"] = {"at": time.time(), "generation": generation, "cause": cause}
+        rec["restart_resume"] = None  # the restart's restore is being attempted: spent
         write_record(entities_dir, slug, rec)
         params = dict(rec.get("own_time_params") or {})
 
@@ -1625,6 +1636,94 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         return {"own_time": False, "pid": None, "reason": "start_failed", "error": error}
     _marker(registry, manifest, "personal_started", {"channel": "reconcile", "cause": cause, "pid": pid})
     return {"own_time": True, "pid": pid, "reason": cause}
+
+
+def _restart_pending(rec: Dict[str, Any], generation: int) -> bool:
+    flag = rec.get("restart_resume")
+    return isinstance(flag, dict) and int(flag.get("generation") or 0) == int(generation)
+
+
+# --------------------------------------------------------------------------- gateway start
+_RESTART_PASSES: set = set()
+_RESTART_GUARD = threading.Lock()
+
+
+def resume_after_restart(registry: Any, *, chat_host: Any = None, visit_host: Any = None) -> List[Dict[str, Any]]:
+    """A gateway restart is not a Stop (operator decision D5, 2026-11-09). Once per entities
+    directory per process, at the gateway's start: a home whose personal grant is still armed and
+    whose own-time loop is not running gets its own time back through reconcile (the phase to
+    return to is own time, and the loop the restart took down is not refused as a crash). Never for
+    a stopped home (the kill switch's word stands), never for an archived one, and never from idle
+    without a grant: a home with no armed grant is left exactly as it is. A visit, a sleep or work
+    standing at the start keeps the phase; own time resumes when it ends. Returns one row per home
+    looked at (for the log and tests); never raises."""
+    from abstractruntime.identity.life import personal_grant_refusal, read_entity_state, read_personal_grant
+
+    from .entity_loop import loop_status
+
+    entities_dir = Path(registry.entities_dir)
+    key = str(entities_dir.resolve())
+    with _RESTART_GUARD:
+        if key in _RESTART_PASSES:
+            return []
+        _RESTART_PASSES.add(key)
+    rows: List[Dict[str, Any]] = []
+    try:
+        listed = registry.list_entities()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("restart resume could not list entities: %s", e)
+        return rows
+    for row in listed:
+        slug = str(row.get("slug") or "")
+        if not slug or row.get("error"):
+            continue
+        home_dir = entities_dir / slug
+        try:
+            with phase_lock(entities_dir, slug):
+                if str(read_entity_state(home_dir).get("state") or "") == "paused":
+                    rows.append({"slug": slug, "action": "skipped", "reason": "stopped"})
+                    continue
+                if personal_grant_refusal(read_personal_grant(home_dir)) is not None:
+                    rows.append({"slug": slug, "action": "skipped", "reason": "no_grant"})
+                    continue
+                if bool(loop_status(home_dir).get("running")):
+                    rows.append({"slug": slug, "action": "skipped", "reason": "running"})
+                    continue
+                from .entity_access import entity_archived, users_path_of
+
+                if entity_archived(slug, users_path=users_path_of(registry)):
+                    rows.append({"slug": slug, "action": "skipped", "reason": "archived"})
+                    continue
+                rec = read_record(entities_dir, slug)
+                rec["restart_resume"] = {"generation": int(rec.get("generation") or 0), "at": _now_iso()}
+                _note_resume_to(rec, "personal")
+                write_record(entities_dir, slug, rec)
+            out = reconcile(registry, slug, "gateway_restart", chat_host=chat_host, visit_host=visit_host)
+            rows.append({"slug": slug, "action": "resumed" if out.get("own_time") else "deferred", **out})
+        except Exception as e:  # noqa: BLE001 - one broken home never blocks the others
+            logger.warning("restart resume failed for %s: %s", slug, e)
+            rows.append({"slug": slug, "action": "error", "error": f"{type(e).__name__}: {e}"})
+            continue
+        safe_publish(registry, slug, "gateway_restart", chat_host=chat_host, visit_host=visit_host)
+    for r in rows:
+        if r.get("action") in ("resumed", "deferred", "error"):
+            logger.info("restart resume: %s", r)
+    return rows
+
+
+def start_restart_resume(registry: Any, *, chat_host: Any = None, visit_host: Any = None) -> Optional[threading.Thread]:
+    """The start pass in a daemon thread (service-factory wiring; it never delays serving). Off
+    with the background entity sweeps (ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0, the tests' setting)."""
+    from .entity_repair import background_sweeps_enabled
+
+    if not background_sweeps_enabled():
+        return None
+    thread = threading.Thread(
+        target=lambda: resume_after_restart(registry, chat_host=chat_host, visit_host=visit_host),
+        name="entity-restart-resume", daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_to: Optional[str] = None) -> Dict[str, Any]:

@@ -1090,6 +1090,17 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
 
             logging.getLogger(__name__).exception("entity self-repair sweeper failed to start")
             boot_warnings.append(f"#FALLBACK entity self-repair sweeper not running: {type(e).__name__}: {e}")
+        # A gateway restart is not a Stop (operator decision D5, 2026-11-09): own time resumes for
+        # every home whose personal grant is still armed and whose loop is down.
+        try:
+            from .entity_phase import start_restart_resume
+
+            start_restart_resume(entity_registry, chat_host=entity_chat_host, visit_host=entity_visit_host)
+        except Exception as e:  # noqa: BLE001 - serving never waits on it
+            import logging
+
+            logging.getLogger(__name__).exception("entity restart resume failed to start")
+            boot_warnings.append(f"#FALLBACK own time not resumed after the restart: {type(e).__name__}: {e}")
 
     service = GatewayService(
         config=cfg,

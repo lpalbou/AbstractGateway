@@ -429,6 +429,15 @@ def _need_check_one(
     return {"slug": slug, "action": "need_check", "outcome": "woken (work standing)", "pid": started.get("pid")}
 
 
+def background_sweeps_enabled() -> bool:
+    """The background entity passes (this sweeper, the restart resume) run unless
+    ABSTRACTGATEWAY_ENTITY_SELF_REPAIR is 0/false/off/no."""
+    import os
+
+    flag = str(os.getenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR") or "1").strip().lower()
+    return flag not in ("0", "false", "off", "no")
+
+
 def start_repair_sweeper(registry: Any, *, interval_s: Optional[float] = None) -> Optional[threading.Thread]:
     """Daemon sweep thread (service-factory wiring). Disabled with
     ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0; cadence via
@@ -436,8 +445,7 @@ def start_repair_sweeper(registry: Any, *, interval_s: Optional[float] = None) -
     never machine persistence."""
     import os
 
-    flag = str(os.getenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR") or "1").strip().lower()
-    if flag in ("0", "false", "off", "no"):
+    if not background_sweeps_enabled():
         logger.info("entity self-repair sweeper disabled by env")
         return None
     if interval_s is None:
