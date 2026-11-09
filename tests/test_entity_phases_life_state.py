@@ -106,10 +106,10 @@ def test_every_field_is_present_and_a_newborn_is_idle():
         assert NEW_KEYS | OLD_KEYS <= set(body)
         # A newborn starts idle (operator ruling 2026-11-09: a newborn starts IDLE — awake and reachable, nothing of its own running).
         assert body["phase"] == "idle" and body["stopped"] is False
-        assert body["toggles"] == {"work": True, "personal": False}
+        assert body["toggles"] == {"personal": False}  # only own time is a switch (v3 D1)
         assert body["sleep"] is None
         assert body["sentence"] == "Awake and reachable; nothing of his own is running."
-        assert body["visit"] is None and body["work"] is None and body["blocked"] is None
+        assert body["visit"] is None and body["work"] == {"jobs_queued": 0, "current": None} and body["blocked"] is None
         assert body["can"]["sleep_now"] == {"allowed": True, "sentence": None}
         assert body["can"]["visit"] == {"allowed": True, "sentence": None}
         assert body["rev"] >= 1 and body["since"]
@@ -158,7 +158,8 @@ def test_stopped_personal_work_and_a_self_sleep(loops):
         (home / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
         loops(home, "day")
         body = _ls(client)
-        assert body["phase"] == "work" and body["work"] == {"kind": "work_order", "run_id": None, "since": None, "finishing": False}
+        assert body["phase"] == "work"
+        assert body["work"] == {"jobs_queued": 1, "current": {"kind": "work_order", "run_id": None, "since": None}}
 
         (home / "work_order.md").unlink()
         loops(home, "between")
@@ -173,7 +174,7 @@ def test_stopped_personal_work_and_a_self_sleep(loops):
         body = _ls(client)
         assert body["phase"] == "stopped" and body["stopped"] is True and body["posture"] == "paused"
         assert body["can"]["visit"] == {"allowed": False, "sentence": "Stopped. Resume to visit."}
-        assert body["can"]["toggle_work"]["allowed"] is False
+        assert body["can"]["toggle_personal"]["allowed"] is False and "toggle_work" not in body["can"]
         assert client.get("/api/gateway/entities/Castor/cognition").json()["phase"] == "stopped"
 
 

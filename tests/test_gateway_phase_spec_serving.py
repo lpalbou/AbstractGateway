@@ -40,7 +40,7 @@ def test_spec_phases_route_serves_the_vendored_graph(monkeypatch: pytest.MonkeyP
         spec = body["spec"]
         # The ruled four, exactly (laurent c203: at all times one of these).
         assert sorted(spec["phases"].keys()) == ["personal", "sleep", "visit", "work"]
-        assert spec["initial_phase"] == "sleep"
+        assert spec["initial_phase"] == "idle"  # NEWBORN = IDLE (spec v25)
         # The sha is the honest sync token for consumers' drift warnings.
         assert len(body["sha256"]) == 64
 

@@ -491,17 +491,17 @@ def test_a_restore_tells_the_child_the_remembered_phase(spawned, own_time):
         client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
         assert spawned.return_to[-1] == "personal"  # the restore of an interrupted personal time
 
-        # The interruption took over a work day: the restore names work.
+        # Queued jobs start the loop and tell it nothing (runtime v3: its gate works the queue, then
+        # returns to the remembered phase or ends idle).
         (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
         reg = _registry()
         with entity_phase.phase_lock(reg.entities_dir, "castor"):
             rec = entity_phase.read_record(reg.entities_dir, "castor")
-            rec["resume_to"] = "work"
             rec.pop("spawning", None)
             entity_phase.write_record(reg.entities_dir, "castor", rec)
         before = len(spawned)
         assert entity_phase.reconcile(reg, "castor", "test")["own_time"] is True
-        assert len(spawned) == before + 1 and spawned.return_to[-1] == "work"
+        assert len(spawned) == before + 1 and spawned.return_to[-1] is None
 
 
 def test_start_loop_hands_return_to_to_the_runtime(monkeypatch, tmp_path):
@@ -516,7 +516,7 @@ def test_start_loop_hands_return_to_to_the_runtime(monkeypatch, tmp_path):
     assert seen.get("return_to") == "personal"
 
 
-@pytest.mark.parametrize("stopped_by", ["no_return", "work_off", "edge_removed"])
+@pytest.mark.parametrize("stopped_by", ["no_return", "work_off", "edge_removed", "jobs_done"])
 def test_a_loop_that_ends_on_purpose_hands_the_phase_back(spawned, own_time, stopped_by):
     """The runtime batch's stop words (2026-11-09) are requested ends, never crashes: the gateway
     repairs the gate sleep the loop left (he is awake and reachable), shows no crash, and does
@@ -545,3 +545,47 @@ def test_his_own_sleep_ends_when_its_maintenance_is_done(spawned, own_time):
         assert ls["phase"] == "sleep" and ls["sleep"]["kind"] == "self"
         assert ls["sleep"]["ends"] == "when maintenance is done"
         proc.kill()
+
+
+def test_a_loop_that_ends_with_jobs_left_is_not_respawned_by_its_own_end(spawned, own_time):
+    """Jobs drive work (v3 D1), but never a respawn loop: the loop ending on its own word with a job
+    still queued starts nothing; the next trigger (a job queued, an interruption ending, the
+    operator) does."""
+    with _client() as client:
+        proc = own_time.start(client)
+        (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
+        own_time.end(proc, stopped_by="no_return")
+        client.get("/api/gateway/entities/Castor/life_state")
+        assert spawned == []
+        assert client.put("/api/gateway/entities/Castor/work-order", json={"order": "Sort it all."}).status_code == 200
+        assert spawned == ["castor"] and spawned.return_to == [None]
+
+
+def test_resume_to_is_the_runtimes_bucket(spawned):
+    """Runtime v3 (ed32f0e/901d9c5): the loop and the kill switch write `resume_to` themselves, and
+    the bucket shadows the gateway sidecar — the gateway reads and writes it only through
+    read_resume_to / write_resume_to."""
+    from abstractruntime.identity.life import read_resume_to, write_resume_to
+
+    from abstractgateway import entity_phase
+
+    with _client() as client:
+        _born_awake_with_personal(client)
+        reg = _registry()
+        write_resume_to(_home_dir(), None, written_by="loop")  # the bucket exists (the runtime wrote it)
+        entity_phase.set_resume_to(reg, "castor", "personal")
+        assert read_resume_to(_home_dir())["phase"] == "personal"  # the gateway's word reaches the bucket
+        write_resume_to(_home_dir(), None, written_by="loop")  # the loop ended idle
+        assert entity_phase.read_record(reg.entities_dir, "castor")["resume_to"] is None
+
+
+def test_jobs_queued_is_the_runtimes_queue(spawned):
+    """`work.jobs_queued` is read_job_queue's count: a task the loop has TAKEN is still a job."""
+    from abstractruntime.identity.life import append_task_status
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        t = client.post("/api/gateway/entities/Castor/tasks", json={"title": "sort the archive"})
+        assert t.status_code == 200, t.text
+        append_task_status(_home_dir(), t.json()["task"]["task_id"], "taken", by="entity:castor")
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["work"]["jobs_queued"] == 1

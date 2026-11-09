@@ -260,7 +260,7 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["own_time_revoked"] is True
         row = {i["item"]: i for i in stopped.json()["items"]}["own_time"]
-        assert (row["outcome"], row["sentence"]) == ("revoked", "Own time was revoked.")
+        assert row == {"item": "own_time", "id": None, "code": "revoked", "outcome": "done", "sentence": "Own time was revoked."}
         assert read_personal_grant(home_dir)["mode"] == "disabled"
         markers = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
                    if (m.get("payload") or {}).get("kind") == "personal_grant_revoked"]
@@ -277,7 +277,8 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
         again = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert again.status_code == 200 and again.json()["already"] is True
         # A second Stop has nothing left to revoke: no row claims it.
-        assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()["own_time_revoked"] is False
+        second = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()
+        assert second["own_time_revoked"] is False and "own_time" not in {i["item"] for i in second["items"]}
         assert spawned == ["castor"]
 
 

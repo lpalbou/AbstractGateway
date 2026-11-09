@@ -172,7 +172,7 @@ def validate_edge_ops(
             # STRUCTURAL graph is not an add — it is an overwrite of a
             # DECLARED edge. compute_effective merges by edge_id, so an add
             # duplicating a locked edge's from/to/cause (e.g.
-            # work->personal#operator) would silently REPLACE the locked row
+            # personal->sleep#operator) would silently REPLACE the locked row
             # with overlay-authored fields (its guards DROPPED, policy
             # flipped, instruction smuggled onto a locked edge — a real guard
             # erasure). Declared edges change via redirect/remove; add is for

@@ -55,8 +55,6 @@ def test_grant_modes_and_initial_phase_match_the_artifact():
     art_modes = personal.get("grant_modes") or personal.get("activation", {}).get("modes")
     if art_modes is not None:
         assert set(art_modes) == set(PERSONAL_GRANT_MODES)
-    # newborn=sleep is the artifact's initial_phase; gateway's create() does
-    # not write it yet — the KNOWN parked nonconformance (c1501: awaiting the
-    # eligibility-vs-state fix shape). This pin makes the artifact's word
-    # visible in MY suite so the flip is driven by the source, not memory.
-    assert art.get("initial_phase") == "sleep"
+    # NEWBORN = IDLE (spec v25; operator 2026-11-09): the artifact's initial_phase, and what the
+    # gateway's create() writes (awake, nothing of his own running — gateway 35473e80).
+    assert art.get("initial_phase") == "idle"

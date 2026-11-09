@@ -62,13 +62,14 @@ SPAWN_CLAIM_TTL_S = 30.0
 REQUESTED_STOPS = ("stop_command", "stop_file", "operator", "personal_disarmed", "personal_off", "kill_switch", "settled_desk",
                    # the runtime batch's own words (2026-11-09): work turned off, a removed edge, and a
                    # loop that found no own time to return to (it exits idle) — none of them a crash.
-                   "work_off", "edge_removed", "no_return")
+                   "work_off", "edge_removed", "no_return",
+                   # v3 (runtime ed32f0e): all jobs done and no own time to return to — a clean idle.
+                   "jobs_done")
 
 _DEFAULT_RECORD: Dict[str, Any] = {
     "rev": 0,
     "published_rev": 0,
     "generation": 0,
-    "work": True,
     "snapshot": None,
     "since": None,
     "last_activity_phase": None,
@@ -155,10 +156,31 @@ def read_record(entities_dir: Path, slug: str) -> Dict[str, Any]:
         pass
     except (OSError, ValueError) as e:
         logger.warning("entity phase sidecar %s unreadable (%s); starting from defaults", path, e)
+    # `resume_to` is the RUNTIME's bucket (contract v3; runtime ed32f0e/901d9c5 write it too: a job
+    # interrupting own time, an idle exit, the kill switch). Read through its reader — before the
+    # bucket exists it answers the sidecar's value; afterwards the bucket wins.
+    rec["resume_to"] = _bucket_resume_to(Path(entities_dir) / slug, rec.get("resume_to"))
     return rec
 
 
+def _bucket_resume_to(home_dir: Path, fallback: Optional[str]) -> Optional[str]:
+    if not home_dir.is_dir():
+        return fallback if fallback in ("personal", "work") else None
+    from abstractruntime.identity.life import read_resume_to
+
+    phase = read_resume_to(home_dir).get("phase")
+    return phase if phase in ("personal", "work") else None
+
+
 def write_record(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
+    if rec.pop("_resume_to_written", False):
+        # The gateway's own word goes to the runtime's bucket, its one writer (the sidecar keeps a
+        # projection only).
+        home_dir = Path(entities_dir) / slug
+        if home_dir.is_dir():
+            from abstractruntime.identity.life import write_resume_to
+
+            write_resume_to(home_dir, rec.get("resume_to"), written_by="gateway")
     path = sidecar_path(entities_dir, slug)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f".tmp-{secrets.token_hex(4)}")
@@ -167,11 +189,13 @@ def write_record(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
 
 
 def _note_resume_to(rec: Dict[str, Any], value: Optional[str]) -> bool:
-    """THE one writer of `resume_to` (callers hold the phase lock and write the record)."""
+    """THE gateway's one writer of `resume_to` (callers hold the phase lock and write the record;
+    `write_record` carries it to the runtime's bucket)."""
     value = value if value in ("personal", "work") else None
     if rec.get("resume_to") == value:
         return False
     rec["resume_to"] = value
+    rec["_resume_to_written"] = True
     return True
 
 
@@ -313,6 +337,14 @@ def gather(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any =
         work_order = bool(read_work_order(home_dir))
     except Exception:  # noqa: BLE001
         work_order = False
+    # The job queue is the runtime's word (read_job_queue: the work order, then taken and pending
+    # tasks — the order he works them).
+    from abstractruntime.identity.life import read_job_queue
+
+    job_queue = read_job_queue(home_dir)
+    jobs_queued = int(job_queue.get("jobs_queued") or 0)
+    if job_queue.get("note"):
+        warnings.append(f"#FALLBACK job queue: {job_queue['note']}")
     chat: Dict[str, Any] = {"open": False}
     if chat_host is not None:
         try:
@@ -349,6 +381,7 @@ def gather(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any =
         "personal": personal,
         "personal_expires_at": expires_at,
         "work_order": work_order,
+        "jobs_queued": jobs_queued,
         "chat": chat,
         "durable": durable,
         "seat": seat,
@@ -456,7 +489,8 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
     word = str(state.get("state") or "awake")
     mode = str(state.get("mode") or "")
     loop_alive = bool(loop.get("running"))
-    toggles = {"work": bool(rec.get("work", True)), "personal": bool(facts["personal"])}
+    # Only own time is a switch (contract v3 D1): work starts when a job is queued.
+    toggles = {"personal": bool(facts["personal"])}
     stopped = word == "paused"
     maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
     maintenance_running = bool(maint and maint.get("status") == "running")
@@ -502,8 +536,7 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
             kind = "automation" if seat.get("automation") else "summon"
             work = {"kind": kind, "run_id": seat.get("run_id"), "since": _iso(seat.get("held_since"))}
         else:
-            work = {"kind": "work_order", "run_id": None, "since": None}
-        work["finishing"] = not toggles["work"]
+            work = {"kind": "work_order" if facts["work_order"] else "task", "run_id": None, "since": None}
     elif _sleep_kind(state, loop_alive):
         phase = "sleep"
         kind = _sleep_kind(state, loop_alive)
@@ -526,6 +559,8 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
     else:
         phase = "idle"
 
+    # The job queue (v3 D1): always present; `current` is the job running now.
+    work = {"jobs_queued": int(facts["jobs_queued"]), "current": work}
     blocked = _blocked(facts, rec, phase, toggles)
     snap: Dict[str, Any] = {
         "entity_id": manifest.entity_id,
@@ -574,12 +609,6 @@ def _blocked(facts: Dict[str, Any], rec: Dict[str, Any], phase: str, toggles: Di
         return None
     if facts["archived"]:
         return {"code": "entity_archived", "sentence": "He is archived; restore him from the roster first.", "action": None}
-    if not toggles["work"] and facts["work_order"]:
-        return {
-            "code": "work_order_waits_for_runtime",
-            "sentence": "Work is off and a work order stands; his own time waits until Work is back on.",
-            "action": None,
-        }
     err = str(rec.get("start_error") or "").strip()
     if err:
         return {"code": "own_time_start_failed", "sentence": f"His own time could not start: {err}", "action": "retry"}
@@ -599,12 +628,9 @@ def _sentence(name: str, phase: str, visit: Any, work: Any, sleep: Any, loop: Di
             return base + "; he is finishing what he was doing."
         return base + "."
     if phase == "work":
-        kind = (work or {}).get("kind")
-        base = {"work_order": "Working on his work order", "automation": "Working on an automation"}.get(
-            str(kind), "Working on a request from an agent"
-        )
-        if (work or {}).get("finishing"):
-            return base + "; Work is off, so he stops after this run."
+        kind = ((work or {}).get("current") or {}).get("kind")
+        base = {"work_order": "Working on his work order", "task": "Working on a task you left him",
+                "automation": "Working on an automation"}.get(str(kind), "Working on a request from an agent")
         return base + "."
     if phase == "personal":
         return "On his own time." if str(loop.get("phase") or "") == "day" else "On his own time, resting."
@@ -637,9 +663,7 @@ def _back_to(resume_to: Optional[str], toggles: Dict[str, bool]) -> Tuple[str, O
     if resume_to == "personal":
         return ("personal", None) if toggles["personal"] else ("idle", "Own time is off; he stays awake.")
     if resume_to == "work":
-        if toggles["work"] and toggles["personal"]:
-            return "work", None
-        return "idle", "Work is off; he stays awake."
+        return "work", None  # his jobs (no switch: v3 D1)
     return "idle", None
 
 
@@ -657,12 +681,15 @@ def _next(phase: str, toggles: Dict[str, bool], sleep: Any, work: Any, resume_to
             "personal": "When the visit closes, his own time resumes.",
             "work": "When the visit closes, he goes back to his work.",
         }.get(back, "When the visit closes, he stays awake and reachable.")}
-    if phase == "work" and (work or {}).get("kind") != "work_order":
+    if phase == "work":
+        # Where he returns when all his jobs are done (v3 D1/D4): own time while it is still
+        # given, else idle.
         if revoked:
             return {"phase": "idle", "sentence": revoked}
+        back = "personal" if back == "personal" else "idle"
         return {"phase": back, "sentence": {
-            "personal": "When this work ends, his own time resumes.",
-        }.get(back, "When this work ends, he stays awake and reachable.")}
+            "personal": "When his jobs are done, his own time resumes.",
+        }.get(back, "When his jobs are done, he stays awake and reachable.")}
     if phase == "sleep":
         ends = (sleep or {}).get("ends")
         if revoked:
@@ -688,11 +715,10 @@ def _can(facts: Dict[str, Any], rec: Dict[str, Any], phase: str, stopped: bool) 
         return {
             "visit": no("Stopped. Resume to visit."),
             "sleep_now": no("Stopped. Resume him first."),
-            "toggle_work": no("Stopped. Resume him first, then choose what he may do."),
             "toggle_personal": no("Stopped. Resume him first, then choose what he may do."),
         }
     if facts["archived"]:
-        return {"visit": no(archived), "sleep_now": no(archived), "toggle_work": no(archived), "toggle_personal": no(archived)}
+        return {"visit": no(archived), "sleep_now": no(archived), "toggle_personal": no(archived)}
     if phase == "visit":
         sleep_now = no("He is in a visit; end it to let him sleep.")
     elif phase == "sleep":
@@ -702,12 +728,14 @@ def _can(facts: Dict[str, Any], rec: Dict[str, Any], phase: str, stopped: bool) 
         sleep_now = no("He is already resting; a sleep cannot follow a sleep.")
     else:
         sleep_now = yes
-    return {"visit": dict(yes), "sleep_now": sleep_now, "toggle_work": dict(yes), "toggle_personal": dict(yes)}
+    return {"visit": dict(yes), "sleep_now": sleep_now, "toggle_personal": dict(yes)}
 
 
 def _first_since(phase: str, snap: Dict[str, Any], facts: Dict[str, Any]) -> Optional[str]:
     """`since` on a home's first derive (no recorded transition yet): the source fact."""
     sub = snap.get(phase) if phase in ("visit", "work", "sleep") else None
+    if phase == "work" and isinstance(sub, dict):
+        sub = sub.get("current")
     if isinstance(sub, dict) and sub.get("since"):
         return sub["since"]
     return _iso(facts["state"].get("changed_at")) or _iso(facts["loop"].get("updated_at"))
@@ -715,6 +743,18 @@ def _first_since(phase: str, snap: Dict[str, Any], facts: Dict[str, Any]) -> Opt
 
 # --------------------------------------------------------------------------- publish
 _SEMANTIC_EXCLUDE = ("warnings",)
+# Jobs the own-time loop works on (a loop work day), as opposed to a request holding the seat.
+LOOP_JOB_KINDS = ("work_order", "task")
+
+
+def _work_kind(snap: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The running job's kind in a snapshot (v3 shape `work.current.kind`; a v2 snapshot recorded
+    before the change kept it at `work.kind`)."""
+    work = (snap or {}).get("work") or {}
+    if not isinstance(work, dict):
+        return None
+    current = work.get("current") if "current" in work else work
+    return (current or {}).get("kind") if isinstance(current, dict) else None
 
 
 def publish(
@@ -758,13 +798,13 @@ def publish(
         # toggle, a crash) clears it; an interruption (visit, sleep, a request, a Stop) keeps it.
         new_phase = snap["phase"]
         own_kind = "personal" if new_phase == "personal" else (
-            "work" if new_phase == "work" and (snap.get("work") or {}).get("kind") == "work_order" else None)
+            "work" if new_phase == "work" and _work_kind(snap) in LOOP_JOB_KINDS else None)
         resume_changed = False
         # Work that INTERRUPTED own time (a summon, an automation) is not own time ending (review
         # #10): only an own-time work day (kind work_order) ending clears the target.
-        prev_work_kind = ((prev or {}).get("work") or {}).get("kind")
-        prev_was_own_time = prev_phase == "personal" or (prev_phase == "work" and prev_work_kind == "work_order")
-        prev_was_interruption = prev_phase in ("visit", "sleep") or (prev_phase == "work" and prev_work_kind != "work_order")
+        prev_work_kind = _work_kind(prev)
+        prev_was_own_time = prev_phase == "personal" or (prev_phase == "work" and prev_work_kind in LOOP_JOB_KINDS)
+        prev_was_interruption = prev_phase in ("visit", "sleep") or (prev_phase == "work" and prev_work_kind not in LOOP_JOB_KINDS)
         if own_kind:
             resume_changed = _note_resume_to(rec, own_kind)
         elif new_phase == "idle" and prev_was_own_time:
@@ -1003,7 +1043,8 @@ def stop(
     if revoked:
         _marker(registry, manifest, "personal_grant_revoked",
                 {"mode": "disabled", "revoked_by": "kill_switch", "by": actor, "channel": "kill_switch"})
-        items.append(_item("own_time", None, "revoked", None, OWN_TIME_REVOKED_SENTENCE))
+        # The Entity app reads exactly this row (abstractentity 0848c19): outcome done, code revoked.
+        items.append(_item("own_time", None, "done", "revoked", OWN_TIME_REVOKED_SENTENCE))
     elif revoke_error:
         items.append(_item("own_time", None, "failed", "grant_revoke_failed",
                            f"His own time could not be taken back: {revoke_error}"))
@@ -1330,10 +1371,11 @@ def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: 
 
 # --------------------------------------------------------------------------- toggles
 def set_toggles(
-    registry: Any, name: str, *, work: Optional[bool], personal: Optional[bool],
+    registry: Any, name: str, *, personal: Optional[bool],
     actor: Optional[str] = None, chat_host: Any = None, visit_host: Any = None,
 ) -> Dict[str, Any]:
-    """Write the permissions (contract §2). Raises ValueError('stopped') while stopped."""
+    """Write the one permission, own time (contract §2; v3 D1: there is no work switch). Raises
+    ToggleRefused while stopped or archived."""
     from abstractruntime.identity.life import read_entity_state, write_personal_grant
 
     from .entity_loop import loop_status, stop_loop
@@ -1345,7 +1387,7 @@ def set_toggles(
     entities_dir = Path(registry.entities_dir)
     home_dir = entities_dir / slug
     actor = actor or _actor()
-    changed: Dict[str, Any] = {"work": None, "personal": None}
+    changed: Dict[str, Any] = {"personal": None}
     with phase_lock(entities_dir, slug):
         if str(read_entity_state(home_dir).get("state") or "") == "paused":
             raise ToggleRefused("stopped_use_resume")
@@ -1353,10 +1395,6 @@ def set_toggles(
         facts = gather(registry, name, chat_host=chat_host, visit_host=visit_host)
         if facts["archived"]:
             raise ToggleRefused("entity_archived")
-        if work is not None and bool(rec.get("work", True)) != bool(work):
-            changed["work"] = {"from": bool(rec.get("work", True)), "to": bool(work)}
-            rec["work"] = bool(work)
-            write_record(entities_dir, slug, rec)
         if personal is not None and bool(facts["personal"]) != bool(personal):
             changed["personal"] = {"from": bool(facts["personal"]), "to": bool(personal)}
             write_personal_grant(home_dir, mode=("until_revoked" if personal else "disabled"), granted_by=actor)
@@ -1367,18 +1405,14 @@ def set_toggles(
             # Own time ends at the loop's next boundary (the current step finishes). He is never
             # put to sleep by the toggle: reconcile repairs the gate's leftover sleep after exit.
             stop_loop(home_dir, reason=f"personal turned off by {actor}", requested_by="operator")
-    if changed["work"] is not None and not work:
-        loop = loop_status(home_dir)
-        if bool(loop.get("running")) and str(loop.get("day_kind") or "") == "work":
-            stop_loop(home_dir, reason=f"work turned off by {actor}", requested_by="operator")
     if changed["personal"] is not None and personal:
         # The operator's own act names own time as the phase to return to. Turning it OFF keeps the
         # remembered phase until the interruption ends (the read says "Own time is off"); the
         # restore then finds the grant off, stays idle and retires it.
         set_resume_to(registry, slug, "personal")
-    if changed["work"] is not None or changed["personal"] is not None:
+    if changed["personal"] is not None:
         reconcile(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host,
-                  operator=bool(changed["personal"] is not None and personal))
+                  operator=bool(personal))
     body = publish(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host)
     body["changed"] = changed
     return body
@@ -1390,10 +1424,6 @@ class ToggleRefused(Exception):
         self.code = code
 
 
-def work_allowed(registry: Any, slug: str) -> bool:
-    return bool(read_record(Path(registry.entities_dir), slug).get("work", True))
-
-
 # --------------------------------------------------------------------------- reconcile
 def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, visit_host: Any = None,
               operator: bool = False) -> Dict[str, Any]:
@@ -1403,7 +1433,11 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
     The target is `resume_to` (the phase the interruption took over), restored only while its
     grant is still on. `operator=True` is the operator's own act (his toggle turning personal on,
     his start, his retry): the target is then personal whenever the grant is on. Nothing else ever
-    starts own time from idle, and a crashed loop is never restarted without the operator."""
+    starts own time from idle, and a crashed loop is never restarted without the operator.
+
+    JOBS (contract v3 D1/D4): a queued loop job (a standing work order, a task left with him) starts
+    the loop for WORK whatever the personal grant says — there is no work switch; the loop works,
+    then returns to `resume_to` (personal only while granted) or ends idle."""
     from abstractruntime.identity.life import write_entity_state
 
     if chat_host is None and visit_host is None:
@@ -1440,17 +1474,27 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
             return {"own_time": False, "pid": None, "reason": "work"}
         if loop_alive:
             return {"own_time": False, "pid": None, "reason": "running"}
+        jobs = int(facts["jobs_queued"]) > 0
         target = "personal" if operator else rec.get("resume_to")
+        if jobs and cause == "own_time_ended" and not operator:
+            # The loop ended on its own word with jobs still queued: never a respawn loop. The next
+            # trigger (a job queued, an interruption ending, the operator) starts it again.
+            return {"own_time": False, "pid": None, "reason": "jobs_left_by_loop"}
+        if jobs:
+            target = "work"  # a queued job comes first; own time waits for it (v3 D4)
+        elif target == "work":
+            # The jobs the interruption took over are done: back to own time while it is given.
+            target = "personal" if facts["personal"] else None
+            if target is None and _note_resume_to(rec, None):
+                write_record(entities_dir, slug, rec)
         if target not in ("personal", "work"):
             return {"own_time": False, "pid": None, "reason": "idle"}  # nothing was interrupted
-        if not facts["personal"] or (target == "work" and (not bool(rec.get("work", True)) or not facts["work_order"])):
-            # The grant was revoked meanwhile (the loop runs only under the operator's grant, work
-            # days too): stay idle, and the remembered phase is retired with the interruption.
+        if target == "personal" and not facts["personal"]:
+            # The grant was revoked meanwhile: stay idle, and the remembered phase is retired with
+            # the interruption.
             if not operator and _note_resume_to(rec, None):
                 write_record(entities_dir, slug, rec)
-            return {"own_time": False, "pid": None, "reason": "personal_off" if not facts["personal"] else "work_off"}
-        if not bool(rec.get("work", True)) and facts["work_order"]:
-            return {"own_time": False, "pid": None, "reason": "work_order_waits_for_runtime"}
+            return {"own_time": False, "pid": None, "reason": "personal_off"}
         loop_facts = facts["loop"]
         crashed = "process is gone" in str(loop_facts.get("note") or "") or str(loop_facts.get("stopped_by") or "") == "failures"
         if crashed and not operator:
@@ -1459,7 +1503,9 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
             return {"own_time": False, "pid": None, "reason": "spawning"}
         admission = int(rec.get("admission_seq") or 0)
-        spawn_return_to = "personal" if operator else target
+        # A loop started for queued jobs is told nothing (runtime v3: its gate works the queue, then
+        # returns to the remembered phase or ends idle); the operator's act names personal.
+        spawn_return_to = None if target == "work" else ("personal" if operator else target)
         rec["spawning"] = {"at": time.time(), "generation": generation, "cause": cause}
         write_record(entities_dir, slug, rec)
         params = dict(rec.get("own_time_params") or {})

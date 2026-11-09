@@ -2488,7 +2488,7 @@ def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
 
         snap = _publish_phase(registry, name, "observed")
         phase = str(snap.get("phase") or "") or None
-        if phase == "work" and (snap.get("work") or {}).get("kind") == "work_order" and not loop.get("day_kind"):
+        if phase == "work" and (((snap.get("work") or {}).get("current")) or {}).get("kind") == "work_order" and not loop.get("day_kind"):
             phase_source = "derived"
         if phase == "sleep":
             ends = (snap.get("sleep") or {}).get("ends")
@@ -2915,7 +2915,8 @@ def get_entity_life_state(name: str):
 
 _PHASE_SENTENCES = {
     "invalid_body": "The request body is not valid JSON.",
-    "invalid_toggles": "Say which to change: work, personal or both, each true or false.",
+    "invalid_toggles": "Say whether he may have his own time: personal, true or false.",
+    "unknown_field_work": "There is no work switch: work starts when a job is queued.",
     "invalid_action": "The action is stop, resume or retry.",
     "stopped_use_resume": "Stopped. Resume him first, then choose what he may do.",
 }
@@ -2938,22 +2939,6 @@ def _deprecate(response: Optional[Response], successor: str) -> None:
     if response is not None:
         response.headers["Deprecation"] = "true"
         response.headers["Link"] = f'</api/gateway/entities/{{name}}/{successor}>; rel="successor-version"'
-
-
-def _work_off_refusal(registry: Any, manifest: Any, what: str, *, entity_id: Optional[str] = None) -> Optional[HTTPException]:
-    """409 `work_off` when the entity's Work toggle is off (contract-phases v2 §6.2, §7); None
-    when work is allowed. The current run is never touched: it finishes."""
-    from ..entity_phase import work_allowed
-
-    if work_allowed(registry, manifest.slug):
-        return None
-    message = f"Work is off for him; turn Work on to {what}."
-    return HTTPException(
-        status_code=409,
-        detail={"refused": True, "reason_code": "work_off", "message": message, "reasons": [message],
-                **({"entity_id": entity_id} if entity_id else {})},
-        headers={"X-Gateway-Error-Code": "work_off"},
-    )
 
 
 def _phase_manifest_or_none(name: str) -> Any:
@@ -2984,11 +2969,11 @@ def _life_state_body(name: str, cause: str = "observed") -> Dict[str, Any]:
 
 @router.put("/{name}/life_state/toggles")
 async def put_entity_life_state_toggles(name: str, request: Request):
-    """The phase bar's permissions (contract-phases v2 §2): `{work?: bool, personal?: bool}`.
+    """The phase bar's one permission (contract-phases v3 D1): `{personal: bool}` — there is no
+    work switch (`work` → 422 unknown_field).
     A toggle ALLOWS a phase, it never forces one: personal on starts own time when nothing else
     holds the phase (else when it frees); personal off ends own time at the loop's next boundary
-    and never puts him to sleep; work off refuses new work at the entity's admission points and
-    lets the current run finish. Same values again = a no-op."""
+    and never puts him to sleep. Same values again = a no-op."""
     from .. import entity_phase
 
     manifest = _phase_manifest_or_none(name)
@@ -2998,13 +2983,17 @@ async def put_entity_life_state_toggles(name: str, request: Request):
     if body is None:
         return _phase_refusal(422, "invalid_body", _PHASE_SENTENCES["invalid_body"],
                               await off_loop("light", _life_state_body, name))
-    if not body or set(body) - {"work", "personal"} or any(type(v) is not bool for v in body.values()):
+    if "work" in body:
+        # There is no work switch (contract v3 D1): work starts when a job is queued.
+        return _phase_refusal(422, "unknown_field", _PHASE_SENTENCES["unknown_field_work"],
+                              await off_loop("light", _life_state_body, name))
+    if not body or set(body) - {"personal"} or any(type(v) is not bool for v in body.values()):
         return _phase_refusal(422, "invalid_toggles", _PHASE_SENTENCES["invalid_toggles"],
                               await off_loop("light", _life_state_body, name))
     registry = _registry()
     try:
         return await off_loop("heavy", lambda: entity_phase.set_toggles(
-            registry, name, work=body.get("work"), personal=body.get("personal")))
+            registry, name, personal=body.get("personal")))
     except entity_phase.ToggleRefused as e:
         if e.code == "entity_archived":
             from ..entity_access import EntityArchivedError
@@ -3626,13 +3615,6 @@ def _summon_core(
                 "state": entity_state,
             },
         )
-    # WORK OFF (contract-phases v2 §6.2): a summon is work unless it is an interactive person's
-    # own conversation — a person principal that declares itself human. The declaration alone
-    # never qualifies, and a queued admission re-checks here at dequeue.
-    if not (caller_is_person and caller_kind == "human"):
-        refusal = _work_off_refusal(registry, home.manifest, "send him requests", entity_id=home.entity_id)
-        if refusal is not None:
-            raise refusal
     if state_word == "asleep":
         # VISITING POSTURE GUARD (mutual-exclusivity wave, audit finding 3 —
         # the /loop/start registration-window pattern applied): a summon's
@@ -5051,10 +5033,6 @@ def put_entity_work_order(name: str, req: PutWorkOrderRequest) -> Dict[str, Any]
     home_dir = registry.entities_dir / manifest.slug
 
     order_text = (req.order or "").strip()
-    if not req.clear:
-        refusal = _work_off_refusal(registry, manifest, "give him a work order")
-        if refusal is not None:
-            raise refusal
     if not req.clear and not order_text:
         raise HTTPException(
             status_code=400,
@@ -5103,7 +5081,20 @@ def put_entity_work_order(name: str, req: PutWorkOrderRequest) -> Dict[str, Any]
         (home_dir / WORK_ORDER_FILENAME).write_text(order_text + "\n", encoding="utf-8")
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"could not write the work order: {e}")
+    _job_queued(registry, name)
     return get_entity_work_order(name)
+
+
+def _job_queued(registry: Any, name: str) -> None:
+    """A job was queued (a work order, a task): he moves to work when nothing holds the phase
+    (contract v3 D1 — no work switch; own time, if running, is interrupted by the loop's own gate)."""
+    from ..entity_phase import reconcile, safe_publish
+
+    try:
+        reconcile(registry, name, "job_queued")
+    except Exception:  # noqa: BLE001 - the job itself landed
+        logger.exception("reconcile after a job was queued failed for %s", name)
+    safe_publish(registry, name, "job_queued")
 
 
 # ------------------------------------------------------------- candidates
@@ -6514,9 +6505,6 @@ def post_entity_task(name: str, req: PostTaskRequest) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     home_dir = registry.entities_dir / manifest.slug
-    refusal = _work_off_refusal(registry, manifest, "hand him a task")
-    if refusal is not None:
-        raise refusal
     actor = _task_actor()
     title = str(req.title or "").strip()
     if not title:
@@ -6539,6 +6527,7 @@ def post_entity_task(name: str, req: PostTaskRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     folded = read_task_inbox(home_dir)
+    _job_queued(registry, name)
     return {"task": event, "pending": folded["pending"]}
 
 

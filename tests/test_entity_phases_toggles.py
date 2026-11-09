@@ -34,7 +34,7 @@ def spawned(monkeypatch: pytest.MonkeyPatch):
     calls = []
 
     def _fake_start(registry, manifest, params, return_to=None):
-        calls.append(dict(params))
+        calls.append({**dict(params), "_return_to": return_to})
         return {"pid": 5150 + len(calls)}
 
     monkeypatch.setattr(entity_phase, "start_own_time", _fake_start)
@@ -82,15 +82,15 @@ def test_personal_on_starts_own_time_and_off_never_puts_him_to_sleep(spawned):
         _awake(client)
         r = _put(client, {"personal": True})
         assert r.status_code == 200, r.text
-        assert r.json()["changed"] == {"work": None, "personal": {"from": False, "to": True}}
-        assert r.json()["toggles"] == {"work": True, "personal": True}
+        assert r.json()["changed"] == {"personal": {"from": False, "to": True}}
+        assert r.json()["toggles"] == {"personal": True}
         assert read_personal_grant(_home_dir())["mode"] == "until_revoked"
         assert len(spawned) == 1
 
         # Same values again: a no-op (no rev bump, no second start).
         rev = r.json()["rev"]
         again = _put(client, {"personal": True})
-        assert again.status_code == 200 and again.json()["changed"] == {"work": None, "personal": None}
+        assert again.status_code == 200 and again.json()["changed"] == {"personal": None}
         assert again.json()["rev"] == rev and len(spawned) == 1
 
         # The old loop gate's landing when own time ended: asleep + 6 h. Off = awake and reachable.
@@ -121,8 +121,8 @@ def test_toggle_body_validation_and_the_stopped_refusal():
 
     with _client() as client:
         _awake(client)
-        for body, code in (({}, "invalid_toggles"), ({"work": "yes"}, "invalid_toggles"), ({"work": 1}, "invalid_toggles"),
-                           ({"work": True, "sleep": True}, "invalid_toggles"), ([True], "invalid_body")):
+        for body, code in (({}, "invalid_toggles"), ({"personal": "yes"}, "invalid_toggles"), ({"personal": 1}, "invalid_toggles"),
+                           ({"personal": True, "sleep": True}, "invalid_toggles"), ([True], "invalid_body")):
             r = _put(client, body)
             assert r.status_code == 422, body
             assert r.json()["code"] == code and r.json()["detail"]["life_state"]["phase"] == "idle"
@@ -130,48 +130,44 @@ def test_toggle_body_validation_and_the_stopped_refusal():
                          headers={"Content-Type": "application/json"})
         assert bad.status_code == 422 and bad.json()["code"] == "invalid_body"
         write_entity_state(_home_dir(), "paused", reason="stop")
-        r = _put(client, {"work": False})
+        r = _put(client, {"personal": False})
         assert r.status_code == 409
         assert r.json()["detail"]["message"] == "Stopped. Resume him first, then choose what he may do."
         assert r.json()["code"] == "stopped_use_resume" and r.json()["detail"]["life_state"]["phase"] == "stopped"
-        assert client.put("/api/gateway/entities/Nobody/life_state/toggles", json={"work": True}).status_code == 404
+        assert client.put("/api/gateway/entities/Nobody/life_state/toggles", json={"personal": True}).status_code == 404
 
 
-def test_work_off_refuses_new_work_at_every_admission_point():
+def test_there_is_no_work_switch():
+    """Contract v3 D1 (operator 2026-11-09: "no work toggle"): `work` is gone from the toggles, from
+    `can`, and from the PUT, which names why; nothing refuses work for a switch."""
     with _client() as client:
         _awake(client)
-        assert _put(client, {"work": False}).status_code == 200
-
-        for kind in ("agent", None):  # an agent, or a caller that declares nothing: work
-            body = {"prompt": "do the thing", **({"caller_kind": kind} if kind else {})}
-            s = client.post("/api/gateway/entities/Castor/summon", json=body)
-            assert s.status_code == 409, s.text
-            assert s.json()["detail"]["reason_code"] == "work_off"
-            assert s.json()["detail"]["message"] == "Work is off for him; turn Work on to send him requests."
-        # A person principal declaring itself human is a visit (lane summon): the work gate lets it
-        # through (this hermetic gateway then has no flow to run it).
-        h = client.post("/api/gateway/entities/Castor/summon", json={"prompt": "hello", "caller_kind": "human"})
-        assert "work_off" not in h.text, h.text
-
+        for body in ({"work": False}, {"work": True, "personal": True}):
+            r = _put(client, body)
+            assert r.status_code == 422, r.text
+            assert r.json()["code"] == "unknown_field"
+            assert r.json()["detail"]["message"] == "There is no work switch: work starts when a job is queued."
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["toggles"] == {"personal": False}
+        assert set(ls["can"]) == {"visit", "sleep_now", "toggle_personal"}
+        assert ls["work"] == {"jobs_queued": 0, "current": None}
         t = client.post("/api/gateway/entities/Castor/tasks", json={"title": "sort the archive"})
-        assert t.status_code == 409 and t.json()["detail"]["reason_code"] == "work_off"
-        assert t.json()["detail"]["message"] == "Work is off for him; turn Work on to hand him a task."
-
-        w = client.put("/api/gateway/entities/Castor/work-order", json={"order": "sort the archive"})
-        assert w.status_code == 409 and w.json()["detail"]["reason_code"] == "work_off"
-        cleared = client.put("/api/gateway/entities/Castor/work-order", json={"clear": True})
-        assert cleared.status_code == 200, cleared.text  # clearing is never refused
-
-        on = _put(client, {"work": True})
-        assert on.json()["toggles"]["work"] is True
-        assert client.post("/api/gateway/entities/Castor/tasks", json={"title": "sort the archive"}).status_code == 200
+        assert t.status_code == 200 and "work_off" not in t.text
 
 
-def test_work_off_with_a_standing_order_blocks_own_time_until_the_runtime_skips_it(spawned):
+def test_a_queued_job_starts_work_without_the_grant(spawned):
+    """Contract v3 D1: work is driven by the job queue, whatever the personal grant says: a work
+    order queued on an idle entity starts the loop for work; a task too; a second job while the
+    first is being picked up is counted in the queue."""
     with _client() as client:
         _awake(client)
-        (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
-        assert _put(client, {"work": False}).status_code == 200
-        r = _put(client, {"personal": True})
-        assert spawned == []
-        assert r.json()["blocked"]["code"] == "work_order_waits_for_runtime"
+        w = client.put("/api/gateway/entities/Castor/work-order", json={"order": "Sort the archive."})
+        assert w.status_code == 200, w.text
+        assert len(spawned) == 1 and spawned[-1]["_return_to"] is None  # the runtime's gate works the queue
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["work"]["jobs_queued"] == 1 and ls["toggles"] == {"personal": False}
+        t = client.post("/api/gateway/entities/Castor/tasks", json={"title": "and the letters"})
+        assert t.status_code == 200, t.text
+        # (The fake spawn leaves no live loop, so the task's reconcile starts it again — for work.)
+        assert len(spawned) == 2 and all(c["_return_to"] is None for c in spawned)
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["work"]["jobs_queued"] == 2
