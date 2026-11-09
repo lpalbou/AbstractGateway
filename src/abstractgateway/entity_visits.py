@@ -240,17 +240,15 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
             target = str((prior_state or {}).get("state") or "awake")
             if target not in ("awake", "asleep"):
                 target = "awake"  # paused is the operator's act alone, never auto-restored
+            if target == "asleep":
+                # The same sleep continues: its original reason, writer, wake time (runtime c343)
+                # and since; the aborted open is not part of its reason.
+                from .entity_phase import continue_sleep
+
+                continue_sleep(home.parent, home.name, dict(prior_state or {}))
+                return
             reason = str((prior_state or {}).get("reason") or "")
-            # A BOUNDED sleep keeps its deadline through the restore (runtime
-            # c343: write_entity_state takes wake_at first-class; dropping it
-            # meant an unattended entity could sleep past its need-check).
-            wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
-            write_entity_state(
-                home_dir, target,
-                reason=(f"{reason} {suffix}".strip() if reason else suffix),
-                wake_at=wake_at,
-                written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
-            )
+            write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix))
     except Exception:  # noqa: BLE001
         pass
 
@@ -2175,6 +2173,7 @@ class EntityVisitHost:
         home_dir = registry.entities_dir / manifest.slug
         wake_warning: Optional[str] = None
         prior: Dict[str, Any] = {}
+        sleep_continued = False
         from .entity_phase import phase_lock
 
         try:
@@ -2213,16 +2212,13 @@ class EntityVisitHost:
                     target = str(prior.get("state") or "awake")
                     if target not in ("awake", "asleep"):
                         target = "awake"  # paused is an operator/admin act, never auto-restored
-                    suffix = f"(visitor session ended: {output.get('turns', 0)} turns; {output.get('close_reason', 'closed')})"
                     if target == "asleep":
-                        write_entity_state(
-                            home_dir, "asleep",
-                            reason=(str(prior.get("reason") or "") or "operator sleep restored") + f" {suffix}",
-                            # Bounded sleeps keep their deadline (runtime c343).
-                            wake_at=str(prior.get("wake_at") or ""),
-                            # The same sleep continues: who chose it travels with it (contract-phases §4.4).
-                            written_by=str(prior.get("written_by") or "operator"),
-                        )
+                        # The same sleep continues: its original reason, writer, wake time and since
+                        # (the visit's facts are this close's `session_closed` marker).
+                        from .entity_phase import continue_sleep
+
+                        continue_sleep(registry.entities_dir, manifest.slug, prior)
+                        sleep_continued = True
                     elif owned:
                         write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
                                            f"{output.get('close_reason', 'closed')})")
@@ -2242,6 +2238,8 @@ class EntityVisitHost:
             # A clean terminal record: what ended it and who (the kill switch: the operator).
             details["status"] = "cancelled"
             details["reason"] = str(getattr(state, "error", "") or "") or None
+        if sleep_continued:
+            details["sleep_continues"] = True  # the sleep this visit interrupted goes on, unchanged
         if wake_warning:
             details["warnings"] = [wake_warning]
         self._marker(

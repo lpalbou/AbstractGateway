@@ -1079,16 +1079,15 @@ class EntityChatHost:
                 target = str((prior_state or {}).get("state") or "awake")
                 if target not in ("awake", "asleep"):
                     target = "awake"  # paused is the operator's act alone, never auto-restored
+                if target == "asleep":
+                    # The same sleep continues: its original reason, writer, wake time (runtime
+                    # c343) and since; the aborted open is not part of its reason.
+                    from .entity_phase import continue_sleep
+
+                    continue_sleep(home.parent, home.name, dict(prior_state or {}))
+                    return
                 reason = str((prior_state or {}).get("reason") or "")
-                # A BOUNDED sleep keeps its deadline (runtime c343: wake_at is
-                # first-class on the writer; dropping it slept past need-checks).
-                wake_at = str((prior_state or {}).get("wake_at") or "") if target == "asleep" else ""
-                write_entity_state(
-                    home_dir, target,
-                    reason=(f"{reason} {suffix}".strip() if reason else suffix),
-                    wake_at=wake_at,
-                    written_by=(str((prior_state or {}).get("written_by") or "operator") if target == "asleep" else "operator"),
-                )
+                write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1213,6 +1212,7 @@ class EntityChatHost:
 
         reflection: Optional[Dict[str, Any]] = None
         warnings: List[str] = []
+        sleep_continued = False
         try:
             if reflect and hosted.session.reports:
                 try:
@@ -1252,16 +1252,14 @@ class EntityChatHost:
                         if str(prior.get("state") or "awake") == "asleep":
                             # THE SLEEP RETURNS (skill c219 audit): this visit
                             # woke an operator-asleep entity (B1 doors-wake);
-                            # the rest resumes when the visitor leaves — with
-                            # its wake deadline intact (runtime c343 seam).
-                            write_entity_state(
-                                home_dir, "asleep",
-                                reason=(str(prior.get("reason") or "") or "operator sleep restored")
-                                + f" (visit ended: {len(hosted.session.reports)} turns)",
-                                wake_at=str(prior.get("wake_at") or ""),
-                                # The same sleep continues (contract-phases §4.4): who chose it travels.
-                                written_by=str(prior.get("written_by") or "operator"),
-                            )
+                            # the same sleep resumes when the visitor leaves —
+                            # its original reason, writer, wake deadline (runtime
+                            # c343 seam) and since; the visit is its
+                            # `session_closed` marker, never part of the reason.
+                            from .entity_phase import continue_sleep
+
+                            continue_sleep(self._registry.entities_dir, hosted.entity_slug, prior)
+                            sleep_continued = True
                         else:
                             # Wake-cue seeding (maintainer escalation 2026-07-09,
                             # R3 — "agency blindness"): the return reason carries
@@ -1297,6 +1295,8 @@ class EntityChatHost:
                     pass  # fd close releases the kernel lock regardless
 
         details_closed: Dict[str, Any] = {"session_id": hosted.session.session_id, "turns": len(hosted.session.reports)}
+        if sleep_continued:
+            details_closed["sleep_continues"] = True  # the sleep this visit interrupted goes on, unchanged
         if getattr(hosted, "stopped_by_switch", False):
             details_closed.update({"status": "cancelled", "closed_by": "kill_switch", "by": "operator",
                                    "reason": "kill_switch: stopped by the operator"})

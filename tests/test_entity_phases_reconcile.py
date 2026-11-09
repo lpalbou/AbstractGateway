@@ -729,3 +729,71 @@ def test_the_service_start_runs_the_restart_pass(monkeypatch: pytest.MonkeyPatch
         assert seen[0][1]["chat_host"] is not None and seen[0][1]["visit_host"] is not None
     monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", "0")
     assert entity_phase.start_restart_resume(object()) is None
+
+
+# --------------------------------------------------------------------------- a sleep across visits
+def _host_markers(kind: str):
+    path = _home_dir().parent / ".host_stream" / "castor.jsonl"
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return [r["payload"] for r in rows if (r.get("payload") or {}).get("kind") == kind]
+
+
+@pytest.mark.parametrize("lane", ["visit", "chat"])
+def test_a_sleep_keeps_its_reason_and_since_across_three_visits(spawned, lane):
+    """Castor's sleep reason grew by one "(visitor session ended: …)" per visit and its since moved
+    to each close. The same sleep continues: after three visits the state's reason is the original
+    word for word, `since` (the phase's and the sleep's) is where the sleep began, and the visits
+    are in the ledger (a `summon` at each open, a `session_closed` at each end)."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator")
+        before = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert before["phase"] == "sleep" and before["sleep"]["reason"] == "by the operator (roster)"
+        origin = read_entity_state(home)["changed_at"]
+        for _ in range(3):
+            time.sleep(0.02)  # every write moves changed_at
+            if lane == "visit":
+                opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
+                assert opened.status_code == 200, opened.text
+                assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "visit"
+                closed = client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close",
+                                     json={"closed_by": "operator"})
+            else:
+                opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+                assert opened.status_code == 200, opened.text
+                assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "visit"
+                closed = client.post(f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close")
+            assert closed.status_code == 200, closed.text
+            st = read_entity_state(home)
+            assert st["state"] == "asleep" and st["reason"] == "by the operator (roster)", st
+            assert st["changed_at"] != origin  # the state was rewritten: since comes from the origin
+            after = client.get("/api/gateway/entities/Castor/life_state").json()
+            assert after["phase"] == "sleep" and after["sleep"]["reason"] == "by the operator (roster)"
+            assert after["sleep"]["since"] == before["sleep"]["since"]
+            assert after["since"] == before["since"]
+        assert len(_host_markers("summon")) == 3
+        closes = _host_markers("session_closed")
+        assert len(closes) == 3 and all(c.get("sleep_continues") is True for c in closes), closes
+        assert spawned == []
+
+
+def test_an_aborted_open_keeps_the_sleep_as_it_was(spawned):
+    from abstractgateway.entity_visits import _restore_prior_state
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        write_entity_state(home, "asleep", reason="resting", written_by="operator", wake_at="2099-01-01T00:00:00+00:00")
+        before = client.get("/api/gateway/entities/Castor/life_state").json()
+        prior = dict(read_entity_state(home))
+        write_entity_state(home, "asleep", reason="in conversation with person:admin [visit v-1]", mode="visiting",
+                           written_by="visit-door")
+        _restore_prior_state(home, prior, suffix="(visit open failed)", token="[visit v-1]")
+        st = read_entity_state(home)
+        assert (st["state"], st["reason"], st.get("wake_at")) == ("asleep", "resting", "2099-01-01T00:00:00+00:00")
+        after = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert after["sleep"]["since"] == before["sleep"]["since"]

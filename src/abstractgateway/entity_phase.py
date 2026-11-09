@@ -255,6 +255,36 @@ def admit_visit_posture(entities_dir: Path, slug: str, generation: int, *, reaso
         return True
 
 
+def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any]) -> None:
+    """THE write of a sleep a visit interrupted, at the visit's end (every lane: the durable visit's
+    close, the chat's close, an aborted open). The same sleep continues (contract §4.4): its ORIGINAL
+    reason, who chose it and its wake time are written back unchanged, and the sidecar keeps its
+    original start, so `since` stays where the sleep began however many visits came in between. The
+    visits themselves are in the ledger (`summon` at the open, `session_closed` at the end), never in
+    the sleep's reason. Callers hold the phase lock and have checked the posture is theirs."""
+    from abstractruntime.identity.life import read_entity_state, write_entity_state
+
+    home_dir = Path(entities_dir) / slug
+    with phase_lock(entities_dir, slug):
+        rec = read_record(entities_dir, slug)
+        override = rec.get("sleep_since_override") if isinstance(rec.get("sleep_since_override"), dict) else None
+        if override and prior.get("changed_at") and str(override.get("changed_at") or "") == str(prior.get("changed_at")):
+            since = override.get("since")  # the prior state was itself a continued sleep: its origin
+        else:
+            since = prior.get("changed_at")
+        write_entity_state(
+            home_dir, "asleep",
+            reason=str(prior.get("reason") or "") or "operator sleep restored",
+            # Bounded sleeps keep their deadline (runtime c343).
+            wake_at=str(prior.get("wake_at") or ""),
+            # Who chose it travels with it (contract-phases §4.4).
+            written_by=str(prior.get("written_by") or "operator"),
+        )
+        if since:
+            rec["sleep_since_override"] = {"changed_at": read_entity_state(home_dir).get("changed_at"), "since": since}
+            write_record(entities_dir, slug, rec)
+
+
 def write_if_still_ours(entities_dir: Path, slug: str, predicate: Callable[[Dict[str, Any]], bool],
                         write: Callable[[], Any]) -> bool:
     """An ownership-checked restore (a visit's close, an aborted open) as ONE locked step: the
@@ -823,7 +853,8 @@ def publish(
         if prev is None:
             since = _first_since(snap["phase"], snap, facts)
         elif prev_phase != snap["phase"]:
-            since = _now_iso()
+            # A sleep began when it began: after a visit the same sleep continues from its origin.
+            since = ((snap.get("sleep") or {}).get("since") if snap["phase"] == "sleep" else None) or _now_iso()
         else:
             since = rec.get("since")
         semantic = {k: v for k, v in snap.items() if k not in _SEMANTIC_EXCLUDE}
@@ -1803,10 +1834,8 @@ def after_visit_closed(registry: Any, slug: str, prior: Optional[Dict[str, Any]]
                 write_entity_state(home_dir, "awake", reason="maintenance done; awake")
                 rec["maintenance"] = None
                 write_record(entities_dir, slug, rec)
-            elif prior and str(prior.get("state") or "") == "asleep" and prior.get("changed_at"):
-                # The same sleep continues: it keeps its original since.
-                rec["sleep_since_override"] = {"changed_at": st.get("changed_at"), "since": prior.get("changed_at")}
-                write_record(entities_dir, slug, rec)
+            # A sleep the visit interrupted was written back by the close with its original since
+            # (`continue_sleep`).
         reconcile(registry, slug, cause, chat_host=chat_host, visit_host=visit_host)
     except Exception:  # noqa: BLE001 - the close itself already succeeded
         logger.exception("after-visit reconcile failed for %s", slug)
