@@ -397,3 +397,104 @@ def test_the_hard_stop_never_signals_the_gateway_itself_and_stops_once(monkeypat
         row = entity_phase._kill_loop(home, {}, "test")
         assert row["outcome"] == "failed" and row["code"] == "loop_still_alive"
         proc2.kill()
+
+
+def test_stop_fences_before_it_observes_anything(monkeypatch: pytest.MonkeyPatch):
+    """Review #4: Stop used to publish (and possibly restore own time) BEFORE its fence. A
+    pending restore (an interruption ended, never observed) must not start own time under the
+    Stop."""
+    from abstractruntime.identity.life import write_entity_state
+
+    from abstractgateway import entity_phase
+
+    spawned = []
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p: spawned.append(m.slug) or {"pid": 1})
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        home = _home_dir()
+        from abstractruntime.identity.life import write_personal_grant
+
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
+        proc = _fake_loop(home, "between")
+        write_entity_state(home, "awake", reason="woken")
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "personal"
+        write_entity_state(home, "asleep", reason="self-elected sleep", written_by="self")
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "sleep"
+        proc.kill()
+        proc.wait(5)
+        (home / "loop_status").write_text(json.dumps({"phase": "stopped", "pid": proc.pid, "stopped_by": "rest"}), encoding="utf-8")
+        write_entity_state(home, "awake", reason="woke", written_by="self")  # not observed yet
+        r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        assert r.status_code == 200 and r.json()["phase"] == "stopped"
+        assert spawned == [], "own time was restored under the Stop"
+
+
+def test_stop_never_waits_on_a_hosted_turn_in_flight(monkeypatch: pytest.MonkeyPatch):
+    from abstractgateway import entity_chat
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    class _SlowLLM:
+        class _R:
+            def __init__(self, c):
+                self.content = c
+
+        def generate(self, **kwargs):
+            entered.set()
+            release.wait(20)
+            return self._R("finally.")
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: _SlowLLM())
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened.status_code == 200, opened.text
+        from abstractgateway.routes.entities import _chat_host
+
+        host = _chat_host()
+        chat_id = opened.json()["chat_id"]
+        turn = threading.Thread(target=lambda: host.turn(chat_id, "think hard"), daemon=True)
+        turn.start()
+        assert entered.wait(10)
+        t0 = time.monotonic()
+        r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+        took = time.monotonic() - t0
+        assert r.status_code == 200, r.text
+        assert took < 8, f"Stop waited on the turn ({took:.1f}s)"
+        rows = {i["item"]: i for i in r.json()["items"]}
+        assert rows["chat"]["outcome"] == "cancel_requested"
+        release.set()
+        turn.join(20)
+        deadline = time.monotonic() + 10
+        while host.status("castor").get("open") and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert host.status("castor").get("open") is False
+
+
+def test_a_repeated_stop_retries_what_the_last_one_could_not_finish(monkeypatch: pytest.MonkeyPatch):
+    """Review #5: the root of a run tree was cancelled, its child failed; the root then left live
+    discovery and the next Stop forgot the child. It now retries the recorded child, in its store."""
+    from abstractgateway import entity_phase, entity_seat
+
+    calls = []
+
+    def _fake_tree(runtime, store, run_id):
+        calls.append(run_id)
+        if run_id == "root":
+            return [{"run_id": "root", "outcome": "cancelled", "code": None, "error": None},
+                    {"run_id": "child", "outcome": "failed", "code": "run_cancel_failed", "error": "store locked"}]
+        return [{"run_id": run_id, "outcome": "cancelled", "code": None, "error": None}]
+
+    monkeypatch.setattr(entity_phase, "_cancel_tree", _fake_tree)
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        reg = _registry()
+        monkeypatch.setattr(entity_seat, "read_seat", lambda d, s: {"run_id": "root"})
+        first = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()
+        assert first["complete"] is False
+        monkeypatch.setattr(entity_seat, "read_seat", lambda d, s: None)  # the root left discovery
+        second = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()
+        assert calls == ["root", "child"]
+        assert second["complete"] is True
+        assert entity_phase.read_record(reg.entities_dir, "castor")["stop_outstanding"] == []

@@ -863,8 +863,22 @@ def _marker(registry: Any, manifest: Any, kind: str, details: Dict[str, Any]) ->
         return None, str(e)
 
 
-def _item(item: str, ident: Any, outcome: str, code: Optional[str] = None, sentence: Optional[str] = None) -> Dict[str, Any]:
-    return {"item": item, "id": (str(ident) if ident not in (None, "") else None), "outcome": outcome, "code": code, "sentence": sentence}
+def _item(item: str, ident: Any, outcome: str, code: Optional[str] = None, sentence: Optional[str] = None,
+          *, store: Optional[str] = None) -> Dict[str, Any]:
+    row = {"item": item, "id": (str(ident) if ident not in (None, "") else None), "outcome": outcome, "code": code, "sentence": sentence}
+    if store:
+        row["store"] = store  # where a run lives (gateway | home): a repeated Stop retries it there
+    return row
+
+
+def _run_owner(registry: Any, slug: str, store: str, svc: Any = None) -> Tuple[Any, Any]:
+    """(runtime, run_store) of a run's home: the gateway's own store, or the entity's home store."""
+    if store == "home":
+        er = registry.get_entity_runtime(slug)
+        return er.runtime, er.run_store
+    svc = svc if svc is not None else _service()
+    host = getattr(svc, "host", None)
+    return getattr(host, "runtime", None), getattr(host, "run_store", None)
 
 
 def stop(
@@ -891,12 +905,22 @@ def stop(
     actor = actor or _actor()
     via = via.replace("{name}", slug)
 
-    # The phase the Stop interrupts is observed first (resume_to): Resume restores it.
-    safe_publish(registry, name, "observed", chat_host=chat_host, visit_host=visit_host)
-    # 1. FENCE: generation first, then the paused write (every door refuses from here on).
+    # 1. FENCE FIRST (review 2026-11-09 #4): under the lock, the phase the Stop interrupts is noted
+    # (resume_to, for Resume — never a publish that could reconcile), then the generation moves
+    # and paused is written: from here on every door and every fenced writer refuses.
     with phase_lock(entities_dir, slug):
         rec = read_record(entities_dir, slug)
         already = str(read_entity_state(home_dir).get("state") or "") == "paused"
+        prior_outstanding = list(rec.get("stop_outstanding") or [])
+        if not already:
+            try:
+                before = derive(gather(registry, name, chat_host=chat_host, visit_host=visit_host), rec)
+                if before["phase"] == "personal":
+                    _note_resume_to(rec, "personal")
+                elif before["phase"] == "work" and (before.get("work") or {}).get("kind") == "work_order":
+                    _note_resume_to(rec, "work")
+            except Exception:  # noqa: BLE001 - the stop never waits on an observation
+                logger.exception("stop: the interrupted phase of %s could not be observed", slug)
         rec["generation"] = int(rec.get("generation") or 0) + 1
         maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
         if maint and maint.get("status") == "running":
@@ -914,7 +938,19 @@ def stop(
     items: List[Dict[str, Any]] = []
     cancelled = {"visits": [], "chats": [], "runs": [], "loop_pid": None}
 
-    # 2. SIGNAL at once: the loop's durable stop command, live runs, queued admissions.
+    # 2a. A REPEATED STOP RETRIES what the last one could not finish (review #5), in the store the
+    # item came from — a cancelled root no longer appears in live discovery, its failed child does
+    # here. The list is replaced only by this round's own failures.
+    for old in prior_outstanding:
+        if old.get("item") == "run" and old.get("id"):
+            runtime, store = _run_owner(registry, slug, str(old.get("store") or "gateway"), svc)
+            for o in _cancel_tree(runtime, store, str(old["id"])):
+                items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store=old.get("store")))
+                if o["outcome"] == "cancelled":
+                    cancelled["runs"].append(o["run_id"])
+
+    # 2. SIGNAL at once: the loop's durable stop command, live runs, queued admissions, an
+    # in-flight hosted turn (its session yields at its next model/tool boundary).
     try:
         request_loop_stop(home_dir, reason="kill switch", requested_by="admin")
     except Exception:  # noqa: BLE001 - the SIGTERM below is the real stop
@@ -929,11 +965,10 @@ def stop(
     except Exception:  # noqa: BLE001
         seat_run = None
     if seat_run:
-        svc = svc if svc is not None else _service()
-        outcomes = _cancel_tree(getattr(getattr(svc, "host", None), "runtime", None),
-                                getattr(getattr(svc, "host", None), "run_store", None), seat_run)
+        runtime, store = _run_owner(registry, slug, "gateway", svc)
+        outcomes = _cancel_tree(runtime, store, seat_run)
         for o in outcomes:
-            items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error")))
+            items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store="gateway"))
             if o["outcome"] == "cancelled":
                 cancelled["runs"].append(o["run_id"])
     del probe
@@ -954,12 +989,14 @@ def stop(
             try:
                 er = registry.get_entity_runtime(slug)
                 for o in _cancel_tree(er.runtime, er.run_store, visit_run):
-                    items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error")))
+                    items.append(_item("run", o["run_id"], o["outcome"], o.get("code"), o.get("error"), store="home"))
                     if o["outcome"] == "cancelled":
                         cancelled["runs"].append(o["run_id"])
                         visit_cancelled = True
             except Exception as e:  # noqa: BLE001
-                items.append(_item("run", visit_run, "failed", "run_cancel_failed", f"His visit turn could not be cancelled: {e}"))
+                items.append(_item("run", visit_run, "failed", "run_cancel_failed", f"His visit turn could not be cancelled: {e}",
+                                   store="home"))
+    chat_row = _stop_chat(chat_host, name, cancelled)
     items.append(_queue_stop(entities_dir, slug))
     maint = read_record(entities_dir, slug).get("maintenance")
     if isinstance(maint, dict) and maint.get("status") == "cancel_requested":
@@ -976,7 +1013,7 @@ def stop(
         _marker(registry, manifest, "personal_frozen", {"channel": "kill_switch", "by": actor, "reason": reason or "stopped",
                                                         "pid": loop_row.get("id"), "escalated_to_sigkill": loop_row["outcome"] == "killed_sigkill"})
     items.append(_close_durable(registry, visit_host, name, visit_run, visit_cancelled, cancelled))
-    items.append(_close_chat(chat_host, name, cancelled))
+    items.append(chat_row)
 
     outstanding = [i for i in items if i["outcome"] == "failed"]
     with phase_lock(entities_dir, slug):
@@ -1165,18 +1202,18 @@ def _close_durable(registry: Any, visit_host: Any, name: str, run_id: str, was_c
         return _item("visit", run_id, "failed", "visit_close_failed", f"His visit could not be closed: {getattr(e, 'detail', e)}")
 
 
-def _close_chat(chat_host: Any, name: str, cancelled: Dict[str, Any]) -> Dict[str, Any]:
+def _stop_chat(chat_host: Any, name: str, cancelled: Dict[str, Any]) -> Dict[str, Any]:
+    """The hosted chat under the kill switch (review #4): an in-flight turn is told to yield at
+    once and is never waited on; the close follows on its own when the turn lets go."""
     if chat_host is None:
         return _item("chat", None, "not_open")
     try:
-        status = chat_host.status(name)
-        if not status.get("open"):
-            return _item("chat", None, "not_open")
-        chat_host.close_open_visit(name, reflect=False)
-        cancelled["chats"].append(str(status.get("chat_id")))
-        return _item("chat", status.get("chat_id"), "closed")
+        out = chat_host.stop_open_visit(name)
     except Exception as e:  # noqa: BLE001
         return _item("chat", None, "failed", "chat_close_failed", f"His chat could not be closed: {e}")
+    if out.get("outcome") in ("closed", "cancel_requested"):
+        cancelled["chats"].append(str(out.get("chat_id")))
+    return _item("chat", out.get("chat_id"), str(out.get("outcome") or "not_open"))
 
 
 def resume(registry: Any, name: str, *, actor: Optional[str] = None, chat_host: Any = None, visit_host: Any = None) -> Dict[str, Any]:

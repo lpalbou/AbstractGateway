@@ -1046,6 +1046,47 @@ class EntityChatHost:
         except ChatOpenRefused:
             return None  # already closing/closed — the race resolved itself
 
+    def stop_open_visit(self, name: str) -> Dict[str, Any]:
+        """The kill switch's chat row (contract-phases §3.1; review 2026-11-09 #4). Never waits on
+        cognition: an in-flight turn is told to yield at its next model/tool boundary
+        (`ChatSession.yield_check`), the session leaves the host's live index at once, and its close
+        (no reflection) runs when the turn lets go of the session. Returns {outcome, chat_id}."""
+        manifest = self._registry.manifest_for(name)
+        with self._lock:
+            chat_id = self._by_slug.get(manifest.slug)
+            hosted = self._sessions.get(chat_id) if chat_id else None
+        if hosted is None:
+            return {"outcome": "not_open", "chat_id": None}
+        try:
+            hosted.session.yield_check = lambda: True
+        except Exception:  # noqa: BLE001 - a session without the seam still closes after its turn
+            pass
+        if hosted.turn_lock.acquire(blocking=False):
+            try:
+                if hosted.closed:
+                    return {"outcome": "not_open", "chat_id": chat_id}
+                hosted.closed = True
+            finally:
+                hosted.turn_lock.release()
+            self._close_hosted(hosted, reflect=False)
+            return {"outcome": "closed", "chat_id": chat_id}
+        with self._lock:
+            if self._by_slug.get(manifest.slug) == chat_id:
+                del self._by_slug[manifest.slug]
+
+        def _close_after_the_turn() -> None:
+            with hosted.turn_lock:
+                if hosted.closed:
+                    return
+                hosted.closed = True
+            try:
+                self._close_hosted(hosted, reflect=False)
+            except Exception:  # noqa: BLE001
+                logger.exception("the stopped chat %s could not be closed after its turn", chat_id)
+
+        threading.Thread(target=_close_after_the_turn, name=f"entity-chat-stop-{chat_id}", daemon=True).start()
+        return {"outcome": "cancel_requested", "chat_id": chat_id}
+
     def close_all(self, *, budget_s: float = 60.0) -> None:
         """Shutdown hygiene: reflect + close every live session (the loop
         wake duty travels with each). Mark-closed under each session's
