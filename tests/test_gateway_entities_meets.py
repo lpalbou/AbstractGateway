@@ -202,7 +202,7 @@ def test_rollback_closes_leg_a_when_a_REAL_second_leg_refuses(monkeypatch: pytes
         refused = client.post("/api/gateway/entities/meets/open",
                              json={"entity_a": "Castor", "entity_b": "Pollux"})
         assert refused.status_code == 409, refused.text
-        assert "paused" in refused.json()["detail"]
+        assert refused.json()["detail"] == "Stopped. Resume to visit."  # stopped: the one visit refusal
 
         # Castor's leg was rolled back — the door is free for a solo visit.
         solo = client.post("/api/gateway/entities/Castor/visit/open", json={})
