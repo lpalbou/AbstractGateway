@@ -44,3 +44,12 @@ def test_visit_statistics_belong_to_latest_turn_and_exclude_idle_time():
                park("2026-10-18T01:00:03Z")]
     ledger = SimpleNamespace(list=lambda rid: records)
     assert visit_message_stats(ledger, "v") == dict(input_tokens=30, output_tokens=7, tool_calls=0, wall_time_seconds=3)
+
+
+def test_a_capability_call_is_not_the_answer():
+    """The summaries model authoring the turn's memory (an LLM_CALL tagged `capability`, runtime
+    bb6d17a) is not the answer: the message's numbers stay the mind's, never unknown because of it."""
+    mind = rec("llm_call", {"usage": {"prompt_tokens": 7, "completion_tokens": 3}}, "m")
+    authoring = dict(status="completed", effect={"type": "llm_call", "payload": {"capability": "summaries"}},
+                     result={"content": "{}"}, idempotency_key="a")
+    assert stats_from_records([mind, authoring]) == dict(input_tokens=7, output_tokens=3, tool_calls=0)

@@ -461,6 +461,11 @@ def _register_hermetic_markers(config) -> None:
     )
     config.addinivalue_line(
         "markers",
+        "capability_models: the test meets the entity's real capability models (the summaries model that "
+        "authors every memory's title and summary) instead of the fixed test one.",
+    )
+    config.addinivalue_line(
+        "markers",
         "real_home(reason): the test reads the operator's real home directory (read-only, through "
         "ABSTRACT_TEST_REAL_HOME; HOME itself stays a tmp directory). The reason is mandatory, and a test "
         "module that reads ABSTRACT_TEST_REAL_HOME without this marker is a collection error.",
@@ -662,6 +667,41 @@ def _no_real_tailscale_serve(monkeypatch: pytest.MonkeyPatch) -> None:
     # CLI. Gateways a test starts as a subprocess pass `--tailscale-https off`.
     # tests/test_gateway_tailscale_https.py drives a fake CLI explicitly.
     monkeypatch.setattr("abstractgateway.tailscale_https._tailscale_binary", lambda: None)
+
+
+class _FixedSummariesModel:
+    """The summaries capability in a test that does not ask for the real one: every authoring call
+    (a structured {title, summary} request) gets one fixed answer; nothing else is expected of it."""
+
+    model_info = {"provider": "test", "model": "fixed-summaries", "thinking": None}
+
+    def generate(self, **kwargs):
+        model = kwargs.get("response_model")
+        if model is None:
+            raise AssertionError("the test summaries model only authors titles and summaries")
+        return model(title="A test memory", summary="A memory formed in a test.")
+
+
+@pytest.fixture(autouse=True)
+def _fixed_summaries_capability(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every record an entity forms is authored by its summaries capability model in the formation
+    # step (AbstractRuntime 4eefddb / bb6d17a). That model inherits the mind, and tests script the
+    # mind call by call: the authoring calls would eat their scripts. They get one fixed model here
+    # instead; a test of the authoring seams marks itself `capability_models` and meets the real path.
+    if request.node.get_closest_marker("capability_models") is not None:
+        return
+    try:
+        from abstractgateway.entities import EntityRegistry
+    except Exception:  # noqa: BLE001 - a test tree without the entity stack has nothing to stub
+        return
+    real = EntityRegistry.capability_llm
+
+    def capability_llm(self, slug, capability):
+        if capability == "summaries":
+            return _FixedSummariesModel()
+        return real(self, slug, capability)
+
+    monkeypatch.setattr(EntityRegistry, "capability_llm", capability_llm)
 
 
 @pytest.fixture(autouse=True)

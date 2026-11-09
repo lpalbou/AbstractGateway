@@ -24,8 +24,11 @@ someone's own time is part of their biography.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["loop_status", "start_loop", "stop_loop"]
 
@@ -133,7 +136,40 @@ def start_loop(
         context_window=context_window,
         endpoint_profile=endpoint_profile,
         return_to=return_to,
+        capability_endpoint_profiles=_capability_endpoint_profiles(Path(home_dir), provider=provider, model=model),
     )
+
+
+def _capability_endpoint_profiles(home_dir: Path, *, provider: str, model: str) -> Dict[str, Dict[str, Any]]:
+    """The private endpoint material for each capability model that runs on an `endpoint:*` profile
+    (runtime 4eefddb: the loop child builds its summaries client for title/summary authoring, and an
+    endpoint profile resolves only through the host's store). `{capability: {spec, profile}}`; may
+    carry secrets, so it rides the spawn env only and is never recorded. A capability whose profile
+    this gateway cannot resolve is left out and named in the log: the child's client then refuses
+    (SubstrateUnset) and its records stay pending for the drainer, said in its own failure line."""
+    from abstractruntime.identity.cognition_profile import CAPABILITIES, resolve_capability
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for capability in CAPABILITIES:
+        try:
+            spec = str(resolve_capability(home_dir, capability, mind={"provider": provider, "model": model})["provider"])
+        except Exception as e:  # noqa: BLE001 - an unresolvable capability is the child's to report
+            logger.warning("own time: capability %s of %s does not resolve: %s", capability, home_dir.name, e)
+            continue
+        spec = spec.strip().lower()
+        if not spec.startswith("endpoint:"):
+            continue
+        from .provider_endpoint_profiles import resolve_effective_endpoint_profile
+        from .users import gateway_data_dir_from_env
+
+        data_dir = gateway_data_dir_from_env()
+        resolved = resolve_effective_endpoint_profile(spec, base_dir=data_dir, root_base_dir=data_dir)
+        if resolved is None:
+            logger.warning("own time: capability %s of %s names %s, which no enabled profile resolves",
+                           capability, home_dir.name, spec)
+            continue
+        out[capability] = {"spec": spec, "profile": resolved.private_resolution()}
+    return out
 
 
 def stop_loop(home_dir: Path, *, reason: str = "", requested_by: str = "operator") -> Dict[str, Any]:

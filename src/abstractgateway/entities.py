@@ -286,7 +286,34 @@ def _llm_effect_generate(llm: Any, effect: Any, *, empty_message: str) -> Any:
     media = payload.get("media")
     if isinstance(media, list) and media:
         gen_kwargs["media"] = list(media)
+    schema = payload.get("response_schema")
+    if schema is not None:
+        # STRUCTURED OUTPUT (runtime bb6d17a: the visit lane's authoring call asks for {title, summary}):
+        # the JSON schema becomes the provider's response model through the runtime's own converter; a
+        # schema it cannot honour is a failed call, never an unstructured answer.
+        from abstractruntime.integrations.abstractcore.structured_output import (
+            StructuredOutputRequestError,
+            prepare_response_model,
+        )
+
+        try:
+            if not isinstance(schema, dict) or not schema:
+                raise StructuredOutputRequestError("response_schema must be a non-empty JSON schema object")
+            gen_kwargs["response_model"] = prepare_response_model(
+                schema, name=str(payload.get("response_schema_name") or "StructuredOutput").strip() or "StructuredOutput"
+            )
+        except StructuredOutputRequestError as e:
+            return EffectOutcome.failed(f"LLM_CALL refused: {e}")
     out = llm.generate(**gen_kwargs)
+
+    data: Any = None
+    if gen_kwargs.get("response_model") is not None:
+        # A structured call answers the parsed object (a model instance, or a response carrying one).
+        parsed = out if hasattr(out, "model_dump") else (getattr(out, "structured_output", None) or getattr(out, "parsed", None))
+        if hasattr(parsed, "model_dump"):
+            data = parsed.model_dump()
+        elif isinstance(parsed, dict):
+            data = dict(parsed)
 
     def _field(name: str) -> Any:
         value = getattr(out, name, None)
@@ -296,7 +323,11 @@ def _llm_effect_generate(llm: Any, effect: Any, *, empty_message: str) -> Any:
 
     content = _field("content")
     tool_calls = _field("tool_calls")
+    if data is not None and not (isinstance(content, str) and content.strip()):
+        content = json.dumps(data, ensure_ascii=False)
     result: Dict[str, Any] = {"content": content if isinstance(content, str) else ""}
+    if data is not None:
+        result["data"] = data
     if isinstance(tool_calls, list) and tool_calls:
         result["tool_calls"] = tool_calls
     for key in ("finish_reason", "usage", "model"):
@@ -1707,6 +1738,9 @@ class EntityRegistry:
                 er = open_entity_runtime(
                     self.entities_dir / slug,
                     embedder=embedder,
+                    # A capability-tagged LLM_CALL (the visit lane's title/summary authoring, runtime
+                    # bb6d17a) goes to that capability's own model, never the mind.
+                    capability_handlers={"summaries": self._entity_capability_llm_handler(slug, "summaries")},
                     extra_handlers={
                         EffectType.LLM_CALL: self._entity_llm_handler(slug),
                         # G5(ii): the entity's HANDS — without this handler the
@@ -1914,8 +1948,9 @@ class EntityRegistry:
 
     def _entity_capability_llm_handler(self, slug: str, capability: str) -> Any:
         """An LLM_CALL-shaped handler on one capability's client (the mind handler's twin): the
-        payload's `messages`, `system_prompt`, `tools`, `params` and `media` are forwarded as the
-        mind handler forwards them; the outcome carries content, tool calls, finish_reason, usage
+        payload's `messages`, `system_prompt`, `tools`, `params`, `media` and `response_schema` /
+        `response_schema_name` (structured output, the parsed object in `result.data`) are forwarded
+        as the mind handler forwards them; the outcome carries content, tool calls, finish_reason, usage
         and model. A resolution refusal is a failed outcome naming the capability."""
 
         def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:

@@ -100,6 +100,7 @@ def _write_profile(home: Path, capabilities: dict, **rest) -> None:
 # --------------------------------------------------------------------------- 1. the capability factory
 
 
+@pytest.mark.capability_models  # the real summaries client, not the fixed test one
 def test_capability_llm_follows_the_cognition_profile_with_patience_and_no_speculation(monkeypatch: pytest.MonkeyPatch):
     """`capability_llm_factory(slug)(cap)` builds the capability's client from `cognition.yaml`
     (its own choice, else the mind), through the same late-bound factory as the mind handler, with
@@ -144,6 +145,7 @@ def test_capability_llm_follows_the_cognition_profile_with_patience_and_no_specu
             llm_for("telepathy")  # the runtime's own refusal, never a substitute client
 
 
+@pytest.mark.capability_models  # the real summaries client, not the fixed test one
 def test_capability_handler_forwards_tools_media_and_params_like_the_mind_handler(monkeypatch: pytest.MonkeyPatch):
     """The LLM_CALL-shaped handler for a capability sends the payload's `tools`, `media` and
     `params` to the client and returns content/finish_reason/usage/model beside tool calls."""

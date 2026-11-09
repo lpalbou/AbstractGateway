@@ -39,6 +39,10 @@ def stats_from_records(records):
         result = record.get("result") or {}
         if not isinstance(effect, dict) or not isinstance(result, dict):
             continue
+        if effect.get("type") == "llm_call" and (effect.get("payload") or {}).get("capability"):
+            # A capability's own call (the summaries model authoring the turn's memory, runtime
+            # bb6d17a) is not the answer: the message's numbers are the mind's.
+            continue
         if effect.get("type") == "llm_call":
             usage = result.get("usage") or {}
             usage = usage if isinstance(usage, dict) else {}

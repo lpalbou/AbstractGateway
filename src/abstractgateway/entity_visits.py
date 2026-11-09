@@ -2222,6 +2222,13 @@ class EntityVisitHost:
 
         after_visit_closed(registry, manifest.slug, prior or None, visit_host=self,
                            chat_host=_chat_host_or_none())
+        if details.get("status") != "cancelled":
+            # Titles and summaries a failed authoring call left pending are retried now on a
+            # loop-less home (runtime 4eefddb; a hosted chat's close and the loop's ticks drain
+            # their own). Beside the close, never in it.
+            from .entity_authoring import schedule_drain_after_close
+
+            schedule_drain_after_close(registry, manifest.slug)
 
     @staticmethod
     def _journal_seq(er: Any) -> Optional[int]:

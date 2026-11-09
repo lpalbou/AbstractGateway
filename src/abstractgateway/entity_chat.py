@@ -791,6 +791,9 @@ class EntityChatHost:
                 # that knows the knob (a default open works on older drivers).
                 session_kwargs["shelf_size"] = int(shelf_size)
             session = ChatSession(home, llm, **session_kwargs)
+            # The models other than the mind (the summaries capability authors every record's title
+            # and summary at formation, runtime 4eefddb): without it every turn forms pending records.
+            session.llm_for_capability = self._registry.capability_llm_factory(slug)
         except SystemExit as e:
             # A refused prelude aborts the summon — the reasons travel verbatim.
             if lease is not None:

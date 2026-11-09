@@ -300,3 +300,28 @@ def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pyte
         assert r3.status_code == 409, r3.text
         assert r3.json()["detail"]["reason_code"] == "already_running"
         assert str(_os.getpid()) in r3.json()["detail"]["message"]
+
+
+def test_the_loop_child_gets_its_capability_endpoint_profiles(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Runtime 4eefddb: the own-time child builds its summaries client (title/summary authoring) and an
+    endpoint profile resolves only through the gateway's store, so the spawn hands the private
+    resolution of each capability on an endpoint profile; plain families and the unresolvable are
+    left out (the child's client says so itself)."""
+    from types import SimpleNamespace
+
+    import abstractgateway.provider_endpoint_profiles as pep
+    import abstractruntime.identity.cognition_profile as cp
+    import abstractruntime.identity.life as life_mod
+
+    from abstractgateway import entity_loop
+
+    chosen = {"summaries": "endpoint:theforge", "understanding": "lmstudio", "extraction": "endpoint:gone"}
+    monkeypatch.setattr(cp, "resolve_capability", lambda home, cap, mind=None: {"provider": chosen[cap], "model": "m"})
+    monkeypatch.setattr(pep, "resolve_effective_endpoint_profile", lambda spec, **kw: (
+        SimpleNamespace(private_resolution=lambda: {"base_url": "https://forge.example/v1", "api_key": "k"})
+        if spec == "endpoint:theforge" else None))
+    seen = {}
+    monkeypatch.setattr(life_mod, "spawn_loop_process", lambda home, **kw: seen.update(kw) or {"pid": 1})
+    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m")
+    assert seen["capability_endpoint_profiles"] == {
+        "summaries": {"spec": "endpoint:theforge", "profile": {"base_url": "https://forge.example/v1", "api_key": "k"}}}

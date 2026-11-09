@@ -10804,6 +10804,13 @@ and the start of its own time use `recall.shelf_size` when the request names no
 the width when it starts: a change applies from its next start, including a
 restart after a crash.
 
+Every memory the entity forms gets its title and summary from the
+`capabilities.summaries` model at the moment it forms, in a visit, a durable
+visit and its own time alike. When that model cannot answer, the memory forms
+without them and is completed later: at the next step of its own time, when a
+visit closes, or during its sleep. A summaries model on a provider connection
+works in its own time too.
+
 Progressive disclosure: `inspect` shows diary **gists** only. The verbatim
 prose stays in the book and is fetched by the entity itself during a session
 (`DIARY_READ`), never bulk-exported by inspection.
