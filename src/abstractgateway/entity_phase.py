@@ -2289,6 +2289,10 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
     # The wake is a moment of his life like any other (the sleep that ends has its own marker).
     _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "asleep", "reason": "maintenance done",
                                          **({"failed": failed} if failed else {})})
+    # The wake is this write point's own transition: the sleep ended because its maintenance finished, so its row says
+    # `maintenance_done` (as the loop's own wake does), never the cause of a later publish (the door's settle publish
+    # read `operator_sleep`).
+    safe_publish(registry, name, "maintenance_done", chat_host=chat_host, visit_host=visit_host)
     reconcile(registry, name, "maintenance_done", chat_host=chat_host, visit_host=visit_host)
     return "woke"
 

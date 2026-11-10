@@ -17112,6 +17112,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   configured" and `GET /config/capability-defaults` answered 500. `ConfigParseError` now reaches the 503
   `core_config_unreadable` with the file's path and the parse error, on that route and on every route that needs the
   runtime (`/runs`, `/entities`, discovery); the console page still loads.
+- **The wake after an operator sleep's maintenance says why** (`entity_phase.py`). Its `phase_changed` row
+  (sleep → idle) read cause `operator_sleep`: the door's final publish was the first to see the wake. The sleep ended
+  because its maintenance finished, so the row now says `maintenance_done`, as the loop's own wake does (the idle
+  sleep's wake too); the row that entered the sleep keeps `operator_sleep`.
 
 ### Security
 

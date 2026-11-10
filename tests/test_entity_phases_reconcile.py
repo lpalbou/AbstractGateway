@@ -893,6 +893,33 @@ def test_an_operator_sleep_on_his_sleep_adds_no_sleep_rows(spawned, dream):
             assert [p.get("kind") for p in added if p.get("kind") == "phase_changed"] == [], added
 
 
+@pytest.mark.parametrize("before", ["idle", "sleep"])
+def test_the_wake_after_an_operator_sleep_s_maintenance_says_maintenance_done(spawned, before):
+    """A live home's second topics night (2026-11-10): the operator's sleep with its pass ended with the wake row
+    sleep -> idle under cause `operator_sleep`: the door's settle publish was the first to see the wake. The sleep
+    ended because its maintenance finished: the row says `maintenance_done`, as the loop's own wake does; the row
+    that entered the sleep keeps `operator_sleep`."""
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        if before == "sleep":
+            write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator", fence=_LF.admit(home))
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == before
+        rows0 = len(_host_rows())
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "reason": "a night", "dream": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["maintenance"] == "woke"
+        added = _host_rows()[rows0:]
+        phase_rows = [(p.get("from"), p.get("to"), p.get("cause")) for p in added if p.get("kind") == "phase_changed"]
+        expected = [("sleep", "idle", "maintenance_done")]
+        if before == "idle":
+            expected = [("idle", "sleep", "operator_sleep")] + expected
+        assert phase_rows == expected, added
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "idle"
+
+
 @pytest.mark.parametrize("before_state", ["awake", "gate"])
 def test_a_sleep_with_its_pass_from_awake_still_falls_asleep(spawned, before_state):
     """The counterpart: from idle (awake, or a gate sleep, whose stored word is asleep while the phase is
