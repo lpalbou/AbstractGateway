@@ -1655,6 +1655,33 @@ def entity_communities(name: str) -> Dict[str, Any]:
         raise HTTPException(status_code=501, detail=f"communities unavailable: {e}")
 
 
+@router.get("/{name}/self-brief")
+def entity_self_brief(name: str) -> Dict[str, Any]:
+    """His self-knowledge brief: what he knows about, at a glance, written by the runtime at the end of a sleep's
+    topics stage into `<home>/self_brief.md` (AbstractRuntime identity/self_brief.py; the file is a projection, never a
+    memory) and placed in his prompt prefix. Served as `{text, written_at, version, tokens}` (`version` = memory's
+    communities version_seq the brief describes). 404 `no_brief` for a home that has none yet (no sleep since the
+    runtime learned to write it, or no topics); 500 for a file that is not a brief (the runtime's ValueError, its
+    message). Pure read; nothing is computed on GET."""
+    try:
+        home = _registry().get_home(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e).strip("'\""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    from abstractruntime.identity.self_brief import read_self_brief
+
+    try:
+        brief = read_self_brief(home.home_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if brief is None:
+        raise HTTPException(status_code=404, detail={"code": "no_brief",
+                                                     "message": f"{name} has no brief yet: it is written at the end of a sleep."})
+    return {"text": brief["text"], "written_at": brief["written_at"], "version": brief["version_seq"],
+            "tokens": brief["tokens"]}
+
+
 @router.get("/{name}/verify")
 def verify_entity(name: str) -> Dict[str, Any]:
     """Verify both attestation planes (the book's hash chain; the graph

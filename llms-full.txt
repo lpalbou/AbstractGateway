@@ -11185,6 +11185,11 @@ flowchart LR
   title is still being written says so in `pending` (title `null`), never a keyword label. Before his first
   sleep: `first_sleep_pending: true` and no topics (the app says his topics form at his first sleep).
   Cached per home and journal position, so a memory formed since the version shows in `provisional_ids`.
+- **`GET /entities/{name}/self-brief`**: his self-knowledge brief, what he knows about at a glance: the runtime writes
+  it at the end of a sleep's topics stage into `<home>/self_brief.md` (a projection, never a memory) and places it in
+  his prompt prefix (AbstractRuntime 0.19.1, identity/self_brief.py). Served as `{text, written_at, version, tokens}`
+  (`version` = the communities version_seq it describes). 404 `no_brief` before the first sleep that wrote one; 500 for a
+  file that is not a brief. The Entity app shows it on his Identity page (the Files view lists only his workspace).
 - **`GET /entities/{name}/graph`**: the whole graph the app draws, in one read: `{version, journal_seq,
   communities_version, communities, nodes, edges}`. Each node is an open formed record (community records
   never are) with the latest display block of its binding (exactly as the replay serves it), its topic `key`,
@@ -16158,6 +16163,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Added
 
+- **`GET /entities/{name}/self-brief`** serves the entity's self-knowledge brief (`<home>/self_brief.md`, written
+  by AbstractRuntime 0.19.1 at the end of a sleep's topics stage and placed in his prompt prefix) as `{text,
+  written_at, version, tokens}`; 404 `no_brief` before the first sleep that wrote one. The Entity app shows it on
+  his Identity page (operator 2026-11-10: the Files view lists only his workspace, so the brief was invisible).
 - **The conversation's agent stays out of what is addressed to entities** (operator agreed 2026-11-09).
   `POST /runs/start` takes `mentions`: the entities the message mentions (the composer's chips, the
   same names the client sends to `POST /sessions/{id}/mentions`; never parsed from the text). Each is

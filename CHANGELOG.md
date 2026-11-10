@@ -16,6 +16,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Added
 
+- **`GET /entities/{name}/self-brief`** serves the entity's self-knowledge brief (`<home>/self_brief.md`, written
+  by AbstractRuntime 0.19.1 at the end of a sleep's topics stage and placed in his prompt prefix) as `{text,
+  written_at, version, tokens}`; 404 `no_brief` before the first sleep that wrote one. The Entity app shows it on
+  his Identity page (operator 2026-11-10: the Files view lists only his workspace, so the brief was invisible).
 - **The conversation's agent stays out of what is addressed to entities** (operator agreed 2026-11-09).
   `POST /runs/start` takes `mentions`: the entities the message mentions (the composer's chips, the
   same names the client sends to `POST /sessions/{id}/mentions`; never parsed from the text). Each is

@@ -596,6 +596,11 @@ flowchart LR
   title is still being written says so in `pending` (title `null`), never a keyword label. Before his first
   sleep: `first_sleep_pending: true` and no topics (the app says his topics form at his first sleep).
   Cached per home and journal position, so a memory formed since the version shows in `provisional_ids`.
+- **`GET /entities/{name}/self-brief`**: his self-knowledge brief, what he knows about at a glance: the runtime writes
+  it at the end of a sleep's topics stage into `<home>/self_brief.md` (a projection, never a memory) and places it in
+  his prompt prefix (AbstractRuntime 0.19.1, identity/self_brief.py). Served as `{text, written_at, version, tokens}`
+  (`version` = the communities version_seq it describes). 404 `no_brief` before the first sleep that wrote one; 500 for a
+  file that is not a brief. The Entity app shows it on his Identity page (the Files view lists only his workspace).
 - **`GET /entities/{name}/graph`**: the whole graph the app draws, in one read: `{version, journal_seq,
   communities_version, communities, nodes, edges}`. Each node is an open formed record (community records
   never are) with the latest display block of its binding (exactly as the replay serves it), its topic `key`,
