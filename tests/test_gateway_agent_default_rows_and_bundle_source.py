@@ -58,11 +58,23 @@ def test_saved_rows_are_set_and_turn_broken_when_the_workflow_goes(tmp_path: Pat
     )
 
 
-def test_interface_table_covers_every_interface_a_shipped_workflow_declares() -> None:
+def test_interface_table_covers_every_interface_a_shipped_workflow_declares(tmp_path: Path) -> None:
+    import shutil
+
     from abstractgateway.agent_defaults import INTERFACE_TABLE, disk_entrypoint_index
     from abstractgateway.config import _default_flows_dir
+    from abstractgateway.workflow_sources import shipped_bundle_names
 
-    declared = {i for r in disk_entrypoint_index([Path(_default_flows_dir())]) for i in r.get("interfaces") or []}
+    # The SHIPPED bundles alone: a checkout's flows/bundles also holds the operator's own drafts and
+    # imports (git-ignored, never shipped), which may declare interfaces this table does not name.
+    shipped_dir = tmp_path / "shipped"
+    shipped_dir.mkdir()
+    for name in sorted(shipped_bundle_names()):
+        source = Path(_default_flows_dir()) / name
+        if source.is_file():
+            shutil.copy2(source, shipped_dir / name)
+    assert (shipped_dir / "basic-agent.flow").is_file(), "the shipped bundles are found where the gateway serves them"
+    declared = {i for r in disk_entrypoint_index([shipped_dir]) for i in r.get("interfaces") or []}
     assert declared, "the shipped flows declare interfaces"
     assert declared <= set(INTERFACE_TABLE), sorted(declared - set(INTERFACE_TABLE))
     for iface, row in INTERFACE_TABLE.items():
@@ -117,10 +129,20 @@ def test_every_bundle_the_checkout_keeps_in_its_flows_folder_is_shipped() -> Non
     """Adversary pass 2 (F4): map-reduce, structured-extract, adversarial-review and the meta-*
     agents live in the gateway's own flows/bundles but not in the wheel force-include list; on a
     repository-checkout deploy they are still files this gateway ships, never "Imported"."""
+    import shutil
+    import subprocess
+
     from abstractgateway.workflow_sources import bundle_source, shipped_bundle_names
 
     repo = Path(__file__).resolve().parent.parent
-    tracked = {p.name for p in (repo / "flows" / "bundles").glob("*.flow")}
+    git = shutil.which("git")
+    if git is None or not (repo / ".git").exists():
+        pytest.skip("not a git checkout: the tracked bundle list comes from git")
+    # What git TRACKS, never the folder: the operator's drafts and imports sit beside them, git-ignored.
+    listed = subprocess.run([git, "ls-files", "-z", "--", "flows/bundles"], cwd=repo, capture_output=True,
+                            text=True, check=True).stdout
+    tracked = {Path(p).name for p in listed.split("\0") if p.endswith(".flow")}
+    assert "basic-agent.flow" in tracked, sorted(tracked)
     for name in ("map-reduce@0.1.0.flow", "structured-extract@0.1.0.flow", "adversarial-review@0.1.0.flow",
                  "meta-debate@0.1.1.flow", "meta-baseline@0.1.1.flow", "co-scientist@0.1.0.flow"):
         assert name in tracked, name

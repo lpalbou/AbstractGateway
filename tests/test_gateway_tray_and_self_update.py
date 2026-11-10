@@ -301,8 +301,11 @@ def test_the_network_guard_accepts_this_macs_bonjour_name(monkeypatch: pytest.Mo
 
     if sys.platform != "darwin":
         pytest.skip("macOS Bonjour name")
+    scutil = "/usr/sbin/scutil"  # absolute: /usr/sbin is not on every shell's PATH
+    if not Path(scutil).exists():
+        pytest.skip("macOS without /usr/sbin/scutil")
     guard = next(m for n, m in sys.modules.items() if n.endswith("conftest") and hasattr(m, "_is_this_machine_name"))
-    local = sp.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5).stdout.strip()
+    local = sp.run([scutil, "--get", "LocalHostName"], capture_output=True, text=True, timeout=5).stdout.strip()
     assert local
     monkeypatch.setattr(guard._socket, "gethostname", lambda: "dhcp-17-42.example.net")
     assert guard._is_this_machine_name(f"{local}.local") and guard._is_this_machine_name(local.upper() + ".local.")

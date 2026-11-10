@@ -177,7 +177,8 @@ def _macos_local_host_name() -> str:
     import subprocess as _sp
 
     try:
-        out = _sp.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
+        # Absolute: /usr/sbin (where macOS ships scutil) is not on every shell's PATH.
+        out = _sp.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
     except (OSError, _sp.SubprocessError):
         return ""
     return out.stdout.strip().lower().rstrip(".") if out.returncode == 0 else ""
