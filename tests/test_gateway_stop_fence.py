@@ -228,3 +228,44 @@ def test_a_drain_admitted_before_a_stop_never_runs_after_it(monkeypatch):
         assert fired
         assert out == {"skipped": "stopped"}, out
         assert drained == [], "the drainer ran after the operator's Stop"
+
+
+# ------------------------------------------------------------------------------------------------- finding 5
+def test_a_stop_during_the_night_refuses_every_later_write_of_the_pass(monkeypatch):
+    """Codex review 3 #5: the night's persistence was not fenced: memory's `cancelled=` only guards its completion
+    marker. The pass runs under its fence (the shared home's commit guard, step 1): after a Stop landing inside the
+    final stage no completion is recorded AND any further write of the pass is refused inside its transaction."""
+    import abstractmemory.maintenance as night
+    from abstractmemory import MemoryRecordInput
+    from abstractruntime.identity.lifecycle_fence import StoppedByOperator
+
+    from abstractgateway import entity_idle_sleep, entity_phase
+    from abstractgateway.entities import LIFE_SCOPE
+
+    real_dream = night.dream_pass
+    seen = {}
+    with _client() as client:
+        _born(client, "Castor")
+        reg = _registry()
+        with entity_phase.fenced_here(reg.entities_dir, "castor") as rec:
+            rec["last_maintenance"] = {"generation": 0, "status": "done", "error": None,
+                                       "at": (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()}
+            entity_phase.write_record(reg.entities_dir, "castor", rec)
+
+        def _dream_then_stop(system, *args, **kwargs):
+            out = real_dream(system, *args, **kwargs)
+            assert _stop("castor")["action"] == "stop"
+            seen["after_stop"] = _memory_dump()
+            try:
+                system.remember(MemoryRecordInput(kind="episode", title="after the Stop", digest="written after the Stop."),
+                                scope=LIFE_SCOPE, owner_id="entity:castor", idempotency_key="after-the-stop")
+                seen["write"] = "landed"
+            except StoppedByOperator:
+                seen["write"] = "refused"
+            return out
+
+        monkeypatch.setattr(night, "dream_pass", _dream_then_stop)
+        out = entity_idle_sleep.idle_sweep_one(reg, "castor")
+        assert seen.get("write") == "refused", seen.get("write")
+        assert _memory_dump() == seen["after_stop"], "the night wrote after the operator's Stop"
+        assert out["maintenance"] == "stopped", out
