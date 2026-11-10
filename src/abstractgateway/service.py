@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from abstractruntime.core.run_lifecycle import extract_run_lifecycle
 
@@ -2008,6 +2008,14 @@ def _summarize_run_output(value: Any, *, max_string: int = 50_000, max_items: in
     return _walk(value, depth=0)
 
 
+def turn_notices(run: Any) -> List[Dict[str, Any]]:
+    """The notices a turn's output holds (`output.notices`: [{kind, record_id, title, text?, staged?, ...}], what the
+    entity's turn formed or staged), copied; [] when it holds none."""
+    output = getattr(run, "output", None)
+    notices = output.get("notices") if isinstance(output, dict) else None
+    return [dict(n) for n in notices if isinstance(n, dict)] if isinstance(notices, list) else []
+
+
 def run_summary(run: Any) -> Dict[str, Any]:
     """HTTP-safe run summary (do not return full run.vars)."""
 
@@ -2078,6 +2086,10 @@ def run_summary(run: Any) -> Dict[str, Any]:
     from abstractruntime.core.turn_author import prompt_repeat_of
 
     out["repeat_of"] = prompt_repeat_of(vars_obj)
+    # What the turn formed or staged (the entity's turn.notices: a mention turn keeps them as its output), as the
+    # session turn's own answer serves them; [] for a run that holds none (Castor E2E 2026-11-10: the /runs rows and
+    # the history bloc carried no notices).
+    out["notices"] = turn_notices(run)
 
     try:
         vars_obj = getattr(run, "vars", None)

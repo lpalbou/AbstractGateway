@@ -398,3 +398,23 @@ def test_a_mirror_is_admitted_in_one_step_against_a_stop(monkeypatch):
         assert r.status_code == 200, r.text
         assert r.json()["mirrors"][0]["reply"] is None and "stopped" in r.json()["mirrors"][0]["error"]
         assert len(llm.calls) == 2, "Nerin was asked to answer words carried across a Stop"
+
+
+def test_the_runs_list_and_the_history_bloc_carry_the_turns_notices(monkeypatch):
+    """Castor E2E 2026-11-10: a mention turn's answer says what the turn formed or staged (`notices`), but its
+    GET /runs row and its history bloc turn carried none. Both now carry the same list as the answer."""
+    _install(monkeypatch, ["Noted, I hold it as your report.\n\n```lesson\ntitle: Storm ledgers can be misfiled\n"
+                           "Before citing the 1890 storm ledger, check where it is filed now.\n```", "Reflection."])
+    with _client() as client:
+        _create(client)
+        r = _mention(client, "sess-notices", "@Castor the 1890 storm ledger was misfiled")
+        assert r.status_code == 200, r.text
+        answer = r.json()
+        assert answer["notices"], answer
+        rows = client.get("/api/gateway/runs", params={"session_id": "sess-notices"}).json()
+        items = rows.get("items") or rows.get("runs") or []
+        (row,) = [i for i in items if i["run_id"] == answer["run_id"]]
+        assert row["notices"] == answer["notices"], row
+        bloc = client.get("/api/gateway/sessions/sess-notices/history/bloc").json()
+        (turn,) = [t for t in bloc["turns"] if t["run_id"] == answer["run_id"]]
+        assert turn["notices"] == answer["notices"], turn

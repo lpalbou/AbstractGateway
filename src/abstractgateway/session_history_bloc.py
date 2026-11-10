@@ -144,6 +144,11 @@ def assemble_session_history_bloc(
             row["prompt_author"] = run_section.get("prompt_author")
             row["author"] = run_section.get("author")
             row["repeat_of"] = run_section.get("repeat_of")
+            # What the turn formed or staged (a mention turn's output.notices), as the session turn's answer
+            # serves them; [] for a turn that holds none (Castor E2E 2026-11-10).
+            from .service import turn_notices
+
+            row["notices"] = turn_notices(run_store.load(rid))
             bundle_warnings = bundle.get("warnings")
             if isinstance(bundle_warnings, list) and bundle_warnings:
                 for w in bundle_warnings:
