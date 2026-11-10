@@ -10336,7 +10336,7 @@ async def run_session_kind_migrations(svc: Any) -> None:
 
 def _attach_repeat_of(items: List[Dict[str, Any]], run_store: Any) -> None:
     """`repeat_of` and `notices` on every GET /runs row (mentions contract §3: the client folds a mention turn
-    that repeats the person's own agent turn by it; Castor E2E 2026-11-10: what the entity's turn formed or staged,
+    that repeats the person's own agent turn by it; what the entity's turn formed or staged,
     the same list as the session turn's answer). A row read from the run index carries no vars and no output;
     only the mention door's turns can carry them (a client copy is dropped at /runs/start), so those rows alone
     are read whole, on the served page only. Every other index row says null and []."""

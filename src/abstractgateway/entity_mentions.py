@@ -88,8 +88,8 @@ def _display_name(manifest: Any) -> str:
 def mentioned_entities_line(names: List[str]) -> str:
     """The one context line the conversation's own agent gets when the person's message mentions
     entities (operator agreed 2026-11-09), placed as the LAST system instruction before the person's
-    words (bundle_host._add_mentions_line). Imperative and short (Castor E2E 2026-11-10: the softer
-    line was read and the agent still answered for Castor): whether the message also addresses the
+    words (bundle_host._add_mentions_line). Imperative and short (the softer
+    line was read and the agent still answered for the mentioned entity): whether the message also addresses the
     agent is the agent's judgment (never a text rule here: the mentions are the composer's chips), and
     it never speaks for a mentioned entity. A real model may still answer (operator decision pending:
     an opt-in agent)."""
@@ -127,7 +127,7 @@ CONTEXT_MAX_TOKENS = 8000
 
 
 def _speaker_label(author: Any) -> str:
-    """`Castor (entity)` / `Laurent` / `Agent (Basic Agent)`, from the structured author only."""
+    """`<name> (entity)` / `<person>` / `Agent (Basic Agent)`, from the structured author only."""
     from abstractruntime.core.turn_author import read_author
 
     a = read_author(author) or {"kind": "person", "name": None, "entity_id": None}
@@ -730,7 +730,7 @@ def _mirror_into_bound_visits(
     caller: str, generation: Optional[int] = None,
 ) -> list:
     """A VISIT LANE (the conversation is another entity's live visit, e.g. an Entity-app visit with
-    nerin): the mentioned entity's reply is a turn of THAT visit, spoken by the mentioned entity,
+    another entity): the mentioned entity's reply is a turn of THAT visit, spoken by the mentioned entity,
     through the visit door (join the stamped participants, then `turn` with that speaker), so the
     visited entity hears it and its home's ledger and memory keep it like any visitor's words. The
     words read `<name> (entity): <reply>` (`speaker_line`, from the author field). The visited

@@ -37,7 +37,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
-| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index, mention_id?, repeat_of?}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt; `mention_id` makes a resend return the first answer); 404 `entity_not_found` (unknown, hidden or invalid name, identical answers), 409 `in_another_conversation` / `stopped_use_resume`, 422 `repeat_of_unknown`, 503 `entity_cannot_answer` (a plain sentence) | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
+| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index, mention_id?, repeat_of?}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt; `mention_id` makes a resend return the first answer); 404 `entity_not_found` (unknown, hidden or invalid name, identical answers), 409 `in_another_conversation` / `stopped_use_resume`, 422 `repeat_of_unknown`, 503 `entity_cannot_answer` (a plain sentence). `mentions` on `POST /runs/start` and on `POST /entities/{name}/summon` tells the conversation's agent to leave the message to the entities | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
 | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
@@ -234,6 +234,15 @@ the request's `interface` (null when it names none); the wrapper run of
 writes it; an origin sent by the client is replaced. Runs started before this
 field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
 (it marks the runs this gateway's runner ticks); the person is `origin.actor`.
+
+`mentions` names the entities the message addresses: a list of entity names or slugs, the composer's chips (never
+parsed from the text), the same names the client sends to `POST /sessions/{session_id}/mentions` for each entity's
+answer. A name that is not an entity the caller can see answers 404 `entity_not_found`. The gateway writes
+`input_data._runtime.mentions` itself (`{entities: [{entity_id, name}], line}`; a client copy is dropped), and the
+conversation's agent reads, as the last instruction before the person's words, that the mentioned entities answer
+the message themselves and that, unless the user addressed it directly, it replies with an empty message (an empty
+reply shows no answer; staying silent is still the model's judgment). `POST /entities/{name}/summon` takes the same
+`mentions`. See [entities.md](./entities.md#mentioning-an-entity-from-any-chat).
 
 A conversation can carry a temporary identity (framework ADR 0052 §9, a regular agent's look and
 voice): `identity: {avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`
@@ -1952,7 +1961,7 @@ Ledger record (an activity; there is no wait, waiting record or resume for these
 {"effect": {"type": "emit_event", "payload": {"name": "abstract.tool_policy_decision", "scope": "run",
   "payload": {"decision": "auto_approved", "source": "session_policy", "session_id": "s-123",
               "node_id": "agent", "tool_calls": [{"call_id": "c1", "name": "fetch_url", "matched": "kind:web"}],
-              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "laurent", "client": "panel-chat"},
+              "policy": {"revision": 5, "set_by": {"tenant_id": "default", "user_id": "alice", "client": "panel-chat"},
                          "set_at": "2026-10-27T10:00:00+00:00"}}}},
  "status": "completed"}
 ```

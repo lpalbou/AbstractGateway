@@ -2568,7 +2568,7 @@ def _live_now(registry: Any, name: str, home_dir: Any) -> Dict[str, Any]:
 
 @router.get("/{name}/cognition")
 def entity_cognition(name: str) -> Dict[str, Any]:
-    """The B3 spend wire (laurent 04:58 "unclear when it's working and
+    """The B3 spend wire (operator: "unclear when it's working and
     consuming credits"; dispatch c1340 2c — observer's board tile and the
     entity app's meter both consume this): ONE read serving working-now +
     tick phase + real token spend.

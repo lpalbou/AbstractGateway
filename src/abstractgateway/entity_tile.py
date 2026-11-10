@@ -172,10 +172,10 @@ class BoundedCache:
 
 
 # The engine card per (home directory, journal seq, parameters). 17 entities × a few parameter
-# variants fit with room; an ephemeral-sized card is ~90 KB, so the bound caps the cache near 6 MB.
+# variants fit with room; a long life's card is ~90 KB, so the bound caps the cache near 6 MB.
 ENGINE_CARD_CACHE = BoundedCache(maxsize=64)
 # The merged host-marker + state-history moments per (home, both files' size and mtime): the marker
-# stream of a long life is megabytes of JSON lines (ephemeral: 6 MB, 2,700 markers).
+# stream of a long life is megabytes of JSON lines (a long life: 6 MB, 2,700 markers).
 LIFE_MOMENTS_CACHE = BoundedCache(maxsize=64)
 
 

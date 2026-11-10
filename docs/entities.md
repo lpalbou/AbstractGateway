@@ -1,7 +1,7 @@
 # Summoned entities
 
 The gateway owns the lifecycle of **summoned entities** — persistent
-identities (like "Castor") that live across sessions, users, and workplaces;
+identities (like "Orion") that live across sessions, users, and workplaces;
 each summon is a re-adoption of the same self. An entity is not a chatbot configuration: it is a home
 directory holding everything the entity is and has lived, plus the lifecycle
 surface to create, inspect, verify, and summon it.
@@ -50,7 +50,7 @@ form, kept for life because journals are append-only — plus creation time, the
 the future key/signature work).
 
 **The entity's ID — the handle — is `<name>@<gateway ip>`**, e.g.
-`castor@192.168.1.146`: the name at its home
+`orion@192.168.1.146`: the name at its home
 gateway's current LAN address (or the operator-declared
 `ABSTRACTGATEWAY_DECLARED_ADDRESS`). That is what every operator surface
 shows as "Entity ID". The manifest string above is a birth marker, never
@@ -66,11 +66,11 @@ the keys work.
 CLI (there is deliberately no delete verb):
 
 ```bash
-abstractgateway entity create --name Castor [--spark spark.yaml] [--data-dir ./runtime]
+abstractgateway entity create --name Orion [--spark spark.yaml] [--data-dir ./runtime]
 abstractgateway entity list
-abstractgateway entity inspect Castor      # who it is, what it wrote, how it feels
-abstractgateway entity card Castor         # the identity card: a page to know your companion
-abstractgateway entity verify Castor       # both attestation chains + the spark hash
+abstractgateway entity inspect Orion      # who it is, what it wrote, how it feels
+abstractgateway entity card Orion         # the identity card: a page to know your companion
+abstractgateway entity verify Orion       # both attestation chains + the spark hash
 ```
 
 Through the running gateway's routes (`--url`, else the gateway running for this data dir;
@@ -79,10 +79,10 @@ loopback URL; `--json` prints the route's payload; a refusal prints the gateway'
 exits 2):
 
 ```bash
-abstractgateway entity identity get Castor [--rev N]     # its look, voice, reference, fingerprint, age
-abstractgateway entity identity set Castor --style watch-well --color "#3366cc" \
+abstractgateway entity identity get Orion [--rev N]     # its look, voice, reference, fingerprint, age
+abstractgateway entity identity set Orion --style watch-well --color "#3366cc" \
     --provider kokoro --model kokoro-82m --voice am_adam [--speed 1.1] [--quality-preset P]
-abstractgateway entity record Castor [--track-record | --reputation | --acquaintances] [--since ISO]
+abstractgateway entity record Orion [--track-record | --reputation | --acquaintances] [--since ISO]
 ```
 
 `entity record` prints "No experience yet" where nothing was counted, and says what the numbers
@@ -184,7 +184,7 @@ These refusals carry `{code, detail: {reason_code, message, life_state}}` and th
 | GET | `/api/gateway/entities/{name}/cognition-profile` | What each part of its thinking uses, and its memory settings (below). `capabilities.{summaries,understanding,extraction}`: `{choice, effective, source}`, where `choice` is `{"inherit": "mind"}` or `{provider, model, thinking, max_input_tokens}`, `effective` is `{provider, model, thinking}` (null only when it inherits and the gateway has no text model) and `source` is `profile` or `mind`; `recall: {shelf_size, source, applies_to_running_loop: "on restart"}`; `rebuild: {sensitivity, cap_per_turn, source, sources}` (`source` per block, `sources` per field: `profile` or `default`); `lookback: {context, source}`; `mind: {provider, model, thinking, source}` (`entity`, `gateway`, or `unset` with a `note`). |
 | PUT | `/api/gateway/entities/{name}/cognition-profile` | An admin or its creator (the creator: a changed capability must use a model the gateway offers, else `403 not_offered`). Any subset of `{capabilities: {cap: {"inherit": "mind"} \| {provider, model, thinking?, max_input_tokens?} \| null}, recall: {shelf_size: int \| null}, rebuild: {sensitivity: number \| null, cap_per_turn: int \| null}, lookback: {context: "day" \| "tick" \| null}}`: what is absent keeps its value, `null` returns it to its default. Refused with a sentence (400) outside the ranges below, for an unknown field, or for an `endpoint:` provider that is not an enabled connection. Each change is recorded in its history (`cognition_profile_changed`, old and new) before the file changes; the answer is the GET shape. |
 | GET | `/api/gateway/entities/{name}/identity[?rev=N]` | Its digital identity (framework ADR 0052): `{entity_id, identity: {rev, avatar: {style, style_requested, color, source, watch_code}, voice, set_at, set_by}, identity_ref, fingerprint, age: {born, days}}`. `avatar.style` is the design drawn and `style_requested` the id the record holds: they differ when the avatar catalog retired that design (it is drawn as its replacement). `?rev=N` serves an earlier revision from the home's biography. `identity.change` is why that revision was written: `{cause, written_by, at}` from its biography row (`cause`: `recorded_default`, `chosen`; null when the home has no row for it). A home without a record yet gets its recorded default here (unless it is closed for maintenance: 409). |
-| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not one this gateway's avatar catalog knows, active or retired, or cannot be drawn on the Watch (400, the ready designs listed); the voice is not one the caller's voice picker lists (`GET /voice/voices?provider=` as the caller; 400: "Castor can't speak with zz: it isn't a kokoro voice Castor can use. An entity speaks with this gateway's shared voices and its creator's own voices; another person's own voice stays theirs until an administrator shares it with everyone. Choose one of: …"); its model is not downloaded (409, `error.download`: "Castor's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
+| PUT | `/api/gateway/entities/{name}/identity` | An admin or its creator: `{avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`, the whole identity. Refused in this order, for every role: the home is closed for maintenance (409); the design is not one this gateway's avatar catalog knows, active or retired, or cannot be drawn on the Watch (400, the ready designs listed); the voice is not one the caller's voice picker lists (`GET /voice/voices?provider=` as the caller; 400: "Orion can't speak with zz: it isn't a kokoro voice Orion can use. An entity speaks with this gateway's shared voices and its creator's own voices; another person's own voice stays theirs until an administrator shares it with everyone. Choose one of: …"); its model is not downloaded (409, `error.download`: "Orion's voice needs the kokoro model kokoro-big (330 MB), which is not downloaded on this computer yet. Download it (the Models page, or: …), then save the identity again."). Never cleared. Each change is `rev + 1`, recorded in the home's biography and as an `identity_changed` host marker. |
 | GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). PUT: an admin or its creator (the creator: a voice the caller's picker lists, else `403 not_offered`). On a home with an identity record: served from the record (`source: identity`, never the gateway default in its place), a PUT changes the record's voice through the identity's checks, and `clear` is refused (409). |
 | GET/PUT | `/api/gateway/entities/{name}/appearance` | How apps draw it (the colour and shape of its orb): `{color: "#rrggbb", shape: planet\|kitty\|face\|wave}`, the whole look replaced, or `{"clear": true}`; unset, apps use their own look. Also accepted at creation (`appearance` on `POST /entities`) and returned on each row of the list. On a home with an identity record: the record's colour and the shape its design draws (`source: identity`). The shape designs are retired, so a shape writes the ready design the avatar catalog draws in its place: `wave` writes `watch-wave` (read back as `wave`), `kitty` and `face` write `watch-halo` (read back as `planet`); a PUT changes the record's look (what is not given keeps its value; the voice is kept), `clear` is refused (409), and a record with no voice yet refuses a look change with its sentence. |
 
@@ -203,8 +203,8 @@ default once when the gateway starts (a home closed for maintenance is skipped a
 logged, a record is never overwritten), else at its first `GET /identity`. A later
 change of the gateway's default voice never changes a recorded identity. The entity
 speaks with the record's voice only: its TTS lanes answer `voice_source: identity`,
-`identity_ref` and the `X-Identity-Ref` header (`entity:castor#3`), and a record with
-no voice refuses with "Castor has no voice yet: choose one in its Identity settings
+`identity_ref` and the `X-Identity-Ref` header (`entity:orion#3`), and a record with
+no voice refuses with "Orion has no voice yet: choose one in its Identity settings
 or set the Gateway default voice". The reference also rides each visit
 (`_runtime.identity_ref`, beside the signed stamp, and on the open response), each
 meet leg, relay row and status row, each public update row of a visit, and the visit's state (`GET /visit/{run_id}/state`, top-level `identity_ref`); a home
@@ -445,7 +445,7 @@ Summoning opens a work session *as* the entity:
 4. The prelude leads the run's system prompt; the work brief is the prompt.
 
 ```bash
-curl -X POST http://localhost:8080/api/gateway/entities/castor/summon \
+curl -X POST http://localhost:8080/api/gateway/entities/orion/summon \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"prompt": "Review the backup strategy for the home lab."}'
 ```
@@ -462,7 +462,7 @@ client picks the entity from `GET /entities` (a structured choice: the gateway n
 ```bash
 curl -X POST http://localhost:8080/api/gateway/sessions/$SESSION_ID/mentions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"entity": "castor", "text": "@castor does the backup plan hold?", "mention_index": 0, "mention_id": "<optional>", "repeat_of": "<the agent turn run id, optional>"}'
+  -d '{"entity": "orion", "text": "@orion does the backup plan hold?", "mention_index": 0, "mention_id": "<optional>", "repeat_of": "<the agent turn run id, optional>"}'
 ```
 
 `mention_id` (optional) is your own id for this mention. Sending it again (a double submit, a retry
@@ -477,7 +477,7 @@ What happens:
    as you mention again, a fresh visit opens.
 3. **The entity reads the conversation and lives it at home.** Your text is a turn of that
    visit, preceded by the conversation's recent turns quoted with who said them
-   (`Laurent: ...`, `Agent (Basic Agent): ...`, `Castor (entity): ...`; built from each turn's
+   (`Alice: ...`, `Agent (Basic Agent): ...`, `Orion (entity): ...`; built from each turn's
    `author`, never from the text): the newest whole turns, at most 12 turns and 8,000 tokens,
    whichever comes first. A turn too long to quote on its own is left out, with a note, and the
    others are still quoted. Attachments are named (`(attached: contract.pdf)`). A reused visit is
@@ -488,7 +488,7 @@ What happens:
 4. **The answer is a turn of your conversation.** The reply is recorded in the session (a
    completed run, workflow `entity-mention`), so session history, `GET /runs/{id}`, the replay
    view and every client show it, and the conversation's agent sees it in the next turn's
-   history as `castor (entity): ...`, never as its own words.
+   history as `orion (entity): ...`, never as its own words.
 
 Several mentions in one message are separate requests, in order (`mention_index` 0, 1, 2...),
 each its own turn.
@@ -503,12 +503,12 @@ answer under them. A `repeat_of` that is not a turn of this conversation answers
 the reply came (`updated_at`), so the answer always sorts after the question.
 
 **In a visit.** When the conversation is the live visit of the entity you are visiting (an
-Entity-app visit with Nerin, `session_id` = the one `visit/open` returned), the mentioned entity reads
-THAT visit's exchange (your words and Nerin's answers) as the conversation, and its reply is also a turn
-of THAT visit, spoken by the mentioned entity: the door adds `entity:castor` to the visit's signed
-participants, then sends `Castor (entity): <reply>` as a visit turn with that speaker. Nerin hears
+Entity-app visit with Leo, `session_id` = the one `visit/open` returned), the mentioned entity reads
+THAT visit's exchange (your words and Leo's answers) as the conversation, and its reply is also a turn
+of THAT visit, spoken by the mentioned entity: the door adds `entity:orion` to the visit's signed
+participants, then sends `Orion (entity): <reply>` as a visit turn with that speaker. Leo hears
 it and answers it like any visitor's words; his home's ledger and memory keep it. The answer lists
-these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`; `reply` is Nerin's answer to THIS turn,
+these under `mirrors` (`[{entity_id, run_id, turn_id, reply}]`; `reply` is Leo's answer to THIS turn,
 or `null` with an `error` sentence when he could not answer it. When his model call fails on that
 turn, `reply` is "This turn could not be answered: …" with the cause in `turn_error`, and his visit
 stays open. `[]` in a plain chat: two entities mentioned in one chat never mirror into each other).
@@ -517,14 +517,15 @@ The answer (200):
 
 ```json
 {"run_id": "<the session turn>", "turn_id": "<the turn in the entity's home>",
- "author": {"kind": "entity", "name": "Castor", "entity_id": "entity:castor",
-            "identity_ref": "entity:castor#3", "avatar": {"style": "watch-halo", "color": "#336699"}},
+ "author": {"kind": "entity", "name": "Orion", "entity_id": "entity:orion",
+            "identity_ref": "entity:orion#3", "avatar": {"style": "watch-halo", "color": "#336699"}},
  "session_id": "...", "mention_index": 0, "repeat_of": null,
  "context": {"turns": 3, "tokens": 412, "max_turns": 12, "max_tokens": 8000, "dropped_turns": 0,
              "older_turns_not_read": false},
  "reply": "...",
+ "notices": [],
  "visit": {"run_id": "<the visit run in the home>", "turn_id": "...", "visit_id": "visit-...",
-           "entity_id": "entity:castor", "reused": false},
+           "entity_id": "entity:orion", "reused": false},
  "mirrors": []}
 ```
 
@@ -537,7 +538,7 @@ own conversation):
 | 409 | `in_another_conversation` | The entity is in another conversation. Only one of your own conversations is ever named (`session_id`); another account's never is. It is free again when that conversation ends or after 5 idle minutes |
 | 409 | `stopped_use_resume` | The entity is stopped (the kill switch) |
 | 422 | `repeat_of_unknown` | `repeat_of` is not your own turn of this conversation with the same words |
-| 503 | `entity_cannot_answer` | "Castor cannot answer right now. Try again in a moment.": its mind cannot be resolved (no model chosen), or the turn gave no reply (the cause is in the gateway log, never in the sentence) |
+| 503 | `entity_cannot_answer` | "Orion cannot answer right now. Try again in a moment.": its mind cannot be resolved (no model chosen), or the turn gave no reply (the cause is in the gateway log, never in the sentence) |
 
 **Who speaks, on every turn.** Session history (`GET /sessions/{id}/history/bloc` rows and each
 bundle's `run`), `GET /runs/{id}`, the replay view's user and assistant messages, and the
@@ -547,6 +548,24 @@ bundle's `run`), `GET /runs/{id}`, the replay view's user and assistant messages
 avatar: {style, color}|null}`, every key present. An agent's turn is named by its workflow
 (`workflow_selection.name`, never a model name); a person's by the account's display name; a
 summon's answer is the entity's.
+
+**Mentions on the agent's turn and on a summon.** When the same message also starts the conversation's agent
+turn, send the same chips as `mentions` on `POST /runs/start` (names or slugs, the ones you send to this door;
+never parsed from the text). Each is resolved like this door resolves it: a missing, hidden or invalid name answers
+404 `entity_not_found`. The gateway writes `_runtime.mentions` itself (a client copy is dropped), and the
+conversation's agent reads, as the last instruction before your words: "The mentioned entities (Orion) answer this
+message themselves. Unless the user addressed you directly, reply with an empty message." An empty reply shows no
+answer, and the entities' answers follow your turn. Staying silent is still the model's judgment: a model may answer
+anyway. `POST /entities/{name}/summon` takes the same `mentions` for the other entities the message names; naming
+the summoned entity itself mentions nobody else.
+
+**What a turn formed: `notices`.** A turn's answer carries what the entity formed or staged during it, unchanged:
+`[{kind, record_id, title, text?, staged?, visibility?}]`, and the reply it serves carries no bracket markers (the
+stored words keep them). A mention answers `notices` and records them on its session turn, so `GET /runs` rows and
+the session history bloc carry them too (`[]` for a turn that formed nothing); a mirrored turn's row carries the
+visited entity's. The hosted chat turn and the visit door's turn answer `reply_notices` beside the reply (on the
+visit door, `notices` stays the operator's log lines). The visit close answers `notices`: each election the visit's
+turns staged that the close formed, with the formed record's graph id.
 
 ## His topics (memory's communities)
 
@@ -699,7 +718,7 @@ with no file path in any answer:
 
 AbstractMemory rewrites a record's words (its digest) in place and keeps
 every earlier reading as a version. The gateway serves what memory stores,
-under memory's own names, so an app can say "Summary by Nerin's mind
+under memory's own names, so an app can say "Summary by Leo's mind
 (qwen3.8-27b), 7 Nov" or "Extract (mechanical)" without guessing from the
 text. Every block carries all of these keys; a value the store does not
 hold for the record is `null`, never a missing key:

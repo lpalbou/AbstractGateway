@@ -20,7 +20,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `POST /runs/start` takes `mentions`: the entities the message mentions (the composer's chips, the
   same names the client sends to `POST /sessions/{id}/mentions`; never parsed from the text). Each is
   resolved like the mention door does (a hidden or missing one is 404 `entity_not_found`), and the
-  agent reads one line after the conversation's history: "The mentioned entities (Castor) answer for
+  agent reads one line after the conversation's history: "The mentioned entities (<names>) answer for
   themselves; answer only the part addressed to you, or say nothing with an empty reply." Whether the
   message also addresses it is the agent's own judgment. The line rides `_runtime.mentions`
   (`{entities: [{entity_id, name}], line}`), written by the gateway only (a client copy is dropped),
@@ -68,7 +68,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   community `key`, `via` and seat from memory's communities read (the payload itself rides along unchanged), and
   the formation edges between nodes. Folded once per process and home, then only the replay's tail since
   `journal_seq` (a new memory, a closure, the night's new version); the app tails the live stream from there.
-  Measured on a scratch copy of castor (895 nodes, 2947 edges, 14 topics, 1.9 MB): the first read 2.1-2.4 s (once
+  Measured on a scratch copy of a long-lived entity's home (895 nodes, 2947 edges, 14 topics, 1.9 MB): the first read 2.1-2.4 s (once
   per process and home), then 5 ms; after a new memory formed, 62 ms (the tail only).
 - **An idle entity sleeps on its Mind's thresholds** (operator 2026-11-09). The cognition
   profile gains `sleep: {after_hours: 24, after_events: 500}` (served and set through `…/cognition-profile`;
@@ -95,7 +95,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   the words `<name> (entity): <reply>`); the visited entity answers it, its home ledger keeps it; listed under
   `mirrors`. Only the VISITED entity's own visit is mirrored into (a visit the mention door opened never is: two
   entities mentioned in one chat do not mirror into each other). The mentioned entity READS the conversation: its
-  visit turn is the session's newest whole turns quoted with their authors (`Laurent: ...`, `Agent (<name>): ...`,
+  visit turn is the session's newest whole turns quoted with their authors (`<person>: ...`, `Agent (<name>): ...`,
   `<Name> (entity): ...`, from the turn rows' `author` fields), at most 12 turns / 8,000 tokens whichever first,
   then the person's words; the answer's `context` states the bound. Visit runs carry `_meta.author` (the entity's
   display name, identity ref, look). The 404 sentence names the entity only (no server folder path). Errors `{detail, code}`: 404 `entity_not_found` for an unknown or a hidden entity alike (members
@@ -320,7 +320,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   console's Network page (web and terminal) shows it instead of the manual `tailscale serve --bg`
   instruction.
 - **A lean entity tile read: `GET /entities/{name}/tile`** (`entity_tile.py`, backlog 1012). One small card about an entity
-  read the whole identity card (up to 90 KB and 0.5-1 s warm for a long life such as ephemeral). The tile serves exactly what a
+  read the whole identity card (up to 90 KB and 0.5-1 s warm for a long life). The tile serves exactly what a
   card shows a person, about 2 KB: name, look, age, its model; what it is doing now and since when (the same phase
   `/cognition` folds, busy, and a warning when its own time stopped after repeated failures); its newest interests, its newest
   open problem or question, its latest lesson, its last meaningful moment (a closed set of kinds: visits, sleeps, its own
@@ -328,12 +328,12 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `now.state` tells the resting default (awake, nothing running) from sleep. A source that cannot be read costs its facts
   with a labelled warning, never the tile.
   The roster (`GET /entities`) and the discovery contract (`common.entities.tile`) advertise it; clients fall back to the
-  card on older gateways. Measured on a copy of ephemeral: 5-9 ms warm (0.5-1 s on the first read after its life grew).
+  card on older gateways. Measured on a copy of a long-lived entity's home: 5-9 ms warm (0.5-1 s on the first read after its life grew).
 
 ### Changed
 
-- **The line the conversation's agent gets when a message mentions entities is imperative and last** (the agent read the softer line and still answered for Castor after a long workspace search). It is
-  now "The mentioned entities (Castor) answer this message themselves. Unless the user addressed you directly,
+- **The line the conversation's agent gets when a message mentions entities is imperative and last** (the agent read the softer line and still answered for the mentioned entity after a long workspace search). It is
+  now "The mentioned entities (<names>) answer this message themselves. Unless the user addressed you directly,
   reply with an empty message.", the last system instruction before the person's words. The mentions are the
   composer's chips, never read from the text. A real model may still answer: whether the agent takes part at all
   is an operator decision still pending (an opt-in agent).
@@ -569,7 +569,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   the newest model stamp are cached per (home directory, memory file, journal seq, parameters) — the communities rule,
   tenant-safe, and a home restored from a backup never meets the old life's card —
   bounded to 64 entries; and the merged host moments per (home, marker and state-history file size and time). A repeated
-  card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (castor, ephemeral); a grown life recomputes once.
+  card read of an unchanged life costs 6-12 ms instead of 0.2-0.6 s (two long-lived entities); a grown life recomputes once.
   `/cognition` and `/tile` share one live fold of the phase (`_live_now`). Host-marker moments now carry `details.change`
   for a work-order change (`set` or `cleared`).
 - **Notification emails show the automation's text formatted, not as raw Markdown** (`mail/mail_markdown.py`,
@@ -586,7 +586,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - **Whose voices an entity may speak with, said in the refusal.** An entity lives and speaks in its
   creator's plane, so it may speak with the gateway's shared voices (built-in, made or shared by an
   administrator) and its creator's own voices; another person's own voice, or an unknown id, is
-  refused with "it isn't a qwen3-tts voice Castor can use. An entity speaks with this gateway's shared
+  refused with "it isn't a qwen3-tts voice <name> can use. An entity speaks with this gateway's shared
   voices and its creator's own voices; another person's own voice stays theirs until an administrator
   shares it with everyone." (docs/entities.md, "Whose voices an entity may speak with").
 - **AbstractNote's own work is `notes`, never a conversation or a user automation**
@@ -795,10 +795,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `params.response_schema` and the answer comes back as the model's instance. Clients name who answers
   (`model_info`), a structured result names its model, and a failing capability call is reported with its cause and
   the model that failed (so the runtime files it as unavailable, never as a malformed answer).
-- **A mention of a name no entity can have answers 404, never 500** (`routes/session_mentions.py`). `POST /sessions/{sid}/mentions` with `{"entity": "@Castor"}`, a reserved word (`auth`, `templates`, ...)
-  or any name that does not normalize answered 500 with the internal error text (`ValueError: entity name '@Castor'
+- **A mention of a name no entity can have answers 404, never 500** (`routes/session_mentions.py`). `POST /sessions/{sid}/mentions` with `{"entity": "@example"}`, a reserved word (`auth`, `templates`, ...)
+  or any name that does not normalize answered 500 with the internal error text (`ValueError: entity name '@example'
   does not normalize ...`). The name is now checked first and answers the same 404 `entity_not_found` sentence as a
-  missing or hidden entity (`There is no entity called '@Castor'.`); a malformed body stays 422.
+  missing or hidden entity (`There is no entity called '@example'.`); a malformed body stays 422.
 - **Mention fixes.**
   - **In a visit lane, the mentioned entity reads that visit's exchange.** It gets the visitors' words, taken from the
     door's own records and never from the rendered prompt with its memories, plus the visited entity's answers.
@@ -811,7 +811,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   - **`mention_id`** (optional): a resend with the same id returns the first answer and never asks a second one.
   - **A mirrored turn reports its own new answer, or a plain error.** It never repeats the visited entity's previous
     reply. `POST /visit/{run_id}/turn` answers `answered: true|false`.
-  - **503 `entity_cannot_answer` is a plain sentence** ("Castor cannot answer right now. Try again in a moment.").
+  - **503 `entity_cannot_answer` is a plain sentence** ("<name> cannot answer right now. Try again in a moment.").
     The provider's error and model list go to the log only.
   - **Every mention refusal has a code and a sentence, and always carries the caller's own `session_id`.** An
     uncoded busy refusal from the visit door ("a visit is opening… retry shortly") is `in_another_conversation`.
@@ -825,7 +825,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
   Not fixed here: a model failure during a mirrored turn still ends the visited entity's visit run, because a failed
   turn fails the visit workflow in AbstractRuntime. That needs the runtime to park a failed turn instead.
-- **A visit on a sleeping entity no longer leaves a "sleep → sleep" row.** castor and nerin carried
+- **A visit on a sleeping entity no longer leaves a "sleep → sleep" row.** Entity homes carried
   `phase_changed` markers with `from == to == "sleep"`: each visit's close wrote the sleep back changed
   (its reason, its start, and its mode, which the visit's open did not record), so the snapshot moved
   without a phase change. The open now records the sleep's mode with the rest of the prior state, and
@@ -841,7 +841,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   stopped home, never for an archived one, never from idle without a grant. The restore is recorded in
   the phase sidecar as `restart_resume {generation, at}` and holds only under that generation (a Stop
   cancels it); it is spent once a start is attempted. Off with the other background entity passes
-  (`ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0`). Before: nerin needed a manual Retry after every restart.
+  (`ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0`). Before: such an entity needed a manual Retry after every restart.
 - **Resume keeps its reason**, as Stop keeps its own. `POST /entities/{name}/lifecycle {action: "resume",
   reason}` (and the older `POST /entities/{name}/state {state: "awake", reason}` on a stopped entity)
   dropped the operator's reason: the state said only "resumed [by …]" and the `wake` marker said
@@ -874,7 +874,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   posture on a sleep). A sleep from idle, a gate sleep included, still falls asleep with both rows.
 - **A sleep keeps its reason and its start across visits** (`entity_phase.continue_sleep`). Every visit that
   interrupted a sleep appended "(visitor session ended: N turns; closed)" to the sleep's reason when it closed
-  (castor's reason carried sixteen of them) and moved the sleep's start to the close. The same sleep now
+  (one sleep's reason carried sixteen of them) and moved the sleep's start to the close. The same sleep now
   continues unchanged on every lane (the durable visit's close, the hosted chat's close, an aborted open): its
   original reason, who chose it, its wake time, and `since` (both `life_state.since` and `sleep.since`) where
   the sleep began, however many visits came in between. The visits are in the ledger instead: a `summon`
@@ -933,7 +933,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   `python -m abstractgateway.model_host_child` mentions (module docstrings, ADR 0002, a test) now
   name the real start command.
 - **Saving an identity with a voice the picker shows works again** (`entity_settings_access.py`,
-  `entity_identity.py`). "Castor can't speak with 250b665e…: this gateway offers no qwen3-tts voice
+  `entity_identity.py`). "<name> can't speak with <voice id>…: this gateway offers no qwen3-tts voice
   right now" while the signed-in `GET /voice/voices?provider=qwen3-tts` listed 93 voices: the check
   called the voice route function directly, and the `language` parameter it did not pass arrived as
   FastAPI's `Query(None)` object, which filtered every voice out. The voice and model checks
@@ -1016,7 +1016,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
     `not_a_participant`, "This visit belongs to another conversation." The visit's speaker is always the caller.
 - **A client can no longer label a run as an entity's or mark its prompt as a repeat** (`routes/gateway.py`). `POST /runs/start` and `/runs/schedule` drop a client's `_runtime.entity` (the entity doors
   mint and sign that stamp for the run they open; a client copy made AbstractRuntime's turn authors label the agent's
-  reply as the entity's, replayed as "castor (entity): ...") and its `_meta.repeat_of` and `_meta.mention` (written
+  reply as the entity's, replayed as "<name> (entity): ...") and its `_meta.repeat_of` and `_meta.mention` (written
   only by the mention route after it validated them; a client-set `repeat_of` hid that prompt from a mention's quoted
   context and made clients fold it). `_stamp_run_origin` drops the two `_meta` keys as it already dropped `author` and
   `prompt_author`. With AbstractRuntime's matching change, an unsigned stamp never makes an entity turn either.

@@ -1,6 +1,6 @@
 """His memory graph in one read: `GET /entities/{name}/graph` (COMMUNITIES-DESIGN 2026-11-10 §3, slice 2).
 
-The Entity app drew the graph by folding the whole replay through the live door (castor: 55 s for the bindings).
+The Entity app drew the graph by folding the whole replay through the live door (a long life: 55 s for the bindings).
 This snapshot folds it here, once: the nodes (every open formed record, the latest display block of its binding,
 resolved for the operator audience exactly as the replay serves it) and their formation edges, with each node's
 community key, `via` and seat from memory's communities read, plus that read itself (payload version 2, unchanged).

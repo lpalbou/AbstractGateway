@@ -719,7 +719,7 @@ def standing_sleep(rec: Dict[str, Any], state: Dict[str, Any]) -> bool:
     an operator's or the idle sweep's sleep (a sleep phase on its own), or his own sleep while the
     phase the gateway last versioned (`rec`'s snapshot) is sleep. A visit's posture and a gate sleep
     (1178: the stored word is asleep, the phase idle) are not. A sleep written onto a standing sleep is
-    the same sleep: no `sleep` moment, no phase_changed row (castor 2026-11-10)."""
+    the same sleep: no `sleep` moment, no phase_changed row (2026-11-10)."""
     if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") == "visiting":
         return False
     if _sleep_kind(state, False) is not None:
@@ -1106,7 +1106,7 @@ def publish(
             _write_published(entities_dir, slug, rec)
         if prev != semantic:
             # The same sleep with new details (a new reason, the pass's dreaming mode, its end): versioned
-            # for the life_state readers, never announced (castor 2026-11-10: the operator's sleep with its
+            # for the life_state readers, never announced (2026-11-10: the operator's sleep with its
             # pass on his standing sleep wrote two "sleep -> sleep" rows). A toggle change is still a row.
             same_sleep = (prev_phase == "sleep" and snap["phase"] == "sleep"
                           and (prev or {}).get("toggles") == semantic.get("toggles"))
@@ -1121,8 +1121,8 @@ def publish(
                     rec["published_rev"] = int(rec["rev"])
                 # else: a change still unannounced keeps its own from/cause; this rev announces it.
             else:
-                # Entering `stopped` is the kill switch's act whichever write point published it (Castor E2E
-                # 2026-11-10: the visit the Stop closed published first and the Stop's row read visit_closed).
+                # Entering `stopped` is the kill switch's act whichever write point published it
+                # (2026-11-10: the visit the Stop closed published first and the Stop's row read visit_closed).
                 entering_stop = snap["phase"] == "stopped" and prev_phase != "stopped"
                 rec["last_cause"] = KILL_SWITCH_CAUSE if entering_stop else str(cause or "observed")
                 rec["last_from"] = prev_phase

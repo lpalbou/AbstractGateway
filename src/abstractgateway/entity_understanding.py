@@ -68,7 +68,7 @@ def _digest_authored(stamp: Any) -> bool:
 
 def cut_when_saved(reading: Mapping[str, Any], source: Any) -> bool:
     """`cut` for one reading (memory's fields: digest_method, digest_version, authored_by) of a record whose
-    formation provenance names `source`. An AUTHORED reading is never cut (Castor E2E C4_04, 2026-11-10: two
+    formation provenance names `source`. An AUTHORED reading is never cut (2026-11-10: two
     visit-close summaries authored by the summaries capability served cut): its digest_method `authored:<capability>`
     (runtime authored_digest_attributes), the record's `metadata_authored` stamp, or an authored formation provenance
     (`source` = `authored:<capability>`) - whatever else the reading says."""

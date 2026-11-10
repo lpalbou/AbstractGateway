@@ -2091,7 +2091,7 @@ def run_summary(run: Any) -> Dict[str, Any]:
 
     out["repeat_of"] = prompt_repeat_of(vars_obj)
     # What the turn formed or staged (the entity's turn.notices: a mention turn keeps them as its output), as the
-    # session turn's own answer serves them; [] for a run that holds none (Castor E2E 2026-11-10: the /runs rows and
+    # session turn's own answer serves them; [] for a run that holds none (2026-11-10: the /runs rows and
     # the history bloc carried no notices).
     out["notices"] = turn_notices(run)
 

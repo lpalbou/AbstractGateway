@@ -4,7 +4,7 @@ description: Operate AbstractGateway through its CLI and authenticated HTTP APIs
 license: MIT
 compatibility: Python 3.10+. A reachable Gateway and Gateway user credentials are required for run APIs. Local inference needs the matching Apple or GPU install profile and explicitly downloaded models.
 metadata:
-  package-version: unreleased
+  package-version: "0.21.0"
 ---
 
 # AbstractGateway

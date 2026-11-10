@@ -1907,7 +1907,7 @@ class EntityVisitHost:
 
         voice = str(participant or "").strip()
         if ":" not in voice:
-            raise ValueError(f"a participant is namespace:name (entity:castor), not {participant!r}")
+            raise ValueError(f"a participant is namespace:name (entity:<name>), not {participant!r}")
         er, _run, _wf, _manifest = self._load_visit(name, run_id, need_spec=False)
         lease = self._acquire_lease(er)
         try:
@@ -2113,7 +2113,7 @@ class EntityVisitHost:
         warnings: List[str] = []
         try:
             records = er.ledger_store.list(run_id)
-            # THE SERVED WORDS (Castor E2E C2_07, 2026-11-10): the history keeps what was SENT (the visitor's
+            # THE SERVED WORDS (2026-11-10): the history keeps what was SENT (the visitor's
             # message decorated with MEMORIES, the reply with its election markers); a reload shows what the
             # visit served instead, from the run's own ledger - the visitor's words as he sent them (the
             # turn's resume) and the reply as ANSWER served it, with its notices (what the turn formed or
@@ -2495,7 +2495,7 @@ class EntityVisitHost:
                 st = read_entity_state(home_dir)
                 word = str(st.get("state") or "")
                 reason_now = str(st.get("reason") or "")
-                # RESTORE BY OWNERSHIP (mutual-exclusivity wave, laurent dm#94,
+                # RESTORE BY OWNERSHIP (mutual-exclusivity wave, operator ruling,
                 # audit finding 4): the open stamps the posture with THIS visit's
                 # id, so terminal restores match the identity token — a posture
                 # belonging to ANOTHER lane's live session is never adopted.

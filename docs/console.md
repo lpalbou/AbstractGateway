@@ -190,7 +190,7 @@ entity"). Only the actions that apply to a row are shown: your own row has no
 44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
 what it does for whom: "Email address and mailbox of alice", "OpenAI API
 access for alice", "Activity log of alice", "Workspaces alice's agents may
-use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
+use", "Manage orion (mind, voice, prompt…)", "Rotate alice's sign-in
 token", "Archive alice (kept, hidden)". The same tooltip explains every icon
 button in the console (Workflows, Models, Apps, the top bar…): it appears
 after a short pause, stays inside the window and Escape hides it. The table never scrolls sideways: long names and
@@ -207,7 +207,7 @@ default and your browser remembers it.
   signed out until you turn Active back on."). Your own account and the last
   active admin cannot be switched off.
 - **Active** for an entity: off suspends it (it stops acting and its gateway
-  credential is switched off) after "Suspend castor? It stops acting until you
+  credential is switched off) after "Suspend orion? It stops acting until you
   turn Active back on."; on resumes it in the state it had before.
 - **Email** opens a dialog. On your own row it is **My email**: a compact header
   (your address) and three tabs ([email.md](./email.md)). **Mailboxes**: one list,
@@ -263,7 +263,7 @@ default and your browser remembers it.
   entity's creator changes its mind, voice, tools per phase and instructions
   (the creator picks among the models and voices the gateway offers; a tier-2
   tool's box stays off for the creator, with the tooltip "Only an admin can
-  give castor a tier-2 tool: …"); sleep and wake, personal time, freeze, the
+  give orion a tier-2 tool: …"); sleep and wake, personal time, freeze, the
   work order and the memory index rebuild are an administrator's. Anyone else
   reads the current values as text.
 - **Archive** asks in a row under the account ("Archive alice? They can't sign

@@ -73,7 +73,7 @@ def mention_entity(session_id: str, req: MentionRequest) -> Any:
     try:
         entity_slug(req.entity)
     except ValueError:
-        # A name no entity can have ('@Castor', a reserved word such as 'auth') is simply not an
+        # A name no entity can have ('@example', a reserved word such as 'auth') is simply not an
         # entity: the same 404 as a missing or hidden one, never a 500 carrying internal text
         # (review 2026-11-09 finding 4). A malformed body is FastAPI's 422.
         return _not_found(req.entity)

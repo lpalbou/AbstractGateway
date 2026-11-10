@@ -1389,7 +1389,7 @@ class EntityRegistry:
                 warnings.append(home.embedding_pin_warning)
             try:
                 # BIRTH RECORDS ARE AUTHORED (AbstractMemory 82178c9 engram(author=)): a spark item without a name
-                # gets its title from the entity's summaries capability before it forms (castor carried two
+                # gets its title from the entity's summaries capability before it forms (a home carried two
                 # "trait-0"), the call kept as a home artifact; a failure forms it pending with its failure line.
                 # Under the birth's admission: a Stop during the birth makes no further model call.
                 from abstractruntime.identity.authoring import capability_formation_author, log_pass_authoring_failures
@@ -2661,7 +2661,7 @@ class EntityRegistry:
 
                 from .entity_phase import IDLE_SWEEP_WRITER as _IDLE_WRITER
 
-                # The ledger's cause names whose sleep it is (Castor E2E 2026-11-10): the idle sweep's own sleep
+                # The ledger's cause names whose sleep it is: the idle sweep's own sleep
                 # (his, by the threshold its reason names) is `idle_sleep`, never the operator's.
                 safe_publish(self, manifest.slug, "idle_sleep" if written_by == _IDLE_WRITER else "operator_sleep")
                 try:
@@ -2741,7 +2741,7 @@ class EntityRegistry:
         verb = {"asleep": "sleep", "awake": "wake", "paused": "pause"}[state2]
         out: Dict[str, Any] = {"state": written, "prior": prior, "marker_seq": None, "dream": dream_result}
         if same_sleep:
-            # No "Fell asleep" for a sleep that began before (castor 2026-11-10: the row landed after the
+            # No "Fell asleep" for a sleep that began before (2026-11-10: the row landed after the
             # pass, an hour into the sleep). The pass's own rows tell it: the night's records, and the
             # wake when maintenance is done.
             out["same_sleep"] = True
