@@ -267,6 +267,11 @@ HOST_MARKER_KINDS = (
     # generation, cause, sentence}. `from == to` is a rev bump that is not a
     # phase change (a toggle, a sub-object): biography readers skip it.
     "phase_changed",
+    # communities_changed (COMMUNITIES-DESIGN 2026-11-10 §3): memory formed a new version of his topics
+    # (the night's communities_pass). ONE marker per version (dedup_field "version_seq"), recorded when
+    # the version's community records pass through the stream: payload {version_seq}. The Entity app
+    # re-reads GET /communities on it; a community record is never a node.
+    "communities_changed",
 )
 
 _marker_lock = threading.Lock()
@@ -773,6 +778,45 @@ def _enrich_operator_displays(home: EntityHome, envelope: Dict[str, Any], cache:
     return envelope
 
 
+COMMUNITIES_CHANGED = "communities_changed"
+# The versions this process already marked, per marker file (the dedup scan reads the whole file).
+_MARKED_VERSIONS: Dict[str, set] = {}
+_MARKED_LOCK = threading.Lock()
+
+
+def _community_version(envelope: Dict[str, Any]) -> Optional[int]:
+    """The communities version a binding envelope of a community record belongs to (memory's display block:
+    kind "community", `version_seq`), else None."""
+    if envelope.get("family") != "binding":
+        return None
+    display = envelope.get("display")
+    if not isinstance(display, dict) or display.get("kind") != "community":
+        return None
+    version = display.get("version_seq")
+    return int(version) if isinstance(version, int) and not isinstance(version, bool) else None
+
+
+def note_communities_version(home: Any, *, entities_dir: Path, slug: str, version_seq: int,
+                             journal_seq: int) -> Optional[Dict[str, Any]]:
+    """Record the ONE `communities_changed` host marker of a communities version (dedup by `version_seq`),
+    anchored at the journal position where the version's records pass (`journal_seq`): its envelope, with
+    `deduped: True` when it already stood; None when it cannot be written (the stream goes on, logged)."""
+    key = str(_marker_path(entities_dir, slug))
+    with _MARKED_LOCK:
+        if int(version_seq) in _MARKED_VERSIONS.setdefault(key, set()):
+            return {"deduped": True}
+    try:
+        env = record_host_marker(entities_dir=entities_dir, slug=slug, entity_id=str(home.entity_id),
+                                 kind=COMMUNITIES_CHANGED, journal_seq=int(journal_seq),
+                                 details={"version_seq": int(version_seq)}, dedup_field="version_seq")
+    except Exception:  # noqa: BLE001 - a marker never breaks the stream it annotates
+        logger.exception("communities_changed marker for %s (version %s) failed", slug, version_seq)
+        return None
+    with _MARKED_LOCK:
+        _MARKED_VERSIONS.setdefault(key, set()).add(int(version_seq))
+    return env
+
+
 def merged_replay(
     home: EntityHome,
     *,
@@ -807,6 +851,9 @@ def merged_replay(
 
     markers = read_host_markers(entities_dir, slug, since_seq=float(since_seq), until_seq=None if until_seq is None else marker_window_end(int(until_seq))) if include_host else []
     m_idx = 0
+    versions_marked = {int(m["payload"]["version_seq"]) for m in markers
+                       if (m.get("payload") or {}).get("kind") == COMMUNITIES_CHANGED
+                       and isinstance((m.get("payload") or {}).get("version_seq"), int)}
 
     for envelope in envelopes:
         seq = float(envelope.get("seq") or 0.0)
@@ -816,6 +863,13 @@ def merged_replay(
             yield markers[m_idx]
             m_idx += 1
         yield _enrich_operator_displays(home, envelope, diary_display_cache) if enrich else envelope
+        version = _community_version(envelope)
+        if version is not None and version not in versions_marked:
+            versions_marked.add(version)
+            marker = note_communities_version(home, entities_dir=entities_dir, slug=slug, version_seq=version,
+                                              journal_seq=int(seq))
+            if include_host and marker is not None and not marker.get("deduped"):
+                yield marker
     while m_idx < len(markers):
         yield markers[m_idx]
         m_idx += 1

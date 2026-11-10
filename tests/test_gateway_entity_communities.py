@@ -259,3 +259,95 @@ def test_an_operator_sleep_runs_the_runtime_s_night_repair_then_topics(monkeypat
         assert last and last["detail"].get("communities_version") == served["version_seq"], last
         log = (home.home_dir / "own_time.log").read_text(encoding="utf-8")
         assert f"(topics: version {served['version_seq']} - " in log, log[-2000:]
+
+
+# --------------------------------------------------------------------------- GET /entities/{name}/graph (one read)
+
+
+def _graph(client: TestClient) -> Dict[str, Any]:
+    r = client.get("/api/gateway/entities/Castor/graph")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_the_graph_is_one_read_nodes_with_their_topic_and_seat_and_edges() -> None:
+    """GET /graph serves the graph the Entity app draws in one request: every open formed record but the community
+    records (their latest display block as the replay serves it), its community key, `via` and seat from memory's
+    communities read, the formation edges between nodes, and that read itself (unchanged)."""
+    from abstractruntime.integrations.abstractmemory.memory_facade import communities
+
+    with _client() as client:
+        home = _born(client)
+        before = _graph(client)
+        assert before["communities"]["first_sleep_pending"] is True and before["communities_version"] is None
+        assert set(home.test_ids.values()) <= {n["id"] for n in before["nodes"]}
+        assert all(n["community"] is None and n["seat"] is None for n in before["nodes"])
+
+        _sleep(home)
+        snap = _graph(client)
+        served = communities(home.memory, scopes=_ladder(home.entity_id), owner_id=home.entity_id)
+        assert snap["communities"] == served and snap["communities_version"] == served["version_seq"]
+        assert snap["journal_seq"] == int(home.memory.current_seq())
+        nodes = {n["id"]: n for n in snap["nodes"]}
+        assert not [n for n in snap["nodes"] if n["kind"] == "community"], "a community record is never a node"
+        for c in served["communities"]:
+            for m in c["members"]:
+                if m["id"] in nodes:
+                    assert nodes[m["id"]]["community"] == c["key"] and nodes[m["id"]]["via"] == m["via"]
+                    seat = (c["layout"].get("seats") or {}).get(m["id"])
+                    assert nodes[m["id"]]["seat"] == (list(seat) if seat is not None else None)
+        assert all(nodes[i]["community"] for i in home.test_ids.values()), "every memory is in a topic"
+        assert all(e["a"] in nodes and e["b"] in nodes and e["relation"] for e in snap["edges"])
+        for n in snap["nodes"]:
+            assert n["display"]["graph_id"] == n["id"] and n["title"] == n["display"].get("title")
+
+
+def test_the_graph_folds_only_the_tail_after_a_formation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cached per home at the journal position it covers: a request after a new memory formed folds the replay
+    from there (never the whole life again), and the new memory is there, provisional in its topic."""
+    from abstractgateway import entity_replay
+
+    with _client() as client:
+        home = _born(client)
+        _sleep(home)
+        first = _graph(client)
+        seen: List[float] = []
+        real = entity_replay.merged_replay
+
+        def _counting(*args: Any, **kwargs: Any):
+            seen.append(float(kwargs.get("since_seq") or 0.0))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(entity_replay, "merged_replay", _counting)
+        late = _form(home, "dam-4", "episode", "The dam spillway in the flood",
+                     "The flood tested the dam spillway and its gauges held.")
+        snap = _graph(client)
+        assert seen == [float(first["journal_seq"])], seen
+        (node,) = [n for n in snap["nodes"] if n["id"] == late]
+        assert node["community"] and node["via"] == "provisional" and node["seat"] is None
+        assert _graph(client)["journal_seq"] == snap["journal_seq"] and seen == [float(first["journal_seq"])]
+
+
+def test_one_communities_changed_marker_per_version_and_no_member_edges_on_the_stream() -> None:
+    """The stream (COMMUNITIES-DESIGN §3): a new version is ONE host marker {kind: communities_changed,
+    version_seq} however many readers pass it; a community record's binding draws its revision chain only, never
+    an edge per member."""
+    import json as _json
+
+    with _client() as client:
+        home = _born(client)
+        receipt = _sleep(home)
+        for _ in range(2):  # two readers of the same version
+            lines = [_json.loads(x) for x in client.get("/api/gateway/entities/Castor/replay").text.splitlines() if x.strip()]
+        markers = [e for e in lines if e.get("family") == "host" and (e.get("payload") or {}).get("kind") == "communities_changed"]
+        assert [m["payload"]["version_seq"] for m in markers] == [receipt["version_seq"]], markers
+        from abstractgateway.entity_replay import read_host_markers
+
+        logged = [m for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
+                  if (m.get("payload") or {}).get("kind") == "communities_changed"]
+        assert len(logged) == 1, logged
+        community_bindings = [e for e in lines if e.get("family") == "binding"
+                              and (e.get("display") or {}).get("kind") == "community"]
+        assert community_bindings, "the version's records pass through the stream"
+        for e in community_bindings:
+            assert all(edge.get("relation") == "refines" for edge in (e["display"].get("edges") or [])), e["display"]

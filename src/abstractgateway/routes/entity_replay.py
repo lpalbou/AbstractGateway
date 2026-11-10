@@ -246,6 +246,23 @@ async def replay_entity_stream(
     return StreamingResponse(_batch_bytes(_lines()), media_type="application/x-ndjson")
 
 
+@router.get("/{name}/graph")
+async def entity_graph_snapshot(name: str) -> Dict[str, Any]:
+    """His memory graph in ONE read (COMMUNITIES-DESIGN §3, slice 2): `{version, journal_seq, communities_version,
+    communities (memory's payload v2, unchanged), nodes [{id, seq, observed_at, scope, owner_id, kind, title, display,
+    community, via, seat}], edges [{a, b, relation}]}` (entity_graph.graph_snapshot). Folded from the replay's
+    bindings and closures once per process and home, then only the tail since `journal_seq`; the app tails the
+    live stream from `journal_seq`."""
+    from ..entity_graph import graph_snapshot
+
+    registry = _registry()
+    home = await _home_or_404_offloop(registry, name)
+    try:
+        return await off_loop("heavy", graph_snapshot, home, entities_dir=registry.entities_dir, slug=home.manifest.slug)
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=f"graph unavailable: {e}")
+
+
 @router.get("/{name}/records/{graph_id}/verbatim")
 async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
     """Verbatim-on-click (maintainer ask, a2a 0007): the lossless exchange
