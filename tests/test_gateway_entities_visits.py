@@ -555,6 +555,32 @@ def test_turn_serves_the_probe_payload_and_transcript_rehydrates(monkeypatch: py
         assert len(tr2["turns"]) == 4, "closed visits stay readable (rehydration after the fact)"
 
 
+def test_the_transcript_serves_the_words_the_visit_served_never_the_prompt(monkeypatch: pytest.MonkeyPatch):
+    """Castor E2E C2_07 (2026-11-10): an app reload read the transcript and showed the whole MEMORIES prompt as the
+    visitor's message and the reply's raw election markers ("[learned: ...]"). The transcript serves what the turn
+    served: the visitor's words as sent, the reply as ANSWER served it (no markers) and its notices - the same as
+    the turn's own answer."""
+    _install_scripted_llm(monkeypatch, [
+        "Noted, I will hold it as your report.\n\n```lesson\ntitle: Storm ledgers can be misfiled\n"
+        "Before citing the 1890 storm ledger, check where it is filed now.\n```",
+        "Reflection.",
+    ])
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        turned = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn",
+                             json={"text": "the 1890 storm ledger was misfiled"})
+        assert turned.status_code == 200, turned.text
+        answer = turned.json()
+        assert answer["reply_notices"], answer  # the lesson was staged: the turn says so as data
+        tr = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
+        user, reply = tr["turns"][0], tr["turns"][1]
+        assert user["content"] == "the 1890 storm ledger was misfiled", user["content"][:300]
+        assert reply["content"] == answer["reply"] and "[learned" not in reply["content"], reply["content"]
+        assert reply["notices"] == answer["reply_notices"]
+        assert reply["turn_id"] == answer["turn_id"]
+
+
 def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.MonkeyPatch):
     """B1 ruling (a), laurent 04:58: 'if i click visit, it should awake the
     entity, period.' An operator-asleep entity (no visiting posture, no live
@@ -994,9 +1020,9 @@ def test_turn_image_attachment_reaches_the_model_and_the_transcript(monkeypatch:
         transcript = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()
         user_turn = transcript["turns"][0]
         assert user_turn["role"] == "user"
-        assert "(attached: shared/pic.png — a PNG image" in user_turn["content"]
-        assert "(attached: shared/notes.txt — a text file, 12 bytes; read_file opens it)" in user_turn["content"]
-        assert user_turn["content"].endswith("what do you see?")
+        # The visitor's words as he sent them (the "(attached: ...)" lines are the prompt's decoration, never his);
+        # what he attached rides `attachments`.
+        assert user_turn["content"] == "what do you see?"
         records = user_turn["attachments"]
         assert [a["path"] for a in records] == ["shared/pic.png", "shared/notes.txt"]
         assert records[0] == {"path": "shared/pic.png", "bytes": len(png),
@@ -1021,8 +1047,7 @@ def test_turn_image_attachment_reaches_the_model_and_the_transcript(monkeypatch:
         assert turned.json()["turn_n"] == 3 and "no words" in turned.json()["reply"]
         assert llm.saw_media[2] == [png_abs]
         silent = client.get(f"/api/gateway/entities/Castor/visit/{run_id}/transcript").json()["turns"][4]
-        assert silent["role"] == "user" and silent["content"].startswith("(")
-        assert silent["content"].endswith("read_file re-opens it)")
+        assert silent["role"] == "user" and silent["content"] == ""  # no words: the image alone
         assert [a["path"] for a in silent["attachments"]] == ["shared/pic.png"]
 
         closed = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})

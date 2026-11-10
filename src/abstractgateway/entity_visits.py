@@ -405,6 +405,46 @@ def close_notices(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _served_words(turns: List[Dict[str, Any]], records: List[Dict[str, Any]]) -> None:
+    """Replace the transcript's SENT words with the SERVED ones, from the visit run's ledger: each visitor turn
+    (a `resume` of the visitor's wait carrying `text`) and the ANSWER that followed it (`answer_user`: the served
+    reply, its `notices`, its `turn_id`). A turn with no answer (it failed) keeps its history line (the failure
+    sentence) and gets `notices: []`. Aligned with the history's user/assistant pairs in order when the counts
+    agree, else from the tail (the newest turns are the ones a reload shows); a history line with no ledger twin
+    keeps its words."""
+    served: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+    for rec in records:
+        if not isinstance(rec, dict) or not isinstance(rec.get("result"), dict) and str(rec.get("status") or "") != "completed":
+            continue
+        effect = rec.get("effect") or {}
+        etype = str(effect.get("type") or "").lower()
+        payload = effect.get("payload") if isinstance(effect.get("payload"), dict) else {}
+        if etype == "resume" and str(payload.get("wait_key") or "") == "visitor_input":
+            sent = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+            if "text" in sent and str(sent.get("kind") or "") != "close":
+                served.append((str(sent.get("text") or ""), None))
+        elif etype == "answer_user" and isinstance(rec.get("result"), dict) and served and served[-1][1] is None:
+            served[-1] = (served[-1][0], payload)
+    users = [i for i, t in enumerate(turns) if t.get("role") == "user"]
+    offset = len(served) - len(users)
+    for j, i in enumerate(users):
+        k = j + offset
+        if not 0 <= k < len(served):
+            continue
+        text, answer = served[k]
+        turns[i]["content"] = text
+        reply = turns[i + 1] if i + 1 < len(turns) and turns[i + 1].get("role") == "assistant" else None
+        if reply is None:
+            continue
+        if answer is not None:
+            reply["content"] = str(answer.get("message") or "")
+            reply["notices"] = [dict(n) for n in (answer.get("notices") or []) if isinstance(n, dict)]
+            if answer.get("turn_id"):
+                reply["turn_id"] = str(answer["turn_id"])
+        else:
+            reply["notices"] = []
+
+
 def _ledger_tool_details(records: List[Dict[str, Any]]) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str], List[Dict[str, Any]]]:
     """Per-turn tool details folded from the run's OWN ledger (2026-07-18,
     laurent's "unacceptable error with tools": the durable lane served
@@ -2072,7 +2112,14 @@ class EntityVisitHost:
             turns.append(t)
         warnings: List[str] = []
         try:
-            buckets, order, _tail = _ledger_tool_details(er.ledger_store.list(run_id))
+            records = er.ledger_store.list(run_id)
+            # THE SERVED WORDS (Castor E2E C2_07, 2026-11-10): the history keeps what was SENT (the visitor's
+            # message decorated with MEMORIES, the reply with its election markers); a reload shows what the
+            # visit served instead, from the run's own ledger - the visitor's words as he sent them (the
+            # turn's resume) and the reply as ANSWER served it, with its notices (what the turn formed or
+            # staged), the same words and notices as the turn's own answer.
+            _served_words(turns, records)
+            buckets, order, _tail = _ledger_tool_details(records)
             assistants = [t for t in turns if t.get("role") == "assistant"]
             # Tail anchor: the LAST visible assistant message is the LAST
             # answered turn; walk both lists backward together. Older
