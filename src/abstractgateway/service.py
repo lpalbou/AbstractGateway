@@ -20,6 +20,10 @@ from .stores import GatewayStores, build_file_stores, build_sqlite_stores, warm_
 from .users import gateway_user_auth_enabled
 from .workflow_catalog import workflow_catalog_bundles_root_from_env
 
+# The module's logger: start_gateway_runner's best-effort boot steps log through it (a heal pass that raises
+# is a warning, never a NameError that fails the boot).
+logger = logging.getLogger("abstractgateway.service")
+
 _DRAFT_RUN_PURPOSE = "draft_test"
 
 

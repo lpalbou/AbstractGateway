@@ -347,3 +347,35 @@ def test_eager_rehydration_one_failure_never_blocks_others(monkeypatch: pytest.M
     assert result["started"] == 2
     assert len(result["errors"]) == 1 and "bad" in result["errors"][0]
     _reset_service_globals()
+
+
+def test_a_boot_heal_that_raises_is_logged_and_the_boot_goes_on(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """start_gateway_runner's two best-effort boot steps (the effective phase-spec reconcile, the host pause
+    state) log a warning when they raise and the boot carries on. Their warning named a `logger` the module
+    never defined, so a failing heal became a NameError that failed the gateway's boot."""
+    import logging
+
+    import abstractgateway.command_sandbox as sandbox
+    import abstractgateway.host_control as host_control
+    import abstractgateway.routes.entities as entities_routes
+    import abstractgateway.service as svc_mod
+
+    class _BootWentOn(Exception):
+        pass
+
+    def _raise(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("heal pass broke")
+
+    def _went_on() -> None:
+        raise _BootWentOn()
+
+    monkeypatch.setattr(sandbox, "configure_at_boot", lambda: {"first": False, "line": ""})
+    monkeypatch.setattr(entities_routes, "reconcile_effective_spec_file", _raise)
+    monkeypatch.setattr(host_control, "configure", _raise)
+    monkeypatch.setattr(svc_mod, "_boot_checkpoint", _went_on)  # the step right after both: stop there
+    with caplog.at_level(logging.WARNING, logger="abstractgateway.service"):
+        with pytest.raises(_BootWentOn):
+            svc_mod.start_gateway_runner()
+    messages = [r.getMessage() for r in caplog.records if r.name == "abstractgateway.service"]
+    assert "effective phase-spec reconcile skipped at boot" in messages, messages
+    assert "host pause state could not be loaded" in messages, messages

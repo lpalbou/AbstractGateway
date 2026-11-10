@@ -986,6 +986,10 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - **The Summon entity form fits a phone** (`console.py`). Its tools-per-phase table kept a 420 px minimum width inside
   a dialog about 400 px wide, so on a phone the whole form scrolled sideways. The table now fits at 400 px (tighter
   cells, long tool names wrap); every tool and phase is still shown, and the desktop layout is unchanged.
+- **A boot step that fails no longer fails the gateway's boot** (`service.py`). When the effective phase-spec
+  reconcile or loading the host pause state raised at start, its warning named an undefined `logger`, so the boot
+  stopped with a NameError instead of logging and carrying on. Both now log a warning (`abstractgateway.service`) and
+  the boot continues.
 
 ### Security
 
