@@ -303,3 +303,32 @@ def test_a_stop_while_the_chat_opens_leaves_no_session_lease_or_effect(monkeypat
         assert llm.calls == []
         stream = _home().parent / ".host_stream" / "castor.jsonl"
         assert '"summon"' not in (stream.read_text(encoding="utf-8") if stream.exists() else "")
+
+
+# ----------------------------------------------------------------------------------------------------- T10
+@pytest.mark.parametrize("lane", ["visit", "chat"])
+def test_a_visit_closed_after_a_stop_restores_nothing(monkeypatch, lane):
+    """T10: a visit's close restores the state it took (by its ownership token), but never over a Stop since the visit
+    was admitted. The runtime's own Stop (`hard_stop_loop`, a CLI) moves the generation without writing paused: the
+    posture still reads as the visit's, and only the visit's fence keeps the close from writing over the Stop."""
+    from abstractruntime.identity.life import hard_stop_loop, read_entity_state
+
+    _install_llm(monkeypatch, [])
+    with _client() as client:
+        _born(client, "Castor")
+        if lane == "visit":
+            run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        else:
+            chat_id = client.post("/api/gateway/entities/Castor/chat/open", json={}).json()["chat_id"]
+        posture = read_entity_state(_home())
+        assert posture["mode"] == "visiting"
+        lines = _history_lines()
+        hard_stop_loop(_home(), reason="stopped from the command line", requested_by="admin")
+        if lane == "visit":
+            client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={"closed_by": "operator"})
+        else:
+            client.post(f"/api/gateway/entities/Castor/chat/{chat_id}/close", json={})
+        after = read_entity_state(_home())
+        assert (after["state"], after.get("mode"), after["changed_at"]) == (
+            posture["state"], posture.get("mode"), posture["changed_at"]), after
+        assert _history_lines() == lines, "the close wrote a state over the Stop"
