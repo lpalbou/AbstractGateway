@@ -518,3 +518,48 @@ def test_an_older_waiter_opens_before_the_newcomers(monkeypatch):
         assert order[1][0] == "carol", order
         for t in threads.values():
             t.join(60)
+
+
+# ------------------------------------------------------------------------------------------------- finding 7
+def test_the_same_visitor_hands_over_a_visit_parked_on_an_approval(monkeypatch):
+    """Codex review 3 #7: the same visitor opening ANOTHER conversation hands his visit over, but the handover always
+    resumed the visit's visitor wait: a visit parked on a tool approval (or an ask_user question) answered
+    `not_waiting` and the new conversation got no visit. The pending interaction is now settled explicitly (the run
+    is cancelled with the handover's reason, the approved-or-not tool never runs), its history and records stay, and
+    the new conversation's visit opens."""
+    from types import SimpleNamespace
+
+    from abstractgateway import entity_chat
+
+    class _LLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, **kwargs):
+            self.calls += 1
+            tools = [{"name": "read_memory", "arguments": {"tag": "missing"}, "call_id": "memory-call"}] if self.calls == 1 else None
+            return SimpleNamespace(content="" if tools else "A completed answer.", tool_calls=tools,
+                                   finish_reason="tool_calls" if tools else "stop", model="test-model",
+                                   usage={"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10})
+
+    llm = _LLM()
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+    with _client() as client:
+        _born(client, "Castor")
+        base = "/api/gateway/entities/castor"
+        opened = client.post(base + "/visit/open",
+                             json={"session_id": "conv-a", "tool_policy": {"modes": {"read_memory": "approve"}}})
+        assert opened.status_code == 200, opened.text
+        run_a = opened.json()["run_id"]
+        assert client.post(f"{base}/visit/{run_a}/turn", json={"text": "Read that memory."}).status_code == 200
+        assert client.get(f"{base}/visit/{run_a}/state").json()["pending_wait"] is not None  # parked on the approval
+
+        second = client.post(base + "/visit/open", json={"session_id": "conv-b"})
+        assert second.status_code == 200, second.text
+        assert second.json()["run_id"] != run_a and second.json()["session_id"] == "conv-b"
+        er = _registry().get_entity_runtime("castor")
+        old = er.run_store.load(run_a)
+        assert str(getattr(old.status, "value", old.status)) == "cancelled"
+        assert "another conversation" in str(old.error or "")
+        assert "Read that memory." in str(er.ledger_store.list(run_a))  # his words and what ran stay readable
+        assert llm.calls == 1, "the tool waiting for its approval ran, or the old visit thought again"

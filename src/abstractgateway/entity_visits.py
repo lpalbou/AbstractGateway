@@ -1114,8 +1114,7 @@ class EntityVisitHost:
                 # The same visitor, but ANOTHER conversation (Codex review 2 #9): an explicit
                 # HANDOFF — his own visit there closes (his words kept, its look-back runs) and this
                 # conversation's visit opens. Never a refusal; never someone else's visit.
-                self.close(name, str(view["run_id"]), closed_by="operator",
-                           reason="the visitor continued in another conversation")
+                self.hand_over(name, str(view["run_id"]), reason="the visitor continued in another conversation")
                 return self.open(name, participants=participants, session_id=session_id,
                                  session_tools=session_tools, conversation=conversation)
             return {
@@ -1936,6 +1935,32 @@ class EntityVisitHost:
         if status in ("completed", "failed", "cancelled"):
             self._finalize_terminal(er, manifest, run_id, state)
         return out
+
+    def hand_over(self, name: str, run_id: str, *, reason: str) -> Dict[str, Any]:
+        """The same visitor continues in ANOTHER conversation (Codex review 3 #7): his visit here ends, whatever it
+        waits on. Parked on his next message: the ordinary close (his words kept, its look-back runs). Parked on
+        anything else - an approval, an `ask_user` question - the pending interaction is SETTLED explicitly: the run
+        is cancelled with this reason (the runtime records the question's resolution as cancelled), which keeps its
+        history and every effect it completed, and the visit's terminal duty runs (the restore by ownership,
+        `session_closed`). Never a `not_waiting` refusal that leaves the new conversation without its visit."""
+        from abstractruntime.identity.visit_workflow import VISITOR_WAIT_KEY
+
+        er, run, _wf, manifest = self._load_visit(name, run_id, need_spec=False)
+        status = str(getattr(run.status, "value", run.status))
+        waiting = getattr(run, "waiting", None)
+        if status == "waiting" and str(getattr(waiting, "wait_key", "") or "") == VISITOR_WAIT_KEY:
+            return self.close(name, run_id, closed_by="operator", reason=reason)
+        if status in ("completed", "failed", "cancelled"):
+            return {"run_id": run_id, "status": status}
+        lease = self._acquire_lease(er)
+        try:
+            er.runtime.cancel_run(run_id, reason=reason, cancelled_by="handover")
+        finally:
+            if lease is not None:
+                lease.release()
+        state = er.run_store.load(run_id)
+        self._finalize_terminal(er, manifest, run_id, state)
+        return {"run_id": run_id, "status": str(getattr(state.status, "value", state.status)), "settled": True}
 
     def finalize_cancelled(self, name: str, run_id: str) -> None:
         """The kill switch cancelled this visit's run mid-turn (contract-phases

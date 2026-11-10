@@ -54,3 +54,6 @@
   arrival and opens only at the head of its home's line (`entity_visits.ARRIVALS`, shared by the durable visit and the
   hosted chat), so a newcomer never overtakes a visitor already waiting. The same visitor rejoining his own live visit
   takes no ticket.
+- **The same visitor hands over a visit whatever it waits on** (Codex review 3 #7): a visit parked on a tool approval
+  or a question is settled explicitly (cancelled with the handover's reason, the pending tool never runs, its history
+  and ledger kept, its terminal duty run) and the new conversation's visit opens, instead of `not_waiting`.
