@@ -591,6 +591,8 @@ def gather(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any =
         warnings.append(f"#FALLBACK loop status unreadable: {e}")
     grant = read_personal_grant(home_dir)
     personal = personal_grant_refusal(grant) is None
+    # Who took own time back, when it was taken back (runtime 17be7e3: kill_switch | operator; None otherwise).
+    revoked_by = None if personal else (str(grant.get("revoked_by") or "") or None)
     expires_at = _iso(grant.get("expires_at")) if personal and str(grant.get("mode") or "") == "timer" else None
     try:
         work_order = bool(read_work_order(home_dir))
@@ -639,6 +641,7 @@ def gather(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any =
         "loop": loop,
         "personal": personal,
         "personal_expires_at": expires_at,
+        "personal_revoked_by": revoked_by,
         "work_order": work_order,
         "jobs_queued": jobs_queued,
         "chat": chat,
@@ -830,6 +833,7 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
         "stopped": stopped,
         "toggles": toggles,
         "personal_expires_at": facts["personal_expires_at"],
+        "personal_revoked_by": facts.get("personal_revoked_by"),
         "sentence": _sentence(name, phase, visit, work, sleep, loop, blocked),
         "next": _next(phase, toggles, sleep, work, rec.get("resume_to"), _visit_prior(chat, durable)),
         "blocked": blocked,
@@ -1312,7 +1316,9 @@ def stop(
         _note_resume_to(rec, None)
         try:
             if personal_grant_refusal(read_personal_grant(home_dir)) is None:
-                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", fence=KILL_SWITCH)
+                # Who took own time back is recorded with it (runtime 17be7e3 PERSONAL_REVOKERS): the Stop.
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", revoked_by="kill_switch",
+                                     fence=KILL_SWITCH)
                 revoked = True
         except Exception as e:  # noqa: BLE001 - reported on its row; the stop goes on
             revoke_error = str(e)
@@ -1721,7 +1727,8 @@ def resume(registry: Any, name: str, *, reason: str = "", actor: Optional[str] =
             # the Stop, and a grant armed meanwhile by any path is considered cancelled.
             _note_resume_to(rec, None)
             if personal_grant_refusal(read_personal_grant(home_dir)) is None:
-                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", fence=RESUME)
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", revoked_by="kill_switch",
+                                     fence=RESUME)
                 revoked_at_resume = True
             write_record(entities_dir, slug, rec)
     started = {"own_time": False, "pid": None}
@@ -1778,7 +1785,7 @@ def set_toggles(
         if personal is not None and bool(facts["personal"]) != bool(personal):
             changed["personal"] = {"from": bool(facts["personal"]), "to": bool(personal)}
             write_personal_grant(home_dir, mode=("until_revoked" if personal else "disabled"), granted_by=actor,
-                                 fence=rec.fence)
+                                 **({} if personal else {"revoked_by": "operator"}), fence=rec.fence)
     if changed["personal"] is not None:
         _marker(registry, manifest, "personal_granted" if personal else "personal_grant_revoked",
                 {"channel": "toggle", "by": actor, "mode": "until_revoked" if personal else "disabled"})

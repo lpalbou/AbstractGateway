@@ -7051,7 +7051,7 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None, response:
         if _rec is None:
             raise HTTPException(status_code=409, detail="the lifecycle generation cannot be read (phases.yaml); "
                                                         "repair it before changing own time")
-        _wpg(home_dir, mode="disabled", granted_by=actor, fence=_rec.fence)
+        _wpg(home_dir, mode="disabled", granted_by=actor, revoked_by="operator", fence=_rec.fence)
     # Durable command, not a sentinel file (maintainer ruling 2026-07-08):
     # the loop consumes it at its next boundary; his thought finishes whole.
     status = stop_loop(home_dir, reason=reason, requested_by="operator")
@@ -7207,7 +7207,9 @@ def _apply_personal_grant(registry: EntityRegistry, manifest: Any, *, mode: str,
                                 "reasons": [message]},
                         headers={"X-Gateway-Error-Code": "stopped_use_resume"},
                     )
-            write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=expires_at, fence=_rec.fence)
+            # The operator's own revoke names itself (runtime 17be7e3 PERSONAL_REVOKERS); an arming write names none.
+            write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=expires_at,
+                                 **({"revoked_by": "operator"} if mode == "disabled" else {}), fence=_rec.fence)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

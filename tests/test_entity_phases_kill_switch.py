@@ -272,6 +272,9 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
         row = {i["item"]: i for i in stopped.json()["items"]}["own_time"]
         assert row == {"item": "own_time", "id": None, "code": "revoked", "outcome": "done", "sentence": "Own time was revoked."}
         assert read_personal_grant(home_dir)["mode"] == "disabled"
+        # The grant file says who took own time back (runtime 17be7e3), and so does his life state.
+        assert read_personal_grant(home_dir)["revoked_by"] == "kill_switch"
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["personal_revoked_by"] == "kill_switch"
         markers = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
                    if (m.get("payload") or {}).get("kind") == "personal_grant_revoked"]
         assert markers and markers[-1]["revoked_by"] == "kill_switch"
@@ -290,6 +293,34 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
         second = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).json()
         assert second["own_time_revoked"] is False and "own_time" not in {i["item"] for i in second["items"]}
         assert spawned == ["castor"]
+
+
+def test_the_operator_s_own_revoke_says_so_and_the_next_grant_clears_it(monkeypatch: pytest.MonkeyPatch):
+    """runtime 17be7e3 (PERSONAL_REVOKERS kill_switch | operator): the operator turning own time off records
+    revoked_by operator (the grant file and his life state say "revoked by the operator"); giving it again clears it."""
+    from abstractruntime.identity.life import read_personal_grant
+
+    from abstractgateway import entity_phase
+
+    monkeypatch.setattr(entity_phase, "start_own_time",
+                        lambda r, m, p, return_to=None, *, fence: {"pid": 1})
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        home_dir = _home_dir()
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["personal_revoked_by"] is None
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
+        off = client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": False})
+        assert off.status_code == 200, off.text
+        assert read_personal_grant(home_dir)["revoked_by"] == "operator"
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["personal_revoked_by"] == "operator"
+        # The personal-grant door's own revoke names the operator too.
+        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
+        assert "revoked_by" not in read_personal_grant(home_dir)
+        assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "disabled"}).status_code == 200
+        assert read_personal_grant(home_dir)["revoked_by"] == "operator"
+        assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
+        assert "revoked_by" not in read_personal_grant(home_dir)
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["personal_revoked_by"] is None
 
 
 def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest.MonkeyPatch):
