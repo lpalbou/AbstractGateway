@@ -140,8 +140,14 @@ def test_a_durable_visit_close_authors_what_formation_left_pending(monkeypatch: 
     from abstractgateway import entity_authoring, entity_chat
 
     class _FirstAuthoringFails(_LLM):
+        # Armed after the birth: the birth's own authoring calls (the unnamed spark items, AbstractMemory
+        # engram(author=)) are not the formation this test fails.
+        armed = False
+        failed = False
+
         def generate(self, **kwargs):
-            if kwargs.get("response_model") is not None and not self.structured:
+            if self.armed and kwargs.get("response_model") is not None and not self.failed:
+                self.failed = True
                 self.structured.append(kwargs)
                 raise RuntimeError("the summaries endpoint refused")
             return super().generate(**kwargs)
@@ -150,6 +156,7 @@ def test_a_durable_visit_close_authors_what_formation_left_pending(monkeypatch: 
     monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: fake)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        fake.armed = True
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         rid = opened.json()["run_id"]
         assert client.post(f"/api/gateway/entities/Castor/visit/{rid}/turn", json={"text": "the tide?"}).status_code == 200
