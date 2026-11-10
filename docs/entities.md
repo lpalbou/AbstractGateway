@@ -548,6 +548,49 @@ avatar: {style, color}|null}`, every key present. An agent's turn is named by it
 (`workflow_selection.name`, never a model name); a person's by the account's display name; a
 summon's answer is the entity's.
 
+## His topics (memory's communities)
+
+An entity's memories group into **topics** while it sleeps. Memory forms them (AbstractMemory's
+`communities_pass`, run by the runtime's night after the metadata repair) and keeps each topic as a
+`community` record with an authored title and summary; the gateway serves what memory formed and computes
+nothing on a request.
+
+```mermaid
+flowchart LR
+  night["his sleep: repair, then topics"] --> version["memory: a new version of his topics"]
+  version --> stream["replay stream: one communities_changed marker"]
+  stream --> app["Entity app re-reads /communities"]
+  version --> route["GET /communities and GET /graph"]
+```
+
+- **Where they form**: every sleep the gateway runs (the operator's sleep, the idle sweep's) runs the
+  runtime's night (`build_consolidator`): memory's sleep pass, the repair of titles and summaries, then the
+  topics (what has no vector is embedded first with the home's own embedder), then the night voice. The
+  own-time loop runs the same night. A Stop ends it at the next step; nothing is written after it.
+- **`GET /entities/{name}/communities`**: memory's payload version 2, unchanged: `{version, version_seq,
+  first_sleep_pending, algorithm, communities: [{id, key, title, summary, pending, verdict, size, kinds,
+  members: [{id, via}], provisional_ids, cohesion, layout: {xy, radius, seats}, centroid_stale, facts}],
+  links: [{a, b, weight}]}`. `key` is stable across versions (`id` is the version's record). A topic whose
+  title is still being written says so in `pending` (title `null`), never a keyword label. Before his first
+  sleep: `first_sleep_pending: true` and no topics (the app says his topics form at his first sleep).
+  Cached per home and journal position, so a memory formed since the version shows in `provisional_ids`.
+- **`GET /entities/{name}/graph`**: the whole graph the app draws, in one read: `{version, journal_seq,
+  communities_version, communities, nodes, edges}`. Each node is an open formed record (community records
+  never are) with the latest display block of its binding (exactly as the replay serves it), its topic `key`,
+  `via` and seat from the communities read; `edges` are the formation edges between nodes. Folded once per
+  process and home, then only the stream's tail since `journal_seq`; the app tails the live stream from there.
+- **The live marker**: when a new version's records pass through the replay stream, the gateway records one
+  host marker `{kind: "communities_changed", version_seq}` per version; the app re-reads `/communities` on
+  it. A community record's binding draws its revision chain only, never an edge per member.
+- **One memory's topic**: the record read (`GET .../records/{graph_id}/verbatim`) and the card's record
+  briefs carry `community`: `{key, title, pending, provisional, via}` or `null`, so a hover card or the Detail
+  tab can say which topic the memory is in.
+- **The entity's own view**: the `topics` tool (tier 1, read-only) reads the same communities in visits.
+- **Sleeping when fragmented**: besides `sleep.after_hours` and `sleep.after_events`, an idle entity sleeps
+  once more than `sleep.after_fragmented_share` (cognition profile, default 0.15) of its memories are not yet
+  whole (placed provisionally, without a vector, or with a title or summary still being written), if
+  something formed since its last sleep; the sleep's reason says the share.
+
 ## The deposit gate (actor by channel, never by payload)
 
 Every write to an entity's home passes a door that derives the **actor from
