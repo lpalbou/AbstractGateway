@@ -800,3 +800,36 @@ def test_the_kill_switch_ends_a_live_summon_run_with_a_clean_cancelled_record(cl
     ended = {r.get("step_id") for r in records if r.get("status") in ("completed", "failed", "cancelled", "waiting")}
     assert started <= ended, "a half-written ledger entry was left behind"
     assert not any(r.get("status") == "failed" for r in records)
+
+
+def test_summon_takes_the_mentions_of_the_message_like_runs_start(client: TestClient):
+    """POST /entities/{name}/summon takes `mentions` with the /runs/start semantics (c26d38a2): the chips, never the
+    text, resolved like the mention door and written host-only as `_runtime.mentions {entities, line}` (a client copy
+    is dropped); the bundle host adds the line after the history, right before the person's words, so the summoned
+    entity answers only what is addressed to it. Naming the summoned entity itself mentions nobody else. The request
+    model used to drop the key silently."""
+    from abstractgateway.service import get_gateway_service
+
+    for name in ("Castor", "Nerin"):
+        assert client.post("/api/gateway/entities", json={"name": name, "spark": _spark(name)}).status_code == 201
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+    body = {"prompt": "@Nerin what do you think?", "bundle_id": "min", "flow_id": "root",
+            "input_data": {"provider": "mock", "model": "mock-model",
+                           "_runtime": {"mentions": {"entities": [], "line": "a client's own line"}}}}
+
+    unknown = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nobody"]})
+    assert unknown.status_code == 404 and unknown.json()["code"] == "entity_not_found", unknown.text
+
+    r = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nerin", "Castor"]})
+    assert r.status_code == 200, r.text
+    run = get_gateway_service().host.run_store.load(r.json()["run_id"])
+    mentions = run.vars["_runtime"]["mentions"]
+    assert [e["entity_id"] for e in mentions["entities"]] == ["entity:nerin"]
+    assert "answer for themselves" in mentions["line"] and "a client's own line" not in mentions["line"]
+    assert run.vars["context"]["messages"][-1] == {"role": "system", "content": mentions["line"]}
+
+    # A client's own _runtime.mentions without chips is dropped (host-written only).
+    assert client.post("/api/gateway/entities/Nerin/state", json={"state": "awake"}).status_code == 200
+    forged = client.post("/api/gateway/entities/Nerin/summon", json=body)
+    assert forged.status_code == 200, forged.text
+    assert "mentions" not in (get_gateway_service().host.run_store.load(forged.json()["run_id"]).vars.get("_runtime") or {})

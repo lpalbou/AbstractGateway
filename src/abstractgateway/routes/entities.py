@@ -3358,6 +3358,16 @@ class SummonEntityRequest(BaseModel):
     # a polling client (it IS the mailbox drop) and the answer lands in the
     # durable session.
     queue: bool = Field(default=False, description="If the seat is held, wait in the door queue (202 + poll) instead of a 409")
+    mentions: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "The other entities this message mentions: the composer's chips (names or slugs, as sent to POST "
+            "/sessions/{id}/mentions), never parsed from the text, the same as POST /runs/start. The summoned "
+            "entity is told they answer for themselves and answers only the part addressed to it, or says nothing "
+            "with an empty reply. Naming the summoned entity itself mentions nobody else. A name that is not a "
+            "visible entity is 404 `entity_not_found`."
+        ),
+    )
     park: bool = Field(default=False, description="With queue=true: leave the message with the entity (no polling client expected; exempt from poll-silence reaping)")
 
 
@@ -3486,6 +3496,8 @@ def summon_entity(name: str, req: SummonEntityRequest):
         caller_kind=normalize_caller_kind(req.caller_kind),
         caller_is_person=principal is None or not _is_entity_principal(principal),
     )
+    if isinstance(out, Response):
+        return out  # a refusal already shaped (an unknown mentioned entity: 404 entity_not_found)
     if out.get("queued"):
         # Queued admission is 202 (contract §2): accepted for processing,
         # not yet a run. The body carries queue_id/position/poll.
@@ -3762,6 +3774,33 @@ def _summon_core(
     input_data = _sanitize_run_workspace_policy(
         input_data, principal=current_gateway_principal(), session_id=getattr(req, "session_id", None)
     )
+    # THE MENTIONS LINE (the /runs/start semantics, c26d38a2): written host-only as _runtime.mentions
+    # {entities, line} from the request's chips (a client copy is dropped); the bundle host adds the
+    # line after the history, right before the person's words.
+    _rt_client = input_data.get("_runtime")
+    if isinstance(_rt_client, dict) and "mentions" in _rt_client:
+        input_data["_runtime"] = {k: v for k, v in _rt_client.items() if k != "mentions"}
+
+    def _is_self(chip: Any) -> bool:
+        try:
+            return entity_slug(str(chip)) == home.manifest.slug
+        except Exception:  # noqa: BLE001 - an invalid name is no self-mention (the resolver 404s it)
+            return False
+
+    _others = [m for m in (req.mentions or []) if not _is_self(m)]
+    if _others:
+        from ..entity_mentions import agent_mention_context
+
+        try:
+            _mention_ctx = agent_mention_context(registry, list(_others))
+        except KeyError as e:
+            from .session_mentions import _not_found as _mention_not_found
+
+            return _mention_not_found(str(e.args[0]) if e.args else "")
+        if _mention_ctx["entities"]:
+            _rt_m = dict(input_data["_runtime"]) if isinstance(input_data.get("_runtime"), dict) else {}
+            _rt_m["mentions"] = _mention_ctx
+            input_data["_runtime"] = _rt_m
     input_data["prompt"] = req.prompt
     # Who started it (backlog 1038): the summon counts in the entity's track record (framework ADR
     # 0052 §5). Host-written; a client-sent `_meta.origin` is replaced, never trusted.
@@ -4454,6 +4493,11 @@ def _attempt_queue_admission(name: str, *, svc: Any = None, registry: Any = None
                 svc=svc,
                 registry=registry,
             )
+            if isinstance(out, Response):
+                # A refusal the core shaped itself (an unknown mentioned entity): it can never admit.
+                import json as _json
+
+                raise HTTPException(status_code=out.status_code, detail=_json.loads(bytes(out.body)))
         except HTTPException as e:
             contention = _is_contention_refusal(e.detail)
             if contention is not None:
