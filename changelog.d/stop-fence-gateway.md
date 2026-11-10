@@ -29,3 +29,6 @@
     see it at their next read. The start doors answer a start the Stop overtook (`StoppedByOperator`) with
     "Stopped. Resume him first." and a start another one beat ("already starting", `LoopAlreadyRunning`) as
     `already_running`, never `start_failed`.
+- Tests stub only the loop's process creation (Codex review 3 #12): `subprocess.Popen` answers the runtime spawn's
+  own argv with a fake child (its pid beyond any pid_max), so the spawn lock, the start refusal, the lifecycle fence
+  and the reservation run in every test; `loop_spawns` records the loops a test's code tried to create.

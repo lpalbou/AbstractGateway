@@ -708,24 +708,80 @@ def _fixed_summaries_capability(request: pytest.FixtureRequest, monkeypatch: pyt
     monkeypatch.setattr(EntityRegistry, "capability_llm", capability_llm)
 
 
+# A pid beyond every platform's pid_max (macOS 99998, Linux at most 2**22): never a live process.
+FAKE_LOOP_PID = 2**30 - 7
+
+
+def _is_loop_argv(args: object) -> bool:
+    """The runtime spawn's own argv (`spawn_loop_process`: the loop module and its spawn-only flag) -
+    never a test's own stand-in loop (entity_fake_loop runs the same module on purpose)."""
+    argv = [str(a) for a in args] if isinstance(args, (list, tuple)) else []
+    return "--skip-command-fast-forward" in argv and any(
+        a == "-m" and b == "abstractruntime.identity.life" for a, b in zip(argv, argv[1:]))
+
+
+class _FakeLoopProcess:
+    """What process creation returns for the own-time loop's argv in a test: a child that "started"
+    (alive at the spawn's own death check) and was never a process - its pid is beyond any pid_max,
+    so every liveness probe afterwards reads it gone. Nothing else is faked."""
+
+    def __init__(self, argv: list) -> None:
+        self.args = argv
+        self.pid = FAKE_LOOP_PID
+        self.returncode = None
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self) -> None:
+        pass
+
+    def terminate(self) -> None:
+        pass
+
+    def send_signal(self, sig) -> None:
+        pass
+
+
 @pytest.fixture(autouse=True)
-def _no_real_own_time_process(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_real_own_time_process(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
     # A queued job, a toggle or a resume can start an entity's own-time loop (contract v3): a REAL
     # child process (`python -m abstractruntime.identity.life`) that would outlive the test and call
-    # a model. Only the process creation is stubbed here; the whole admission path still runs. A test
-    # that needs the real child marks itself `real_loop_spawn`.
+    # a model. ONLY THE PROCESS CREATION is stubbed (Codex review 3 #12): `subprocess.Popen` answers
+    # the runtime spawn's argv with a fake child; the whole spawn path still runs - the spawn lock,
+    # the start refusal (`loop_start_refusal`), the lifecycle fence and the reservation (loop_status
+    # `starting`). Every other process starts for real. The argv of each loop spawn is recorded
+    # (`loop_spawns`). A test that needs the real child marks itself `real_loop_spawn`.
     # The background repair/idle sweeper each app start would launch is off too: from a test it wakes
-    # minutes later over a finished test's homes (the idle sweep opens them — a slow fd leak across
+    # minutes later over a finished test's homes (the idle sweep opens them - a slow fd leak across
     # a long session). The sweeper's functions are tested by calling them directly.
     monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", "0")
+    spawns: list = []
     if request.node.get_closest_marker("real_loop_spawn") is not None:
+        yield spawns
         return
-    try:
-        import abstractruntime.identity.life as life
-    except Exception:  # noqa: BLE001 - no runtime in this tree: nothing to stub
-        return
-    monkeypatch.setattr(life, "spawn_loop_process", lambda home_dir, **kw: {"pid": None, "stubbed_by_test": True, **{
-        k: kw.get(k) for k in ("provider", "model", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size")}})
+    import subprocess
+
+    real_popen = subprocess.Popen
+
+    class _Popen(real_popen):  # a subclass: isinstance checks and subclassing keep working
+        def __new__(cls, args, *a, **kw):
+            if _is_loop_argv(args):
+                spawns.append(list(args))
+                return _FakeLoopProcess(list(args))
+            return super().__new__(cls)
+
+    monkeypatch.setattr(subprocess, "Popen", _Popen)
+    yield spawns
+
+
+@pytest.fixture
+def loop_spawns(_no_real_own_time_process) -> list:
+    """The argv of every own-time loop process the test's code tried to create (none really)."""
+    return _no_real_own_time_process
 
 
 @pytest.fixture(autouse=True)

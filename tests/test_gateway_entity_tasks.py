@@ -56,16 +56,13 @@ def test_task_status_words_are_the_closed_set(tmp_path: Path) -> None:
         set_task_status(home, task_id="nope", status="done", by="person:admin")
 
 
-def test_task_endpoints_marker_first_and_roster_field(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_task_endpoints_marker_first_and_roster_field(monkeypatch: pytest.MonkeyPatch, loop_spawns: list) -> None:
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "tasks-marker-secret")
-    # A queued task starts the loop for work (contract v3 D1): only the process creation is stubbed,
-    # so the task stays pending for the roster to count.
-    import abstractruntime.identity.life as life_mod
-
-    spawns: list = []
-    monkeypatch.setattr(life_mod, "spawn_loop_process", lambda home, **kw: spawns.append(kw) or {"pid": 999999})
+    # A queued task starts the loop for work (contract v3 D1): only the process creation is stubbed
+    # (conftest: the loop's Popen; the runtime's spawn admission, lock and reservation run), so the
+    # task stays pending for the roster to count.
     from abstractgateway.app import app
 
     with TestClient(app, headers={"Authorization": "Bearer tasks-marker-secret"}) as client:
@@ -89,7 +86,10 @@ def test_task_endpoints_marker_first_and_roster_field(monkeypatch: pytest.Monkey
         assert task["by"] == "person:admin"
         assert task["origin"].startswith("person:admin via POST")
         assert r1.json()["pending"] == 1
-        assert len(spawns) == 1 and spawns[0].get("return_to") is None  # the job started the loop, for work
+        # The job started the loop, for work: one process created, told no own-time phase to return to.
+        assert len(loop_spawns) == 1
+        argv = loop_spawns[0]
+        assert argv[argv.index("--return-to") + 1] == "none"
 
         # The roster now carries the count (three-consumer contract c2801).
         roster = client.get("/api/gateway/entities").json()["entities"]
