@@ -473,4 +473,9 @@ def test_the_enabled_worker_puts_one_home_to_sleep_per_sweep_the_longest_waiting
             clock.closing = True
             clock.ticks.release()
             worker.join(timeout=30)
+            # A deliberate end, never a death: the registry is process-wide, and a dead "entity-self-repair"
+            # entry would make every later /api/health in this process answer "degraded" (shard 3, 2026-11-10).
+            from abstractgateway.worker_registry import unregister_worker
+
+            unregister_worker("entity-self-repair")
         assert not worker.is_alive()

@@ -1108,3 +1108,23 @@ def _abstractnote_workflows_only_when_asked(request, monkeypatch):
 
     monkeypatch.setattr(abstractnote_seam, "note_bundle_paths", lambda _root: [])
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_dead_worker_left_behind(request: pytest.FixtureRequest):
+    """The worker registry (worker_registry.py) is process-wide: a test that starts a real long-lived worker
+    thread and lets it end without `unregister_worker` leaves a DEAD entry behind, and every later
+    `/api/health` in the same process answers "degraded" with that name in `dead_workers` (found 2026-11-10:
+    test_entity_idle_sleep's real repair sweeper turned test_gateway_runner_singleton_lock red in shard 3).
+    After each test: a dead registered worker is removed (so the next test is not polluted) AND the test that
+    left it is failed by name, at its source."""
+    from abstractgateway.worker_registry import unregister_worker, workers_snapshot
+
+    before = {name for name, st in workers_snapshot().items() if not st.get("alive")}
+    yield
+    dead = sorted(name for name, st in workers_snapshot().items() if not st.get("alive") and name not in before)
+    for name in dead:
+        unregister_worker(name)
+    if dead:
+        pytest.fail(f"{request.node.nodeid} left dead registered worker(s) behind: {dead}; a deliberately "
+                    "ended worker must be unregistered (worker_registry.unregister_worker) in the test's teardown")
