@@ -125,7 +125,9 @@ _role_lock = threading.Lock()
 #         (skills_library.py), the entity phases (`home_state_lock`, `read_lifecycle_generation`,
 #         `read_job_queue`, `TurnCancelled`), the cognition profile and `sleep_thresholds`, turn authors,
 #         `drain_authoring` (entity_authoring.py) and `TOOL_RESULT_ARTIFACT_KIND` (routes/entity_replay.py).
-ABSTRACTRUNTIME_FLOOR = "0.19.0"
+# 0.19.1: the self-knowledge brief (`identity.self_brief.read_self_brief`, served by GET /entities/{name}/self-brief
+#         and written into the prefix at the end of a sleep).
+ABSTRACTRUNTIME_FLOOR = "0.19.1"
 
 
 def _installed_runtime_version() -> str:
@@ -1002,6 +1004,11 @@ def require_runtime_features(runtime: Any) -> None:
         from abstractruntime.integrations.abstractcore.skill_roots import register_skill_roots  # noqa: F401
     except ImportError:
         missing.append("registered skill roots (abstractruntime.integrations.abstractcore.skill_roots.register_skill_roots, AbstractRuntime 0.19.0)")
+    # AbstractRuntime 0.19.1: the self-knowledge brief the route GET /entities/{name}/self-brief reads.
+    try:
+        from abstractruntime.identity.self_brief import read_self_brief  # noqa: F401
+    except ImportError:
+        missing.append("the self-knowledge brief reader (abstractruntime.identity.self_brief.read_self_brief, AbstractRuntime 0.19.1)")
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).

@@ -336,6 +336,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Changed
 
+- Dependency floor: AbstractRuntime 0.19.1 (`identity.self_brief.read_self_brief`, the brief the new route serves;
+  the host-build check names it when missing).
 - **The line the conversation's agent gets when a message mentions entities is imperative and last** (the agent read the softer line and still answered for the mentioned entity after a long workspace search). It is
   now "The mentioned entities (<names>) answer this message themselves. Unless the user addressed you directly,
   reply with an empty message.", the last system instruction before the person's words. The mentions are the

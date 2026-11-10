@@ -49,10 +49,10 @@ entity's life grows, and notification emails that show the automation's Markdown
 
 Upgrading to 0.21.0:
 
-- It needs AbstractRuntime 0.19.0, AbstractMemory 0.5.0, AbstractCore 2.35.0, abstractavatar 0.2.0, abstractagent
+- It needs AbstractRuntime 0.19.1, AbstractMemory 0.5.0, AbstractCore 2.35.0, abstractavatar 0.2.0, abstractagent
   0.6.1 and abstractskill 0.3.11 or newer (dependency floors: `pip install -U abstractgateway` brings them). On an
   older AbstractRuntime the gateway refuses to build its runtime and says so: "this gateway needs
-  abstractruntime>=0.19.0".
+  abstractruntime>=0.19.1".
 - Code that opens an entity home beside the gateway (a script, a plugin) passes the fence AbstractRuntime 0.19.0
   requires: `open_home(..., fence=)`, `open_entity_runtime(..., fence=)`, `ChatSession(..., fence=)`; the gateway
   passes its own everywhere.
