@@ -16838,6 +16838,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Fixed
 
+- A visit attachment that is a symlink loop is refused 400 `attachment_unreadable` on every Python: on 3.13
+  `Path.resolve()` no longer raises on a loop and `is_file()` swallowed the ELOOP, so the door said 404 "no file"
+  (found by the 0.21.0 release gate's 3.13 shard); the validator now stats once before classifying.
 - **An authored summary is never shown as cut** (two visit-close summaries the summaries
   capability authored at formation served `cut: true`). A reading whose `digest_method` is `authored:<capability>`,
   whose record carries a `metadata_authored` stamp covering the summary, or whose formation provenance is
