@@ -2637,7 +2637,11 @@ class EntityRegistry:
                 # app shows "resting for maintenance" while this request is still working.
                 from .entity_phase import safe_publish
 
-                safe_publish(self, manifest.slug, "operator_sleep")
+                from .entity_phase import IDLE_SWEEP_WRITER as _IDLE_WRITER
+
+                # The ledger's cause names whose sleep it is (Castor E2E 2026-11-10): the idle sweep's own sleep
+                # (his, by the threshold its reason names) is `idle_sleep`, never the operator's.
+                safe_publish(self, manifest.slug, "idle_sleep" if written_by == _IDLE_WRITER else "operator_sleep")
                 try:
                     if maintenance_generation is None:
                         raise _MaintenanceSuperseded()  # a Stop landed since the sleep was admitted

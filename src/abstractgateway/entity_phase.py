@@ -51,6 +51,8 @@ ACTIVITY_PHASES = ("visit", "work", "personal", "sleep")
 SELF_SLEEP_WRITERS = ("self", "personal-cycle", "sleep-bound")
 # The idle sweep's sleep (contract v3 D2): his own sleep, entered by the gateway from idle.
 IDLE_SWEEP_WRITER = "idle-sweep"
+#: The `phase_changed` cause of the Stop's own row (the kill switch, contract-phases §3).
+KILL_SWITCH_CAUSE = "kill_switch"
 # Sleeps the old loop gate wrote when it found nothing to do (root 1178): until the runtime batch
 # they are not sleep at all — the entity is awake and reachable (contract §1.2).
 GATE_SLEEP_WRITERS = ("grant-gate", "day-gate", "need-check")
@@ -1090,7 +1092,10 @@ def publish(
             rec["since"] = since
             if snap["phase"] in ACTIVITY_PHASES:
                 rec["last_activity_phase"] = snap["phase"]
-            rec["last_cause"] = str(cause or "observed")
+            # Entering `stopped` is the kill switch's act whichever write point published it (Castor E2E
+            # 2026-11-10: the visit the Stop closed published first and the Stop's row read visit_closed).
+            entering_stop = snap["phase"] == "stopped" and prev_phase != "stopped"
+            rec["last_cause"] = KILL_SWITCH_CAUSE if entering_stop else str(cause or "observed")
             rec["last_from"] = prev_phase
             _write_published(entities_dir, slug, rec)
             # A loop that ended because it was asked to (graceful stop, personal off) hands the
@@ -1430,7 +1435,7 @@ def stop(
     with fenced(entities_dir, slug, KILL_SWITCH) as rec:
         rec["stop_outstanding"] = outstanding
         write_record(entities_dir, slug, rec)
-    body = publish(registry, name, "stop", chat_host=chat_host, visit_host=visit_host)
+    body = publish(registry, name, KILL_SWITCH_CAUSE, chat_host=chat_host, visit_host=visit_host)
     complete = not outstanding and not any(i["outcome"] == "cancel_requested" for i in items)
     loop_item = next((i for i in items if i["item"] == "loop"), {})
     body.update({

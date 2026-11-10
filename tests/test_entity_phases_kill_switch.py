@@ -138,6 +138,14 @@ def test_stop_closes_the_visit_and_every_door_then_answers_stopped(monkeypatch: 
         assert rows["visit"] == {"item": "visit", "id": run_id, "outcome": "closed", "code": None, "sentence": None}
         assert stop.json()["cancelled"]["visits"] == [run_id]
         assert client.get("/api/gateway/entities/Castor/visit").json().get("open") is False
+        # The Stop's own ledger row is the kill switch's, never the visit it closed (Castor E2E 2026-11-10: it read
+        # visit_closed, the close having published first).
+        from abstractgateway.entity_replay import read_host_markers
+
+        rows = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
+                if (m.get("payload") or {}).get("kind") == "phase_changed"]
+        (into_stop,) = [r for r in rows if r.get("to") == "stopped" and r.get("from") != "stopped"]
+        assert into_stop["cause"] == "kill_switch", rows
 
         for path, body in (("visit/open", {}), ("chat/open", {"context_window": 32000})):
             refused = client.post(f"/api/gateway/entities/Castor/{path}", json=body)

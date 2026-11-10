@@ -93,7 +93,7 @@ _RULED_PHASES = ("visit", "work", "personal", "sleep")
 # already recorded as its own moment: the tile shows the act, never its echo.
 _DOOR_ACT_CAUSES = frozenset({
     "visit_opened", "visit_closed", "chat_opened", "chat_closed", "summon_started", "toggle", "stop",
-    "resume", "retry", "operator_sleep", "operator_wake",
+    "resume", "retry", "operator_sleep", "operator_wake", "kill_switch", "idle_sleep",
 })
 # What the tile's "now" may say (contract-phases v2 §1.1): the four phases plus the two statuses.
 _SERVED_PHASES = _RULED_PHASES + ("idle", "stopped")
