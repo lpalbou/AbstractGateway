@@ -181,3 +181,81 @@ def test_the_payload_is_reread_when_the_journal_moves_and_folds_a_new_placement(
 def test_an_unknown_entity_is_a_404() -> None:
     with _client() as client:
         assert client.get("/api/gateway/entities/Nobody/communities").status_code == 404
+
+
+# --------------------------------------------------------------------------- the gateway's sleep runs the runtime's night
+
+
+class _Summaries:
+    """The summaries capability (and the mind): one structured title + summary per call, numbered so sibling topics
+    never collide; any other call answers plain text."""
+
+    model_info = {"provider": "lmstudio", "model": "test-summaries"}
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, *args: Any, response_model: Any = None, **kwargs: Any) -> Any:
+        self.calls += 1
+        if response_model is not None:
+            return response_model(title=f"Authored title {self.calls}", summary=f"What record {self.calls} holds.")
+
+        class _Reply:
+            content = "A quiet night."
+            usage = {"total_tokens": 1}
+
+        return _Reply()
+
+
+def _install_minds(monkeypatch: pytest.MonkeyPatch) -> _Summaries:
+    from abstractgateway import entity_chat
+
+    llm = _Summaries()
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind",
+                        lambda: {"provider": "lmstudio", "model": "test-mind", "base_url": None, "reasoning": None})
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+    return llm
+
+
+def _record(home: Any, gid: str) -> Dict[str, Any]:
+    from abstractruntime.integrations.abstractmemory.memory_facade import resolve_digest_assertion
+
+    a = resolve_digest_assertion(home.store, gid)
+    return dict(a.attributes or {})
+
+
+@pytest.mark.capability_models  # the real capability path, on this file's scripted client
+def test_an_operator_sleep_runs_the_runtime_s_night_repair_then_topics(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The operator's sleep (POST .../state asleep + dream) runs the runtime's night (build_consolidator), not
+    memory's sleep_pass alone: the metadata repair authors a record formed without a title, the topics stage forms
+    a communities version (titled by the same author), its version joins tonight's maintenance detail, and the
+    night's topics line is in the home's own-time log."""
+    from abstractmemory import MemoryRecordInput
+
+    _install_minds(monkeypatch)
+    with _client() as client:
+        home = _born(client)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            [untitled] = home.memory.remember_many(
+                [MemoryRecordInput(kind="episode", title="", digest="The dam keeper told me about the spillway gauges.",
+                                   pending=("title",))],
+                scope="life", owner_id=home.entity_id, idempotency_key="untitled", turn_id="untitled")
+        assert not str(_record(home, untitled).get("title") or "").startswith("Authored title")
+        assert client.get("/api/gateway/entities/Castor/communities").json()["first_sleep_pending"] is True
+
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "asleep", "dream": True})
+        assert r.status_code == 200, r.text
+        night = r.json()["dream"]
+        assert night.get("communities", {}).get("version_seq") is not None, night
+        assert night["authoring"]["authored"] >= 1, night["authoring"]
+
+        served = client.get("/api/gateway/entities/Castor/communities").json()
+        assert served["first_sleep_pending"] is False and served["version_seq"] == night["communities"]["version_seq"]
+        assert any(str(c["title"] or "").startswith("Authored title") for c in served["communities"]), served
+        assert str(_record(home, untitled).get("title") or "").startswith("Authored title"), _record(home, untitled)
+
+        last = home.memory.tasks.last_maintenance(_ladder(home.entity_id), kind="night")
+        assert last and last["detail"].get("communities_version") == served["version_seq"], last
+        log = (home.home_dir / "own_time.log").read_text(encoding="utf-8")
+        assert f"(topics: version {served['version_seq']} - " in log, log[-2000:]

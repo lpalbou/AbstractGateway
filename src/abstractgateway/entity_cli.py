@@ -235,14 +235,19 @@ def run_entity_command(args: Any) -> None:
         ]
         dream = result.get("dream")
         if dream:
-            created = dream.get("created")
-            if created:
+            # The runtime's night (build_consolidator's loop-facing shape): `formed`, `dream_record_id`, memory's
+            # own report under `engine`, the topics receipt under `communities`.
+            engine_dream = (dream.get("engine") or {}).get("dream") or {}
+            if dream.get("formed"):
                 lines.append(
                     f"  the sleep formed a dream: {dream.get('dream_record_id')} "
-                    f"(salience {dream.get('salience')})"
+                    f"(salience {engine_dream.get('salience')})"
                 )
             else:
                 lines.append("  the sleep was quiet (no dream this pass)")
+            topics = dream.get("communities") or {}
+            if topics.get("version_seq") is not None:
+                lines.append(f"  his topics: version {topics['version_seq']} ({topics.get('communities')} topics)")
         _emit(result, as_json=bool(args.json), human_lines=lines)
         return
 

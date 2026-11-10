@@ -199,6 +199,25 @@ class _MaintenanceSuperseded(Exception):
     visit took the posture): the pass is skipped, never run under them."""
 
 
+def _night_log(home_dir: Path, slug: str) -> Callable[[str], None]:
+    """The runtime night's `out` when the gateway runs the sleep: each line appended to the home's
+    own-time log (`own_time.log`, where the loop's night writes the same lines: its stdout) and logged.
+    A log that cannot be written never stops the night."""
+    from abstractruntime.identity.life import LOOP_LOG_FILENAME
+
+    path = Path(home_dir) / LOOP_LOG_FILENAME
+
+    def out(line: str) -> None:
+        logger.info("night of %s: %s", slug, line)
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(str(line) + "\n")
+        except OSError as e:
+            logger.warning("night of %s: the own-time log %s could not be written: %s", slug, path, e)
+
+    return out
+
+
 @dataclass(frozen=True)
 class EntityManifest:
     """Gateway-owned identity card for one home directory."""
@@ -1904,61 +1923,67 @@ class EntityRegistry:
 
             from . import entity_chat as _ec
 
-            home_dir = self.entities_dir / slug
             try:
-                mind = _ec.resolve_entity_mind(None, None, home_dir=home_dir)
+                llm = self.mind_llm(slug)
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
-            provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
-
-            # Resolve endpoint: virtual providers the SAME way bundle_host
-            # does (_resolve_gateway_default_endpoint_profile). The entity
-            # substrate may name `endpoint:<profile>` (an operator-configured
-            # remote like OVH); create_llm only knows concrete families, so
-            # the raw `endpoint:` string reaching it raises "Unknown provider"
-            # — the door must resolve the profile to (provider_family,
-            # base_url, api_key) first. bundle_host attaches a client-side
-            # resolver for workflow runs; the per-entity runtime's LLM client
-            # has none, so the door resolves BEFORE building the client. A
-            # named-but-missing/disabled endpoint profile FAILS LOUD (the
-            # no-fallback rule — a summoned entity never silently swaps mind).
-            try:
-                provider, endpoint_kwargs = self._resolve_entity_provider(str(provider).strip())
-            except _ec.ChatOpenRefused as e:
-                return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
-
-            # No output cap ever (operator 2026-10-02): the model works at its full capacity.
-            llm_kwargs: Dict[str, Any] = {"model": model}
-            if thinking:
-                # The substrate's reasoning effort applies to the resident
-                # lane too — one mind, one triple, every lane.
-                llm_kwargs["thinking"] = thinking
-            if mind["speculation"] is not None:
-                # The mind's MTP intent (round 3), like thinking: every lane.
-                llm_kwargs["speculation"] = mind["speculation"]
-            llm_kwargs.update(endpoint_kwargs)  # base_url/api_key from a resolved endpoint profile
-            if "base_url" not in llm_kwargs:
-                # A resolved endpoint profile's base_url wins; otherwise the
-                # gateway text route's own endpoint when this is its provider.
-                route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind["base_url"])
-                if route_base_url:
-                    # The configured key goes to this address only when it is the
-                    # configured one (security, 0.21.0).
-                    from .provider_connections import configured_provider_request_kwargs
-
-                    llm_kwargs.update(
-                        configured_provider_request_kwargs(
-                            provider,
-                            current_base_dir=self.data_dir,
-                            root_base_dir=self.root_data_dir,
-                            base_url=route_base_url,
-                        )
-                    )
-            factory = _ec._default_llm_factory  # late-bound module attribute
-            llm = factory(provider, **llm_kwargs)
             return _llm_effect_generate(llm, effect, empty_message="LLM returned no content for the visit turn")
 
         return handler
+
+    def mind_llm(self, slug: str) -> Any:
+        """The client of this entity's ONE mind, built per call (the LLM_CALL handler's and the night
+        voice's): substrate resolved through the no-fallback chain, endpoint profiles resolved first,
+        the gateway route's own address and key for its provider, thinking and MTP speculation as the
+        mind names them. Raises entity_chat.ChatOpenRefused for an unresolvable mind or endpoint."""
+        from . import entity_chat as _ec
+
+        home_dir = self.entities_dir / slug
+        mind = _ec.resolve_entity_mind(None, None, home_dir=home_dir)
+        provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
+
+        # Resolve endpoint: virtual providers the SAME way bundle_host
+        # does (_resolve_gateway_default_endpoint_profile). The entity
+        # substrate may name `endpoint:<profile>` (an operator-configured
+        # remote like OVH); create_llm only knows concrete families, so
+        # the raw `endpoint:` string reaching it raises "Unknown provider"
+        # — the door must resolve the profile to (provider_family,
+        # base_url, api_key) first. bundle_host attaches a client-side
+        # resolver for workflow runs; the per-entity runtime's LLM client
+        # has none, so the door resolves BEFORE building the client. A
+        # named-but-missing/disabled endpoint profile FAILS LOUD (the
+        # no-fallback rule — a summoned entity never silently swaps mind).
+        provider, endpoint_kwargs = self._resolve_entity_provider(str(provider).strip())
+
+        # No output cap ever (operator 2026-10-02): the model works at its full capacity.
+        llm_kwargs: Dict[str, Any] = {"model": model}
+        if thinking:
+            # The substrate's reasoning effort applies to the resident
+            # lane too — one mind, one triple, every lane.
+            llm_kwargs["thinking"] = thinking
+        if mind["speculation"] is not None:
+            # The mind's MTP intent (round 3), like thinking: every lane.
+            llm_kwargs["speculation"] = mind["speculation"]
+        llm_kwargs.update(endpoint_kwargs)  # base_url/api_key from a resolved endpoint profile
+        if "base_url" not in llm_kwargs:
+            # A resolved endpoint profile's base_url wins; otherwise the
+            # gateway text route's own endpoint when this is its provider.
+            route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind["base_url"])
+            if route_base_url:
+                # The configured key goes to this address only when it is the
+                # configured one (security, 0.21.0).
+                from .provider_connections import configured_provider_request_kwargs
+
+                llm_kwargs.update(
+                    configured_provider_request_kwargs(
+                        provider,
+                        current_base_dir=self.data_dir,
+                        root_base_dir=self.root_data_dir,
+                        base_url=route_base_url,
+                    )
+                )
+        factory = _ec._default_llm_factory  # late-bound module attribute
+        return factory(provider, **llm_kwargs)
 
     # ------------------------------------------------ capability clients (understanding drain v1)
     def capability_llm(self, slug: str, capability: str) -> Any:
@@ -2550,23 +2575,14 @@ class EntityRegistry:
         dream_result: Optional[Dict[str, Any]] = None
         home = reserved_home if reserved_home is not None else self.get_home(manifest.slug)
         if dream:
-            # W3 canonical night (wave-4 dispatch c3291; adversary A's
-            # two-different-nights divergence): the operator sleep verb runs
-            # the FULL sleep_pass (resolve -> tend -> dream, the engine's
-            # canonical order) — the same night the loop's on_sleep runs —
-            # never the bare dream_pass that skipped tending. Older engines
-            # without sleep_pass degrade to dream-only with a labeled
-            # #FALLBACK (build_consolidator's exact posture).
-            try:
-                from abstractruntime.integrations.abstractmemory.memory_facade import sleep_pass as _night_pass
-
-                _night_is_full = True
-            except ImportError:
-                from abstractruntime.integrations.abstractmemory.memory_facade import dream_pass as _night_pass
-
-                _night_is_full = False
-
-            eid = manifest.entity_id
+            # THE RUNTIME'S NIGHT, the one the loop's sleep runs (operator 2026-11-10: the topics form
+            # during the sleep, after the repair): `build_consolidator` - memory's sleep_pass ->
+            # authoring-failure lines -> METADATA REPAIR -> TOPICS (topics.sleep_communities: embed what
+            # has no vector, then memory's communities_pass) -> the night voice. One code path for every
+            # sleep (the operator's, the idle sweep's, the loop's): the gateway composes its inputs (the
+            # pass's fence, its capability and mind clients, its embedding route, the home's night log)
+            # and never runs memory's pass itself.
+            from abstractruntime.identity.life import build_consolidator
 
             # One writer per home (plan item 1, GW-A): the dream pass is a
             # writer window (holder="dream"). A held home SKIPS the pass
@@ -2634,44 +2650,32 @@ class EntityRegistry:
                                                       lambda fence: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming",
                                                                                        written_by=written_by, fence=fence)):
                         raise _MaintenanceSuperseded()
-                    def _pass_cancelled() -> bool:
-                        # The hard Stop (Codex review 3 #5): the lifecycle generation moved. FAIL
-                        # CLOSED: a generation that cannot be read is a Stop, never "not stopped". The
-                        # fence's compare + stat, then phases.yaml itself (a stage boundary's re-read).
-                        try:
-                            return bool(pass_fence.truth_moved())
-                        except Exception:  # noqa: BLE001 - unreadable = stopped
-                            return True
-
-                    def _pass_may_continue() -> bool:
-                        # The pass stops at its next stage when a Stop moved the generation or a
-                        # visitor took the posture (Codex review 2 #2): nothing further is written.
-                        if _pass_cancelled():
-                            return False
-                        try:
-                            st_now = read_entity_state(home_dir)
-                        except Exception:  # noqa: BLE001 - unreadable ends the pass (fail closed)
-                            return False
-                        return not (st_now.get("state") == "asleep" and st_now.get("mode") == "visiting")
-
-                    # `cancelled` is memory's hard Stop check, consulted again right before the night's
-                    # completion marker (memory f310865): a night stopped during its final stage records
-                    # no completion. `should_continue` is the graceful yield at its stage boundaries.
-                    pass_kwargs = ({"should_continue": _pass_may_continue, "cancelled": _pass_cancelled}
-                                   if _night_is_full else {})
+                    # The night under the pass's fence (the loop's posture): the runtime's night ends at
+                    # memory's next stage when the fence moved or a visitor took the posture
+                    # (`should_continue`), memory records no completion after a Stop (`cancelled=`), and
+                    # the repair, the topics step and the voice check it too. The gateway's own shared
+                    # home acts under it as well (`acting_under`): nothing of the night lands after a Stop.
+                    # The home's own embedder (the registry's, the one its pin was written with): memory
+                    # refuses a title or summary rewrite on a vectored record without it, and embeds
+                    # nothing the night forms.
+                    night = build_consolidator(
+                        home_dir,
+                        fence=pass_fence,
+                        embedder=self._resolve_embedder(),
+                        llm_for_capability=self.capability_llm_factory(manifest.slug),
+                        narrator_llm_factory=lambda: self.mind_llm(manifest.slug),
+                        out=_night_log(home_dir, manifest.slug),
+                    )
                     with acting_under(pass_fence):
-                        result = _night_pass(
-                            home.memory,
-                            scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
-                            owner_id=eid,
-                            **pass_kwargs,
-                        )
+                        result = night()
                     dream_result = dict(result) if isinstance(result, dict) else {"result": result}
-                    if not _night_is_full:
-                        dream_result["warning"] = (
-                            "#FALLBACK engine has no sleep_pass (older abstractmemory); dream-only night "
-                            "— tending/resolution skipped"
-                        )
+                    engine = dream_result.get("engine") if isinstance(dream_result.get("engine"), dict) else {}
+                    if engine.get("cancelled_after"):
+                        # memory's sleep_pass ended early (a visitor, a wake): the completion reads it here.
+                        dream_result["cancelled_after"] = engine["cancelled_after"]
+                    if dream_result.get("stopped_by") == "kill_switch":
+                        # The operator's Stop ended the night (the runtime wrote nothing after it).
+                        dream_result.update({"cancelled": True, "cancelled_by": "operator", "reason": KILL_SWITCH_REASON})
                     if lease_warning:
                         dream_result["warning"] = lease_warning
                 except _MaintenanceSuperseded:
