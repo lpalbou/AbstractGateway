@@ -155,3 +155,46 @@ def test_the_spawn_admission_runs_a_job_starts_without_a_grant_nothing_without_e
         (_home() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
         assert start_loop(_home(), provider="lmstudio", model="test-model")["pid"]
         assert len(loop_spawns) == 1
+
+
+# ------------------------------------------------------------------------------------------- T9 / finding 2
+def test_a_source_stopped_after_the_last_check_carries_nothing_into_the_visit(monkeypatch):
+    """Codex review 3 #2 (T9): the mention mirror checked the SOURCE's generation, then ran the visited entity's
+    turn: a Stop of the source landing after that last check and before the target's turn is admitted still carried
+    his words in and made the visited entity answer them. The source's fence now travels with the act: the visit door
+    re-checks it under the target's writer lease, right before it runs anything."""
+    from abstractgateway.entity_visits import EntityVisitHost
+
+    llm = _install_llm(monkeypatch, [
+        "Nerin: hello.",               # nerin, the person's own turn
+        "Castor: the bridge holds.",   # castor, the mention
+        "Nerin: thank you, Castor.",   # nerin answering the mirrored words: must never be asked
+    ])
+    real_turn = EntityVisitHost.turn
+    fired = []
+
+    def _turn(self, name, run_id, **kw):
+        if kw.get("speaker") == "entity:castor" and not fired:
+            fired.append(_stop("castor"))  # the Stop lands after the mirror's last check, before the turn
+        return real_turn(self, name, run_id, **kw)
+
+    with _client() as client:
+        _born(client, "Nerin", "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={}).json()
+        sid, nerin_run = opened["session_id"], opened["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{nerin_run}/turn",
+                           json={"text": "@Castor does the bridge hold?"}).status_code == 200
+        er = _registry().get_entity_runtime("nerin")
+        history_before = list(er.run_store.load(nerin_run).vars["_visit"]["history"])
+
+        monkeypatch.setattr(EntityVisitHost, "turn", _turn)
+        r = client.post(f"/api/gateway/sessions/{sid}/mentions",
+                        json={"entity": "Castor", "text": "@Castor does the bridge hold?", "mention_index": 0})
+        assert fired, "the mirror never reached the visited entity's turn"
+        assert r.status_code == 200, r.text
+        (mirror,) = r.json()["mirrors"]
+        assert mirror["reply"] is None and "was stopped; nothing was carried" in mirror["error"], mirror
+        assert len(llm.calls) == 2, "the visited entity answered the stopped entity's words"
+        run = er.run_store.load(nerin_run)
+        assert run.vars["_visit"]["history"] == history_before
+        assert str(getattr(run.status, "value", run.status)) == "waiting"  # Nerin's own visit goes on

@@ -149,6 +149,19 @@ def _wait_while(busy: Any, entities_dir: Any, slug: str, generation: Optional[in
 STOPPED_VISIT_SENTENCE = "Stopped. Resume to visit."
 
 
+def _admit_acting() -> None:
+    """THE ACTING FENCES at a visit's drive (Codex review 3 #2): a turn driven on behalf of another
+    entity's act (a mention mirrored into this visit acts under its SOURCE's fence) is admitted only
+    while every one of them stands - checked under this visit's writer lease, immediately before the
+    runtime runs anything. Moved: GenerationMoved (the caller says nothing was carried). The turn,
+    once admitted, is the visited entity's own act."""
+    from .entity_phase import GenerationMoved, acting_fences
+
+    for fence in acting_fences():
+        if fence.moved():
+            raise GenerationMoved(f"the act was stopped ({fence!r} moved)")
+
+
 def _refuse_if_stopped_run(state: Any) -> None:
     """A visit run the operator's Stop ended (the fence's cancelled outcome: run CANCELLED, error
     KILL_SWITCH_REASON, Fable review F11) is answered with the one stopped sentence — never its
@@ -2188,6 +2201,7 @@ class EntityVisitHost:
         with self._lock:
             self._in_flight.add(str(run_id))
         try:
+            _admit_acting()
             return er.runtime.tick(workflow=wf, run_id=run_id, max_steps=max_steps)
         finally:
             with self._lock:
@@ -2201,6 +2215,7 @@ class EntityVisitHost:
         with self._lock:
             self._in_flight.add(str(run_id))
         try:
+            _admit_acting()
             return er.runtime.resume(
                 workflow=wf, run_id=run_id, wait_key=wait_key, payload=payload, max_steps=max_steps
             )
@@ -2232,6 +2247,7 @@ class EntityVisitHost:
                     raise VisitRefused(409, str(e), code="home_lease_held")
                 if _stopped(Path(er.home.home_dir)):
                     raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
+                _admit_acting()  # the act this wait serves was stopped (a mirror's source entity): it ends
                 if not logged:
                     logger.info("visit waits for the home's writer to finish: %s", e)
                     logged = True

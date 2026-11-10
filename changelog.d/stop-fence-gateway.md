@@ -32,3 +32,6 @@
 - Tests stub only the loop's process creation (Codex review 3 #12): `subprocess.Popen` answers the runtime spawn's
   own argv with a fake child (its pid beyond any pid_max), so the spawn lock, the start refusal, the lifecycle fence
   and the reservation run in every test; `loop_spawns` records the loops a test's code tried to create.
+- **A mention mirrored into another entity's visit carries nothing after the mentioned entity's Stop** (Codex review 3
+  #2, design T9): the join and the mirrored turn run under the source's fence beside the visited entity's own, and
+  the visit door re-checks every acting fence under the visited home's writer lease right before it runs anything.

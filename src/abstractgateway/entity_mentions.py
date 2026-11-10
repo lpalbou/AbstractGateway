@@ -760,19 +760,25 @@ def _mirror_into_bound_visits(
         if str((origin_of(live.vars) or {}).get("client") or "") == MENTION_CHANNEL:
             continue
         row: Dict[str, Any] = {"entity_id": str(er.home.entity_id), "run_id": str(live.run_id)}
-        # Mirror ADMISSION is fenced on the mentioned entity's generation (review #2): a Stop of the
-        # mentioned entity since its answer means its words are not carried into another visit.
-        # ATOMIC ADMISSION (Codex review 2 #3): the generation check and the join are ONE step under
-        # the mentioned entity's lifecycle lock, so a Stop can no longer land between them; the turn
-        # (cognition) runs outside the lock.
-        from .entity_phase import GenerationMoved, fenced
+        # THE SOURCE'S FENCE travels with its words (Codex review 3 #2): the join and the mirrored turn
+        # are acts of the mentioned entity, run under its admission fence beside the visited entity's
+        # own (its runtime's). A Stop of the mentioned entity at any point before the turn is admitted -
+        # after the last check here included - means nothing is carried: the visit door re-checks every
+        # acting fence under the visited home's writer lease, right before it runs anything.
+        from .entity_phase import GenerationMoved, acting_under, admission_fence, fenced
 
+        source_fence = admission_fence(registry.entities_dir, mentioned.slug, generation) if generation is not None else None
         try:
-            if generation is not None:
-                with fenced(registry.entities_dir, mentioned.slug, generation):
+            with acting_under(*([source_fence] if source_fence is not None else [])):
+                if source_fence is not None:
+                    # ATOMIC ADMISSION (Codex review 2 #3): the check and the join in one step under the
+                    # mentioned entity's lifecycle lock.
+                    with fenced(registry.entities_dir, mentioned.slug, source_fence):
+                        visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+                else:
                     visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
-            else:
-                visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+                turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
+                                         speaker=str(mentioned.entity_id))
         except GenerationMoved:
             row["reply"] = None
             row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."
@@ -782,18 +788,7 @@ def _mirror_into_bound_visits(
             row["error"] = str(e.detail)
             out.append(row)
             continue
-        if generation is not None:
-            from .entity_phase import moved_since
-
-            if moved_since(registry.entities_dir, mentioned.slug, generation):
-                # Stopped after the admission: his words still never reach the other visit.
-                row["reply"] = None
-                row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."
-                out.append(row)
-                continue
         try:
-            turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
-                                     speaker=str(mentioned.entity_id))
             row["turn_id"] = str(turned.get("turn_id") or "") or None
             if turned.get("turn_error"):
                 # The visited entity's model call failed on THIS turn: the runtime answered it with
