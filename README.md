@@ -36,8 +36,8 @@ entity runs or writes until Resume, and a gateway restart is not a Stop. An idle
 sleep runs AbstractRuntime's night: the repair that authors pending titles and summaries, then its topics, served by
 `GET /entities/{name}/communities` (AbstractMemory's payload version 2) and `GET /entities/{name}/graph` (its memory
 graph in one read), announced by a `communities_changed` marker on the replay stream. `@entity` works from any chat
-(`POST /sessions/{id}/mentions`, `mentions` on `POST /runs/start` and on the summon door): the conversation's agent
-stays out of what is addressed to entities (its silence is still the model's judgment), every turn says who spoke (`author`) and carries the notices of what it
+(`POST /sessions/{id}/mentions`, `mentions` on `POST /runs/start` and on the summon door): a message whose
+`mentions` name only entities starts no agent run (the reserved chip `agent` asks the agent too), every turn says who spoke (`author`) and carries the notices of what it
 formed. Session kinds `automation` and `process` keep automation occurrences and AbstractNote's processing out of the
 conversation list. Every tool result of a visit rests whole in the entity's home (`GET .../artifacts`), a visit turn
 takes files as `attachments` (an image reaches the entity's model as an image), and record blocks say when their words
@@ -68,6 +68,11 @@ Upgrading to 0.21.0:
   summon) answers 409 `stopped_use_resume` until Resume. Clients render the served turn fields, never the text:
   `author` and `prompt_author` (who spoke), `notices` (`reply_notices` on the hosted chat turn: what the turn formed),
   `turn_error` (why a visit turn could not be answered) and `cut` on record blocks.
+- Mentions decide who answers. `mentions` on `POST /runs/start` (and the summon door) that name entities but not the
+  reserved chip `agent` start no agent run: the person's turn is recorded and the answer says `agent: "not_addressed"`
+  with its `turn_id` (the turn carries `agent_addressed: false` on `GET /runs`, the history bloc and the replay view);
+  the entities answer through `POST /sessions/{id}/mentions` with that `repeat_of`. Add `agent` to the chips for the
+  agent to answer too; every other start answers `agent: "started"`. No entity can be named `agent` (409).
 
 **What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
 support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated

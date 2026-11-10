@@ -206,7 +206,11 @@ def create_entity(req: CreateEntityRequest) -> Any:
     """Create an entity home: lint -> store the spark verbatim -> engram ->
     manifest. Idempotent for the same spark (`created=false`); a CHANGED
     document is refused with the engine's human-written error (409)."""
-    from ..entities import EntityQuotaExceeded
+    from ..entities import AGENT_NAME_RESERVED, RESERVED_MENTION_NAME, EntityQuotaExceeded
+
+    # `agent` names the conversation's own agent in @mentions: never an entity (409 with the sentence).
+    if str(req.name or "").strip().lower().replace(" ", "-") == RESERVED_MENTION_NAME:
+        raise HTTPException(status_code=409, detail={"code": "name_reserved", "message": AGENT_NAME_RESERVED})
 
     # Birth skills validate BEFORE anything is created — a typo'd phase must
     # not mint a home and then half-fail. DEFAULT (laurent seq 156, skill
@@ -3582,6 +3586,51 @@ def _summon_core(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # MENTIONS ROUTING IS STRUCTURAL (operator 2026-11-10; /runs/start's rule): the summoned entity answers when
+    # the chips name it, name `agent`, or name nobody; chips that name only OTHER entities start no summon run (no
+    # seat, no wake, no prelude): the person's turn is recorded on the session and those entities answer through
+    # the mention door.
+    if req.mentions:
+        from ..entity_mentions import agent_mention_context, split_mentions
+
+        def _names_this_entity(chip: Any) -> bool:
+            try:
+                return entity_slug(str(chip)) == home.manifest.slug
+            except Exception:  # noqa: BLE001 - an invalid name is no self-mention (the resolver 404s it)
+                return False
+
+        _agent_named, _chips = split_mentions(req.mentions)
+        _others_only = [c for c in _chips if not _names_this_entity(c)]
+        if _others_only and not _agent_named and len(_others_only) == len(_chips):
+            from fastapi.responses import JSONResponse as _JSONResponse
+
+            try:
+                agent_mention_context(registry, list(_others_only))
+            except KeyError as e:
+                from .session_mentions import _not_found as _mention_not_found
+
+                return _mention_not_found(str(e.args[0]) if e.args else "")
+            _sid = str(getattr(req, "session_id", "") or "").strip()
+            if not _sid:
+                return _JSONResponse(status_code=400, content={"detail": (
+                    "A message addressed only to other entities needs a session_id: their answers are turns of that "
+                    "conversation.")})
+            from abstractruntime.core.run_origin import ORIGIN_KEY as _ORIGIN_KEY
+            from abstractruntime.core.turn_author import PROMPT_AUTHOR_KEY as _PROMPT_AUTHOR_KEY
+
+            from ..entity_mentions import person_author, record_person_turn
+            from ..entity_visits import person_origin
+            from ..security.principal import current_gateway_principal as _current_principal
+
+            _turn = record_person_turn(svc, session_id=_sid, input_data={
+                "prompt": req.prompt,
+                "context": {"task": req.prompt, "messages": []},
+                "_meta": {_ORIGIN_KEY: person_origin(actor=f"person:{caller_id}", client="summon"),
+                          _PROMPT_AUTHOR_KEY: person_author(_current_principal())},
+            })
+            return {"run_id": str(_turn.run_id), "turn_id": str(_turn.run_id), "session_id": _sid, "entity_id": home.entity_id,
+                    "agent": "not_addressed"}
+
     if from_queue_id is not None:
         # QUEUED-ATTEMPT FAST PATH (door-cleanup audit P0-1/P2-4/P2-8): an
         # admission attempt against a still-held seat must cost one cheap
@@ -3806,7 +3855,10 @@ def _summon_core(
         except Exception:  # noqa: BLE001 - an invalid name is no self-mention (the resolver 404s it)
             return False
 
-    _others = [m for m in (req.mentions or []) if not _is_self(m)]
+    from ..entity_mentions import is_agent_mention
+
+    # The `agent` chip addresses the summoned entity here (never an entity to resolve).
+    _others = [m for m in (req.mentions or []) if not _is_self(m) and not is_agent_mention(m)]
     if _others:
         from ..entity_mentions import agent_mention_context
 
@@ -4232,6 +4284,8 @@ def _summon_core(
         "run_id": str(run_id),
         "session_id": session_id,
         "entity_id": home.entity_id,
+        "agent": "started",
+        "turn_id": str(run_id),
         "channel": CHANNEL_WORKPLACE,
         "participants": participants,
         "context_window_tokens": declared_window,

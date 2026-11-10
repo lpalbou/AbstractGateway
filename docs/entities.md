@@ -549,15 +549,18 @@ avatar: {style, color}|null}`, every key present. An agent's turn is named by it
 (`workflow_selection.name`, never a model name); a person's by the account's display name; a
 summon's answer is the entity's.
 
-**Mentions on the agent's turn and on a summon.** When the same message also starts the conversation's agent
-turn, send the same chips as `mentions` on `POST /runs/start` (names or slugs, the ones you send to this door;
-never parsed from the text). Each is resolved like this door resolves it: a missing, hidden or invalid name answers
-404 `entity_not_found`. The gateway writes `_runtime.mentions` itself (a client copy is dropped), and the
-conversation's agent reads, as the last instruction before your words: "The mentioned entities (Orion) answer this
-message themselves. Unless the user addressed you directly, reply with an empty message." An empty reply shows no
-answer, and the entities' answers follow your turn. Staying silent is still the model's judgment: a model may answer
-anyway. `POST /entities/{name}/summon` takes the same `mentions` for the other entities the message names; naming
-the summoned entity itself mentions nobody else.
+**Who answers: `mentions` on the agent's turn and on a summon.** The same chips also go on `POST /runs/start` as
+`mentions` (names or slugs, never parsed from the text), with the reserved chip `agent` when the message is also for
+the conversation's own agent (no entity can be named `agent`). A missing, hidden or invalid name answers 404
+`entity_not_found`. Without `agent`, the agent's run is not started: the person's turn is recorded on the session, the
+answer says `agent: "not_addressed"` with that turn's `turn_id` (send it as `repeat_of` here; it is also the
+turn's `run_id`), and the turn carries
+`agent_addressed: false` wherever a reload reads it (`GET /runs`, the history bloc, the replay view). With `agent`, the
+agent's run starts (`agent: "started"`) and the agent reads, as the last instruction before your words: "The mentioned
+entities (Orion) answer this message themselves. Unless the user addressed you directly, reply with an empty message."
+Staying silent is still the model's judgment: a model may answer anyway. `POST /entities/{name}/summon` follows the same
+rule: the summoned entity answers when the chips name it, name `agent` or name nobody; chips that name only other
+entities start no summon run.
 
 **What a turn formed: `notices`.** A turn's answer carries what the entity formed or staged during it, unchanged:
 `[{kind, record_id, title, text?, staged?, visibility?}]`, and the reply it serves carries no bracket markers (the

@@ -328,6 +328,70 @@ def person_author(principal: Any) -> Dict[str, Any]:
     return author_for("person", name or user)
 
 
+# THE CONVERSATION'S OWN AGENT IN `mentions` (operator 2026-11-10: mentions routing is structural). The reserved
+# chip `agent` names the conversation's agent the way an entity's name names it: a message whose `mentions` name
+# entities and not `agent` never starts the agent's run; `agent` (alone or with entities) starts it as before. No
+# entity can be named `agent` (entities.entity_slug refuses it), so the chip can never mean anyone else.
+AGENT_MENTION = "agent"
+# The person's turn recorded on the session when no agent ran (a message addressed only to entities): a completed
+# root run with the person's words and no answer, `_meta.agent_addressed = False`. The entities' answers follow it
+# through the mention door, with `repeat_of` = this turn.
+PERSON_TURN_WORKFLOW_ID = "person-turn"
+AGENT_ADDRESSED_KEY = "agent_addressed"
+
+
+def is_agent_mention(chip: Any) -> bool:
+    """True for the reserved chip that names the conversation's own agent (`agent`, `@agent`, any case)."""
+    return str(chip or "").strip().lstrip("@").strip().lower() == AGENT_MENTION
+
+
+def split_mentions(mentions: Any) -> Tuple[bool, List[str]]:
+    """(`agent` named, the entity chips in order). The agent chip is never resolved as an entity."""
+    chips = [str(m) for m in (mentions or []) if str(m or "").strip()]
+    return any(is_agent_mention(m) for m in chips), [m for m in chips if not is_agent_mention(m)]
+
+
+def agent_addressed_of(vars_obj: Any) -> Optional[bool]:
+    """False for a person's turn the agent was not asked to answer (`_meta.agent_addressed`), else None."""
+    meta = vars_obj.get("_meta") if isinstance(vars_obj, dict) else None
+    if isinstance(meta, dict) and meta.get(AGENT_ADDRESSED_KEY) is False:
+        return False
+    return None
+
+
+def record_person_turn(svc: Any, *, session_id: str, input_data: Dict[str, Any]) -> Any:
+    """A message addressed only to entities: the person's turn as a completed root run of the session, and no agent
+    run. `input_data` is the turn's input as the door prepared it (the person's words, the host's `_meta`: origin and
+    prompt author); `_meta.agent_addressed` is False and there is no answer (the history replay skips a turn without
+    one; the mention turns that repeat it carry the pair). The account's event stream learns of it like any turn."""
+    from abstractruntime.core.models import RunState, RunStatus, utc_now
+
+    vars_obj = dict(input_data)
+    meta = dict(vars_obj.get("_meta") or {}) if isinstance(vars_obj.get("_meta"), dict) else {}
+    meta[AGENT_ADDRESSED_KEY] = False
+    vars_obj["_meta"] = meta
+    now = utc_now().isoformat()
+    run = RunState(
+        run_id=str(uuid.uuid4()),
+        workflow_id=PERSON_TURN_WORKFLOW_ID,
+        status=RunStatus.COMPLETED,
+        current_node="done",
+        vars=vars_obj,
+        output={},
+        actor_id="gateway",
+        session_id=session_id,
+        created_at=now,
+        updated_at=now,
+    )
+    svc.host.run_store.save(run)
+    stream = getattr(getattr(svc, "runner", None), "user_stream", None)
+    if stream is not None:
+        from .events_stream import record_run
+
+        record_run(stream, run)
+    return run
+
+
 def _elsewhere(manifest: Any, caller_session: str, cause: str = "", *, own_session: Optional[str] = None) -> MentionRefused:
     """The entity is in someone else's conversation. The sentence and the body name NO other
     session, run or account (security, 2026-11-09 review K: the holder's session id let a member
@@ -391,7 +455,9 @@ def _cannot_answer(manifest: Any, session_id: str) -> MentionRefused:
 def _check_repeat_of(svc: Any, session_id: str, repeat_of: Optional[str], *, principal: Any = None, text: str = "") -> Optional[str]:
     """`repeat_of` names the person's OWN turn of this session whose words the mention repeats: a
     root run of this session in the caller's plane, started by the caller, carrying the same words
-    (mentions-review E); anything else refuses 422 `repeat_of_unknown`."""
+    (mentions-review E); anything else refuses 422 `repeat_of_unknown`. Either id a start answered names it:
+    `turn_id` (the session turn row's id) and `run_id` are the same id for a session turn, the agent's run or the
+    person's turn recorded when no agent was asked (`person-turn`); the words are checked against that turn's."""
     from abstractruntime.core.run_origin import origin_of
 
     rid = str(repeat_of or "").strip()
@@ -814,4 +880,4 @@ def _mirror_into_bound_visits(
     return out
 
 
-__all__ = ["CODE_CANNOT_ANSWER", "CODE_ELSEWHERE", "MENTION_WORKFLOW_ID", "MentionRefused", "entity_author", "mention", "person_author"]
+__all__ = ["AGENT_MENTION", "CODE_CANNOT_ANSWER", "CODE_ELSEWHERE", "MENTION_WORKFLOW_ID", "PERSON_TURN_WORKFLOW_ID", "MentionRefused", "entity_author", "mention", "person_author"]

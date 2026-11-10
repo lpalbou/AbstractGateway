@@ -2094,6 +2094,12 @@ def run_summary(run: Any) -> Dict[str, Any]:
     # session turn's own answer serves them; [] for a run that holds none (2026-11-10: the /runs rows and
     # the history bloc carried no notices).
     out["notices"] = turn_notices(run)
+    # A person's turn the agent was not asked to answer (mentions routing, operator 2026-11-10): `agent_addressed:
+    # false`, so a reload renders it as sent; absent on every other turn.
+    from .entity_mentions import agent_addressed_of
+
+    if agent_addressed_of(vars_obj) is False:
+        out["agent_addressed"] = False
 
     try:
         vars_obj = getattr(run, "vars", None)

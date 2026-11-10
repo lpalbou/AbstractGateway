@@ -82,6 +82,11 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # principals). Every NEW literal segment added before /{name} must be
 # added here (adversary F3, 2026-07-12).
 RESERVED_ENTITY_NAMES = frozenset({"auth", "meets", "templates", "inventory", "creation-defaults", "spec"})
+# `agent` names the conversation's own agent among a message's `mentions` (entity_mentions.AGENT_MENTION): no entity
+# may take it, so the chip can never mean anyone else (refused here, at the slug boundary, like the names above).
+RESERVED_MENTION_NAME = "agent"
+AGENT_NAME_RESERVED = ("The name \"agent\" is reserved: it names the conversation's agent in @mentions. "
+                       "Choose another name.")
 
 # The B1 doors-wake reason PREFIX — ONE spelling shared by both wake writers
 # (chat drawer + durable visit lane) and both close-restore matchers
@@ -161,6 +166,8 @@ def entity_slug(name: str) -> str:
             f"entity name {raw!r} is reserved (a literal API path segment under "
             f"/entities — an entity named {slug!r} would be unreachable); pick another name"
         )
+    if slug == RESERVED_MENTION_NAME:
+        raise ValueError(AGENT_NAME_RESERVED)
     return slug
 
 

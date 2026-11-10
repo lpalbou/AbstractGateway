@@ -98,6 +98,24 @@ class ViewEntry:
     folds: int = 0  # apply() calls that folded records (observability, tests)
     records_folded: int = 0  # every record is folded once per entry, however many clients follow
     last_scalars: Optional[Dict[str, Any]] = None  # the scalars the last delta carried
+    agent_unaddressed: Optional[bool] = None  # the root is a person's turn no agent was asked to answer (read once)
+
+    def served_json(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """The view as served: `agent_addressed: false` on the view of a person's turn the agent was not asked to
+        answer (mentions routing, operator 2026-11-10; the root's own record says it, fixed when the turn is recorded,
+        so every body of this view carries the same field and the cursor token stays its ETag)."""
+        if self.agent_unaddressed is None:
+            from .entity_mentions import agent_addressed_of
+
+            try:
+                root = self.run_store.load(self.root_run_id)
+            except Exception:  # noqa: BLE001 - an unreadable root: no field (the reducer's own view)
+                root = None
+            self.agent_unaddressed = agent_addressed_of(getattr(root, "vars", None)) is False
+        if self.agent_unaddressed:
+            body = dict(body)
+            body["agent_addressed"] = False
+        return body
 
     # ----------------------------------------------------------------- reads (worker thread)
 
@@ -174,7 +192,7 @@ class ViewEntry:
     def view_bytes_locked(self) -> Tuple[str, bytes]:
         token = self.view.cursor["token"]
         if self.json_cache is None or self.json_cache[0] != token:
-            self.json_cache = (token, json.dumps(self.view.to_json(), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            self.json_cache = (token, json.dumps(self.served_json(self.view.to_json()), ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
         return self.json_cache
 
     def broadcast(self, delta: Dict[str, Any]) -> None:
@@ -431,7 +449,7 @@ def read_view_at(entry: ViewEntry, token: str) -> Optional[bytes]:
         old = None
     if old is None:
         return None
-    return json.dumps(old.to_json(), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(entry.served_json(old.to_json()), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def unsubscribe(entry: ViewEntry, sub: _Subscriber) -> None:

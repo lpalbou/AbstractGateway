@@ -822,6 +822,7 @@ def test_summon_takes_the_mentions_of_the_message_like_runs_start(client: TestCl
 
     r = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nerin", "Castor"]})
     assert r.status_code == 200, r.text
+    assert r.json()["agent"] == "started"  # naming the summoned entity itself addresses it
     run = get_gateway_service().host.run_store.load(r.json()["run_id"])
     mentions = run.vars["_runtime"]["mentions"]
     assert [e["entity_id"] for e in mentions["entities"]] == ["entity:nerin"]
@@ -834,3 +835,32 @@ def test_summon_takes_the_mentions_of_the_message_like_runs_start(client: TestCl
     forged = client.post("/api/gateway/entities/Nerin/summon", json=body)
     assert forged.status_code == 200, forged.text
     assert "mentions" not in (get_gateway_service().host.run_store.load(forged.json()["run_id"]).vars.get("_runtime") or {})
+
+
+def test_a_summon_message_for_other_entities_only_starts_no_summon_run(client: TestClient):
+    """Mentions routing is structural (operator 2026-11-10; /runs/start's rule): at Castor's summon door, chips that
+    name only OTHER entities (not Castor, not `agent`) start no summon run (no seat, no wake, no prelude): the person's
+    turn is recorded on the session (`agent: "not_addressed"`, the turn's `agent_addressed: false`) and those entities
+    answer through the mention door. With no session there is nowhere to record it (400); an unknown chip is 404."""
+    from abstractgateway.service import get_gateway_service
+
+    for name in ("Castor", "Nerin"):
+        assert client.post("/api/gateway/entities", json={"name": name, "spark": _spark(name)}).status_code == 201
+    body = {"prompt": "@Nerin what do you think?", "bundle_id": "min", "flow_id": "root",
+            "input_data": {"provider": "mock", "model": "mock-model"}}
+    store = get_gateway_service().host.run_store
+    before = {getattr(r, "run_id", None) for r in store.list_runs(limit=500)} if hasattr(store, "list_runs") else set()
+    r = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nerin"], "session_id": "sess-summon-others"})
+    assert r.status_code == 200, r.text
+    assert r.json()["agent"] == "not_addressed" and r.json()["turn_id"] == r.json()["run_id"]
+    turn = store.load(r.json()["run_id"])
+    assert turn.workflow_id == "person-turn" and turn.vars["_meta"]["agent_addressed"] is False
+    assert turn.vars["prompt"] == "@Nerin what do you think?" and turn.session_id == "sess-summon-others"
+    if before:
+        started = {getattr(x, "run_id", None) for x in store.list_runs(limit=500)} - before
+        assert started == {turn.run_id}, started  # the person's turn only: no summon run
+    assert client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nerin"]}).status_code == 400
+    unknown = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nobody"], "session_id": "s2"})
+    assert unknown.status_code == 404 and unknown.json()["code"] == "entity_not_found", unknown.text
+    agent = client.post("/api/gateway/entities/Castor/summon", json={**body, "mentions": ["Nerin", "agent"]})
+    assert agent.status_code == 200 and agent.json()["agent"] == "started", agent.text

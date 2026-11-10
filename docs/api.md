@@ -37,7 +37,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
-| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index, mention_id?, repeat_of?}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt; `mention_id` makes a resend return the first answer); 404 `entity_not_found` (unknown, hidden or invalid name, identical answers), 409 `in_another_conversation` / `stopped_use_resume`, 422 `repeat_of_unknown`, 503 `entity_cannot_answer` (a plain sentence). `mentions` on `POST /runs/start` and on `POST /entities/{name}/summon` tells the conversation's agent to leave the message to the entities | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
+| `POST /api/gateway/sessions/{session_id}/mentions` (`{entity, text, mention_index, mention_id?, repeat_of?}`) | `@entity` in any conversation: a visit turn in the entity's home, its reply recorded as a turn of the session with `author` (`repeat_of` folds a repeated prompt; `mention_id` makes a resend return the first answer); 404 `entity_not_found` (unknown, hidden or invalid name, identical answers), 409 `in_another_conversation` / `stopped_use_resume`, 422 `repeat_of_unknown`, 503 `entity_cannot_answer` (a plain sentence). `mentions` on `POST /runs/start` and on `POST /entities/{name}/summon` decides who answers: entities only, no agent run (`agent: "not_addressed"`, the turn's `agent_addressed: false`); with the reserved chip `agent`, the agent too | [entities.md](./entities.md#mentioning-an-entity-from-any-chat) |
 | `/api/gateway/entities/{name}/track-record`, `/reputation`, `/acquaintances`; `/api/gateway/sessions/{session_id}/track-record`, `/reputation`, `/acquaintances` | what an entity (or a regular agent's session) has done, how far it can be trusted per kind of task, and whom it met; read-only, derived from its records | [below](#track-record-reputation-and-acquaintances) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 | `/api/gateway/runs/{run_id}/decisions` | one calibrated decision about a text (yes/no, choice and score answers with confidence), as a durable child run | [below](#decisions) |
@@ -235,14 +235,35 @@ writes it; an origin sent by the client is replaced. Runs started before this
 field existed answer `origin: null`. The run's `actor_id` stays `"gateway"`
 (it marks the runs this gateway's runner ticks); the person is `origin.actor`.
 
-`mentions` names the entities the message addresses: a list of entity names or slugs, the composer's chips (never
-parsed from the text), the same names the client sends to `POST /sessions/{session_id}/mentions` for each entity's
-answer. A name that is not an entity the caller can see answers 404 `entity_not_found`. The gateway writes
-`input_data._runtime.mentions` itself (`{entities: [{entity_id, name}], line}`; a client copy is dropped), and the
-conversation's agent reads, as the last instruction before the person's words, that the mentioned entities answer
-the message themselves and that, unless the user addressed it directly, it replies with an empty message (an empty
-reply shows no answer; staying silent is still the model's judgment). `POST /entities/{name}/summon` takes the same
-`mentions`. See [entities.md](./entities.md#mentioning-an-entity-from-any-chat).
+`mentions` says who the message is for: a list of entity names or slugs, the composer's chips (never parsed from
+the text), plus the reserved chip `agent` for the conversation's own agent (no entity can be named `agent`: creating
+one answers 409 `name_reserved`). A name that is not an entity the caller can see answers 404 `entity_not_found`.
+Every start answers `agent` and `turn_id`, the session turn row's id (a session turn is keyed by its root run, so it
+equals `run_id`): a mention of the same words sends it as `repeat_of`. The routing is structural:
+
+- **Entities, without `agent`:** the agent's run is not started. The person's turn is recorded on the session (a
+  completed turn with the person's words, `prompt_author` the person, no answer) and the answer is
+  `{"run_id": "<that turn>", "turn_id": "<the same id>", "agent": "not_addressed"}`. The turn carries `agent_addressed: false` on its
+  `GET /runs` row, `GET /runs/{run_id}`, the session history bloc (`GET /sessions/{session_id}/history/bloc`) and its
+  replay view (`GET /runs/{run_id}/view`), so a reload renders it as it was sent; the field is absent on every other
+  turn. A `session_id` is required (400 without one). Each entity answers through
+  `POST /sessions/{session_id}/mentions` with `repeat_of` = that `turn_id` (`repeat_of` takes the turn id or the run
+  id, the same id; the words are checked against the recorded turn's).
+- **`agent` with entities:** the agent's run starts (`agent: "started"`) and the entities answer through the mention
+  door as above. The gateway writes `input_data._runtime.mentions` itself (`{entities: [{entity_id, name}], line}`; a
+  client copy is dropped), and the agent reads, as the last instruction before the person's words, that the mentioned
+  entities answer the message themselves and that, unless the user addressed it directly, it replies with an empty
+  message (an empty reply shows no answer; staying silent is still the model's judgment).
+- **`agent` alone, or no `mentions`:** a plain agent turn (`agent: "started"`).
+
+`POST /entities/{name}/summon` takes the same `mentions` and answers `agent` the same way: the summoned entity answers
+when the chips name it, name `agent`, or name nobody; chips that name only other entities start no summon run (no
+seat, no wake, no prelude), and the person's turn is recorded as above (`agent: "not_addressed"` with its `turn_id`). See
+[entities.md](./entities.md#mentioning-an-entity-from-any-chat).
+
+The recorded turn is an ordinary session turn: `GET /runs/{run_id}`, `GET /runs/{run_id}/input_data` and its replay
+view read it like any turn. Known limit: the rule applies where a message starts a turn (`POST /runs/start`, the summon
+door); while a reply is running, an entity-only message still steers the agent (the steer path).
 
 A conversation can carry a temporary identity (framework ADR 0052 §9, a regular agent's look and
 voice): `identity: {avatar: {style, color}, voice: {provider, model, voice, speed?, quality_preset?}}`

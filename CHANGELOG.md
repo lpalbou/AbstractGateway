@@ -608,6 +608,22 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - **Birth records are authored under the entity's name** (`entities.py`). AbstractRuntime 0.19.0's summaries briefing
   names whose memories these are (`entity_name`, a required argument): the birth author passes the entity's name as
   its home holds it (`spark.yaml`'s `name`, else the entity id), so a new entity's first records refer to it by name.
+- **Mentions decide who answers** (`routes/gateway.py`, `routes/entities.py`, `entity_mentions.py`; operator
+  2026-11-10). `mentions` on `POST /runs/start` that name entities but not the reserved chip `agent` start no agent run:
+  the person's turn is recorded on the session (a completed turn with the person's words and no answer), the answer
+  says `agent: "not_addressed"` with that turn's `turn_id` (the session turn row's id, equal to its `run_id`; every start
+  answers it), and the turn carries `agent_addressed: false` on its
+  `GET /runs` row, `GET /runs/{run_id}`, the session history bloc and its replay view; the entities answer through
+  `POST /sessions/{session_id}/mentions` with `repeat_of` = that `turn_id` (it takes the turn id or the run id; a
+  `session_id` is required, 400 without one).
+  `agent` with entities starts the agent as before, told the entities answer for themselves; `agent` alone, or no
+  mentions, is a plain agent turn; those starts answer `agent: "started"`. The summon door follows the same rule:
+  chips that name only other entities start no summon run. No entity can be named `agent` (creating one answers 409
+  `name_reserved`); the mention door answers it as no entity (404). Known limit: the rule applies where a message
+  starts a turn; while a reply is running, an entity-only message still steers the agent (the steer path), and clients
+  hide the "stays out" hint then.
+- **The fragmentation threshold's refusal speaks in percent** (`entity_cognition_profile.py`), as the Mind panel's
+  field does: "The fragmentation threshold must be between 1 % and 100 % (stored as a fraction, 0.15 = 15 %)."
 
 ### Deprecated
 

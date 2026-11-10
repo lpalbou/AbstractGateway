@@ -2754,6 +2754,14 @@ class StartRunRequest(_SpeculationControlRequest):
 
 class StartRunResponse(BaseModel):
     run_id: str
+    # Who answers (mentions routing, operator 2026-11-10): "started" = the agent's run started (`run_id`);
+    # "not_addressed" = the message's `mentions` name entities and not `agent`: no agent run, `run_id` is the
+    # person's turn recorded on the session (its row carries `agent_addressed: false`); the entities answer
+    # through POST /sessions/{session_id}/mentions with `repeat_of` = this run id.
+    agent: Optional[str] = None
+    # The session turn row's id for this message (GET /runs and the history bloc key a turn by its root run, so it is
+    # `run_id`): the id a mention of the same words sends as `repeat_of`.
+    turn_id: Optional[str] = None
     # Populated ONLY when this gateway process accepted the run while its
     # runner is enabled but locked out of the singleton tick lock with no
     # fresh peer heartbeat (i.e. nobody is provably ticking this data_dir).
@@ -9573,20 +9581,38 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_host_stamps(_strip_client_workflow_policy(dict(req.input_data or {})))
+        # MENTIONS ROUTING IS STRUCTURAL (operator 2026-11-10). The chips say who the message is for: entities
+        # only (no `agent` chip) -> the agent's run never starts, the person's turn is recorded on the session
+        # and the entities answer through the mention door; `agent` (alone or with entities) -> the agent runs
+        # as before, told about the mentioned entities (the line rides _runtime.mentions; the host adds it after
+        # the history). `agent` alone is a plain agent turn.
+        agent_addressed = True
         if req.mentions:
-            # The message is addressed to entities too: its own agent is told they answer for
-            # themselves (the line rides _runtime.mentions; the host adds it after the history).
-            from ..entity_mentions import agent_mention_context
+            from ..entity_mentions import agent_mention_context, split_mentions
             from .entities import _registry as _entity_registry
 
-            try:
-                mention_ctx = await off_loop("light", agent_mention_context, _entity_registry(), list(req.mentions))
-            except KeyError as e:
-                from .session_mentions import _not_found as _mention_not_found
+            agent_named, entity_chips = split_mentions(req.mentions)
+            mention_ctx: Dict[str, Any] = {"entities": []}
+            if entity_chips:
+                try:
+                    mention_ctx = await off_loop("light", agent_mention_context, _entity_registry(), entity_chips)
+                except KeyError as e:
+                    from .session_mentions import _not_found as _mention_not_found
 
-                return _mention_not_found(str(e.args[0]) if e.args else "")
-            if mention_ctx["entities"]:
+                    return _mention_not_found(str(e.args[0]) if e.args else "")
+            agent_addressed = agent_named or not mention_ctx["entities"]
+            if agent_addressed and mention_ctx["entities"]:
                 _ensure_input_runtime_namespace(input_data)["mentions"] = mention_ctx
+        if not agent_addressed:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=(
+                    "A message addressed only to entities needs a session_id: their answers are turns of that "
+                    "conversation."))
+            from ..entity_mentions import record_person_turn
+
+            _stamp_run_origin(input_data, kind="person", principal=principal, client=req.interface)
+            person_turn = await off_loop("light", record_person_turn, svc, session_id=session_id, input_data=input_data)
+            return StartRunResponse(run_id=str(person_turn.run_id), turn_id=str(person_turn.run_id), agent="not_addressed")
         _apply_conversation_opt_in(input_data, req.conversation)
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         if req.workspace is not None:
@@ -9755,6 +9781,8 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     _audit_run_started(request, run_id=str(run_id), selection=resolved_workflow, fallback=str(req.bundle_id or flow_id or ""))
     return StartRunResponse(
         run_id=str(run_id),
+        agent="started",
+        turn_id=str(run_id),
         runner_warning=_runner_inactive_warning(svc),
         resolved_workflow=resolved_workflow,
         limits=_limits_after_start(svc, str(run_id), run_limits),
@@ -10342,10 +10370,13 @@ def _attach_repeat_of(items: List[Dict[str, Any]], run_store: Any) -> None:
     are read whole, on the served page only. Every other index row says null and []."""
     from abstractruntime.core.turn_author import prompt_repeat_of
 
-    from ..entity_mentions import MENTION_WORKFLOW_ID
+    from ..entity_mentions import MENTION_WORKFLOW_ID, PERSON_TURN_WORKFLOW_ID
     from ..service import turn_notices
 
     for item in items:
+        if str(item.get("workflow_id") or "") == PERSON_TURN_WORKFLOW_ID:
+            # The person's turn recorded when no agent was asked (mentions routing): always `agent_addressed: false`.
+            item.setdefault("agent_addressed", False)
         if "repeat_of" in item and "notices" in item:
             continue  # a summary built from the run itself already carries them
         value, notices = None, []

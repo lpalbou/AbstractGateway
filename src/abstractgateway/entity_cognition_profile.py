@@ -126,8 +126,18 @@ def cognition_profile_view(home_dir: Path) -> Dict[str, Any]:
     }
 
 
+# The served sentence for a field whose app control speaks another unit than the stored value: the Mind panel shows
+# the fragmentation threshold as a percent field, the profile stores a fraction (runtime
+# validate_sleep_after_fragmented_share keeps its own words for its own callers).
+SERVED_SENTENCES = {
+    "sleep.after_fragmented_share": ("The fragmentation threshold must be between 1 % and 100 % "
+                                     "(stored as a fraction, 0.15 = 15 %)."),
+}
+
+
 def _invalid(e: Exception) -> CognitionProfileRefused:
-    return CognitionProfileRefused(400, getattr(e, "sentence", None) or str(e))
+    served = SERVED_SENTENCES.get(str(getattr(e, "field", "") or ""))
+    return CognitionProfileRefused(400, served or getattr(e, "sentence", None) or str(e))
 
 
 def _check_endpoint(label: str, provider: str, *, data_dir: Path, root_data_dir: Path) -> None:

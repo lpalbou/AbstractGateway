@@ -290,7 +290,9 @@ def test_the_fragmented_share_sleep_threshold_is_set_refused_and_reset(world) ->
     for bad in (0, 1.5, -0.1, "lots", True):
         refused = c.put(URL, headers=admin, json={"sleep": {"after_fragmented_share": bad}})
         assert refused.status_code == 400, (bad, refused.text)
-        assert "after_fragmented_share" in refused.json()["detail"] or "share" in refused.json()["detail"].lower(), refused.text
+        # Percent-first, as the Mind panel's field speaks (the stored value is a fraction).
+        assert refused.json()["detail"] == ("The fragmentation threshold must be between 1 % and 100 % "
+                                            "(stored as a fraction, 0.15 = 15 %)."), refused.text
     assert c.get(URL, headers=admin).json()["sleep"]["after_fragmented_share"] == 0.3
     body = c.put(URL, headers=admin, json={"sleep": {"after_fragmented_share": None}}).json()
     assert body["sleep"]["after_fragmented_share"] == 0.15 and body["sleep"]["sources"]["after_fragmented_share"] == "default"
