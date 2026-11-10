@@ -27,14 +27,43 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
-**What's new in 0.21.0** ([CHANGELOG](CHANGELOG.md#0210---2026-11-07)): `GET /entities/{name}/tile` serves
-the few facts an entity card shows (milliseconds instead of a full card), and the card itself is cached until the
-entity's life grows; notification emails show the automation's Markdown formatted and safe. AbstractNote's captures and
-background processing no longer appear among your conversations or automations: they are listed as
-notes (`kind=notes` on `GET /runs` and `GET /automations`), and Note's own Processing page is
-unchanged. Saving an entity's or a conversation's identity with a voice the voice picker shows works
-again; an entity speaks with the shared voices and its creator's own voices, and another person's own
-voice is refused with that sentence.
+**What's new in 0.21.0** ([CHANGELOG](CHANGELOG.md#0210---2026-11-10)): an entity lives one phase at a time
+(visit, idle, work, its own time or sleep, or stopped). `GET /entities/{name}/life_state` serves the phase bar,
+`PUT .../life_state/toggles` gives or takes back its own time (the operator's to give; work starts when a job is
+queued), and the kill switch `POST .../lifecycle` (`stop`, `resume`, `retry`) is final: after a Stop nothing of the
+entity runs or writes until Resume, and a gateway restart is not a Stop. An idle entity sleeps on its own thresholds
+(hours, new memories, or the share of its memories not yet in a topic, `sleep.after_fragmented_share`), and every
+sleep runs AbstractRuntime's night: the repair that authors pending titles and summaries, then its topics, served by
+`GET /entities/{name}/communities` (AbstractMemory's payload version 2) and `GET /entities/{name}/graph` (its memory
+graph in one read), announced by a `communities_changed` marker on the replay stream. `@entity` works from any chat
+(`POST /sessions/{id}/mentions`, `mentions` on `POST /runs/start` and on the summon door): the conversation's agent
+stays out of what is addressed to entities, every turn says who spoke (`author`) and carries the notices of what it
+formed. Session kinds `automation` and `process` keep automation occurrences and AbstractNote's processing out of the
+conversation list. Every tool result of a visit rests whole in the entity's home (`GET .../artifacts`), a visit turn
+takes files as `attachments` (an image reaches the entity's model as an image), and record blocks say when their words
+were `cut` when saved. The iteration limit is 50 by default
+(`agents.max_iterations`, stored once on a fresh install), "Keep the Mac awake while the gateway runs" is a setting
+(`serve --keep-awake on|off`), and HTTPS on the Tailscale name is served automatically while the gateway runs. Also:
+`GET /entities/{name}/tile` (the few facts an entity card shows, in milliseconds), the identity card cached until the
+entity's life grows, and notification emails that show the automation's Markdown formatted.
+
+Upgrading to 0.21.0:
+
+- It needs AbstractRuntime 0.19.0, AbstractMemory 0.5.0, AbstractCore 2.35.0, abstractavatar 0.2.0, abstractagent
+  0.6.1 and abstractskill 0.3.11 or newer (dependency floors: `pip install -U abstractgateway` brings them). On an
+  older AbstractRuntime the gateway refuses to build its runtime and says so: "this gateway needs
+  abstractruntime>=0.19.0".
+- Code that opens an entity home beside the gateway (a script, a plugin) passes the fence AbstractRuntime 0.19.0
+  requires: `open_home(..., fence=)`, `open_entity_runtime(..., fence=)`, `ChatSession(..., fence=)`; the gateway
+  passes its own everywhere.
+- Entity homes open with AbstractMemory 0.5.0's task queue: a title or summary that cannot be authored at once is
+  pending, and the next sleep's repair authors it.
+- AbstractCore 2.35.0 never replaces a settings file it cannot parse with defaults (`ConfigParseError`): fix or
+  remove the file it names.
+- `GET /entities/{name}/communities` serves AbstractMemory's payload version 2 (`key` beside `id`, `pending`,
+  `first_sleep_pending`); `life_state.toggles` is `{personal}` (there is no work switch: `work` answers 422); the old
+  lifecycle routes (`POST .../state {state: "paused"}`, `.../loop/start|stop`) still work and answer
+  `Deprecation: true` with their successor in `Link`.
 
 **What's new in 0.20.2** ([CHANGELOG](CHANGELOG.md#0202---2026-11-07)): speech clients check voice
 support with `GET /api/gateway/discovery/capabilities?scope=voice`, without waiting for the unrelated

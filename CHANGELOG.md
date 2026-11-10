@@ -10,12 +10,315 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
-## [0.21.0] - 2026-11-07
+## [0.21.0] - 2026-11-10
 
 (0.20.3 was prepared but never published; its changes are part of this release.)
 
 ### Added
 
+- **The conversation's agent stays out of what is addressed to entities** (operator agreed 2026-11-09).
+  `POST /runs/start` takes `mentions`: the entities the message mentions (the composer's chips, the
+  same names the client sends to `POST /sessions/{id}/mentions`; never parsed from the text). Each is
+  resolved like the mention door does (a hidden or missing one is 404 `entity_not_found`), and the
+  agent reads one line after the conversation's history: "The mentioned entities (Castor) answer for
+  themselves; answer only the part addressed to you, or say nothing with an empty reply." Whether the
+  message also addresses it is the agent's own judgment. The line rides `_runtime.mentions`
+  (`{entities: [{entity_id, name}], line}`), written by the gateway only (a client copy is dropped),
+  and is never replayed into a later turn. An empty reply shows no answer: the turn keeps the person's
+  words and the entities' answers follow it.
+- **Needs** AbstractAgent 0.6.1 (a dependency floor), whose ReAct loop takes an empty reply as its answer when
+  `_runtime.mentions` is set instead of asking again ("Your previous response was empty"), and clients that send
+  `mentions` with the turn.
+- **An entity's cognition profile: what each part of its thinking uses, and how many memories a turn brings to
+  mind** (`entity_cognition_profile.py`, `routes/entities.py`, `docs/entities.md`). `GET
+  /api/gateway/entities/{name}/cognition-profile` answers, for `summaries`, `understanding` and `extraction`, the
+  stored `choice` (`{"inherit": "mind"}` by default, or `{provider, model, thinking, max_input_tokens}`), the
+  `effective` model and its `source` (`profile` or `mind`); `recall` (`shelf_size`, default 50, `source`,
+  `applies_to_running_loop: "on restart"`); `rebuild` (`sensitivity` 0.5, `cap_per_turn` 3, `source`, `sources`);
+  `lookback` (`context`: `day` by default or `tick`, what the end-of-tick look-back sees; `source`); and the `mind`. `PUT` takes any subset of `capabilities`, `recall` and `rebuild`: an absent field keeps its value,
+  `null` returns it to its default. It is checked like the mind's route: the reasoning-effort words, `max_input_tokens`
+  4096 to 140000, `shelf_size` a whole number 1 to 400, `sensitivity` 0 to 1, `cap_per_turn` a whole number 0 to 10
+  (text, decimals and true/false are refused), `lookback.context` `day` or `tick` ("Look-back context must be day or
+  tick."), an `endpoint:` provider that is an enabled connection, and for the
+  entity's creator a model the gateway offers (`403 not_offered`; a capability saved unchanged is kept). Refusals are
+  sentences such as "Memories per turn must be a whole number from 1 to 400.". Each change records a
+  `cognition_profile_changed` marker (old, new, by, as) in the entity's history before the file changes; when the
+  marker cannot be recorded the answer is 503 and nothing is written. The route is an entity setting (an admin or
+  the creator; "Only an admin or <name>'s creator can change how it thinks."), and the console names the marker
+  "Thinking settings changed". Requires the AbstractRuntime release that ships `identity.cognition_profile`.
+- **`communities_changed` on the replay stream**: when a new version of his
+  topics passes through the stream (memory's community records), the gateway records ONE host marker per version,
+  payload `{kind: "communities_changed", version_seq}`, anchored where the version's records stand; every reader
+  and the live tail see it, so the Entity app re-reads `/communities` instead of polling. Community records keep
+  memory's replay projection: their binding draws the revision chain only, never an edge per member.
+- **`cut`: the words were cut when they were saved**. Every record block the Entity app reads now says whether its words were cut by a retired
+  writer when it saved them: the replay stream's record blocks (`display.cut`) and recall blocks
+  (`display.recalled[].cut`), the record read (`GET …/records/{graph_id}/verbatim`) and the card's record
+  briefs. The flag comes from the writer of the words shown, never from their text (no marker is looked
+  for): the flow brain's `mechanical-flow-v1` episodes, and a session reflection still in the words it was
+  formed with under no recorded author (until ADR 0054, AbstractRuntime 0.19.0, that writer cut its digest
+  at 280 characters and stamped nobody). A rewrite in his sleep clears it. The app can then show the title
+  and "Older record: its summary was cut when saved; he rewrites it in his sleep."
+- Known gap: on a machine that ran a pre-release AbstractRuntime build with ADR 0054 but before titles and summaries
+  were authored at formation (both ship in 0.19.0), reflections formed then were whole but are also unstamped, so they read `cut: true` until rewritten.
+- **`GET /entities/{name}/graph`: his memory graph in one read**. The
+  Entity app drew the graph by folding the whole replay through the live door. This route serves `{version,
+  journal_seq, communities_version, communities, nodes, edges}`: every open formed record but the community records
+  (the latest display block of its binding, resolved for the operator exactly as the replay serves it), its
+  community `key`, `via` and seat from memory's communities read (the payload itself rides along unchanged), and
+  the formation edges between nodes. Folded once per process and home, then only the replay's tail since
+  `journal_seq` (a new memory, a closure, the night's new version); the app tails the live stream from there.
+  Measured on a scratch copy of castor (895 nodes, 2947 edges, 14 topics, 1.9 MB): the first read 2.1-2.4 s (once
+  per process and home), then 5 ms; after a new memory formed, 62 ms (the tail only).
+- **An idle entity sleeps on its Mind's thresholds** (operator 2026-11-09). The cognition
+  profile gains `sleep: {after_hours: 24, after_events: 500}` (served and set through `…/cognition-profile`;
+  hours 1 to 720, events 1 or more; AbstractRuntime 0.19.0). The gateway's sweep puts an IDLE entity to sleep once
+  either is reached since its last completed sleep (AbstractMemory `records_since_maintenance`, seeded with the home's
+  own last completed maintenance so existing homes do not all sleep at once). The sleep is its own (`kind: self`,
+  the reason names the threshold), runs its maintenance pass and ends idle; host marker `idle_sleep` records the
+  threshold, the counts and which clock fired (`boundary_source`). One home sleeps per sweep, the one waiting
+  longest first. An idle home under its thresholds gets the authoring drainer instead.
+- **`@entity` from any chat window: `POST /sessions/{session_id}/mentions`** (`entity_mentions.py`,
+  `routes/session_mentions.py`, docs/entities.md "Mentioning an entity from any chat"). Body `{entity, text,
+  mention_index}`; 200 `{run_id, turn_id, author, session_id, mention_index, reply, visit: {run_id, turn_id, visit_id,
+  entity_id, reused}}`. The mention runs through the VISIT DOOR as the signed-in person: the entity's live visit is
+  reused when it is bound to this session, else a visit is opened bound to it (channel `mention`, closed by the
+  reaper after the seat's 5 idle minutes, reflection included); `text` is a visit turn, so the entity's HOME holds
+  the episode (ledger, memory formation, artifacts). The reply is recorded as a turn of the session (a completed root
+  run, workflow `entity-mention`, `_meta.author` the entity, `_meta.prompt_author` the person, `_meta.mention` the
+  home's visit run/turn ids). One session's mentions are serialized. `repeat_of` (optional, the person's own turn of
+  this conversation carrying the same words) marks the mention turn `_meta.repeat_of` so clients show the words once
+  (the prompt is kept: replay stays whole pairs); 422 `repeat_of_unknown` otherwise. The mention turn's `created_at`
+  is when the words arrived, `updated_at` when the reply came. In a VISIT lane (the session is another entity's live
+  visit) the reply is mirrored into that visit as a turn spoken by the mentioned entity (door join:
+  `EntityVisitHost.join_participant` re-signs the stamp with the new participant, then `turn` with that speaker and
+  the words `<name> (entity): <reply>`); the visited entity answers it, its home ledger keeps it; listed under
+  `mirrors`. Only the VISITED entity's own visit is mirrored into (a visit the mention door opened never is: two
+  entities mentioned in one chat do not mirror into each other). The mentioned entity READS the conversation: its
+  visit turn is the session's newest whole turns quoted with their authors (`Laurent: ...`, `Agent (<name>): ...`,
+  `<Name> (entity): ...`, from the turn rows' `author` fields), at most 12 turns / 8,000 tokens whichever first,
+  then the person's words; the answer's `context` states the bound. Visit runs carry `_meta.author` (the entity's
+  display name, identity ref, look). The 404 sentence names the entity only (no server folder path). Errors `{detail, code}`: 404 `entity_not_found` for an unknown or a hidden entity alike (members
+  mention only the entities they created; same sentence, same code); 409 `in_another_conversation` naming
+  the conversation holding the visit (`session_id`); the visit door's own 409 codes; 503 `entity_cannot_answer`
+  (mind unresolvable: the visit door's substrate refusal now carries code `mind_unresolved`; or no reply).
+- **Who speaks, on every turn surface: `author` / `prompt_author`** (`service.run_summary`, `events_stream`,
+  `session_history_bloc.py`, AbstractRuntime `core.turn_author`). `{kind: entity|agent|person, name, entity_id,
+  identity_ref, avatar}` (every key present) on `GET /runs/{id}`, history bloc rows (and each bundle's `run`), the
+  replay view's user/assistant messages, the `run.started`/`run.finished` pointer events (`author`) and every live
+  reply frame on `/runs/{id}/ledger/stream` (`llm.delta`/`llm.delta_end`, snapshot and synthetic ends: the root
+  turn's `author`, resolved once per root by the delta sink, so it rides split-mode files too). `/runs/start`
+  stamps the person under the account's display name and drops a client-sent author; a summon stamps the entity as
+  its answer's author. The history replayed to the next agent run renders an entity's reply `<name> (entity): ...`.
+- **The kill switch: `POST /api/gateway/entities/{name}/lifecycle`** `{action: "stop" | "resume" | "retry"}`
+  (operator ruling 2026-11-08; admin-only).
+  - `stop` is instant and unconditional, in a fixed order:
+    1. The home's lifecycle `generation` is bumped first. This is the fence.
+    2. `paused` is written.
+    3. Cancellation is signalled at once: the loop's durable stop command, the summon seat's run tree, an in-flight
+       visit turn's run tree, and the queued admissions (failed with "Stopped. Resume him first.").
+    4. Each teardown then runs on its own: the loop gets SIGTERM, then SIGKILL after 3 s; the durable visit closes with
+       `closed_by=pause`; the hosted chat closes without reflection.
+  - The response lists one row per item (`run`, `visit`, `chat`, `loop`, `maintenance`, `queue`) with a stable
+    `outcome` and, on failure, a `code` and a sentence. It also carries `complete`.
+  - A repeated Stop retries whatever is still outstanding.
+  - Every writer that began before a Stop gives up instead of undoing it: the unbounded visit wait (both lanes), the
+    home-lease wait, an operator sleep's maintenance pass (`finally`), and a mention's answer (neither recorded in the
+    session nor mirrored).
+  - `resume` clears stopped, writes awake (never a sleep) and restarts own time when `personal` is on.
+  - `retry` re-runs the gateway's own-time reconcile.
+- `entity_seat.cancel_run_tree_outcomes`: one outcome per run (`cancelled`, `already_terminal`, `missing`, `failed`
+  with `run_cancel_failed` or `run_children_unknown`) instead of a log line. `cancel_run_tree` keeps its shape.
+
+- **`GET /entities/{name}/life_state` serves the phase bar**.
+  - `phase` is exactly one of `visit | work | personal | sleep | stopped | idle`, and comes from ONE derivation
+    (`entity_phase.derive`) that `/cognition`, the tile and `POST /state`'s settled answer now share.
+  - New fields: `toggles {work, personal}`, `stopped`, `since` (the phase's entry), `sentence` (one plain line,
+    no clock time), `next`, `blocked {code, sentence, action}`, `can {visit, sleep_now, toggle_work,
+    toggle_personal}` (each `{allowed, sentence}`), and the `visit`, `work` and `sleep` sub-objects.
+  - `rev` versions the whole snapshot: it is monotonic per home and survives restarts (sidecar
+    `entities/.life_phase/<slug>.json`). Each new rev is announced once as a `phase_changed` host marker on the
+    replay stream. If the announcement is missed, the next read sends it.
+  - An unknown entity answers 404 `entity_not_found` with `life_state: null`.
+- **`PUT /entities/{name}/life_state/toggles`** `{work?, personal?}` (admin-only).
+  - The toggles are permissions. Personal on starts own time when nothing else holds the phase.
+  - Personal off ends own time at the loop's next boundary and never puts him to sleep. The old gate's
+    leftover sleep (`grant-gate`/`day-gate`) is written back to awake (root 1178).
+  - Work off refuses new work, 409 `work_off`, at the summon door (direct and queued), the task inbox and the
+    work order (clearing an order is never refused). The current run finishes.
+  - A person principal's own summon (`caller_kind: human`) is a visit and is not gated. The declaration alone
+    never qualifies.
+  - The body is validated by the handler: 422 `invalid_body` or `invalid_toggles`. While stopped: 409
+    `stopped_use_resume`.
+
+- **Own time is the operator's to give; the gateway restores it after an interruption** (operator
+  clarification 2026-11-09).
+  - The sidecar's `resume_to` (`personal | work | null`, one writer) names the own-time phase an interruption took
+    over: a visit or chat, a sleep, a request, a Stop.
+  - Reconcile RESTORES it only while that phase's grant is still on. It does so after a visit or chat closes (normal
+    or idle reaper), a spontaneous sleep ends, a request ends (runner hook), the work order is cleared, an operator
+    sleep's maintenance is done, a resume, or a wake.
+  - It never starts own time from idle by itself. Only the operator's own act does: the personal toggle, `loop/start`,
+    `PUT /personal-grant`, retry.
+  - Never under a visit (open or opening), a running sleep, live work, the kill switch, or an archived entity.
+  - Never twice: a spawn claim in the sidecar. A Stop that lands during the spawn kills the new loop.
+  - A crashed loop is never restarted without the operator: the read shows `blocked {loop_crashed, action: retry}`.
+  - A graceful stop that completes ends own time and clears `resume_to`. Gateway shutdown never starts own time.
+- **`next.phase` says where an interruption returns** (the Entity app 0.12.0). During a visit, a sleep or a request,
+  `next.phase` is `personal` or `work` (the remembered own-time phase, while its grant is on), `sleep` for a visit that
+  interrupted a sleep, else `idle`. A grant revoked meanwhile reads `{phase: "idle", sentence: "Own time is off; he
+  stays awake."}`. The remembered phase retires when that interruption ends. Visit status (both lanes) carries the
+  interrupted `prior_state`.
+- **The vendored phase spec is v23** (the Entity app 0.12.0, the privilege rule: personal is entered only by the
+  operator's grant or resume, or by returning to it). The drifted-spec pin is green again; the edge-ops tests use v23's
+  causes and edges.
+- **A visit's close returns to the previous phase**. An interrupted sleep continues as the same sleep, keeping
+  who chose it (`written_by`), its wake time and its original `since`. Both lanes restore `written_by`.
+- **An operator sleep wakes when its maintenance is done** (`POST /state {state: sleep, dream: true}`). The
+  sleep is announced before the pass. When the pass returns he wakes and the gateway reconciles, unless a Stop moved
+  the generation (nothing written) or a visit took the posture (the wake then runs at the visit's close). The response
+  carries `maintenance: woke | after_visit | stopped | not_ours`.
+- **The replay stream observes changes made inside the loop**. When the home's `state`, `loop_status` or
+  `phases.yaml` moves, and on every heartbeat, an open `/replay/stream` re-derives the snapshot. A new rev reaches the
+  client as its `phase_changed` envelope, and a reconnect with `Last-Event-ID` redelivers it.
+- **A visit's tool results rest whole in the entity's home, and three routes serve them** (`entities.py`,
+  `entity_visits.py`, `routes/entity_replay.py`, `docs/entities.md`; root backlog 1145 steps 1 and 2, operator
+  2026-11-08: no activity, human or entity, outside the runtime). The gateway's visit tool handler now passes the home's
+  artifact store and the lane's context to the runtime's `execute_tool_elections`, so every tool result during a visit
+  (the search output, a fetched page, the whole file behind a bounded `read_file` view, an image's bytes, a command's
+  output) is kept whole, content-addressed, in `<home>/artifacts`; the result text ends with `[artifact: <id>]`, the
+  ledger's `tool_calls` rows carry `artifact_id`, and the visit transcript's `tool_details` carry it too. New reads,
+  from the home's own store and with no file path in any answer: `GET /api/gateway/entities/{name}/artifacts?run_id=
+  &tool=&turn_id=&limit=&cursor=` (metadata rows, newest first, bounded), `…/artifacts/{id}/meta` (one row) and
+  `…/artifacts/{id}` (the bytes with their stored content type; an image is served as an image); 404 for an unknown id.
+  Needs AbstractRuntime 0.19.0 (`keep_tool_result_artifact`; a dependency floor).
+- **Files attached to an entity visit turn, as data** (`routes/entities.py`, `entity_visits.py`, `docs/entities.md`;
+  operator 2026-11-08: images already work with every other client, so they must work for entities too).
+  `POST /api/gateway/entities/{name}/visit/{run_id}/turn` takes `attachments: [{"path": "shared/x.png"}]` beside `text`
+  and `speaker`; `path` is workspace-relative, the string `POST .../workspace/file` returned when the file was placed
+  (`mounts/<name>/…` allowed). Each path is resolved through the entity's own workspace rules and recorded on the turn
+  as `{path, bytes, sha256, content_type}` (type from the bytes for PNG/JPEG/GIF/WEBP, else from the name). Refusals come
+  before any state moves, each with a `code`: 404 `attachment_not_found`; 403 `attachment_outside_workspace` (one fixed
+  sentence for a path outside the workspace or an unknown or refused mount — the mount whitelist is never listed to a
+  visit client); 400 `attachment_is_directory` / `attachment_path_required` / `attachment_unreadable` (an embedded NUL,
+  a name too long, a symlink loop — never a 500); 413 `attachment_too_large` (the 20 MB per-file workspace cap, or a
+  turn whose files total more than 64 MB, the total in the detail); at most 64 files per turn. The records ride the
+  visit run's resume payload as structured data — nothing is parsed from the text — and
+  `GET .../visit/{run_id}/transcript` serves them on the user turn as `attachments`. Meets pass none.
+  `GET .../visit/{run_id}/ledger` serves media paths workspace-relative (a `read_file` result's `output.media`, an
+  `llm_call` payload's `media`); the home store keeps the record as written.
+- **An idle entity also sleeps when too much of him is fragmented** (operator 2026-11-10; AbstractRuntime
+  `sleep.after_fragmented_share`, default 0.15; AbstractMemory `records_since_maintenance(...).fragmented`). Beside
+  `after_hours` and `after_events`, the idle sweep puts him to sleep once more than that share of his memories are
+  not yet whole (placed provisionally in a topic, without a vector, or with a title or summary still being
+  written), as long as something formed since his last completed sleep; the sleep's reason says it ("18 % of his
+  memories are not yet in a topic") and the receipt carries memory's `fragmented` counts. One home per sweep, as
+  before.
+- **A gateway iteration default, `agents.max_iterations`** (operator 2026-11-08). How many cycles an agent run may take when
+  the app sets no limit of its own: a whole number of 1 or more, unset by default (each workflow's own limit applies, 20 for
+  the built-in agent). Read and written on `GET/POST /api/gateway/admin/runtime-config` (`{value, source: stored|default}`;
+  a bool, a decimal or a word is refused with a sentence; no upper limit, a `warning` line past 200) and with
+  `abstractgateway config set|get|unset agents.max_iterations`; the web console shows it as *Iteration limit* under
+  Workflows → Settings (saved, then read back). Every app reads it from `GET /discovery/capabilities`
+  (`agent_limits.max_iterations`).
+- **`limits` on every `POST /runs/start` answer**: `{max_iterations, source: request|gateway_default|builtin}`, also kept on
+  the run as `input_data._gateway_limits`. The app's value wins, else the gateway default is written to
+  `_limits.max_iterations`, else the workflow decides. `POST /backlog/maintain` and `POST /backlog/advisor` follow the same
+  ladder with their former built-in 12 and 10 and return `limits` too.
+- **"Keep the Mac awake while the gateway runs" is a user setting** (`keep_awake.py`, `runtime_config.py`,
+  `routes/keep_awake.py`, the web console's Gateway card, the tray's Settings submenu; backlog 1149, operator
+  2026-11-08 — the 2026-11-02 "no switch" ruling is superseded). The idle-sleep assertion the gateway holds on macOS
+  is now governed by the stored setting `host.keep_awake` (default on, so existing installs behave the same), read at
+  serve start and changed live: off releases the assertion at once, on holds it again, no restart.
+  `serve --keep-awake on|off` sets it for one run (no environment variable; the saved value applies at the next
+  start). `GET /api/gateway/host/runner` carries `keep_awake: {value, source: flag|stored|default, held,
+  platform_supported[, stored_value]}`; `PUT /api/gateway/host/keep-awake {enabled}` (admin) stores it, applies it
+  and returns the same shape. The web console shows a switch beside "Start at login" on the Gateway card with the
+  same words as the tray ("Keep the Mac awake while the gateway runs"; pressed = on), verified by a fresh read after
+  every click; the tray's Settings submenu has the check item right under "Start at login", bound to the same
+  route. On a system without such an assertion the row says so and the setting still stores. The terminal console's
+  row is a separate crate and comes later. Independent check on a Mac: `pmset -g assertions` lists `AbstractGateway`
+  under PreventUserIdleSystemSleep while held.
+- **Every memory is formed with its authored title and summary** (AbstractRuntime 0.19.0, operator
+  rulings 2026-11-09):
+  - In a durable visit, the formation step's authoring call (an `LLM_CALL` tagged `capability: summaries`) goes to the
+    entity's summaries model, never its mind. `open_entity_runtime(capability_handlers=)` is wired for it.
+  - The LLM_CALL handlers forward `response_schema` / `response_schema_name` as structured output, and the parsed
+    object comes back in `result.data`. A schema the converter refuses is a failed call, never an unstructured answer.
+  - A hosted chat session knows its capability models (`ChatSession.llm_for_capability`). Without them every turn
+    formed pending records.
+  - When a durable visit closes on a home with no own time running, the titles and summaries a failed authoring call
+    left pending are authored. This runs beside the close, bounded by `rebuild.cap_per_turn`, under the home's writer
+    lease taken at once or not at all.
+  - The own-time process receives the private resolution of every capability model on a provider connection
+    (`spawn_loop_process(capability_endpoint_profiles=)`), so its summaries client works there too.
+- **Who took his own time back is recorded** (AbstractRuntime 0.19.0 `write_personal_grant(revoked_by=)`). The
+  Stop (and a Resume cancelling a grant armed meanwhile) revokes with `revoked_by: kill_switch`; the operator's own
+  revoke (the personal toggle off, the personal-grant door, the loop stop's revoke) with `revoked_by: operator`;
+  the next grant clears it. The life state serves `personal_revoked_by` (null while own time is given), so a
+  client can say "own time revoked by the operator" or "by Stop".
+- **One memory says which of his topics it is in.** The record read (`GET .../records/{graph_id}/verbatim`) and
+  the card's record briefs (interests, lessons, key moments) carry `community`: `{key, title, pending,
+  provisional, via}` (AbstractMemory `community_of` through the runtime facade for the record read; the same
+  communities read `/communities` serves for the card), or `null` when no version holds the memory, so a hover
+  card or the Detail tab can say "in topic …". A diary record's read is unchanged.
+- **`session_totals` on `GET /api/gateway/runs`** (`routes/gateway.py`; operator 2026-11-08). Code's sidebar said
+  "≥4 turns" because a listing page holds a few runs of a session, never all of them. Every listing page now carries
+  `session_totals`: for each `session_id` on the page, `{"turns": <what the listing shows as turns of the whole session:
+  parent-less runs that are not automation controllers, plus occurrences>, "runs": <its runs>}` — the session's
+  internal `session_memory_<id>` bookkeeping run counts in neither (a one-turn conversation reads as 1) — under the same
+  `session_kind` filter as the page (a conversation listing counts conversation runs), read from
+  the file store's session and children indexes — no run file and no ledger is read, and only the sessions on the page
+  are counted (measured on an 11,500-run, 2,114-session store copy: 5.4 ms median for a page naming 50 sessions,
+  about 10 ms for 200, on top of the index the gateway already builds at boot). The key is absent when the page names
+  no session, or when the run store is not the file-backed one (no such index: nothing is guessed).
+- **Session kinds `automation` and `process`** (`session_kinds.py`, `GET /runs`, `POST /runs/start`, `GET /host/runs`;
+  backlog 1166, operator 2026-11-08: "conversations, docs, notes, automations, processes; a probe is a process; a
+  visit is a conversation with an entity"). A session's purpose is now one of `conversation` (the default), `docs`,
+  `notes`, `automation` (an occurrence of an automation a person created: the controller's and its occurrences'
+  sessions, by their run attribution) or `process` (work the framework runs for its own treatments: AbstractNote's
+  `note-process`, `note-reflect` and `note-consolidate` occurrences by exact flow id; the phone and watch voice probes
+  and model-host verifications when their client starts them with `kind: "process"`). Note's captures and drains stay
+  `notes`; a discussion stays a conversation; there is no `visit` kind. `POST /runs/start` takes the new kinds (with a
+  `session_id`) and marks the session before the run starts. Turn listings take `kind=` as a comma list
+  (`kind=conversation,automation`) beside `all`; the default stays conversations, so automation occurrences leave the
+  default list; a listing that asks for the automation attribution (`session_kind=automation,occurrence`, what the
+  Observer and AbstractCode send) keeps listing those sessions whatever `kind` says. Every row carries `kind` and
+  `session_kind`. The first listing after the upgrade runs the one-time migrations `process_sessions_v1` and
+  `automation_sessions_v1` (recorded in `session_kinds.json` like `docs_qa_bundle_v1`); later occurrences are
+  classified at read time, never written to the file. `GET /host/runs` lists automation sessions by default and takes
+  `kind=process` / `kind=automation`; processes stay out of its default like notes. The client halves (the Assistant's
+  probes sending `process`, the Code and Observer kind chips) are separate items.
+- **What a memory stores about its own words, on every surface the Entity app reads** (`entity_understanding.py`,
+  `routes/entity_replay.py`, `routes/entities.py`, `docs/entities.md`). AbstractMemory now rewrites a record's words
+  in place and keeps every earlier reading as a version; the gateway serves its fields under memory's own names, every
+  key present and `null` when the store holds none: `digest`, `digest_method`, `digest_version`, `version_count`,
+  `authored_by` `{kind, id}`, `reader` `{provider, model, thinking}`, `understood_at`, `cause`; world-model cards
+  `target`, `target_type`, `card_revision`, `source_count`; dreams `narrated`, `narration_version`; a superseded record
+  `replaced_by`. `GET /api/gateway/entities/{name}/records/{graph_id}/verbatim` carries the current reading and
+  `versions` (every reading, oldest first). Replay `snapshot` envelopes carry `display.recalled`, one block per recalled
+  record, describing the reading that entered that context (the payload is unchanged; with `enrich=false` nothing is
+  added). `GET .../card` interest, lesson and key-moment briefs carry the current reading. Every non-diary record carries them whatever its
+  visibility (a private lesson included). Diary records gain nothing: their words still leave only through the diary
+  door. Requires the AbstractMemory release with
+  `MemorySystem.record_understanding` and `versions` (memory 0059).
+- **`POST /entities/{name}/summon` takes `mentions`**, with the `POST /runs/start` semantics: the composer's chips
+  (never parsed from the text), resolved like the mention door and written host-only as `_runtime.mentions
+  {entities, line}` (a client copy is dropped). The bundle host adds the line after the history, right before the
+  person's words: the summoned entity answers only what is addressed to it, or says nothing with an empty reply.
+  Naming the summoned entity itself mentions nobody else; an unknown name is 404 `entity_not_found`. The request
+  model used to drop the key silently.
+- **HTTPS on the Tailscale name, automatic** (`tailscale_https.py`). While it runs, `serve` serves
+  `https://<host>.<tailnet>.ts.net` itself (`tailscale serve` started in the foreground as the gateway's
+  child), so phones and other computers on the tailnet get voice, camera and the clipboard with no setup.
+  The address exists only while the gateway is up: Tailscale removes it when the command ends, and a
+  watchdog ends the command within a second when the gateway stops abruptly. When it cannot be served yet
+  (Tailscale down, HTTPS certificates off), the gateway checks again every 30 s, so Tailscale coming up
+  later needs no restart. An existing `tailscale serve` or `tailscale funnel` on port 443 is never
+  replaced. On by default; `serve --tailscale-https off` turns it off. `GET /api/gateway/network` reports
+  `tailscale_https` (`off | unavailable | taken | starting | active | failed`, url, target, reason), and the
+  console's Network page (web and terminal) shows it instead of the manual `tailscale serve --bg`
+  instruction.
 - **A lean entity tile read: `GET /entities/{name}/tile`** (`entity_tile.py`, backlog 1012). One small card about an entity
   read the whole identity card (up to 90 KB and 0.5-1 s warm for a long life such as ephemeral). The tile serves exactly what a
   card shows a person, about 2 KB: name, look, age, its model; what it is doing now and since when (the same phase
@@ -29,6 +332,232 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Changed
 
+- **The line the conversation's agent gets when a message mentions entities is imperative and last** (the agent read the softer line and still answered for Castor after a long workspace search). It is
+  now "The mentioned entities (Castor) answer this message themselves. Unless the user addressed you directly,
+  reply with an empty message.", the last system instruction before the person's words. The mentions are the
+  composer's chips, never read from the text. A real model may still answer: whether the agent takes part at all
+  is an operator decision still pending (an opt-in agent).
+- **Identity looks follow the avatar catalog's retired and ready designs** (abstractavatar 0.2.0,
+  `entity_identity.py`). A stored or requested design the catalog retired is accepted and drawn as its
+  replacement (`eye` as `watch-well`, the retired robots as `watch-hover`, `watch-shape-wave` as
+  `watch-wave`, the others as `watch-halo`): never refused, never drawn blank. The record keeps the id it
+  was given; identity payloads (`GET /entities/{name}/identity`, the list rows, `GET /sessions/{sid}/identity`)
+  serve the drawn design as `avatar.style`, the stored id as `avatar.style_requested`, and the drawn
+  design's `watch_code`. An unknown design is refused with the ready designs only, never the experimental
+  ones (still accepted by id). The legacy appearance shapes write ready designs: `wave` -> `watch-wave`,
+  `kitty` and `face` -> `watch-halo` (read back as `planet`); `planet` over a shape design (`watch-wave`
+  reads as `wave`) writes the entity's default orb when it is ready, else `watch-halo`. A missing or
+  incompatible abstractavatar native library answers 503 on identity sets and reads instead of a 500. A gateway with an abstractavatar older than
+  0.2.0 answers 503 naming the version instead of mis-resolving.
+- **A new entity's unnamed spark items are authored at birth** (AbstractMemory 0.5.0 `engram(author=)`). Creation
+  hands memory the entity's summaries capability as the author (the call kept as a home artifact, under the birth's
+  admission fence), so a purpose, trait or limit without a name gets an authored title instead of the "trait-N"
+  stand-in; when the capability fails, the record forms with its title pending (a task the drainer and the sleep
+  repair take) and its authoring-failure line.
+- **Visits, summons and own time use the entity's own recall width** (`entity_chat.py`, `entity_visits.py`,
+  `entity_gate.py`, `entity_loop.py`, `routes/entities.py`). When a request names no `shelf_size`, a visit
+  (`chat/open`), a durable visit, a summon and the start of the entity's own time take `recall.shelf_size` from its
+  cognition profile, else 50 as before; a request's own value still wins. `loop_spawn.json` now records only a width
+  the start request named, so a restart after a crash reads the profile again.
+- **Dependency floors for this release** (`pyproject.toml`): AbstractRuntime 0.19.0 (the Stop fence, the one
+  iteration default, registered skill roots, the entity life cycle), AbstractMemory 0.5.0 (the task queue every
+  entity home opens with, the fragmented-memory counts the idle sleep reads), AbstractCore 2.35.0 (the runtime's own
+  floor), abstractavatar 0.2.0 (retired designs and resolved styles), abstractagent 0.6.1 and abstractskill 0.3.11.
+  The `apple` and `gpu` profiles and the `embeddings` extra follow. The abstractvoice floor stays 0.20.0.
+- **A newborn entity starts idle** (operator ruling 2026-11-09). It is awake and reachable, with nothing of its own
+  running, and own time starts when the operator gives it. Before, newborns were born asleep (the c1503 birth sleep).
+- **The own-time process is told where it returns** (AbstractRuntime `spawn_loop_process(return_to=)`, 2026-11-09).
+  The operator's own start (personal on, `loop/start`, Retry) says `personal`; a restore after an interruption names
+  the phase it took over (`personal` or `work`).
+- **There is no work switch; jobs drive work** (operator 2026-11-09). `life_state.toggles` is
+  `{personal}`; `can.toggle_work` and the `work_off` refusals are gone, and `PUT …/life_state/toggles` with `work`
+  answers 422 `unknown_field`, "There is no work switch: work starts when a job is queued." `life_state.work` is
+  always `{jobs_queued, current}` (`current`: `{kind, run_id, since}`, kinds `summon`, `automation`, `work_order`,
+  `task`). A work order or a task queued on an idle entity starts the loop for work (`return_to: work`) without the
+  personal grant; a job during own time interrupts it, and when all jobs are done he returns to own time only while
+  it is still given, else idle. A loop that ends on its own with jobs left is not respawned by that end.
+
+- **Stop takes own time back; Resume is idle** (operator 2026-11-09). `POST …/lifecycle
+  {action: "stop"}` also revokes the personal grant (marker `personal_grant_revoked`, `revoked_by: kill_switch`) and
+  forgets the phase to return to. When a grant was on, its answer carries `own_time_revoked: true` and the row
+  `{item: "own_time", code: "revoked", outcome: "done", sentence: "Own time was revoked."}`.
+  `resume` writes awake and the entity is `idle`: nothing from before the Stop is restored, and own time starts only
+  when the operator turns personal on again.
+- **The runtime owns the job queue and the way back** (AbstractRuntime 0.19.0). `work.jobs_queued`
+  is the runtime's `read_job_queue` (the work order, then taken and pending tasks). `resume_to` is read and written
+  only through the runtime's `read_resume_to` / `write_resume_to` bucket, which the loop and the kill switch write too.
+  A loop started for queued jobs is told no `return_to` (its gate works the queue). `jobs_done` is a requested end
+  (a clean idle, never a crash).
+- **Canonical phase spec v25** re-vendored byte for byte (the Entity app 0.12.0): the newborn is idle, the
+  `work->personal#operator` edge is gone, and the guards into work are `job_queued`.
+- **A job never erases the own time it interrupted**. The queue's work day no longer overwrites
+  `resume_to = personal`, and a remembered `work` return is never turned into own time just because the grant
+  stands.
+- **Nothing gives own time back across a Stop**. The deprecated `PUT …/personal-grant` is
+  refused while stopped (409 `stopped_use_resume`), checked and armed in one step under the lifecycle lock; Resume
+  forgets the way back and revokes any grant armed meanwhile, so it always lands in idle.
+- **A visit waits; it is never refused for another visit** (root ADR-0027). A visit door that
+  finds another person's visit or a drawer session on the entity waits, without a deadline, for it to end (only
+  Stop ends the wait). The same visitor opening from another conversation is a handoff: their visit there closes
+  and this conversation's visit opens. Participants stay isolated: nobody joins another person's visit.
+- **Stop never takes an unknown process for a dead one**. The loop's liveness is alive, dead or
+  unknown (EPERM, an unreadable start time): unknown is not signalled and not counted as stopped, the Stop's loop
+  row says `loop_unverified`, and pressing Stop again retries.
+- **One lock and one generation with the runtime** (AbstractRuntime 0.19.0). The gateway's
+  lifecycle lock now holds the runtime's home state lock inside it, so every gateway check-then-write is serialized
+  with the loop's own state and `phases.yaml` writes; the lifecycle generation is the runtime's
+  (`read_lifecycle_generation`, bumped by every Stop through `bump_lifecycle_generation` and by the runtime's hard
+  stop). The operator's state write (`POST …/state`) is fenced on it: a Stop landing meanwhile is never written over.
+- **Stop reaches every effect boundary** (AbstractRuntime 0.19.0). A hosted chat turn checks
+  the lifecycle generation at each boundary (`ChatSession.cancel_check`): after a Stop it runs no further tool, model
+  call, formation or authoring, and its record says cancelled, by the operator (the turn answers 409
+  `stopped_use_resume`). The operator's maintenance pass stops at its next stage on a Stop or a visitor
+  (`should_continue`), and the authoring drainer stops before any further call or write (`should_stop`).
+- **A mirrored mention is admitted in one step**. The mentioned entity's generation check and
+  its join to the other visit happen under its lifecycle lock, and the generation is checked again right before the
+  mirrored turn: a Stop of the mentioned entity carries none of his words into another visit. (A Stop landing
+  while the visited entity is already answering cannot cancel that other entity's turn.)
+- **Visit admission is fenced end to end**. A visit's run becomes visible to Stop in one fenced
+  step with the generation its preflight saw (a Stop in between refuses the open and cancels the run). A visit
+  taking the phase while own time is being started is not a Stop: the new loop holds at the visiting posture and
+  keeps its grant and its way back, instead of being hard-stopped.
+- **Stopped is the one visit refusal** (operator 2026-11-09: a visit never fails). Both visit doors and the mention door
+  answer 409 `{"detail": "Stopped. Resume to visit.", "code": "stopped_use_resume"}`.
+  - `entity_asleep` is gone: an open visit's turns are never refused because of a sleep.
+  - `entity_paused` is replaced by `stopped_use_resume`.
+  - Hosted-chat refusals that carry a code are served as `{detail, code}` with the `X-Gateway-Error-Code` header.
+- The durable visit status (`GET /entities/{name}/visit`) also carries `participants` and `created_at`.
+- **Idle is served as `idle`, stopped as `stopped`.** `/life_state`, `/cognition` and the tile no longer fold
+  "awake with nothing running" into `sleep` (the c203 IDLE-IS-SLEEP rule is retired by the 2026-11-08 ruling). Under
+  the kill switch, `phase` is `stopped` instead of `null`. The tile's last moment skips a `phase_changed` echo of an
+  act that is its own moment.
+- The summon door's paused refusal also carries `reason_code: stopped_use_resume` and a `message`.
+- **Operator sleep only changes the phase**. It no longer disarms the personal grant or clears the standing
+  work order: v17's OPERATOR-SLEEP-IS-ABSOLUTE composite is retired by the 2026-11-08 ruling.
+
+- `POST /entities/{name}/state {state: "sleep"}` is refused during a visit (409 `in_visit`, "He is in a visit; end
+  it to let him sleep."; it no longer tears the visit down) and while already asleep (409 `already_asleep`).
+  `POST /state awake` hands the phase back to the toggles (reconcile).
+- The kill switch records `personal_frozen` when it killed a live loop. It calls the runtime's hard stop only when a
+  loop is alive: the hard stop writes the status as the calling process, and a second one would signal the gateway.
+- **The gateway's sleeps run the runtime's night** (AbstractRuntime 0.19.0 `build_consolidator(embedder=)`). The
+  operator's sleep (`POST /entities/{name}/state` asleep with the dream pass) and the idle sweep's sleep called
+  memory's `sleep_pass` alone, so they skipped the night's metadata repair, the topics stage and the night voice.
+  They now run the same night the own-time loop runs: memory's sleep pass, then the repair of titles and summaries,
+  then his topics (`topics.sleep_communities`: what has no vector is embedded, then memory forms the night's version
+  of his communities), then the night voice. It runs under the pass's lifecycle fence (a Stop ends it at the next
+  step, nothing is written after it), with the home's own embedder (memory refuses a rewrite of a vectored record
+  without it), the entity's summaries capability and mind clients, and the night's lines in the home's
+  `own_time.log`. The sleep's result is the runtime's night (`formed`, `dream_record_id`, `authoring`,
+  `communities`, `engine`: memory's own report); `abstractgateway entity state ... --dream` says the dream and the
+  topics version.
+- **His topics are memory's communities, formed while he sleeps** (AbstractMemory
+  `community_index.communities`, AbstractRuntime `memory_facade.communities`). `GET /entities/{name}/communities`
+  keeps its URL and serves memory's payload version 2 unchanged: `{version: 2, version_seq, first_sleep_pending,
+  algorithm, communities: [{id, key, title, summary, pending, verdict, size, kinds, members: [{id, via}],
+  provisional_ids, cohesion, layout: {xy, radius, seats}, centroid_stale, facts}], links: [{a, b, weight}]}`. Titles
+  and summaries are authored (or honestly `pending`), never keyword labels. Nothing is computed on GET: the runtime's
+  request-time Louvain (`abstractruntime.identity.communities`, retired) is no longer called; a home with no version
+  yet answers `first_sleep_pending: true` with no communities, never a stand-in partition. Cached per home and journal
+  seq, so a memory placed since the version shows in `provisional_ids` at the next read.
+- **The `topics` tool reaches visits**: the door's tool executor wires AbstractRuntime's `HomeMemoryReader.topics`
+  beside `search_memory`/`read_memory`/`recent_memories`.
+- **`sleep.after_fragmented_share` in the cognition profile** (AbstractRuntime 0.19.0): `GET/PUT
+  /entities/{name}/cognition-profile` serve and accept the share of his memories not yet in a topic past which an idle
+  entity sleeps (default 0.15, `0 < share <= 1`, the runtime's sentence for a value outside it; null resets it).
+- **A dev server an agent starts lives as long as its conversation** (operator decision 2026-11-09; needs
+  AbstractRuntime 0.19.0). AbstractRuntime now keeps a `local_helper_start` helper for the session instead
+  of closing it when the turn's run ends, so a server started in one Code turn still answers in the next.
+  The gateway ends it with the conversation: `POST /sessions/{id}/archive` stops the session's helpers
+  (`helpers_stopped: N` in its answer), and the gateway's stop stops every helper (shutdown stage
+  "local helpers stop"); the agent or the operator can still stop one (`local_helper_stop`).
+- Known gap: with a separate runner process (split mode) the helpers live in the runner, and an archive
+  answered by the HTTP process does not reach them; they stop with the runner.
+- **The iteration default is 50, read from AbstractRuntime** (operator 2026-11-08: "By default, set it to 50
+  everywhere"). Unset `agents.max_iterations` now means the framework default, `DEFAULT_MAX_ITERATIONS` (50), imported
+  by name: the runtime-config read carries `default: 50`, `capabilities.agent_limits.max_iterations.default` is 50
+  (`source: "default"`), a `POST /runs/start` without a value answers `limits: {max_iterations: 50, source: "builtin"}`
+  (it was `null`), and `POST /backlog/maintain` / `/backlog/advisor` lose their own 12 and 10. The console field reads
+  "Not set: the framework default (50)" and its clear button is *Use the default*.
+- **No gateway text cap refuses a title any more** (`automation_defaults.py`, `events_stream.py`,
+  `admin_runtimes.py`; root ADR 0054, operator 2026-11-08 — the runtime removed its own stored-text caps the same day).
+  A visual flow's `automation_defaults.title` was refused past 120 characters and a flow's published event `title`
+  past 200: both are now stored whole (a title is a non-empty, trimmed string; nothing else). The desktop tray's
+  Sessions rows keep their 60-character fold as a display choice: `GET /host/runs` rows carry `title` folded with a
+  visible "…" and the whole first line beside it as `title_whole`, so nothing is cut silently. A published event's
+  `body` (was refused past 4,000 characters) and `subject` (past 200) are stored whole too: text is the only rule
+  (ADR 0026/0054: stored text has no length caps).
+- **The gateway half of the Stop fence** (AbstractRuntime 0.19.0). Every
+  runtime state writer the gateway calls carries a fence: the kill switch writes with `KILL_SWITCH`, Resume with
+  `RESUME`, everything else with the `LifecycleFence` of its admission (a door's generation, or the generation read
+  under the lifecycle lock for a write decided in that step).
+  - The sidecar is written only from inside `fenced()` / `fenced_here()`: `write_record` takes only the record such a
+    block yielded, while it is open; anything else is a `TypeError`.
+  - `read_record` fails closed: an unreadable `phases.yaml` is an unknown generation (never the sidecar's old number),
+    and nothing is admitted on it. The life_state read is still served, with a `#FALLBACK` warning and nothing recorded.
+  - The hosted chat opens its home and its `ChatSession` with the visit's fence (the session's every model call,
+    tool and effect checks it; `cancel_check` is gone). The close's restore and an aborted open's restore are fenced on
+    the visit's admission, like the durable visit's terminal restore (its generation is stamped in `_visit.generation`).
+  - The registry opens each entity runtime with a fence admitted at the home's generation and keeps it; a door that
+    admits new work after a Stop readmits it at its own generation (`runtime_for_admission`, AbstractRuntime
+    `EntityRuntime.readmit`), Resume readmits a cached one, and a visit run admitted before a Stop is refused at its
+    door. A run the fence cancelled is answered with "Stopped. Resume to visit.", never its error line.
+  - The registry's shared home (`EntityHome`) gives memory a commit guard and the book a guard that check the fences
+    of the act in progress (`entity_phase.acting_under`): the operator sleep's and the idle sleep's night run under the
+    pass's fence (every commit refused after a Stop, memory's `cancelled=` checks the fence and re-reads
+    `phases.yaml`, fail closed), and a Stop refusing a commit ends the night as stopped by the operator, never failed.
+  - Reconcile has no spawn claim with a clock: a start in progress is the runtime's reservation (loop_status phase
+    `starting`) or this process's own decision-to-reservation window; the runtime's "already starting" / "already in
+    progress" refusals read as `spawning`, its `StoppedByOperator` as `stopped`. The idle sleep reads the same.
+  - The visit waits check the runtime fence (a compare plus one stat), never a sidecar and `phases.yaml` re-parse
+    every 250 ms.
+  - The Stop's receipt carries a `signal` row (`failed lifecycle_signal_unwritten`) when the runtime moved the
+    generation but could not write its signal file (`LifecycleSignalUnwritten`): the Stop stands, other processes
+    see it at their next read. The start doors answer a start the Stop overtook (`StoppedByOperator`) with
+    "Stopped. Resume him first." and a start another one beat ("already starting", `LoopAlreadyRunning`) as
+    `already_running`, never `start_failed`.
+- Tests stub only the loop's process creation: `subprocess.Popen` answers the runtime spawn's
+  own argv with a fake child (its pid beyond any pid_max), so the spawn lock, the start refusal, the lifecycle fence
+  and the reservation run in every test; `loop_spawns` records the loops a test's code tried to create.
+- **A mention mirrored into another entity's visit carries nothing after the mentioned entity's Stop**: the
+  join and the mirrored turn run under the source's fence beside the visited entity's own, and
+  the visit door re-checks every acting fence under the visited home's writer lease right before it runs anything.
+- **The authoring drainer never runs after a Stop it was admitted before**: its fence is
+  admitted before the paused check, the lease and the runtime lookup, revalidated under the lease, the runtime it
+  drains through is the one admitted at that generation, and its writes run under the fence; a Stop refusing a write
+  ends the drain as `stopped`, never an authoring failure.
+- **A hosted chat opened across a Stop is never left live**: its registration is one locked step
+  with the check of the visit's original admission; a session refused there is disposed (home closed, lease released,
+  nothing restored over the Stop), and a Stop during the pending look-back is a refusal, never a failure line.
+- **A busy visited home never holds up a mentioned entity's Stop**: the mirror waits for the
+  visited home's writer lease outside every lifecycle lock (the wait ends on the mentioned entity's Stop); only the
+  brief check-and-join runs under its lifecycle lock.
+- **An unreadable loop status is never taken for a stopped loop**: a status file that exists but
+  is denied or malformed is `failed loop_unverified` on the Stop's receipt (incomplete, a repeated Stop retries), and
+  nothing is signalled; only a missing file reads as no loop.
+- **Visit doors keep one admission and serve arrivals oldest first**: the generation read at a
+  door's arrival runs through every wait and retry of its open (checked on each wait's exit and again once the open
+  lock is held), so a Stop followed by a Resume during a wait still ends the open; and a door takes a ticket on
+  arrival and opens only at the head of its home's line (`entity_visits.ARRIVALS`, shared by the durable visit and the
+  hosted chat), so a newcomer never overtakes a visitor already waiting. The same visitor rejoining his own live visit
+  takes no ticket.
+- **The same visitor hands over a visit whatever it waits on**: a visit parked on a tool approval
+  or a question is settled explicitly (cancelled with the handover's reason, the pending tool never runs, its history
+  and ledger kept, its terminal duty run) and the new conversation's visit opens, instead of `not_waiting`.
+- `GET /entities/{name}/tile` serves `look.style` as the design DRAWN (a retired avatar id resolves to its replacement, an unknown id to the catalog default, as the identity route does) and adds `look.style_requested`, the id as stored.
+- **A turn's notices are served beside its reply, unchanged** (AbstractRuntime 0.19.0, the Entity app
+  owner's contract 2026-11-09: `[{kind, record_id, title, text?, staged?, visibility?}]`; the served reply
+  carries no bracket markers, the stored words keep them).
+  - The visit door answers the turn's served reply (`_turn.reply`), no longer the visit history's stored
+    words, and its probe carries `reply_notices` (`notices` stays the operator's log lines).
+  - The visit close answers `notices`: each election the visit's turns staged (lesson, interest,
+    realization) that the close formed, with the formed record's graph id, read from the run's own ledger,
+    so a "forming" badge resolves to its record.
+  - The hosted chat turn answers `reply_notices` beside `reply`.
+  - A mention answers `notices` and records them on its session turn (`output.notices`, read by the session
+    turn rows of history bundles); a mirrored turn's row carries the visited entity's `notices`.
+- Needs AbstractRuntime 0.19.0 (a dependency floor). The visit run's own session row gets no close
+  notices until the runtime's visit output names them.
 - **The console's kit islands and themes come from the published ui-kit 0.9.19** (`console_islands.py`,
   `console_themes.py`, synced from the AbstractUIC v0.10.6 release; they were at 0.9.15). The entity Mind
   picker resets reasoning and MTP on a model change and offers MTP only for capable models; an
@@ -77,8 +606,320 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   by id, so its Processing page is unchanged. A docs-qa run named by a namespaced `flow_id`
   (without `bundle_id`) is now marked `docs` too.
 
+### Deprecated
+
+- **The old lifecycle routes are mapped onto the phase model** and answer `Deprecation: true` with a successor `Link`:
+  - `POST /entities/{name}/state {state: "paused"}` and `POST .../loop/stop {mode: "freeze"}` ARE the kill switch.
+    They keep their old keys (`state`, `prior`, `closed_visit_run`, `marker_seq`; `frozen`, `pid`, `was_running`,
+    `escalated_to_sigkill`) beside the stop report.
+  - `restore`, or `awake` while stopped, IS resume.
+  - A graceful `loop/stop` also turns personal off. Otherwise the gateway would restart own time at the next visit's
+    close.
+  - `POST .../loop/start` is personal on. It remembers its parameters for the gateway's reconcile. It is DEFERRED
+    (200 `{started: false, deferred: true, life_state}`) while a visit, work or a sleep holds the phase: a running
+    sleep is never cut short. While stopped it answers `stopped_use_resume`.
+  - `PUT .../personal-grant` is the personal toggle: it reconciles and its answer carries `life_state`.
+
 ### Fixed
 
+- **An authored summary is never shown as cut** (two visit-close summaries the summaries
+  capability authored at formation served `cut: true`). A reading whose `digest_method` is `authored:<capability>`,
+  whose record carries a `metadata_authored` stamp covering the summary, or whose formation provenance is
+  `authored:<capability>`, is whole, whatever writer formed the record.
+- **Setting the `kitty` or `face` appearance shape no longer fails** after abstractavatar 0.2.0 removed
+  the `watch-shape-*` designs (`PUT /entities/{name}/appearance`, `appearance` on `POST /entities`).
+- **An unreadable AbstractCore settings file is a 503 that names it** (AbstractCore 2.35.0 `ConfigParseError`: the
+  file is not JSON, or not an object; Core never runs on defaults then). The routes that read Core settings answered
+  500 "Internal error"; they answer 503 `core_config_unreadable` with the file's path and the parse error, the file is
+  left exactly as it is, and the rest of the gateway keeps serving.
+- **A gateway on an AbstractRuntime older than 0.19.0 says which version it needs** (`runtime_config.py`,
+  `live_deltas.py`, `cli.py`). The iteration default is read from the runtime when it is first needed, so the
+  app still loads on an older runtime, and the startup check refuses it by name: "this gateway needs
+  abstractruntime>=0.19.0 ... Upgrade it: pip install -U 'abstractruntime>=0.19.0'", listing what is missing (the
+  iteration default, the Stop fence, registered skill roots). It used to stop with an ImportError at import.
+- **The kill switch's hard stop is safe and honest**.
+  - It runs once per home at a time, across threads and processes.
+  - It reads the raw status, not the folded `running`, so a live loop behind a stale heartbeat is still stopped.
+  - It never signals this gateway's own pid.
+  - Before any signal it verifies the target's incarnation (pid plus the OS start time the loop stamped).
+  - It reports a kill only when the death is confirmed: the runtime's `killed` when it says so, else the gateway's own
+    check of that exact incarnation (zombies count as gone).
+  - A loop spawned across a Stop is stopped the same way.
+- **Stop fences first and never waits on cognition**. The interrupted phase is noted under the lock: no
+  publish, no restore before the fence. An in-flight hosted chat turn is told to yield at its next model or tool
+  boundary (`ChatSession.yield_check`) and is never waited on. The chat leaves the live index at once and closes, with
+  no reflection, when the turn lets go (row `chat: cancel_requested`).
+- **A repeated Stop retries what the last one could not finish**. Each failed run row records its store
+  (`gateway` or `home`), and the next Stop cancels it there before the outstanding list is replaced.
+- **One admission arbitration per home**. Every state write by a visit door, a visit restore and the
+  maintenance pass is checked and written in one step under the lifecycle lock:
+  - against the generation the writer saw at its entry (both doors' posture writes and their wait's hold, the
+    restores after a close or an aborted open, the pass's own writes);
+  - a Stop landing between a check and a write is never overwritten;
+  - the unbounded visit wait also ends on a Stop followed by a Resume (generation, not only `paused`).
+  - A visit taking the phase moves `admission_seq`, so an own-time spawn in progress is stopped and the visit wins.
+- **A sleep never tears down a visit admitted during its maintenance pass**. The old post-pass teardown is
+  gone; the sleep is refused up front while a visit is live (`in_visit`).
+- **A failed maintenance pass completes with a receipt**. He wakes, and the sidecar records
+  `last_maintenance {status: failed, error}`. A pass whose home was taken before it began is `superseded`. A stale
+  completion never touches a newer pass's record.
+- Test fake loops carry the loop module in their argv: the runtime's hard stop now checks the command line before it
+  signals.
+- **Mentions are fenced by the kill switch at every persistence step**. The answer is recorded under the
+  lifecycle lock, against the generation the door saw. A Stop that landed since means nothing is recorded and
+  nothing is mirrored. Each mirror is admitted only while the mentioned entity is not stopped.
+- **`mention_id` is durable**. One record per conversation and `mention_id` in the plane's data folder,
+  written atomically with the answer before the session turn is saved, with the mirrors' completion recorded
+  separately. A resend reads it directly (no bounded scan) and re-saves a session turn a crash left unsaved.
+- `stopped_use_resume` passes through the mention door's refusal mapping intact.
+- **No visit refusal outside the kill switch at the doors**.
+  - A live summon makes both doors wait, without a deadline, for its turn to end; it is no longer a 409
+    `summon_seat_live`.
+  - Another visit still opening makes the door wait until that open registers or goes, then pass every gate again;
+    no more "retry shortly".
+  - The same visitor opening their own live visit again (a reload, a second window) joins it: 200 `joined: true`,
+    still exactly one run.
+  - Every wait ends only on a Stop (generation).
+  - A different person opening while someone else's visit is live still answers 409 `visit_already_open`.
+- **A request that interrupted own time keeps the way back**. Only an own-time work day ending clears
+  `resume_to`; a summon or automation ending is the end of an interruption, so a read racing the run's end hook now
+  restores own time instead of erasing it.
+- **The self-repair sweeper no longer respawns crashed or culled loops**. It records the death once,
+  tells the operator and marks the biography; the loop stays down (`blocked {loop_crashed, action: retry}`) until the
+  operator's Retry. The loop-less need-check (work orders) is unchanged pending the work redesign.
+- **A reused mention in a visit lane never re-quotes the lane**. A per-entity, per-visit cursor kept with
+  the conversation's mention record skips the lane turns the mentioned entity's visit already holds, mirrored turn
+  included.
+- **The kill switch keeps the ledger clean** (operator 2026-11-09: "the ledger must be kept clean"). Every run, visit,
+  turn and pass it ends leaves one clean terminal record: status `cancelled`, reason `kill_switch: stopped by the
+  operator`, by the operator. Never a failure, never a half-written entry.
+  - Runs are cancelled with `cancelled_by="operator"` (the runtime closes an in-flight effect's ledger record as
+    `cancelled`).
+  - An open durable visit, parked or mid-turn, is cancelled, never "completed" by a hard-freeze close; its
+    `session_closed` marker says `status: cancelled` and the reason.
+  - A hosted chat closes with `status: cancelled, closed_by: kill_switch, by: operator`.
+  - A maintenance pass ends with the receipt `last_maintenance {status: cancelled, reason: kill_switch, by: operator}`.
+- **Own time that ends on purpose is not a crash.** A loop that stopped because work was turned off, a step was
+  removed, or it had no own time to return to (`work_off`, `edge_removed`, `no_return`) leaves the entity awake and
+  `idle` with no `loop_crashed` block; the sleep the loop's gate wrote is repaired at once.
+- **A refused hard stop says why.** When AbstractRuntime refuses to signal a process (it stops only a verified loop of
+  this home) or the process survives, the Stop receipt's loop row carries the runtime's reason.
+- **A failed model call no longer ends a visit, and a mention says so plainly** (AbstractRuntime 0.19.0). A visit
+  turn whose model call failed is answered by the runtime with the error and the visit stays open; the visit door's
+  turn answer now carries `turn_error`. A mention whose own answer failed is still 503 `entity_cannot_answer` with the
+  plain sentence (the error is never shown to the caller). A mirrored turn the visited entity could not answer shows
+  "This turn could not be answered: …" as its `reply`, with `turn_error`.
+- **His own sleep says when it ends.** The entity's own sleep carries no clock (AbstractRuntime 0.19.0); its
+  `life_state.sleep.ends` is now "when maintenance is done" instead of `null`.
+- **A summoned entity re-reads its own replies as it said them.** The session history seeded into a summon names
+  the summoned entity as the reader (`session_chat_messages(reader_entity_id=)`): its own earlier replies replay
+  as the exact bytes, other entities' replies keep their "<name> (entity):" label.
+- **The diary handlers know their home.** The entity door passes `home_dir` to the diary handlers, so a public entry
+  projected without a gist is recorded in that home's title-failure file.
+- **An image attached in a visit reaches the entity's model as an image** (`entities.py`). The door's LLM handler
+  dropped the payload's `media`, so a vision-capable mind never saw a screenshot the visitor attached: it received a
+  path, and `read_file` on it returned the runtime's binary refusal. The handler now forwards `media` (absolute file
+  paths) to `generate`, the way every other client's attachments travel; a vision error stays loud. The tool handler
+  serves a `read_file` result that shows an image as the dict abstractagent's sight lane reads,
+  `{"rendered": <the result text>, "media": [<absolute path>]}` (runtime's `tool_result_media`), so the image rides the
+  entity's next model call; other tool results stay plain strings, and the transcript's `tool_details` serve the
+  rendered text. Needs AbstractRuntime 0.19.0 (`tool_result_media`; a dependency floor).
+- **A fresh install stores the iteration limit 50** (operator decision, 2026-11-09: "50 everywhere").
+  The limit ladder puts a workflow's own budget above the framework default, and the shipped basic-agent
+  and goal-agent bundles bake 20, so on a fresh install their runs got 20; the live 50 was a setting
+  stored by hand. `serve` on a fresh data dir (first run not completed, nothing stored for the key) now
+  stores `agents.max_iterations = 50` through the console's own settings door, once
+  (`runtime_config.seed_fresh_install_defaults`, recorded under `seeded_defaults`). An existing install,
+  a stored value and a later clear are never touched.
+- **Known limit:** the basic-agent and goal-agent bundle builders still bake 20 into their On Flow Start pin;
+  until they bake 50, an install whose first run predates this release and that never stored the setting
+  keeps 20 for those bundles (`abstractgateway config set agents.max_iterations 50` fixes it).
+- The identity card's statement blocks (`GET /entities/{name}/card` `identity`: values, purposes, traits) carry `cut`
+  like the card briefs, from the writer stamp of each statement's own self record (matched by kind and title), never
+  from the words.
+- **An idle entity's own sleep can no longer be left standing, or written over a Stop, a visit or a job**.
+  The sweep's sleep now keeps the lifecycle generation its idle check read (a Stop
+  landing while the thresholds were read became the sleep's own generation: the entity ended asleep, then awake,
+  after a Stop), takes the home's writer before its posture changes (a home someone else was writing was put to
+  sleep with its maintenance pass skipped, and that sleep never ended), and checks again under the lifecycle lock
+  that the entity is still idle, with no job queued or starting and the very state the check saw. Refused, nothing
+  is written and the next sweep looks again. The runtime's own Stop (`hard_stop_loop`, which writes no state) is
+  refused through the generation. One home sleeps per sweep, the one waiting longest first (the later of its last
+  completed sleep and its last turn); a home refused at its admission keeps its place and the next due home sleeps
+  instead. `EntityRegistry.set_state` gains `admission=(generation, admit)` for this; the operator's sleep is
+  unchanged (it still sleeps when the home is busy, its pass skipped).
+- **A Stop during a sleep's final stage no longer records a completed night.** The maintenance pass (the operator's
+  sleep and the idle sleep) now also hands AbstractMemory its Stop check as `sleep_pass(cancelled=)` (AbstractMemory
+  0.5.0), consulted right before the night's completion marker, so a Stop while the dream ran no longer resets
+  the idle sleep's boundary. The check fails closed: a lifecycle generation that cannot be read ends the night like
+  a Stop (it used to let the pass go on). Needs AbstractMemory 0.5.0 (a dependency floor).
+- **The requested limit reaches the built-in agent's loop.** The basic-agent's On Flow Start pin default (20) used to
+  replace a `_limits.max_iterations` that a run asked for (the gateway default, the kit field) in the agent's child
+  run; with AbstractRuntime's fix the requested value governs the whole run tree (`tests/test_gateway_iteration_limit_tree.py`
+  runs the real loop: 50 asked = 50 cycles, 10 = 10, none = 50). Needs AbstractRuntime 0.19.0
+  (`DEFAULT_MAX_ITERATIONS`; a dependency floor).
+- **The iteration limit follows one order and the receipt says which rung applied** (`routes/gateway.py`,
+  `hosts/bundle_host.py`, `runtime_config.py`). Order: the person's request > the stored
+  `agents.max_iterations` > the workflow's own value > the framework default (50). A request (the `_limits` field or
+  the flat `max_iterations` pin) and the stored default are written to `_limits.max_iterations`, which AbstractRuntime
+  treats as declared: it now beats an Agent node's own pin default or config (a request of 100 used to run 20). With
+  neither, the workflow's own value applies (an On Flow Start pin default, an Agent or subflow node's value) and the
+  receipt says `{"max_iterations": <value>, "source": "workflow"}` (`null` when the workflow's nodes author several
+  values), else `{50, "builtin"}`; `workflow_iteration_limit(visualflow)` reads it the way the runtime applies it. A
+  client-sent `_limits.max_iterations_declared` is dropped. The shipped basic-agent authors 20 on its start pin, so with
+  nothing requested and nothing stored it now runs 20 (store `agents.max_iterations` to set a gateway-wide default).
+  Requires AbstractRuntime with `declared_max_iterations`.
+- **The ledger names whose act a phase change was**. The idle sweep's sleep entered the
+  ledger as `cause: operator_sleep`; it is `idle_sleep` (his own sleep, the threshold in its reason). The Stop's
+  own row read `cause: visit_closed` when the visit it closed published first; entering `stopped` is always
+  `kill_switch`, and the Stop publishes under that cause. The tile treats both as door acts already recorded as
+  their own moments (`idle_sleep`, `pause`).
+- **`life_state.state` follows the phase.** It served the stored state word, so it read `asleep` beside
+  `phase: visit` during every visit (the visit door stores its posture as asleep + `state_mode: visiting`)
+  and beside `phase: idle` after a gate sleep (root 1178). It is now `paused` while stopped, `asleep` in a
+  sleep and `awake` otherwise. `state_mode` and `state_reason` still carry the stored record, and
+  `GET /entities/{name}/state` still serves it whole. No client read the old value (the Entity app's
+  `phase_bar_source.ts` and `stream_source.ts` do not read `life_state.state`).
+- **Only a maintenance pass that ran to its end is the home's last maintenance.** A night that memory
+  ended early (it yielded to a visit at a stage boundary, or stopped on its hard check, such as an
+  unreadable lifecycle generation) was recorded as `last_maintenance: done`, and that receipt reset the
+  idle sleep's clock (24 h / 500 memories since the last real sleep). Such a night now records its own
+  status in the phase sidecar's `last_pass` (`yielded` or `cancelled`, with memory's `cancelled_after`
+  stage), and `last_maintenance` keeps the last pass that completed. Both callers (the operator's sleep
+  through `POST /entities/{name}/state` and the idle sweep) pass memory's `cancelled_after`.
+- **A message's numbers stay the mind's.** The visit turn stats (`stats.input_tokens` / `output_tokens`) leave out the
+  summaries model's authoring call. Before, its unreported usage made the whole turn's numbers unknown.
+- **Structured output through the shared model client** (live blocker 2026-11-09: every visit-formed record went
+  pending). The pooled client (`PoolGeneration`) and a client of its own now take `response_model` (and
+  `response_schema` / `response_schema_name`) the way a direct client does: the schema rides the runtime's
+  `params.response_schema` and the answer comes back as the model's instance. Clients name who answers
+  (`model_info`), a structured result names its model, and a failing capability call is reported with its cause and
+  the model that failed (so the runtime files it as unavailable, never as a malformed answer).
+- **A mention of a name no entity can have answers 404, never 500** (`routes/session_mentions.py`). `POST /sessions/{sid}/mentions` with `{"entity": "@Castor"}`, a reserved word (`auth`, `templates`, ...)
+  or any name that does not normalize answered 500 with the internal error text (`ValueError: entity name '@Castor'
+  does not normalize ...`). The name is now checked first and answers the same 404 `entity_not_found` sentence as a
+  missing or hidden entity (`There is no entity called '@Castor'.`); a malformed body stays 422.
+- **Mention fixes.**
+  - **In a visit lane, the mentioned entity reads that visit's exchange.** It gets the visitors' words, taken from the
+    door's own records and never from the rendered prompt with its memories, plus the visited entity's answers.
+    Before, it read nothing.
+  - **A reused mention visit is sent only the turns newer than its last mention.** The same conversation was quoted
+    into the same visit again and again.
+  - **A turn too long to quote is skipped on its own, with a note.** The newest whole turns that fit are still quoted;
+    before, one long turn meant nothing was quoted. `context.skipped_oversize` counts the skipped turns, and quoted
+    turns name their attachments ("(attached: contract.pdf)").
+  - **`mention_id`** (optional): a resend with the same id returns the first answer and never asks a second one.
+  - **A mirrored turn reports its own new answer, or a plain error.** It never repeats the visited entity's previous
+    reply. `POST /visit/{run_id}/turn` answers `answered: true|false`.
+  - **503 `entity_cannot_answer` is a plain sentence** ("Castor cannot answer right now. Try again in a moment.").
+    The provider's error and model list go to the log only.
+  - **Every mention refusal has a code and a sentence, and always carries the caller's own `session_id`.** An
+    uncoded busy refusal from the visit door ("a visit is opening… retry shortly") is `in_another_conversation`.
+  - **`repeat_of` is accepted only for the caller's own turn of this conversation carrying the same words.**
+    Anything else is 422 `repeat_of_unknown`.
+  - **A reused visit closed by its idle close between the check and the turn is replaced by a fresh visit, once.**
+    Before, the caller got a passed-through 409.
+  - **Per-conversation mention locks are reference-counted and removed when unused.** The map used to grow forever.
+  - **`POST /entities/{name}/summon` drops a client's `_meta.repeat_of` and `_meta.mention`.** These keys are written
+    only by the mention route, after validation (the rule `POST /runs/start` follows).
+
+  Not fixed here: a model failure during a mirrored turn still ends the visited entity's visit run, because a failed
+  turn fails the visit workflow in AbstractRuntime. That needs the runtime to park a failed turn instead.
+- **A visit on a sleeping entity no longer leaves a "sleep → sleep" row.** castor and nerin carried
+  `phase_changed` markers with `from == to == "sleep"`: each visit's close wrote the sleep back changed
+  (its reason, its start, and its mode, which the visit's open did not record), so the snapshot moved
+  without a phase change. The open now records the sleep's mode with the rest of the prior state, and
+  the close writes back exactly the sleep it interrupted, so a visit that nobody watched adds its own
+  rows (`summon`, `session_closed`) and nothing else. A restore onto a state that already is that sleep
+  writes nothing.
+- **A gateway restart is not a Stop** (`entity_phase.resume_after_restart`, operator decision, 2026-11-09).
+  At the gateway's start, once per entities directory per process and in its own thread, every home whose
+  personal grant is still armed and whose own-time loop is not running gets its own time back through
+  reconcile (cause `gateway_restart`): the phase to return to is own time, and the loop the restart took
+  down (a graceful stop before it, or a pid gone with it) is not refused as `loop_crashed`. A visit, a
+  sleep or work standing at the start keeps the phase, and own time resumes when it ends. Never for a
+  stopped home, never for an archived one, never from idle without a grant. The restore is recorded in
+  the phase sidecar as `restart_resume {generation, at}` and holds only under that generation (a Stop
+  cancels it); it is spent once a start is attempted. Off with the other background entity passes
+  (`ABSTRACTGATEWAY_ENTITY_SELF_REPAIR=0`). Before: nerin needed a manual Retry after every restart.
+- **Resume keeps its reason**, as Stop keeps its own. `POST /entities/{name}/lifecycle {action: "resume",
+  reason}` (and the older `POST /entities/{name}/state {state: "awake", reason}` on a stopped entity)
+  dropped the operator's reason: the state said only "resumed [by …]" and the `wake` marker said
+  "resumed". The state now reads "resumed: <reason> [by … via …]" and the marker carries the reason;
+  without a reason both say what they said before.
+- **`repeat_of` rides every `GET /runs` row**, as the mentions contract says (a client folds a mention turn
+  that repeats the person's own agent turn by it). Rows read from the run index carry no run vars, so the
+  mention turn's row had no `repeat_of` on the default listing path. Every row now has the key: a mention
+  turn names the turn it repeats, every other row says `null`. Only the mention door's turns can carry it
+  (a client copy is dropped at `/runs/start`), so only those rows of the served page are read whole.
+- **A conversation list reads the run store once per refresh** (`GET /api/gateway/runs`). With the run index in
+  `verify` mode (the `serve` default), every read of the run store goes through the whole run folder (one
+  directory listing and one `stat` per run file), whatever the page size. A `root_only=true` page, and the
+  Observer's `kind=conversation&session_kind=automation,occurrence` page, read the store again with a wider
+  limit each time their filters (internal workflows, draft tests, archived sessions, notes) left the page
+  short: two reads on a 14,000-run store, three or more on stores with many hidden runs, each slower when
+  other work holds the interpreter (the Observer's 30 s refresh deadline, "Loading conversations…" in
+  Code). The listing now remembers how deep the same listing had to read last time and starts there: one
+  read per refresh after the first, with the same rows in the same order. On a copy of a 14,400-run store,
+  a warm `root_only=true&limit=200` page went from two reads (0.31-0.64 s) to one (0.15-0.29 s). The remaining
+  cost is the `verify` scan itself; `serve --run-index trusted` answers the same page in about 60 ms.
+- **An operator sleep on a sleeping entity adds no sleep rows** (`entity_phase.py`, `entities.py`). The door
+  takes a sleep asked for while he already sleeps as the same sleep (with its maintenance pass when `dream`),
+  yet its new reason and the pass's dreaming mode each wrote a `phase_changed` "sleep → sleep" row, and the
+  pass ended with a `sleep` moment ("Fell asleep") for a sleep that had begun long before. A sleep that is
+  already the current phase now writes no `phase_changed` row and no `sleep` moment: `GET .../life_state`
+  still versions the new details (`rev` moves), and the pass tells its own story (the night's records, then
+  the wake and the sleep → idle row when its maintenance is done). The identity card's moments no longer
+  count a state-history line that repeats the standing state (a new reason, a dreaming mode, a visit's
+  posture on a sleep). A sleep from idle, a gate sleep included, still falls asleep with both rows.
+- **A sleep keeps its reason and its start across visits** (`entity_phase.continue_sleep`). Every visit that
+  interrupted a sleep appended "(visitor session ended: N turns; closed)" to the sleep's reason when it closed
+  (castor's reason carried sixteen of them) and moved the sleep's start to the close. The same sleep now
+  continues unchanged on every lane (the durable visit's close, the hosted chat's close, an aborted open): its
+  original reason, who chose it, its wake time, and `since` (both `life_state.since` and `sleep.since`) where
+  the sleep began, however many visits came in between. The visits are in the ledger instead: a `summon`
+  marker at each open and a `session_closed` marker at each end, which now carries `sleep_continues: true`
+  when the sleep goes on. A reason that already grew before this release keeps its old suffixes until the
+  sleep ends.
+- **A start runs under the admission it was decided at** (AbstractRuntime 0.19.0: `spawn_loop_process(fence=)`
+  is required). The operator's `loop/start`, the restore of own time after an interruption or a restart
+  (`reconcile`) and the unattended need-check's wake admit the home BEFORE their checks and hand that fence to the
+  spawn: a Stop landing after the decision spawns nothing (`loop/start` answers 409 `stopped_use_resume`).
+- **A home with no lifecycle signal is admitted once** (AbstractRuntime 0.19.0: a missing signal reads as moved,
+  fail closed). Every fence the gateway builds from a remembered generation (`fenced()`, `admission_fence`, a
+  runtime readmitted for new work) first admits a home whose signal was never written, so homes that predate it
+  are not refused every write; `admission_fence(None)` is the runtime's `LifecycleFence.admit`.
+- **The shared home's book append holds the home's write barrier** (AbstractRuntime 0.19.0: `DiaryStore(guard=,
+  barrier_home=)`): a diary write whose fence check passed lands before a racing Stop's generation bump.
+- **The Stop receipt lists only the runs it found live.** The summon seat outlives its run, so a Stop
+  after a finished summon listed that run (`outcome: already_terminal`), and a seat naming a pruned run
+  listed it as `missing`; a visit's finished turns were listed the same way. `items` now carries a `run`
+  row only for a run the Stop cancelled or could not cancel (`failed`, retried by the next Stop), on all
+  three paths (the summon seat, the open visit's tree, a repeated Stop's retries). `cancelled.runs` is
+  unchanged. The per-run helper `cancel_run_tree_outcomes` still reports every outcome.
+- **A session summary formed without its verbatim opens instead of answering 404**
+  (`routes/entity_replay.py`). `GET .../records/{graph_id}/verbatim` on a `summary` record with no `payload_ref` answers
+  200 with its digest as `text`, `born_digest: false` and `summarizes` (the graph ids of the records it covers). Any
+  other record without a verbatim is still a 404.
+- **`GET /runs` rows and the session history bloc carry the turn's `notices`**: what an
+  entity's mention turn formed or staged, the same list as the turn's own answer; `[]` for a run that holds none.
+- **Opening a visit never fails because the entity is busy** (operator 2026-11-09; root ADR-0027). Both visit doors
+  (`POST /entities/{name}/visit/open` and `/chat/open`) waited at most 55 s for the entity's own-time loop to reach a
+  tick boundary, then rolled the state back to awake and answered 409 `loop_busy` ("retry shortly"), so the loop never
+  learned a visitor had come. They now wait with no time limit; with AbstractRuntime's fix the loop starts no new tool
+  once the visiting posture is written and yields right after the step in progress. The stale-yield reaper leaves a
+  visiting posture alone while the loop is still in its day or while a visit is opening on that home, and a door that
+  is still waiting writes its posture back if something replaced it (an operator wake click during "Opening…"). A home
+  held by another writer (a sleep's consolidation pass) makes the open, a turn or a close wait for it (logged once,
+  naming the holder) instead of answering 409 `home_lease_held`; the reaper's sweep and the operator's own pause/sleep
+  teardown never wait (the reaper retries next sweep, the teardown stays labeled `teardown_failed`). `loop_busy` and `home_lease_held` are gone from the documented refusals. Needs the AbstractRuntime
+  release with `await_loop_quiescent(timeout_seconds=None)` and `ChatSession.yield_check`.
+- **A visit's transcript shows what the visit served**. `GET /entities/{name}/visit/{run_id}/transcript`
+  (what the Entity app reads on reload) served the words as SENT: the visitor's message with the whole MEMORIES
+  prompt around it, and the reply with its raw election markers (`[learned: …]`). It now serves, from the visit
+  run's own ledger, the visitor's words as he sent them and the reply as the turn's answer served it, with that
+  answer's `notices` (what the turn formed or staged) and its `turn_id`. What he attached stays in `attachments`
+  (the "(attached: …)" lines were the prompt's decoration); a failed turn keeps its failure sentence.
 - **The release's container image build waits for PyPI instead of failing** (`docker/abstractgateway-server/install-gateway.sh`,
   both Dockerfiles). The v0.20.2 image job failed with "No matching distribution found for
   abstractgateway==0.20.2" minutes after the publish. The pinned PyPI install inside the image build is
@@ -148,6 +989,37 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Security
 
+- **A mention can no longer join another account's visit**. Before this fix, a member could post
+  a mention into the admin's visit session, read that visit through her own entity, and speak in it as the admin.
+  Three causes:
+  - The mention door reused any live visit bound to the posted session id.
+  - Its 409 handed the holding session's id to the caller.
+  - The visit door seated a non-participant as the visit's person.
+
+  Now:
+  - The mention door reuses only a visit it opened itself, in that session, with the caller among the stamped
+    participants.
+  - A busy refusal (`in_another_conversation`) names no other account's session, run or holder: only the caller's own
+    holding conversation is named. Causes go to the log.
+  - The visit-lane mirror turns an answer only into a visit the caller is in.
+  - `POST /entities/{name}/visit/{run_id}/turn` refuses a caller who is not a stamped participant: 403
+    `not_a_participant`, "This visit belongs to another conversation." The visit's speaker is always the caller.
+- **A client can no longer label a run as an entity's or mark its prompt as a repeat** (`routes/gateway.py`). `POST /runs/start` and `/runs/schedule` drop a client's `_runtime.entity` (the entity doors
+  mint and sign that stamp for the run they open; a client copy made AbstractRuntime's turn authors label the agent's
+  reply as the entity's, replayed as "castor (entity): ...") and its `_meta.repeat_of` and `_meta.mention` (written
+  only by the mention route after it validated them; a client-set `repeat_of` hid that prompt from a mention's quoted
+  context and made clients fold it). `_stamp_run_origin` drops the two `_meta` keys as it already dropped `author` and
+  `prompt_author`. With AbstractRuntime's matching change, an unsigned stamp never makes an entity turn either.
+- **A client can no longer choose which folders' files a run reads as "skill files"** (`hosts/bundle_host.py`,
+  `routes/gateway.py`, `skills_library.py`, `capability_inventories.py`, `service.py`). AbstractRuntime serves a `read_file` inside an activated skill's folder before the workspace policies, and
+  it took those folders from run variables `POST /runs/start` passed through (`_runtime.skills_block`,
+  `_runtime.skills_resolution`, the roots of a `skills` mapping), so any client or member could read every file beside
+  any `SKILL.md` on the host. Now: the gateway registers its own skill roots with the runtime when it builds a service
+  (the curated shelf as resolved, `<data dir>/skills/registry/skills` and `<data dir>/skills/imported`) and again for
+  the shelf each run-start resolution reads; `/runs/start`, `/runs/schedule` and the host (every start) drop a
+  client's `_runtime.skills_block` and `_runtime.skills_resolution` and keep only the requested skill NAMES of
+  `skills` (list, single name or mapping), which the gateway's trust-gated resolver turns into the block and the
+  resolution. A caller-set `skills_block` is no longer kept. Requires AbstractRuntime with `register_skill_roots`.
 - **A provider key goes only to the address it was saved for** (`routes/gateway.py`,
   `provider_endpoint_profiles.py`, `provider_connections.py`, `entities.py`, `entity_chat.py`,
   `hosts/bundle_host.py`). The gateway sent its configured key for a provider (the AbstractCore store's, or the

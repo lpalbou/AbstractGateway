@@ -2,8 +2,14 @@
 
 ## [Unreleased]
 
-## [0.18.1] - 2026-11-07
+## [0.18.1] - 2026-11-10
 ### Changed
+- **Network: HTTPS on the Tailscale name** (AbstractGateway 0.21.0, `ui/network.rs`; the web console's words). The
+  Network page says whether the gateway serves `https://<host>.<tailnet>.ts.net` while it runs ("HTTPS (voice and
+  camera on phones and other computers): <url>, served by the gateway while it runs.") or why not ("HTTPS on the
+  Tailscale name: off", "starting", "set up outside the gateway", "not available yet", with the gateway's reason),
+  instead of the manual `tailscale serve --bg` instruction. Without Tailscale it shows one muted line offering it
+  (the open-source client, tailscale.com/download); Tailscale is never required.
 - **Sandbox: reasoning and MTP follow the chosen model** (AbstractGateway 0.21.0, operator rule 2026-11-07; the web
   console's rule and words). Changing the provider or the model puts Reasoning and MTP back on the default (the
   reasoning was kept). MTP, Off included, is offered only when the gateway's capability card says the model supports
