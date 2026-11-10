@@ -45,3 +45,6 @@
 - **A busy visited home never holds up a mentioned entity's Stop** (Codex review 3 #3): the mirror waits for the
   visited home's writer lease outside every lifecycle lock (the wait ends on the mentioned entity's Stop); only the
   brief check-and-join runs under its lifecycle lock.
+- **An unreadable loop status is never taken for a stopped loop** (Codex review 3 #9): a status file that exists but
+  is denied or malformed is `failed loop_unverified` on the Stop's receipt (incomplete, a repeated Stop retries), and
+  nothing is signalled; only a missing file reads as no loop.

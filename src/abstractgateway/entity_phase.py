@@ -1511,12 +1511,20 @@ def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
 
     try:
         raw = json.loads((Path(home_dir) / "loop_status").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None, "no status"
+    except (OSError, ValueError) as e:
+        # UNREADABLE IS NOT "NOT RUNNING" (Codex review 3 #9): a status that exists but cannot be read (a denied
+        # permission) or parsed (a torn or corrupt file) says nothing about its process, which may be alive.
+        # Unknown: never signalled, never counted stopped - an incomplete row the next Stop retries.
+        why = "denied" if isinstance(e, PermissionError) else ("malformed" if isinstance(e, ValueError) else "unreadable")
+        return {"pid": None, "token": None, "unknown": f"its status file is {why} ({type(e).__name__})"}, ""
+    if not isinstance(raw, dict):
+        return {"pid": None, "token": None, "unknown": "its status file is malformed (not a mapping)"}, ""
     try:
         pid = int(raw.get("pid") or 0)
     except (TypeError, ValueError):
-        pid = 0
+        return {"pid": None, "token": None, "unknown": "its status file names no readable pid"}, ""
     if pid <= 0:
         return None, "no pid"
     if pid == os.getpid():
@@ -1596,11 +1604,11 @@ def _kill_loop(home_dir: Path, cancelled: Dict[str, Any], reason: str = "") -> D
             target, why = _loop_target(home_dir)
             if target is None:
                 return _item("loop", None, "not_running", None, None)
-            pid = int(target["pid"])
             if target.get("unknown"):
                 # Not signalled, not counted as stopped: an incomplete row the next Stop retries.
-                return _item("loop", pid, "failed", "loop_unverified",
+                return _item("loop", target.get("pid"), "failed", "loop_unverified",
                              f"His own-time process could not be checked ({target['unknown']}); press Stop again.")
+            pid = int(target["pid"])
             res = freeze_loop(home_dir, reason=reason or "kill switch", requested_by="admin")
             cancelled["loop_pid"] = pid
             reported = res.get("killed") if isinstance(res, dict) else None

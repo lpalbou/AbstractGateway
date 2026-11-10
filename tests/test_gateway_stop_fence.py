@@ -374,3 +374,38 @@ def test_a_busy_visited_home_never_holds_up_the_mentioned_entitys_stop(monkeypat
         (mirror,) = r.json()["mirrors"]
         assert mirror["reply"] is None and "was stopped; nothing was carried" in mirror["error"], mirror
         assert len(llm.calls) == 2
+
+
+# ------------------------------------------------------------------------------------------------- finding 9
+@pytest.mark.parametrize("kind", ["denied", "malformed"])
+def test_an_unreadable_status_is_never_taken_for_a_stopped_loop(kind):
+    """Codex review 3 #9: a loop status the gateway cannot read (a denied permission) or parse (a torn file) was taken
+    for "not running" and the Stop reported the loop stopped. Its process may well be alive: the row is now `failed
+    loop_unverified` (the Stop is incomplete; a repeated Stop retries) and nothing is signalled."""
+    import os
+
+    from abstractruntime.identity.life import write_personal_grant
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence
+
+    from entity_fake_loop import spawn
+
+    with _client() as client:
+        _born(client, "Castor")
+        write_personal_grant(_home(), mode="until_revoked", granted_by="person:admin", fence=LifecycleFence.admit(_home()))
+        proc = spawn(_home(), "day")
+        status = _home() / "loop_status"
+        try:
+            if kind == "denied":
+                os.chmod(status, 0)
+            else:
+                status.write_text('{"phase": "day", "pid": ', encoding="utf-8")
+            r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
+            assert r.status_code == 200, r.text
+            body = r.json()
+            (loop_row,) = [i for i in body["items"] if i["item"] == "loop"]
+            assert (loop_row["outcome"], loop_row["code"]) == ("failed", "loop_unverified"), loop_row
+            assert body["complete"] is False
+            assert proc.poll() is None, "a process the gateway could not verify was signalled"
+        finally:
+            os.chmod(status, 0o644)
+            proc.kill()
