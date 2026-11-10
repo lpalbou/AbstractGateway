@@ -444,7 +444,10 @@ class EntityHome:
                                    commit_guard=self._commit_guard)
         self._book_db = SqliteDatabase(str(self.home_dir / BOOK_FILENAME))
         self._book_ledger = SqliteLedgerStore(self._book_db)
-        self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger, guard=self._commit_guard)
+        # The append holds the home's write barrier (runtime d3ffc65, Codex review 4 #2): a write whose fence
+        # check passed lands before a racing Stop's bump, which waits for it.
+        self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger, guard=self._commit_guard,
+                                barrier_home=self.home_dir)
 
     @staticmethod
     def _commit_guard(where: str) -> None:
@@ -1836,9 +1839,9 @@ class EntityRegistry:
         first act of the new generation; the Stop already cancelled the old generation's runs, and a
         visit run admitted before it is refused at its door (`_load_visit` compares its stamped
         generation). GenerationMoved when the admission itself is stale (a Stop since it)."""
-        from abstractruntime.identity.lifecycle_fence import LifecycleFence, StoppedByOperator
+        from abstractruntime.identity.lifecycle_fence import StoppedByOperator
 
-        from .entity_phase import GenerationMoved
+        from .entity_phase import GenerationMoved, remembered_fence
 
         slug = self.manifest_for(name).slug
         er = self.get_entity_runtime(slug)
@@ -1852,7 +1855,9 @@ class EntityRegistry:
         with readmit_lock:
             fence = er.home.fence
             if int(fence.generation) != int(generation) or fence.moved():
-                admitted = LifecycleFence(self.entities_dir / slug, int(generation))
+                # The remembered admission's fence (a home with no lifecycle signal yet is admitted once
+                # first: the runtime reads a missing signal as moved, 3cd872b).
+                admitted = remembered_fence(self.entities_dir / slug, int(generation))
                 if admitted.moved():
                     raise GenerationMoved(f"this work was admitted at lifecycle generation {generation}; "
                                           "the operator's Stop happened since")

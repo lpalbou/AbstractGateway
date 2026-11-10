@@ -163,7 +163,7 @@ def test_a_visit_taking_the_phase_during_a_spawn_wins(monkeypatch: pytest.Monkey
 
     procs = []
 
-    def _start_while_a_visit_opens(registry, manifest, params, return_to=None):
+    def _start_while_a_visit_opens(registry, manifest, params, return_to=None, *, fence):
         from entity_fake_loop import spawn
 
         proc = spawn(_home(), "day", 60)

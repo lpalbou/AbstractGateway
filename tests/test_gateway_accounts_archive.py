@@ -229,7 +229,7 @@ def test_archived_entity_never_wakes(world, monkeypatch) -> None:
     assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "entity_archived", r.text
     # The loop spawner every caller shares (route, crash repair, need-check).
     with pytest.raises(EntityArchivedError):
-        start_loop(home, provider="lmstudio", model="none")
+        start_loop(home, provider="lmstudio", model="none", fence=object())
     # Talk and visits.
     from abstractgateway.entity_chat import ChatOpenRefused, EntityChatHost
     from abstractgateway.entity_visits import EntityVisitHost, VisitRefused

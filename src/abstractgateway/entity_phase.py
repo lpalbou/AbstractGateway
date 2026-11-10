@@ -369,14 +369,37 @@ def generation_of(entities_dir: Path, slug: str) -> int:
 
 def admission_fence(entities_dir: Path, slug: str, generation: Any) -> Any:
     """The runtime LifecycleFence of an admission: `generation` an int (a door's), a LifecycleFence
-    (returned as is) or None (admitted NOW, GenerationMoved when unreadable)."""
+    (returned as is) or None (admitted NOW through the runtime's `LifecycleFence.admit`: the home's
+    current generation read under its state lock, its signal established; GenerationMoved when it
+    cannot be read or established - nothing is admitted then)."""
     from abstractruntime.identity.lifecycle_fence import LifecycleFence
 
     if isinstance(generation, LifecycleFence):
         return generation
+    home_dir = Path(entities_dir) / slug
     if generation is None:
-        generation = generation_of(entities_dir, slug)
-    return LifecycleFence(Path(entities_dir) / slug, int(generation))
+        try:
+            return LifecycleFence.admit(home_dir)
+        except ValueError as e:  # LifecycleUnreadable (fail closed)
+            raise GenerationMoved(f"the lifecycle generation of {slug} cannot be admitted ({e})") from None
+    return remembered_fence(home_dir, int(generation))
+
+
+def remembered_fence(home_dir: Path, generation: int) -> Any:
+    """The fence of a generation an admission REMEMBERED (a decision taken earlier, a visit's stamp, a
+    pass's sleep). The runtime reads a missing lifecycle signal as moved (runtime 3cd872b, Codex review 4
+    #9: fail closed), and only an admission writes it: a home whose signal was never established is
+    admitted once first (`LifecycleFence.admit`, under the home state lock); the remembered generation
+    then stands, or reads moved like any fence admitted before a Stop."""
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence, signal_path
+
+    home_dir = Path(home_dir)
+    if home_dir.is_dir() and not signal_path(home_dir).exists():
+        try:
+            LifecycleFence.admit(home_dir)
+        except ValueError:
+            pass  # unreadable: the fence below reads moved (fail closed)
+    return LifecycleFence(home_dir, int(generation))
 
 
 # THE ACTING FENCES (STOP-LANE-DESIGN §2.2, gateway half): the gateway's shared, cached handles (the
@@ -463,7 +486,7 @@ def fenced(entities_dir: Path, slug: str, generation: Any) -> Iterator[FencedRec
             if int(rec.get("generation") or 0) != expected:
                 raise GenerationMoved(f"generation moved ({expected} -> {rec.get('generation')})")
             fence = (generation if isinstance(generation, LifecycleFence)
-                     else LifecycleFence(Path(entities_dir) / slug, expected))
+                     else remembered_fence(Path(entities_dir) / slug, expected))
         frec = FencedRecord(rec, fence=fence, slug=slug)
         try:
             yield frec
@@ -1914,9 +1937,12 @@ def _reconcile_spawn(registry: Any, manifest: Any, cause: str, decision: Dict[st
     try:
         # The child is told which own-time phase it returns to: personal for the operator's own act,
         # the remembered phase for a restore (runtime seam `return_to`).
-        started = start_own_time(registry, manifest, decision["params"], return_to=decision["return_to"])
+        # The spawn runs under the admission the decision was taken at (runtime d47b7a2): a Stop since it
+        # spawns nothing.
+        started = start_own_time(registry, manifest, decision["params"], return_to=decision["return_to"],
+                                 fence=admission_fence(entities_dir, slug, generation))
         pid = started.get("pid")
-    except StoppedByOperator:
+    except (StoppedByOperator, GenerationMoved):
         return {"own_time": False, "pid": None, "reason": "stopped"}
     except LoopAlreadyRunning:
         return {"own_time": False, "pid": None, "reason": "running"}
@@ -2043,9 +2069,10 @@ def start_restart_resume(registry: Any, *, chat_host: Any = None, visit_host: An
     return thread
 
 
-def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_to: Optional[str] = None) -> Dict[str, Any]:
+def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_to: Optional[str] = None,
+                   *, fence: Any) -> Dict[str, Any]:
     """Spawn the own-time loop with the remembered `loop/start` parameters, else the entity's own
-    mind and the defaults (one mind per entity)."""
+    mind and the defaults (one mind per entity). `fence`: the admission the start was decided at."""
     from .entity_chat import DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW, entity_base_url, resolve_entity_mind
     from .entity_loop import start_loop
 
@@ -2063,6 +2090,7 @@ def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_
         shelf_size=(int(params["shelf_size"]) if params.get("shelf_size") is not None else None),
         context_window=int(params.get("context_window") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW),
         return_to=return_to,
+        fence=fence,
     )
 
 

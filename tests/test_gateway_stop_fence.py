@@ -125,7 +125,8 @@ def test_two_concurrent_starts_create_one_loop_process(loop_spawns):
         def _start():
             gate.wait()
             try:
-                results.append(start_loop(_home(), provider="lmstudio", model="test-model"))
+                results.append(start_loop(_home(), provider="lmstudio", model="test-model",
+                                          fence=LifecycleFence.admit(_home())))
             except Exception as e:  # noqa: BLE001
                 results.append(e)
 
@@ -145,15 +146,17 @@ def test_two_concurrent_starts_create_one_loop_process(loop_spawns):
 def test_the_spawn_admission_runs_a_job_starts_without_a_grant_nothing_without_either(loop_spawns):
     """Codex review 3 #12: a queued job starts the loop whatever the personal grant says (v3 D1); with neither a grant
     nor a job the runtime refuses synchronously and no process is created. Through the real spawn path."""
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence
+
     from abstractgateway.entity_loop import start_loop
 
     with _client() as client:
         _born(client, "Castor")
         with pytest.raises(RuntimeError, match="no personal time"):
-            start_loop(_home(), provider="lmstudio", model="test-model")
+            start_loop(_home(), provider="lmstudio", model="test-model", fence=LifecycleFence.admit(_home()))
         assert loop_spawns == []
         (_home() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
-        assert start_loop(_home(), provider="lmstudio", model="test-model")["pid"]
+        assert start_loop(_home(), provider="lmstudio", model="test-model", fence=LifecycleFence.admit(_home()))["pid"]
         assert len(loop_spawns) == 1
 
 

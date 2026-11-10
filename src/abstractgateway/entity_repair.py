@@ -340,6 +340,15 @@ def _need_check_one(
         read_personal_grant,
     )
 
+    from .entity_phase import GenerationMoved, admission_fence
+
+    # THE WAKE'S ADMISSION (runtime d47b7a2): taken before the checks below and handed to the spawn,
+    # which refuses once a Stop moved it (nothing is woken). Unreadable: nothing admitted.
+    try:
+        wake_fence = admission_fence(registry.entities_dir, slug, None)
+    except GenerationMoved:
+        return None
+
     if bool(read_loop_status(home_dir).get("running")):
         return None  # a live loop owns its own need-check (one law, its host)
 
@@ -416,7 +425,12 @@ def _need_check_one(
     for key in ("base_url", "tick_seconds", "ticks_per_day", "rest_minutes", "shelf_size", "context_window"):
         if spawn.get(key) is not None:
             kwargs[key] = spawn[key]
-    started = start_loop(home_dir, **kwargs)
+    from abstractruntime.identity.lifecycle_fence import StoppedByOperator
+
+    try:
+        started = start_loop(home_dir, fence=wake_fence, **kwargs)
+    except StoppedByOperator:
+        return {"slug": slug, "action": "need_check", "outcome": "stopped (the operator's Stop since the check)"}
     _marker(registry, slug, entity_id, home_dir, {
         "channel": "need-check", "wake": True,
         "cause": "cadence_need_check",

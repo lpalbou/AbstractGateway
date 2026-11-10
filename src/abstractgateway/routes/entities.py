@@ -6812,6 +6812,16 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
     principal = current_gateway_principal()
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
 
+    # THE START'S ADMISSION (runtime d47b7a2, Codex review 4 #7): taken BEFORE every check below and
+    # handed to the spawn, which refuses at once when a Stop moved it since (StoppedByOperator: nothing
+    # spawns, whichever check it landed after). An unreadable generation admits nothing (fail closed).
+    from ..entity_phase import GenerationMoved as _StartMoved, admission_fence as _start_admission
+
+    try:
+        start_fence = _start_admission(registry.entities_dir, manifest.slug, None)
+    except _StartMoved as e:
+        raise _loop_refuse(409, "start_failed", f"{manifest.entity_id}'s own time cannot be admitted: {e}") from None
+
     # Wake entry point (round 3): an archived entity never runs its loop.
     from ..entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
 
@@ -6933,6 +6943,7 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
             shelf_size=(int(shelf_size) if shelf_size is not None else None),
             context_window=int(context_window),
             return_to="personal",  # the operator's own start: own time is what it returns to
+            fence=start_fence,
         )
     except StoppedByOperator:
         # The operator's Stop overtook this start (runtime 0da3f74): nothing runs, said plainly.

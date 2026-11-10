@@ -246,7 +246,7 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
 
     spawned = []
 
-    def _fake_start(registry, manifest, params, return_to=None):
+    def _fake_start(registry, manifest, params, return_to=None, *, fence):
         spawned.append(manifest.slug)
         return {"pid": 4242}
 
@@ -290,7 +290,7 @@ def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest
     from abstractgateway import entity_phase
 
     spawned = []
-    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None, *, fence: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
@@ -433,7 +433,7 @@ def test_stop_fences_before_it_observes_anything(monkeypatch: pytest.MonkeyPatch
     from abstractgateway import entity_phase
 
     spawned = []
-    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
+    monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None, *, fence: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home_dir()
@@ -535,7 +535,7 @@ def test_nothing_gives_own_time_back_across_a_stop(monkeypatch: pytest.MonkeyPat
 
     spawned = []
     monkeypatch.setattr(entity_phase, "start_own_time",
-                        lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
+                        lambda r, m, p, return_to=None, *, fence: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200

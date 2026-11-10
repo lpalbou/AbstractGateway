@@ -392,9 +392,11 @@ def test_a_loop_spawn_without_a_width_passes_the_stored_one(monkeypatch: pytest.
 
         # The respawn path (the repair sweeper calls start_loop without a width) follows a new value.
         assert client.put(base + "/cognition-profile", json={"recall": {"shelf_size": 30}}).status_code == 200
+        from abstractruntime.identity.lifecycle_fence import LifecycleFence
+
         from abstractgateway.entity_loop import start_loop
 
-        start_loop(home, provider="lmstudio", model="route-model")
+        start_loop(home, provider="lmstudio", model="route-model", fence=LifecycleFence.admit(home))
         assert calls[-1]["shelf_size"] == 30
 
         # An explicit width wins and is recorded.

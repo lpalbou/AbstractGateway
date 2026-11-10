@@ -34,7 +34,7 @@ def spawned(monkeypatch: pytest.MonkeyPatch):
 
     calls = []
 
-    def _fake_start(registry, manifest, params, return_to=None):
+    def _fake_start(registry, manifest, params, return_to=None, *, fence):
         calls.append({**dict(params), "_return_to": return_to})
         return {"pid": 5150 + len(calls)}
 

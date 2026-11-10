@@ -64,7 +64,7 @@ def spawned(monkeypatch: pytest.MonkeyPatch):
     calls = _Spawns()
     lock = threading.Lock()
 
-    def _fake_start(registry, manifest, params, return_to=None):
+    def _fake_start(registry, manifest, params, return_to=None, *, fence):
         time.sleep(0.2)  # a real spawn takes a moment: concurrent reconciles overlap here
         with lock:
             calls.append(manifest.slug)
@@ -308,7 +308,7 @@ def test_a_stop_landing_during_the_spawn_kills_the_new_loop(monkeypatch: pytest.
 
     procs = []
 
-    def _start_then_stop(registry, manifest, params, return_to=None):
+    def _start_then_stop(registry, manifest, params, return_to=None, *, fence):
         from entity_fake_loop import spawn
 
         proc = spawn(_home_dir(), "day", 60)
@@ -508,8 +508,9 @@ def test_start_loop_hands_return_to_to_the_runtime(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setattr(life, "spawn_loop_process", lambda home, **kw: seen.update(kw) or {"pid": 1})
     monkeypatch.setattr(entity_loop, "loop_status", lambda home: {"running": False})
-    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m", return_to="personal")
-    assert seen.get("return_to") == "personal"
+    admission = object()  # the caller's start admission: handed to the spawn as is
+    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m", return_to="personal", fence=admission)
+    assert seen.get("return_to") == "personal" and seen.get("fence") is admission
 
 
 @pytest.mark.parametrize("stopped_by", ["no_return", "work_off", "edge_removed", "jobs_done"])

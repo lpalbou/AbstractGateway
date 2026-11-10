@@ -123,7 +123,8 @@ def test_loop_start_arms_the_grant_itself(monkeypatch: pytest.MonkeyPatch):
 
     def _fake_spawn(home_dir, **kwargs):
         spawned.append(Path(home_dir).name)
-        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
+        # The spawn's own receipt (the runtime's never carries the admission fence it was handed).
+        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **{k: v for k, v in kwargs.items() if k != "fence"}}
 
     monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
 
@@ -164,7 +165,8 @@ def test_loop_start_leaves_an_armed_grant_untouched(monkeypatch: pytest.MonkeyPa
     import abstractruntime.identity.life as life_mod
 
     def _fake_spawn(home_dir, **kwargs):
-        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **kwargs}
+        # The spawn's own receipt (the runtime's never carries the admission fence it was handed).
+        return {"pid": 4242, "log": str(home_dir / "own_time.log"), **{k: v for k, v in kwargs.items() if k != "fence"}}
 
     monkeypatch.setattr(life_mod, "spawn_loop_process", _fake_spawn)
 

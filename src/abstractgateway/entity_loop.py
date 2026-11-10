@@ -51,10 +51,16 @@ def start_loop(
     shelf_size: Optional[int] = None,
     context_window: Optional[int] = None,
     return_to: Optional[str] = None,
+    fence: Any,
 ) -> Dict[str, Any]:
     """`return_to` (runtime seam, operator 2026-11-09): the own-time phase this start returns to —
     "personal" for the operator's own act (his toggle, loop/start, Retry), the remembered phase for a
-    restore; None = the child decides from the home's own record (`--return-to none`)."""
+    restore; None = the child decides from the home's own record (`--return-to none`).
+
+    `fence` (REQUIRED, runtime d47b7a2 / Codex review 4 #7): the LifecycleFence the caller decided the
+    start at, admitted BEFORE its eligibility checks (`entity_phase.admission_fence`). The runtime's
+    spawn refuses at once when it moved (StoppedByOperator: a Stop after the decision spawns nothing)
+    and fences every step of the start against it."""
     from abstractruntime.identity.life import spawn_loop_process
 
     # Wake entry point: an archived entity never runs its loop (round 3; entity_access.py).
@@ -137,6 +143,7 @@ def start_loop(
         endpoint_profile=endpoint_profile,
         return_to=return_to,
         capability_endpoint_profiles=_capability_endpoint_profiles(Path(home_dir), provider=provider, model=model),
+        fence=fence,
     )
 
 

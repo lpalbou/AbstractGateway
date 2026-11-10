@@ -323,6 +323,6 @@ def test_the_loop_child_gets_its_capability_endpoint_profiles(monkeypatch: pytes
         if spec == "endpoint:theforge" else None))
     seen = {}
     monkeypatch.setattr(life_mod, "spawn_loop_process", lambda home, **kw: seen.update(kw) or {"pid": 1})
-    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m")
+    entity_loop.start_loop(tmp_path, provider="lmstudio", model="m", fence=object())
     assert seen["capability_endpoint_profiles"] == {
         "summaries": {"spec": "endpoint:theforge", "profile": {"base_url": "https://forge.example/v1", "api_key": "k"}}}
