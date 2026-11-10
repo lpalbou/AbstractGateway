@@ -531,6 +531,43 @@ class EntityChatHost:
         enable_tools: bool = True,
         enable_workspace: bool = False,
     ) -> Dict[str, Any]:
+        """Open the drawer's visit. ONE admission (Codex review 3 #6): the generation read at the door's
+        arrival runs through every wait and retry of the open, and the open waits its turn behind the
+        visitors who arrived before it (`entity_visits.ARRIVALS`, shared with the durable door)."""
+        from .entity_phase import GenerationMoved, admission_fence, generation_of
+        from .entity_visits import ARRIVALS, STOPPED_VISIT_SENTENCE, VisitRefused
+
+        slug = self._registry.manifest_for(name).slug  # KeyError -> 404 at the route
+        try:
+            admission = generation_of(self._registry.entities_dir, slug)
+        except GenerationMoved:
+            raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
+        try:
+            with ARRIVALS.turn(str(self._registry.entities_dir / slug),
+                               admission_fence(self._registry.entities_dir, slug, admission)):
+                return self._open_admitted(
+                    name, admission, provider=provider, model=model, base_url=base_url, participants=participants,
+                    context_window=context_window, shelf_size=shelf_size, enable_tools=enable_tools,
+                    enable_workspace=enable_workspace)
+        except VisitRefused as e:
+            if e.code == "stopped_use_resume":
+                raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
+            raise
+
+    def _open_admitted(
+        self,
+        name: str,
+        _admission: int,
+        *,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        participants: Optional[List[str]] = None,
+        context_window: Optional[int] = None,
+        shelf_size: Optional[int] = None,
+        enable_tools: bool = True,
+        enable_workspace: bool = False,
+    ) -> Dict[str, Any]:
         # Attention geometry (maintainer ruling 2026-07-08, after the live A/B
         # on Castor): the wide posture IS the default. Resolution order:
         # request body > the home's cognition profile (shelf only, read below
@@ -577,11 +614,10 @@ class EntityChatHost:
 
         # Another drawer session holds the home: wait for it to close or idle out, without a
         # deadline (a visit never fails, Codex review 2 #9); only the kill switch ends the wait.
-        from .entity_phase import generation_of as _gen_open
         from .entity_visits import STOPPED_VISIT_SENTENCE
         from .entity_visits import _wait_while as _wait_open
 
-        _open_gen = _gen_open(self._registry.entities_dir, slug)
+        _open_gen = int(_admission)  # the door's one admission (Codex review 3 #6)
 
         def _drawer_live() -> bool:
             with self._lock:
@@ -601,7 +637,6 @@ class EntityChatHost:
         if self._summon_seat_probe is not None:
             # A VISIT NEVER FAILS on a live summon (Codex review 2026-11-09 #6): the door waits,
             # without a deadline, for the summon's turn to end; only the kill switch ends the wait.
-            from .entity_phase import generation_of as _gen_of
             from .entity_visits import STOPPED_VISIT_SENTENCE, VisitRefused, _wait_while
 
             def _summon_live() -> bool:
@@ -611,7 +646,7 @@ class EntityChatHost:
                     return False
 
             try:
-                _wait_while(_summon_live, self._registry.entities_dir, slug, _gen_of(self._registry.entities_dir, slug))
+                _wait_while(_summon_live, self._registry.entities_dir, slug, _open_gen)
             except VisitRefused:
                 raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
@@ -671,7 +706,6 @@ class EntityChatHost:
             if age is not None and age < float(EntityVisitHost.STALE_YIELD_GRACE_S):
                 # Another visit is opening (Codex review #6: no "retry shortly"): wait, without a
                 # deadline, until it registers or goes, then pass every gate again.
-                from .entity_phase import generation_of as _gen_of
                 from .entity_visits import STOPPED_VISIT_SENTENCE, VisitRefused, _wait_while
 
                 def _opening() -> bool:
@@ -681,12 +715,13 @@ class EntityChatHost:
                     return a2 is not None and a2 < float(EntityVisitHost.STALE_YIELD_GRACE_S) and not registered
 
                 try:
-                    _wait_while(_opening, self._registry.entities_dir, slug, _gen_of(self._registry.entities_dir, slug))
+                    _wait_while(_opening, self._registry.entities_dir, slug, _open_gen)
                 except VisitRefused:
                     raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
-                return self.open(name, provider=provider, model=model, base_url=base_url, participants=participants,
-                                 context_window=context_window, shelf_size=shelf_size, enable_tools=enable_tools,
-                                 enable_workspace=enable_workspace)
+                return self._open_admitted(name, _open_gen, provider=provider, model=model, base_url=base_url,
+                                           participants=participants, context_window=context_window,
+                                           shelf_size=shelf_size, enable_tools=enable_tools,
+                                           enable_workspace=enable_workspace)
             prior_state = {"state": "awake", "reason": ""}
         elif state.get("state") == "asleep":
             # B1 ruling (laurent 04:58; newborn shape c1503: doors WAKE, they
@@ -699,8 +734,9 @@ class EntityChatHost:
         # The phase this visit interrupts is observed BEFORE the posture lands (resume_to).
         from .entity_phase import GenerationMoved, admit_visit_posture, default_hosts, generation_of, safe_publish
 
-        # The door's admission is fenced on the lifecycle generation it sees now (review #1).
-        generation = generation_of(self._registry.entities_dir, slug)
+        # The door's admission is fenced on the lifecycle generation it saw at arrival (review #1; Codex review 3
+        # #6: never a fresh one read after the waits).
+        generation = _open_gen
         safe_publish(self._registry, name, "observed", chat_host=self, visit_host=default_hosts()[1])
         try:
             admit_visit_posture(self._registry.entities_dir, slug, generation, reason=posture_reason)

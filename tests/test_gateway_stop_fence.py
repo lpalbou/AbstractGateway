@@ -409,3 +409,112 @@ def test_an_unreadable_status_is_never_taken_for_a_stopped_loop(kind):
         finally:
             os.chmod(status, 0o644)
             proc.kill()
+
+
+# ------------------------------------------------------------------------------------------------- finding 6
+class _EchoLLM:
+    class _Reply:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    def generate(self, **kwargs):
+        return self._Reply("ok.")
+
+
+def test_a_stop_then_resume_during_the_last_wait_interval_ends_the_open(monkeypatch):
+    """Codex review 3 #6: the wait checked the generation only while the blocker held; a Stop removing the blocker (it
+    closes the other visit) then a Resume, both within the last polling interval, let the open go on - with a fresh
+    generation read after the wait. One admission now runs through every wait and is checked on exit."""
+    import time as time_mod
+
+    from abstractgateway import entity_chat, entity_phase
+    from abstractgateway.entity_visits import VisitRefused
+    from abstractgateway.routes.entities import _chat_host, _visit_host
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: _EchoLLM())
+    real_sleep = time_mod.sleep
+    waiter = {}
+
+    def _sleep(seconds):
+        if threading.current_thread() is waiter.get("thread") and not waiter.get("fired"):
+            waiter["fired"] = True
+            _stop("castor")  # ends Bob's visit: the blocker is gone ...
+            entity_phase.resume(_registry(), "castor", actor="person:admin", chat_host=_chat_host(),
+                                visit_host=_visit_host())  # ... and he is resumed, inside the same interval
+        return real_sleep(seconds)
+
+    with _client() as client:
+        _born(client, "Castor")
+        vh = _visit_host()
+        vh.open("castor", participants=["person:bob"])
+        monkeypatch.setattr(time_mod, "sleep", _sleep)
+
+        def _open():
+            try:
+                waiter["opened"] = vh.open("castor", participants=["person:alice"])
+            except VisitRefused as e:
+                waiter["refused"] = e
+
+        t = threading.Thread(target=_open, daemon=True)
+        waiter["thread"] = t
+        t.start()
+        t.join(120)
+        assert waiter.get("fired"), "the open never waited"
+        assert "opened" not in waiter, "an open admitted before the Stop went on after it"
+        assert waiter["refused"].code == "stopped_use_resume"
+
+
+def test_an_older_waiter_opens_before_the_newcomers(monkeypatch):
+    """Codex review 3 #6: polling plus an unordered mutex let a later arrival overtake a visitor already waiting.
+    Arrivals are served oldest first: here the newcomer even polls fifty times as often, and still goes after."""
+    import time as time_mod
+
+    from abstractgateway import entity_chat
+    from abstractgateway.entity_visits import ARRIVALS, VisitRefused
+    from abstractgateway.routes.entities import _visit_host
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: _EchoLLM())
+    real_sleep = time_mod.sleep
+    threads = {}
+
+    def _sleep(seconds):
+        me = threading.current_thread()
+        if me is threads.get("alice"):
+            return real_sleep(1.0)
+        if me is threads.get("carol"):
+            return real_sleep(0.02)
+        return real_sleep(seconds)
+
+    def _until(cond, what):
+        deadline = time_mod.monotonic() + 120
+        while not cond():
+            assert time_mod.monotonic() < deadline, what
+            real_sleep(0.05)
+
+    with _client() as client:
+        _born(client, "Castor")
+        vh = _visit_host()
+        bob = vh.open("castor", participants=["person:bob"])
+        key = str(_home())
+        order = []
+        monkeypatch.setattr(time_mod, "sleep", _sleep)
+
+        def _open(who):
+            try:
+                out = vh.open("castor", participants=[f"person:{who}"])
+                order.append((who, out["run_id"]))
+            except VisitRefused as e:
+                order.append((who, e.code))
+
+        for who, n in (("alice", 1), ("carol", 2)):
+            threads[who] = threading.Thread(target=_open, args=(who,), daemon=True)
+            threads[who].start()
+            _until(lambda n=n: ARRIVALS.waiting(key) == n, f"{who} never arrived")
+        vh.close("castor", bob["run_id"], closed_by="operator")
+        _until(lambda: len(order) >= 1, "nobody opened after the visit closed")
+        assert order[0][0] == "alice", order
+        vh.close("castor", order[0][1], closed_by="operator")
+        _until(lambda: len(order) >= 2, "the newcomer never opened")
+        assert order[1][0] == "carol", order
+        for t in threads.values():
+            t.join(60)

@@ -143,6 +143,51 @@ def _wait_while(busy: Any, entities_dir: Any, slug: str, generation: Optional[in
         if fence is not None and fence.moved():
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
         time.sleep(0.25)
+    # CHECKED ON EXIT (Codex review 3 #6): a Stop that removed the blocker (it closes the other visit) ends the
+    # wait with busy() False - and a Resume within the same interval: the door's admission still moved, nothing
+    # of it goes on.
+    if fence is not None and fence.moved():
+        raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
+
+
+class _Arrivals:
+    """FAIR ARRIVALS (Codex review 3 #6): the doors of one home (the durable visit, the hosted chat) admit their
+    visitors oldest first. A door takes a ticket on arrival and opens only at the head of its home's line, so a
+    newcomer never overtakes a visitor already waiting (polling plus an unordered mutex let later arrivals win again
+    and again). The wait for one's turn ends on the admission's Stop like every visit wait, never on a clock."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._lines: Dict[str, Any] = {}
+
+    @contextlib.contextmanager
+    def turn(self, key: str, fence: Any) -> Any:
+        import collections
+
+        ticket = object()
+        with self._cond:
+            line = self._lines.setdefault(key, collections.deque())
+            line.append(ticket)
+        try:
+            with self._cond:
+                while line[0] is not ticket:
+                    if fence is not None and fence.moved():
+                        raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
+                    self._cond.wait(0.25)
+            yield
+        finally:
+            with self._cond:
+                line.remove(ticket)
+                if not line:
+                    self._lines.pop(key, None)
+                self._cond.notify_all()
+
+    def waiting(self, key: str) -> int:
+        with self._cond:
+            return len(self._lines.get(key) or ())
+
+
+ARRIVALS = _Arrivals()
 
 
 # The one visit refusal (operator 2026-11-09; contract-phases §6.1, §7).
@@ -1128,18 +1173,54 @@ class EntityVisitHost:
         opens on the same home (the check->create window closes under a
         per-slug mutex). Shared by the operator visit and each side of a
         two-entity meet — one code path, one guard."""
-        from .entity_phase import generation_of
+        from .entity_phase import GenerationMoved, admission_fence, generation_of
 
         slug = self._registry.manifest_for(name).slug
-        generation = generation_of(self._registry.entities_dir, slug)
+        # ONE ADMISSION through every wait and retry (Codex review 3 #6): the generation this door saw at its
+        # arrival, never a fresh one read after a wait.
+        try:
+            generation = generation_of(self._registry.entities_dir, slug)
+        except GenerationMoved:
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
+        line: Any = contextlib.nullcontext()
+        if not (join_existing and self._own_live_visit(name, participants)):
+            # The same visitor rejoining his own live visit is no new arrival; everyone else waits his turn.
+            line = ARRIVALS.turn(str(self._registry.entities_dir / slug),
+                                 admission_fence(self._registry.entities_dir, slug, generation))
+        with line:
+            return self._open_leg_admitted(
+                name, slug, generation, participants=participants, visit_id=visit_id, session_id=session_id,
+                channel_label=channel_label, session_tools=session_tools, conversation=conversation,
+                idle_seconds=idle_seconds, join_existing=join_existing)
+
+    def _own_live_visit(self, name: str, participants: Optional[List[str]]) -> bool:
+        try:
+            er = self._registry.get_entity_runtime(self._registry.manifest_for(name).slug)
+            live = self._live_visit_run(er)
+        except Exception:  # noqa: BLE001
+            return False
+        if live is None:
+            return False
+        stamped = [str(p) for p in (((live.vars or {}).get("_runtime") or {}).get("entity") or {}).get("participants") or []]
+        return (participants or ["person:operator"])[0] in stamped
+
+    def _open_leg_admitted(self, name: str, slug: str, generation: int, *, participants: List[str], visit_id: str,
+                           session_id: Optional[str], channel_label: str, session_tools: Optional[Dict[str, Any]],
+                           conversation: Optional[bool], idle_seconds: Optional[float], join_existing: bool) -> Any:
+        from .entity_phase import moved_since
+
         while True:
             # Another person's visit holds the home: wait for it, OUTSIDE the open lock (its own
             # visitor may still rejoin it), without a deadline; only the kill switch ends the wait.
             _wait_while(lambda: self._other_visit_live(name, participants, join_existing),
                         self._registry.entities_dir, slug, generation)
             with self._slug_lock(slug):
+                # Checked again once the lock is held (Codex review 3 #6): a Stop while it was taken.
+                if moved_since(self._registry.entities_dir, slug, generation):
+                    raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
                 try:
-                    pre = self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
+                    pre = self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing,
+                                          admission=generation)
                 except _OtherVisitLive:
                     continue  # it came back between the wait and the lock: wait again
                 leg = self._start_leg(
@@ -1208,7 +1289,7 @@ class EntityVisitHost:
 
     # ------------------------------------------------- shared leg machinery
     def _preflight(self, name: str, participants: Optional[List[str]], *, visit_id: str = "",
-                   join_existing: bool = False) -> Dict[str, Any]:
+                   join_existing: bool = False, admission: Optional[int] = None) -> Dict[str, Any]:
         """The per-home gates every visit leg passes BEFORE anything durable:
         substrate resolve (no-fallback), one-life-one-visit (durable AND the
         hosted lane), paused refusal, and the auto-yield negotiation with
@@ -1228,11 +1309,18 @@ class EntityVisitHost:
         slug = manifest.slug
         home_dir = registry.entities_dir / slug
         self._refuse_if_archived(slug)
-        # The door's admission is fenced on the lifecycle generation it sees NOW (review #1): every
-        # state write of this open and its wait is checked against it under the lifecycle lock.
-        from .entity_phase import generation_of
+        # The door's admission is fenced on the lifecycle generation it saw at ARRIVAL (review #1; Codex review 3
+        # #6: one admission through every wait and retry): every state write of this open and its wait is
+        # checked against it under the lifecycle lock.
+        from .entity_phase import GenerationMoved, generation_of
 
-        generation = generation_of(registry.entities_dir, slug)
+        if admission is not None:
+            generation = int(admission)
+        else:
+            try:
+                generation = generation_of(registry.entities_dir, slug)
+            except GenerationMoved:
+                raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
         try:
             provider, model, thinking = resolve_substrate(None, None, home_dir=home_dir)
@@ -1335,7 +1423,8 @@ class EntityVisitHost:
                         return a2 is not None and a2 < float(EntityVisitHost.STALE_YIELD_GRACE_S) and self._live_visit_run(er) is None
 
                     _wait_while(_opening, registry.entities_dir, slug, generation)
-                    return self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing)
+                    return self._preflight(name, participants, visit_id=visit_id, join_existing=join_existing,
+                                           admission=generation)
                 # A visiting-yield posture OLDER than the grace belongs to a
                 # PREVIOUS (crashed) visit; the operator's own word is not
                 # recoverable from it — awake is the honest restore.

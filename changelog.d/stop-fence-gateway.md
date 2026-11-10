@@ -48,3 +48,9 @@
 - **An unreadable loop status is never taken for a stopped loop** (Codex review 3 #9): a status file that exists but
   is denied or malformed is `failed loop_unverified` on the Stop's receipt (incomplete, a repeated Stop retries), and
   nothing is signalled; only a missing file reads as no loop.
+- **Visit doors keep one admission and serve arrivals oldest first** (Codex review 3 #6): the generation read at a
+  door's arrival runs through every wait and retry of its open (checked on each wait's exit and again once the open
+  lock is held), so a Stop followed by a Resume during a wait still ends the open; and a door takes a ticket on
+  arrival and opens only at the head of its home's line (`entity_visits.ARRIVALS`, shared by the durable visit and the
+  hosted chat), so a newcomer never overtakes a visitor already waiting. The same visitor rejoining his own live visit
+  takes no ticket.
