@@ -360,6 +360,11 @@ async def read_record_verbatim(name: str, graph_id: str) -> Dict[str, Any]:
             # Its words were cut when saved, by a retired writer (entity_understanding.cut_when_saved).
             "cut": reads.cut(gid, understood) if understood is not None else False,
         }
+        # Which of his topics this memory is in (memory's community_of; None when no version holds it), so the
+        # Detail tab can say "in topic ..." (COMMUNITIES-DESIGN §3). Diary answers stay exactly as they were.
+        from ..entity_topics import record_community
+
+        understanding["community"] = record_community(home, str(assertion.subject))
 
     payload_ref = str(attrs.get("payload_ref") or "").strip()
     if not payload_ref and not is_diary and str(attrs.get("record_kind") or "") == "summary":

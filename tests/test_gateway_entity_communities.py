@@ -351,3 +351,26 @@ def test_one_communities_changed_marker_per_version_and_no_member_edges_on_the_s
         assert community_bindings, "the version's records pass through the stream"
         for e in community_bindings:
             assert all(edge.get("relation") == "refines" for edge in (e["display"].get("edges") or [])), e["display"]
+
+
+def test_one_memory_says_which_topic_it_is_in_on_the_record_read_and_the_card() -> None:
+    """The Detail tab and the hover card (COMMUNITIES-DESIGN §3): the record read and the card's record briefs carry
+    `community` {key, title, pending, provisional, via} (memory's community_of; the payload's title), null before
+    any version."""
+    with _client() as client:
+        home = _born(client)
+        lesson = home.test_ids["dam-3"]
+        before = client.get(f"/api/gateway/entities/Castor/records/{lesson}/verbatim")
+        assert before.status_code == 200, before.text
+        assert before.json()["community"] is None
+        _sleep(home)
+        served = client.get("/api/gateway/entities/Castor/communities").json()
+        (topic,) = [c for c in served["communities"] if lesson in {m["id"] for m in c["members"]}]
+        (via,) = [m["via"] for m in topic["members"] if m["id"] == lesson]
+        expected = {"key": topic["key"], "title": topic["title"], "pending": topic["pending"], "provisional": False,
+                    "via": via}
+        assert client.get(f"/api/gateway/entities/Castor/records/{lesson}/verbatim").json()["community"] == expected
+        card = client.get("/api/gateway/entities/Castor/card").json()
+        briefs = [b for b in (card.get("lessons") or {}).get("lessons") or [] if b.get("record_id") == lesson]
+        assert briefs, card.get("lessons")
+        assert briefs[0]["community"] == expected

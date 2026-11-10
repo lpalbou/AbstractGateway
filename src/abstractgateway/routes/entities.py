@@ -1476,7 +1476,10 @@ def entity_card(
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return card_with_understanding(card, RecordUnderstandings(home))
+    # Each record brief also says which of his topics it is in (entity_topics.card_with_topics).
+    from ..entity_topics import card_with_topics
+
+    return card_with_topics(card_with_understanding(card, RecordUnderstandings(home)), home)
 
 
 @router.get("/{name}/tile")
