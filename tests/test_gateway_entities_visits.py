@@ -1168,6 +1168,107 @@ def test_visit_tool_results_rest_as_home_artifacts_and_are_served(monkeypatch: p
         client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
 
 
+class _SseRequest:
+    """Request stub for a direct call of the live tail's route (it never ends by itself)."""
+
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+def _sse_until_quiet(name: str) -> list:
+    """Every envelope the live SSE tail sends from seq 0 until its first keep-alive."""
+    import asyncio
+
+    from abstractgateway.routes.entity_replay import stream_entity_replay
+
+    async def _drain() -> list:
+        response = await stream_entity_replay(
+            _SseRequest(), name, since_seq=0.0, families=None, enrich=True,
+            heartbeat_s=0.3, poll_s=0.05, last_event_id=None,
+        )
+        gen = response.body_iterator
+        buffer = ""
+        try:
+            while ": keep-alive" not in buffer:
+                buffer += (await gen.__anext__()).decode("utf-8")
+        finally:
+            await gen.aclose()
+        return [json.loads(block.split("data: ", 1)[1]) for block in buffer.split("\n\n") if "data: " in block]
+
+    return asyncio.run(asyncio.wait_for(_drain(), timeout=60))
+
+
+def _step_tools_markers(envelopes: list) -> list:
+    return [e for e in envelopes if e.get("family") == "host" and (e.get("payload") or {}).get("kind") == "step_tools"]
+
+
+def test_a_finished_visit_step_carries_its_tools_and_files_on_the_stream(monkeypatch: pytest.MonkeyPatch):
+    """Root 1204, the gateway half (the Entity app's ledger rows read it, its backlog 0035): a visit step
+    that ran tools ends with ONE `step_tools` host marker {run_id, turn_id, tools in call order,
+    tool_count, files_read, files_written}, after the step's own rows and before the next step's, in
+    the replay export and on the live SSE tail. One step = one turn, even across two tool rounds (two
+    TOOL_CALLS effects); a step that ran no tool has no marker."""
+    pytest.importorskip("abstractagent.adapters.react_runtime")
+    import abstractruntime.identity.tools as rt_tools
+
+    from abstractgateway import entity_chat
+
+    monkeypatch.setattr(rt_tools, "_run_web_search", lambda q: f"Search results for: {q}")
+    llm = _NativeToolLLM([
+        # Turn 1, round 1: a search and a read; round 2: another read and a write.
+        {"content": "", "tool_calls": [
+            {"call_id": "s1", "name": "web_search", "arguments": {"query": "beaver dams"}},
+            {"call_id": "r1", "name": "read_file", "arguments": {"path": "notes/a.txt"}},
+        ]},
+        {"content": "", "tool_calls": [
+            {"call_id": "r2", "name": "read_file", "arguments": {"path": "notes/b.txt"}},
+            {"call_id": "w1", "name": "write_file", "arguments": {"path": "notes/summary.md", "content": "# Dams\n"}},
+        ]},
+        {"content": "Read both notes and wrote the summary."},
+        # Turn 2: no tool at all.
+        {"content": "Nothing to look up this time."},
+        {"content": "Reflection: a good visit."},
+    ])
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: llm)
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        from abstractruntime.identity.tool_policy import write_policy_file
+
+        write_policy_file(_home_dir(), {"visit": ["web_search", "read_file", "write_file", "list_files"]})
+        notes = _home_dir() / "workspace" / "notes"
+        notes.mkdir(parents=True, exist_ok=True)
+        (notes / "a.txt").write_text("Beavers build dams.\n", encoding="utf-8")
+        (notes / "b.txt").write_text("Of wood and mud.\n", encoding="utf-8")
+
+        run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
+        first = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Read your notes and sum them up."})
+        assert first.status_code == 200 and "wrote the summary" in first.json()["reply"], first.text
+        assert (notes / "summary.md").read_text(encoding="utf-8") == "# Dams\n"
+        second = client.post(f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "Anything else?"})
+        assert second.status_code == 200 and "Nothing to look up" in second.json()["reply"], second.text
+
+        expected = {
+            "kind": "step_tools", "session_id": None, "run_id": run_id, "turn_id": "t-0001",
+            "tools": ["web_search", "read_file", "read_file", "write_file"],
+            "tool_count": 4, "files_read": 2, "files_written": 1,
+        }
+        replay = [json.loads(line) for line in client.get("/api/gateway/entities/Castor/replay").text.splitlines() if line.strip()]
+        marked = _step_tools_markers(replay)
+        assert [m["payload"] for m in marked] == [expected], marked  # one step, one marker; turn 2 has none
+        # Stream order: after every row of its step, before any row of the next.
+        step_rows = [e["seq"] for e in replay if e.get("family") != "host" and e.get("run_id") == run_id and e.get("turn_id") == "t-0001"]
+        next_rows = [e["seq"] for e in replay if e.get("family") != "host" and e.get("run_id") == run_id and e.get("turn_id") == "t-0002"]
+        assert step_rows and next_rows, "both turns have rows on the stream"
+        assert max(step_rows) < marked[0]["seq"] < min(next_rows)
+        assert marked[0]["run_id"] == run_id
+
+        # The live SSE tail sends the same one marker.
+        assert [m["payload"] for m in _step_tools_markers(_sse_until_quiet("Castor"))] == [expected]
+
+        client.post(f"/api/gateway/entities/Castor/visit/{run_id}/close", json={})
+
+
 def test_read_file_on_an_image_shows_it_on_the_next_call(monkeypatch: pytest.MonkeyPatch):
     """The sight lane at the door: the entity's own read_file on an image
     serves `{"rendered", "media"}` (runtime's tool_result_media beside the

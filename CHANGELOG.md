@@ -16,6 +16,17 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Added
 
+- **Each step's tools and files on the replay stream** (`entity_step_tools.py`, root backlog 1204; the Entity
+  app's ledger rows read it, its backlog 0035). Every finished step that ran at least one tool is followed by one
+  host marker `{kind: "step_tools", run_id, turn_id, tools, tool_count, files_read, files_written}`, after the
+  step's own rows, on `GET /entities/{name}/replay` and the live tail: `tools` are the calls that ran, in call order
+  (a refused call did not run); `files_read` counts `read_file` / `skim_files` and `files_written` `write_file` /
+  `edit_file`, through one table until AbstractCore declares a file effect on its tools; a step with no tool has no
+  marker, and the marker is never one of the card's moments. A visit step's calls are noted by the door's tool
+  handler and written at the step's answer; an own-time step (the runtime's loop process, no run ledger) is read
+  from its episode's `tools_used` when a stream read reaches it, counted from the home's first stream read on this
+  version (no backfill). The sleep's passes run no tool, so a sleep has none. `record_host_marker` dedups on several
+  fields together (`dedup_field` takes a tuple).
 - **`GET /entities/{name}/self-brief`** serves the entity's self-knowledge brief (`<home>/self_brief.md`, written
   by AbstractRuntime 0.19.1 at the end of a sleep's topics stage and placed in his prompt prefix) as `{text,
   written_at, version, tokens}`; 404 `no_brief` before the first sleep that wrote one. The Entity app shows it on

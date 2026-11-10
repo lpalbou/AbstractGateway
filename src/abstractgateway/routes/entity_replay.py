@@ -221,8 +221,11 @@ async def replay_entity_stream(
     # (the seam runtime ruled at c3750: record-when-present, idempotent).
     if family_list is None or "host" in family_list:
         from ..entity_replay import sweep_night_narrations
+        from ..entity_step_tools import sweep_step_tools_quietly
 
         await off_loop("heavy", sweep_night_narrations, registry.entities_dir, home.manifest.slug, home)
+        # The tools of the home-direct steps formed since the last sweep (root 1204, entity_step_tools.py).
+        await off_loop("heavy", sweep_step_tools_quietly, registry.entities_dir, home.manifest.slug, home)
 
     from ..entity_understanding import RecordUnderstandings, with_cut, with_recalled
 
@@ -632,6 +635,16 @@ def _collect_replay_chunk(
     return out, pos, exhausted
 
 
+def _swept_markers(entities_dir: Any, slug: str, home: Any, step_bound: Optional[int]) -> List[Dict[str, Any]]:
+    """One live poll's host lane: sweep the home-direct steps' tools up to `step_bound` (root 1204,
+    entity_step_tools.py), then read the markers with their file lines."""
+    from ..entity_replay import read_host_markers
+    from ..entity_step_tools import sweep_step_tools_quietly
+
+    sweep_step_tools_quietly(entities_dir, slug, home, until_seq=step_bound)
+    return read_host_markers(entities_dir, slug, include_lines=True)
+
+
 _PHASE_FILES = ("state", "loop_status", "phases.yaml")
 
 
@@ -797,9 +810,13 @@ async def stream_entity_replay(
                 if sig != phase_sig or (now_t - phase_seen_at) >= float(heartbeat_s):
                     phase_sig, phase_seen_at = sig, now_t
                     await off_loop("light", _observe_phase, registry, home.manifest.slug)
-                for envelope in await off_loop("light",
-                    read_host_markers, registry.entities_dir, home.manifest.slug, include_lines=True
-                ):
+                # THE STEP'S TOOLS (root 1204): an own-time step forms in the loop's process, so its marker is
+                # swept here, in the same off-loop call as the marker read — never past what this tail already
+                # sent when it carries bindings, so a marker never arrives before its step's rows (one
+                # `current_seq()` read while the journal has not moved).
+                step_bound = int(pos) if family_list is None or "binding" in family_list else None
+                for envelope in await off_loop("light", _swept_markers, registry.entities_dir, home.manifest.slug,
+                                               home, step_bound):
                     line = int(envelope.get("_line") or 0)
                     if line <= marker_floor or line in delivered_lines:
                         continue

@@ -1838,6 +1838,10 @@ class EntityRegistry:
                         f"{manifest.entity_id!r} — engram/manifest drift; refusing to serve"
                     )
                 wrap_entity_runtime_routing(er, data_dir=self.data_dir)
+                # A step's tools on the replay stream (root backlog 1204): its ANSWER_USER records them.
+                from .entity_step_tools import wrap_answer_user
+
+                wrap_answer_user(er, entities_dir=self.entities_dir, slug=slug)
                 # An entity is an AI user with its own mailbox (round 3 §3.1): its runtime
                 # resolves email through the entity's plane, never its creator's.
                 from .mail.runtime_wiring import wire_entity_runtime_email
@@ -2386,6 +2390,11 @@ class EntityRegistry:
                         **({"hits": election.hits} if election.hits is not None else {}),
                     }
                 )
+            # THE STEP'S TOOLS (root backlog 1204): the calls that ran (a refusal did not), noted under this
+            # turn; the step's ANSWER_USER turns them into its `step_tools` marker (entity_step_tools.py).
+            from .entity_step_tools import note_executed_tools
+
+            note_executed_tools(visit_ns, turn_id, [str(r["name"]) for r in results if r.get("success") is True])
             out: Dict[str, Any] = {"mode": "executed", "results": results}
             if notices:
                 out["notices"] = notices
@@ -2997,6 +3006,7 @@ class EntityRegistry:
         Cached per (home, both files' size + mtime) for current reads (backlog 1012: the marker
         stream of a long life is megabytes); the list is new per call, its rows are shared."""
         from .entity_replay import HOST_STREAM_DIRNAME, marker_window_end, read_host_markers
+        from .entity_step_tools import STEP_TOOLS
         from .entity_tile import LIFE_MOMENTS_CACHE, home_cache_key
 
         history_path = self.entities_dir / slug / "state_history.jsonl"
@@ -3015,6 +3025,8 @@ class EntityRegistry:
             for m in read_host_markers(self.entities_dir, slug, until_seq=marker_window_end(int(as_of)) if as_of is not None else None):
                 p = m.get("payload") or {}
                 kind = p.get("kind")
+                if kind == STEP_TOOLS:
+                    continue  # one step's tool counts (root 1204) annotate the ledger, never a moment of the life
                 at = str(m.get("observed_at") or "")
                 if kind in ("sleep", "wake", "pause"):
                     marker_state_times.append((str(kind), str(p.get("reason") or ""), at))

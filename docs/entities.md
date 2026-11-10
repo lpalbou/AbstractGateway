@@ -679,6 +679,36 @@ verbatim prose, which stays in the book and is fetched one entry at a time
 through the operator diary door (`GET .../diary/{entry_id}`, a marker-first
 recorded read). The redaction marker itself is never served raw.
 
+### A step's tools and files (`step_tools`)
+
+Each finished step that ran at least one tool (a visit turn, a tick of own
+time or work) is followed on the stream by one host marker, so a ledger row
+can say how busy the step was with no further read:
+
+```json
+{"kind": "step_tools", "session_id": null, "run_id": "…", "turn_id": "t-0002",
+ "tools": ["web_search", "read_file", "read_file", "write_file"],
+ "tool_count": 4, "files_read": 2, "files_written": 1}
+```
+
+- `tools` are the calls that ran, in call order (a call the tool grant or the
+  turn's budget refused did not run); `tool_count` counts them.
+- `files_read` counts `read_file` and `skim_files`; `files_written` counts
+  `write_file` and `edit_file`. Listing, searching and `execute_command` count
+  as tools only. One table decides this (`entity_step_tools.py`) until
+  AbstractCore declares a file effect on each tool.
+- The marker comes after the step's own rows: join it to them on `run_id` and
+  `turn_id`. It is on the bounded replay and on the live tail. A step that ran
+  no tool has no marker, and the marker is never a moment of the life (the
+  entity card's moments leave it out).
+- A visit step's calls are noted by the gateway's tool handler and the marker
+  is written when the step answers (or fails with what it already did). Own
+  time runs in the runtime's loop process: its step's episode keeps the names
+  of the tools it ran, and the gateway writes the marker when a stream read
+  reaches that episode. Those steps are counted from the home's first stream
+  read on this gateway version; earlier steps get no marker. The sleep's
+  passes run no tool, so a sleep has no marker.
+
 ### Reading a record's verbatim
 
 `GET /api/gateway/entities/{name}/records/{graph_id}/verbatim` serves the

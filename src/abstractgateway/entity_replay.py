@@ -272,6 +272,11 @@ HOST_MARKER_KINDS = (
     # the version's community records pass through the stream: payload {version_seq}. The Entity app
     # re-reads GET /communities on it; a community record is never a node.
     "communities_changed",
+    # step_tools (root backlog 1204; entity_step_tools.py): one finished step's tool use, so a ledger row says
+    # how many tools ran and how many files were read or written with no fetch. ONE marker per step that ran
+    # a tool (dedup on run_id + turn_id), after the step's own rows: payload {run_id, turn_id, tools (names,
+    # call order), tool_count, files_read, files_written}. Per-step observability, never a moment of the life.
+    "step_tools",
 )
 
 _marker_lock = threading.Lock()
@@ -330,7 +335,7 @@ def record_host_marker(
     run_id: Optional[str] = None,
     session_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
-    dedup_field: Optional[str] = None,
+    dedup_field: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Append one host marker and return its stream envelope.
 
@@ -345,6 +350,7 @@ def record_host_marker(
     the SAME kind carries the same payload[dedup_field] — evaluated INSIDE
     the lock (the scan-then-append TOCTOU is the reason this lives here and
     not at call sites). Returns the existing envelope with "deduped": True.
+    A tuple of field names dedups on all of them together (`step_tools`: run_id + turn_id).
 
     CAPACITY (card 014): new writes mint 1/MARKER_TICKS_PER_BASE ticks —
     the next slot is the first tick strictly above the max existing seq at
@@ -375,7 +381,8 @@ def record_host_marker(
                 pass  # non-POSIX/degraded: the in-process lock still holds
             try:
                 max_seq_at_base = float(base)  # markers sort strictly above this
-                dedup_value = (details or {}).get(dedup_field) if dedup_field else None
+                dedup_fields = (dedup_field,) if isinstance(dedup_field, str) else tuple(dedup_field or ())
+                dedup_values = [(f, (details or {}).get(f)) for f in dedup_fields]
                 signature_reason = (details or {}).get("reason")
                 flood_cutoff = datetime.now(timezone.utc) - timedelta(seconds=MARKER_FLOOD_WINDOW_S)
                 recent_same_signature = 0
@@ -387,9 +394,9 @@ def record_host_marker(
                             continue
                         payload = row.get("payload") or {}
                         if (
-                            dedup_field
+                            dedup_values
                             and payload.get("kind") == kind
-                            and payload.get(dedup_field) == dedup_value
+                            and all(payload.get(f) == v for f, v in dedup_values)
                         ):
                             return {**row, "deduped": True}
                         try:
