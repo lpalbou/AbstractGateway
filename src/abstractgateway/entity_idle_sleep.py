@@ -171,6 +171,10 @@ def _not_idle(facts: Dict[str, Any], snap: Dict[str, Any], rec: Dict[str, Any]) 
         return "archived"
     if snap["phase"] != "idle":
         return str(snap["phase"])
+    if bool((facts.get("loop") or {}).get("running")):
+        # Idle at once when own time is withdrawn, while the loop finishes its turn (operator 2026-11-10
+        # 23:09): never a sleep written under a live loop; the sweep looks again once it has exited.
+        return "own_time_ending"
     if int(facts.get("jobs_queued") or 0) > 0:
         return "job_queued"  # a queued job moves him to work (v3 D1), never to sleep
     if own_time_starting(Path(facts["entities_dir"]), facts["manifest"].slug, facts.get("loop")):

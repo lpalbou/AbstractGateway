@@ -61,6 +61,9 @@ MAINTENANCE_ENDS = "when maintenance is done"
 KILL_SWITCH_REASON = "kill_switch: stopped by the operator"
 # The Stop receipt's own-time row (v3 D3): the kill switch takes his own time back.
 OWN_TIME_REVOKED_SENTENCE = "Own time was revoked."
+# Own time withdrawn while its loop finishes the turn in flight (operator 2026-11-10 23:09): the phase is idle at
+# once, and this is what he is doing until the loop exits at its next boundary.
+OWN_TIME_WITHDRAWN_SENTENCE = "Own time withdrawn: he finishes what he is doing, then goes idle."
 # Homes whose own-time spawn reconcile decided and has not yet handed to the runtime (this process
 # only, cleared in a finally: no clock). From the runtime's reservation on, loop_status phase
 # `starting` is the one truth (runtime 86666af; STOP-LANE-DESIGN §2.4).
@@ -832,9 +835,12 @@ def derive(facts: Dict[str, Any], rec: Dict[str, Any]) -> Dict[str, Any]:
         if override and str(override.get("changed_at") or "") == str(state.get("changed_at") or ""):
             since = _iso(override.get("since")) or since
         sleep = {"kind": kind, "reason": _plain_reason(state.get("reason")), "since": since, "ends": ends}
-    elif loop_alive:
+    elif loop_alive and toggles["personal"]:
         phase = "personal"
     else:
+        # Idle; with a loop still alive and own time not granted, the operator withdrew it (his toggle, an expired
+        # grant) and the loop only finishes the turn in flight before it exits (operator 2026-11-10 23:09: "when
+        # removed it should have switched to idle"; the live 22:03 revoke read "stays on his own time" for 9 min).
         phase = "idle"
 
     # The job queue (v3 D1): always present; `current` is the job running now.
@@ -925,6 +931,8 @@ def _sentence(name: str, phase: str, visit: Any, work: Any, sleep: Any, loop: Di
         if ends:
             return "Napping; wakes on his own."
         return "Asleep until you wake him."
+    if phase == "idle" and bool(loop.get("running")):
+        return OWN_TIME_WITHDRAWN_SENTENCE
     if blocked and blocked.get("code") in ("loop_crashed", "own_time_start_failed", "own_time_not_running"):
         return "Awake and reachable; his own time stopped unexpectedly." if blocked["code"] == "loop_crashed" else (
             "Awake and reachable; his own time is not running."
@@ -1811,17 +1819,21 @@ def set_toggles(
             changed["personal"] = {"from": bool(facts["personal"]), "to": bool(personal)}
             write_personal_grant(home_dir, mode=("until_revoked" if personal else "disabled"), granted_by=actor,
                                  **({} if personal else {"revoked_by": "operator"}), fence=rec.fence)
+            if not personal and _note_resume_to(rec, None):
+                # Withdrawn means withdrawn (operator 2026-11-10 23:09): nothing remembers own time as a
+                # place to return to, in the same step as the revoke (the live 22:03 revoke kept
+                # resume_to=personal for nine minutes while the loop went on).
+                write_record(entities_dir, slug, rec)
     if changed["personal"] is not None:
         _marker(registry, manifest, "personal_granted" if personal else "personal_grant_revoked",
                 {"channel": "toggle", "by": actor, "mode": "until_revoked" if personal else "disabled"})
         if not personal and bool(loop_status(home_dir).get("running")):
-            # Own time ends at the loop's next boundary (the current step finishes). He is never
-            # put to sleep by the toggle: reconcile repairs the gate's leftover sleep after exit.
+            # The turn in flight finishes; nothing after it runs (runtime: no look-back, no next tick)
+            # and the loop exits at that boundary. The phase is idle from now (derive), never sleep:
+            # reconcile repairs the gate's leftover sleep after exit.
             stop_loop(home_dir, reason=f"personal turned off by {actor}", requested_by="operator")
     if changed["personal"] is not None and personal:
-        # The operator's own act names own time as the phase to return to. Turning it OFF keeps the
-        # remembered phase until the interruption ends (the read says "Own time is off"); the
-        # restore then finds the grant off, stays idle and retires it.
+        # The operator's own act names own time as the phase to return to.
         set_resume_to(registry, slug, "personal")
     if changed["personal"] is not None:
         reconcile(registry, name, "toggle", chat_host=chat_host, visit_host=visit_host,

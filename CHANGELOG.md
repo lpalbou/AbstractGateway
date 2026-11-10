@@ -1028,6 +1028,16 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   (sleep → idle) read cause `operator_sleep`: the door's final publish was the first to see the wake. The sleep ended
   because its maintenance finished, so the row now says `maintenance_done`, as the loop's own wake does (the idle
   sleep's wake too); the row that entered the sleep keeps `operator_sleep`.
+- **Turning own time off is idle at once, and says so** (`entity_phase.py`; operator 2026-11-10 23:09: "if I
+  remove the personal time, it's non negotiable; but it's ok to let the entity finish its turn"). With the loop
+  still running, the toggle published phase `personal` ("On his own time.") and its row read personal → personal
+  ("Toggle · stays on his own time"), and `resume_to` stayed `personal` until the loop exited (nine minutes on the
+  live home). The phase is now `idle` from the toggle on, with the sentence "Own time withdrawn: he finishes what
+  he is doing, then goes idle." while the loop finishes its turn (`own_time_running` stays true until it exits; the
+  row reads personal → idle, cause `toggle`); the revoke clears `resume_to` in the same step (the toggle and the
+  deprecated graceful `loop/stop`), so during a visit `next` says he stays awake after it; and the idle sweep never
+  writes its sleep while that loop is still finishing. With AbstractRuntime's matching fix the loop runs nothing
+  after the turn in flight: no look-back, no next tick.
 
 ### Security
 

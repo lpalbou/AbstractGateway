@@ -190,6 +190,46 @@ def test_a_grant_revoked_during_the_visit_means_idle_after_it(spawned, own_time)
         assert spawned == []
 
 
+def test_personal_off_during_own_time_is_idle_at_once_while_the_turn_finishes(spawned, own_time):
+    """Operator 2026-11-10 23:09 ("if I remove the personal time, it's non negotiable; but it's ok to let the
+    entity finish its turn ... when removed it should have switched to idle"). Live: aletheia's 22:03 revoke was
+    announced personal -> personal ("Toggle · stays on his own time"), resume_to stayed personal and the loop
+    ran on for nine minutes. Now the toggle is idle at once with the true sentence, own time is no longer a place
+    to return to, the loop is asked (never killed) to stop at its boundary, and nothing restarts it."""
+    from abstractruntime.identity.life import _loop_command_stores, read_resume_to
+
+    from abstractgateway import entity_idle_sleep, entity_phase
+
+    with _client() as client:
+        proc = own_time.start(client)
+        assert read_resume_to(_home_dir()).get("phase") == "personal"
+        off = client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": False})
+        assert off.status_code == 200, off.text
+        body = off.json()
+        assert body["phase"] == "idle", body
+        assert body["sentence"] == "Own time withdrawn: he finishes what he is doing, then goes idle."
+        assert body["sentence"] == entity_phase.OWN_TIME_WITHDRAWN_SENTENCE
+        assert body["toggles"] == {"personal": False} and body["next"] is None
+        assert body["own_time_running"] is True and proc.poll() is None  # his turn finishes: asked, never killed
+        store, _cursor = _loop_command_stores(_home_dir())
+        pending, _next = store.list_after(after=0, limit=10)
+        assert any(c.type == "loop.stop" for c in pending), [c.type for c in pending]
+        assert read_resume_to(_home_dir()).get("phase") is None  # withdrawn: never a place to return to
+        toggled = [r for r in _host_markers("phase_changed") if r.get("cause") == "toggle"]
+        assert toggled and (toggled[-1]["from"], toggled[-1]["to"]) == ("personal", "idle"), toggled
+        assert toggled[-1]["sentence"] == entity_phase.OWN_TIME_WITHDRAWN_SENTENCE
+        # Idle, but his loop is still finishing: the idle sweep never writes a sleep under it.
+        rec = entity_phase.read_record(_registry().entities_dir, "castor")
+        facts = entity_phase.gather(_registry(), "castor")
+        assert entity_idle_sleep._not_idle(facts, entity_phase.derive(facts, rec), rec) == "own_time_ending"
+        # The loop exits at its boundary: idle, and nothing starts own time again.
+        own_time.end(proc, stopped_by="stop_command")
+        ls = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert ls["phase"] == "idle" and ls["own_time_running"] is False
+        assert ls["sentence"] == "Awake and reachable; nothing of his own is running."
+        assert spawned == []
+
+
 def test_a_spontaneous_sleep_returns_to_own_time_when_it_ends(spawned, own_time):
     from abstractruntime.identity.life import write_entity_state
 
@@ -424,7 +464,8 @@ def test_next_names_where_an_interruption_returns(spawned, own_time):
         assert ls["next"] == {"phase": "personal", "sentence": "When the visit closes, his own time resumes."}
         assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": False}).status_code == 200
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
-        assert ls["next"] == {"phase": "idle", "sentence": "Own time is off; he stays awake."}
+        # The revoke forgets own time as a place to return to (operator 2026-11-10 23:09): idle after the visit.
+        assert ls["next"] == {"phase": "idle", "sentence": "When the visit closes, he stays awake and reachable."}
         client.post(f"/api/gateway/entities/Castor/visit/{opened.json()['run_id']}/close", json={"closed_by": "operator"})
         proc.kill()
 

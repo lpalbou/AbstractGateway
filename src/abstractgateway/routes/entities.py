@@ -7136,6 +7136,10 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None, response:
     # Durable command, not a sentinel file (maintainer ruling 2026-07-08):
     # the loop consumes it at its next boundary; his thought finishes whole.
     status = stop_loop(home_dir, reason=reason, requested_by="operator")
+    # Withdrawn means withdrawn (operator 2026-11-10 23:09): nothing remembers own time as a place to return to.
+    from ..entity_phase import set_resume_to as _set_resume_to
+
+    _set_resume_to(registry, manifest.slug, None)
     try:
         home = registry.get_home(manifest.slug)
         record_host_marker(
