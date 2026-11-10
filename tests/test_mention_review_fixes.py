@@ -382,8 +382,8 @@ def test_a_mirror_is_admitted_in_one_step_against_a_stop(monkeypatch):
     llm = _install(monkeypatch, ["Nerin: the tide is low.", "Castor: noted.", "Nerin: unexpected."])
     real_join = EntityVisitHost.join_participant
 
-    def _join_then_stop(self, name, run_id, participant):
-        out = real_join(self, name, run_id, participant)
+    def _join_then_stop(self, name, run_id, participant, **kw):
+        out = real_join(self, name, run_id, participant, **kw)
         bump_lifecycle_generation(self._registry.entities_dir / "castor", written_by="test")  # Castor stopped
         return out
 
