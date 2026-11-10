@@ -47,6 +47,7 @@ sessions). See `entity_gate.mint_summon_stamp` for the convention.
 
 from __future__ import annotations
 
+import stat as stat_mod
 import contextlib
 import logging
 import secrets
@@ -646,9 +647,13 @@ def _visit_attachment_records(home_dir: Any, attachments: Optional[List[Dict[str
             raise VisitRefused(400, "an attachment needs a workspace-relative path", code="attachment_path_required")
         try:
             resolved = ws.resolve(rel)
-            is_dir = resolved.is_dir()
-            is_file = resolved.is_file()
-            size = int(resolved.stat().st_size) if is_file else 0
+            # One stat, before any is_dir()/is_file(): those swallow every OSError and answer False, which
+            # turned a symlink loop into a 404 "no file" on Python 3.13 (whose resolve() no longer raises on
+            # loops); stat() raises ELOOP / ENAMETOOLONG as OSError (400 below) and ENOENT (404 below).
+            st = resolved.stat()
+            is_dir = stat_mod.S_ISDIR(st.st_mode)
+            is_file = stat_mod.S_ISREG(st.st_mode)
+            size = int(st.st_size) if is_file else 0
         except PermissionError:
             raise VisitRefused(
                 403, f"attachment {rel!r}: the path is outside this entity's workspace",
