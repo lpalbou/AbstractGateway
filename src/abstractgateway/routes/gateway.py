@@ -2727,9 +2727,10 @@ class StartRunRequest(_SpeculationControlRequest):
         default=None,
         description=(
             "The entities this message mentions: the composer's chips (names or slugs, as sent to "
-            "POST /sessions/{id}/mentions), never parsed from the text. The conversation's agent is told they "
-            "answer for themselves and answers only the part addressed to it, or says nothing with an empty "
-            "reply (an empty reply shows no answer). A name that is not a visible entity is 404 `entity_not_found`."
+            "POST /sessions/{id}/mentions), never parsed from the text. The conversation's agent is told, last "
+            "before the person's words, that they answer this message themselves and that, unless the user "
+            "addressed it directly, it replies with an empty message (an empty reply shows no answer). A name "
+            "that is not a visible entity is 404 `entity_not_found`."
         ),
     )
     kind: Optional[str] = Field(

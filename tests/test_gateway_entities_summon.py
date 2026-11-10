@@ -825,7 +825,8 @@ def test_summon_takes_the_mentions_of_the_message_like_runs_start(client: TestCl
     run = get_gateway_service().host.run_store.load(r.json()["run_id"])
     mentions = run.vars["_runtime"]["mentions"]
     assert [e["entity_id"] for e in mentions["entities"]] == ["entity:nerin"]
-    assert "answer for themselves" in mentions["line"] and "a client's own line" not in mentions["line"]
+    assert mentions["line"] == ("The mentioned entities (Nerin) answer this message themselves. Unless the user "
+                                "addressed you directly, reply with an empty message.")
     assert run.vars["context"]["messages"][-1] == {"role": "system", "content": mentions["line"]}
 
     # A client's own _runtime.mentions without chips is dropped (host-written only).

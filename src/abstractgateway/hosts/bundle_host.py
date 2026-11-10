@@ -3040,9 +3040,10 @@ class WorkflowBundleGatewayHost:
     @staticmethod
     def _add_mentions_line(vars0: Dict[str, Any], rt_ns: Dict[str, Any]) -> None:
         """A message that mentions entities (`_runtime.mentions`, written by /runs/start from the
-        request's chips): the agent reads one context line after the conversation's history, right
-        before the person's words: the entities answer for themselves, it answers only what is
-        addressed to it or says nothing. Added after the seed, so it is never taken for a client
+        request's chips): the agent reads one context line after the conversation's history, the LAST
+        system instruction right before the person's words: the mentioned entities answer this
+        message themselves; unless the user addressed it directly, it replies with an empty message
+        (entity_mentions.mentioned_entities_line). Added after the seed, so it is never taken for a client
         transcript, and never replayed into a later turn (history is read from the turns)."""
         mentions = rt_ns.get("mentions") if isinstance(rt_ns, dict) else None
         line = str((mentions or {}).get("line") or "").strip() if isinstance(mentions, dict) else ""

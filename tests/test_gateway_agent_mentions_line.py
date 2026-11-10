@@ -19,12 +19,22 @@ from test_gateway_live_delta_stream import HEADERS, TOKEN, _Ctl, _run_vars, _wai
 
 pytestmark = pytest.mark.basic
 
-LINE = ("The mentioned entities (Castor) answer for themselves; answer only the part addressed to you, "
-        "or say nothing with an empty reply.")
+LINE = ("The mentioned entities (Castor) answer this message themselves. Unless the user addressed you directly, "
+        "reply with an empty message.")
+
+
+def _line_is_the_last_instruction(messages: Any) -> bool:
+    """The line is the LAST system instruction before the person's turn: after the trailing user turn(s), the last
+    message is the system line (Castor E2E 2026-11-10: the line must be the last thing the agent is told)."""
+    msgs = [m for m in (messages or []) if isinstance(m, dict)]
+    while msgs and msgs[-1].get("role") == "user":
+        msgs.pop()
+    return bool(msgs) and msgs[-1].get("role") == "system" and str(msgs[-1].get("content")) == LINE
 
 
 class _SilentWhenAddressedToEntities:
-    """A stubbed agent: it reads its messages and, told the entities answer for themselves, says nothing."""
+    """A stubbed agent that honours the line: told last, before the person's words, that the mentioned entities
+    answer this message themselves, it replies with an empty message."""
 
     seen: List[Any] = []
 
@@ -34,8 +44,7 @@ class _SilentWhenAddressedToEntities:
     def generate(self, *, prompt: str, messages: Any = None, system_prompt: Any = None, tools: Any = None, media: Any = None,
                  params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         _SilentWhenAddressedToEntities.seen.append({"prompt": prompt, "messages": copy.deepcopy(messages)})
-        told = any(isinstance(m, dict) and m.get("role") == "system" and "answer for themselves" in str(m.get("content"))
-                   for m in (messages or []))
+        told = _line_is_the_last_instruction(messages)
         return {"content": "" if told else "I am the agent.", "tool_calls": None,
                 "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}, "model": self._model,
                 "finish_reason": "stop"}

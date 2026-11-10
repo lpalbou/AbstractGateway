@@ -3378,8 +3378,9 @@ class SummonEntityRequest(BaseModel):
         description=(
             "The other entities this message mentions: the composer's chips (names or slugs, as sent to POST "
             "/sessions/{id}/mentions), never parsed from the text, the same as POST /runs/start. The summoned "
-            "entity is told they answer for themselves and answers only the part addressed to it, or says nothing "
-            "with an empty reply. Naming the summoned entity itself mentions nobody else. A name that is not a "
+            "entity is told, last before the person's words, that they answer this message themselves and that, "
+            "unless the user addressed it directly, it replies with an empty message. Naming the summoned entity "
+            "itself mentions nobody else. A name that is not a "
             "visible entity is 404 `entity_not_found`."
         ),
     )

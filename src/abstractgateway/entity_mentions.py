@@ -87,10 +87,14 @@ def _display_name(manifest: Any) -> str:
 
 def mentioned_entities_line(names: List[str]) -> str:
     """The one context line the conversation's own agent gets when the person's message mentions
-    entities (operator agreed 2026-11-09): whether the message also addresses the agent is the
-    agent's judgment (never a text rule here), and it never speaks for a mentioned entity."""
-    return (f"The mentioned entities ({', '.join(names)}) answer for themselves; answer only the part "
-            "addressed to you, or say nothing with an empty reply.")
+    entities (operator agreed 2026-11-09), placed as the LAST system instruction before the person's
+    words (bundle_host._add_mentions_line). Imperative and short (Castor E2E 2026-11-10: the softer
+    line was read and the agent still answered for Castor): whether the message also addresses the
+    agent is the agent's judgment (never a text rule here: the mentions are the composer's chips), and
+    it never speaks for a mentioned entity. A real model may still answer (operator decision pending:
+    an opt-in agent)."""
+    return (f"The mentioned entities ({', '.join(names)}) answer this message themselves. "
+            "Unless the user addressed you directly, reply with an empty message.")
 
 
 def agent_mention_context(registry: Any, entities: List[str]) -> Dict[str, Any]:
