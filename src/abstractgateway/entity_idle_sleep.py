@@ -3,8 +3,10 @@ after 24 h or 500 events, a Mind setting, triggered by the gateway").
 
 Only an IDLE entity (no visit, no job queued or starting, no own time running, not stopped, not asleep)
 is put to sleep, and only by this sweep: once `sleep.after_hours` have passed since his last completed
-sleep, or `sleep.after_events` new memories have formed since it (the cognition profile, AbstractRuntime
-`sleep_thresholds`). The sleep is his own (kind self) and runs its maintenance pass; when the pass is
+sleep, or `sleep.after_events` new memories have formed since it, or (operator 2026-11-10) more than
+`sleep.after_fragmented_share` of his memories are fragmented - not yet in a topic, no vector, a title or
+summary still being written (memory's `fragmented` read) - with something new since the last sleep (the
+cognition profile, AbstractRuntime `sleep_thresholds`). The sleep is his own (kind self) and runs its maintenance pass; when the pass is
 done he is idle again — own time is never resumed by a sleep that did not interrupt it.
 
 ADMISSION (Codex review 3 #1, #10): the generation is read BEFORE the idle check, and the sleep is
@@ -88,6 +90,26 @@ def last_maintenance_done(home_dir: Path, rec: Dict[str, Any]) -> Optional[str]:
     return newest.isoformat() if newest is not None else None
 
 
+def _can_embed(registry: Any) -> bool:
+    """Whether this gateway's homes have an embedder (the night embeds what has no vector only with one)."""
+    resolve = getattr(registry, "_resolve_embedder", None)
+    return bool(callable(resolve) and resolve() is not None)
+
+
+def _fixable_share(fragmented: Any, *, can_embed: bool) -> float:
+    """The share of his memories a sleep would make whole, from memory's `fragmented` {count, share, provisional,
+    unvectored, pending} (None: a store that cannot say -> 0). Without an embedder the night embeds nothing, so the
+    records without a vector are not counted: a vectorless gateway is never put to sleep for what no sleep fixes."""
+    if not isinstance(fragmented, dict):
+        return 0.0
+    share = float(fragmented.get("share") or 0.0)
+    if can_embed or share <= 0.0:
+        return share
+    count = int(fragmented.get("count") or 0)
+    live = count / share
+    return max(0, count - int(fragmented.get("unvectored") or 0)) / live if live else 0.0
+
+
 def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
     """The threshold that fired, with its receipt, or None."""
     from abstractruntime.integrations.abstractmemory.memory_facade import records_since_maintenance
@@ -108,14 +130,26 @@ def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Op
     since = _parse(lived.get("since"))
     now = now or datetime.now(timezone.utc)
     hours = (now - since).total_seconds() / 3600.0 if since is not None else 0.0
+    # How much of him a sleep would make whole (memory's read; None for a store that cannot say). The key itself is
+    # memory's contract since 4074406+ (`records_since_maintenance(...)["fragmented"]`): read by name, never defaulted.
+    fragmented = lived["fragmented"]
     receipt = {"count": count, "hours": round(hours, 2), "since": lived.get("since"),
-               "boundary_source": lived.get("boundary_source"), "thresholds": thresholds}
+               "boundary_source": lived.get("boundary_source"), "thresholds": thresholds, "fragmented": fragmented}
     if count >= int(thresholds["after_events"]):
         return {"threshold": "after_events",
                 "reason": f"{int(thresholds['after_events'])} new memories since the last sleep", **receipt}
     if since is not None and hours >= float(thresholds["after_hours"]):
         return {"threshold": "after_hours",
                 "reason": f"{int(thresholds['after_hours'])} h since the last sleep", **receipt}
+    # THE THIRD TRIGGER (operator 2026-11-10): more than `sleep.after_fragmented_share` of his memories are
+    # fragmented (placed provisionally, no vector, a title or summary still being written): the sleep forms his
+    # topics and repairs them. Only once something formed since the last completed sleep (`count`): a home whose
+    # fragmentation that sleep could not reduce is not put to sleep again and again with nothing new; and without
+    # an embedder, what has no vector is not counted (`_fixable_share`).
+    share = _fixable_share(fragmented, can_embed=_can_embed(registry))
+    if count >= 1 and share > float(thresholds["after_fragmented_share"]):
+        return {"threshold": "after_fragmented_share",
+                "reason": f"{int(round(share * 100))} % of his memories are not yet in a topic", **receipt}
     return None
 
 

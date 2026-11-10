@@ -89,6 +89,10 @@ def test_the_thresholds_decide(monkeypatch: pytest.MonkeyPatch):
     t0 = datetime.now(timezone.utc) - timedelta(minutes=1)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        # The hours and events thresholds alone (the fragmented share has its own test: a newborn's titles are
+        # still being written, so it would fire here).
+        assert client.put("/api/gateway/entities/castor/cognition-profile",
+                          json={"sleep": {"after_fragmented_share": 1.0}}).status_code == 200
         _slept_at(t0)
         # Slept 2 h ago, a few memories since: no sleep.
         assert sleep_due(_registry(), "castor", now=t0 + timedelta(hours=2)) is None
@@ -105,6 +109,55 @@ def test_the_thresholds_decide(monkeypatch: pytest.MonkeyPatch):
         assert due["threshold"] == "after_events" and due["reason"] == "1 new memories since the last sleep"
         bad = client.put("/api/gateway/entities/castor/cognition-profile", json={"sleep": {"after_hours": 721}})
         assert bad.status_code == 400, bad.text
+
+
+def test_the_fragmented_share_puts_him_to_sleep_once_something_new_formed():
+    """The third trigger (operator 2026-11-10): more than `sleep.after_fragmented_share` of his memories fragmented
+    (here: titles still being written, a newborn's and four more) puts an idle home to sleep, the reason naming the
+    share; not again when nothing formed since his last sleep; not over the profile's share."""
+    import warnings
+
+    from abstractmemory import MemoryRecordInput
+
+    from abstractgateway.entity_idle_sleep import sleep_due
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        t0 = datetime.now(timezone.utc)
+        _slept_at(t0 - timedelta(hours=1))  # the memories below form after this sleep
+        home = _registry().get_home("castor")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for i in range(4):
+                home.memory.remember_many(
+                    [MemoryRecordInput(kind="episode", title="", digest=f"A moment still being named {i}.",
+                                       pending=("title",))],
+                    scope="life", owner_id=home.entity_id, idempotency_key=f"pending-{i}", turn_id=f"pending-{i}")
+        due = sleep_due(_registry(), "castor", now=t0 + timedelta(minutes=5))
+        assert due is not None and due["threshold"] == "after_fragmented_share", due
+        assert due["fragmented"]["pending"] >= 4
+        reason = due["reason"]
+        assert reason.endswith(" % of his memories are not yet in a topic") and int(reason.split(" ")[0]) > 15, reason
+        # Just slept: nothing formed since, the same fragmentation does not sleep him again.
+        _slept_at(t0 + timedelta(minutes=10))
+        assert sleep_due(_registry(), "castor", now=t0 + timedelta(minutes=11)) is None
+        # Over the profile's share: no sleep.
+        _slept_at(t0 - timedelta(hours=1))
+        r = client.put("/api/gateway/entities/castor/cognition-profile", json={"sleep": {"after_fragmented_share": 1.0}})
+        assert r.status_code == 200, r.text
+        assert sleep_due(_registry(), "castor", now=t0 + timedelta(minutes=5)) is None
+
+
+def test_without_an_embedder_what_has_no_vector_is_not_fragmentation_a_sleep_fixes():
+    """A gateway with no embedder: the night embeds nothing, so memories without a vector never count toward the
+    fragmented share (a vectorless gateway would otherwise sleep every home at every new memory)."""
+    from abstractgateway.entity_idle_sleep import _fixable_share
+
+    fragmented = {"count": 6, "share": 0.6, "provisional": 0, "unvectored": 6, "pending": 0}
+    assert _fixable_share(fragmented, can_embed=True) == 0.6
+    assert _fixable_share(fragmented, can_embed=False) == 0.0
+    assert _fixable_share({**fragmented, "count": 9, "pending": 3}, can_embed=False) == pytest.approx(0.2)
+    assert _fixable_share(None, can_embed=True) == 0.0
 
 
 def test_a_never_slept_home_is_seeded_from_its_own_history():
@@ -148,6 +201,10 @@ def test_the_sweep_puts_an_idle_entity_to_its_own_sleep_and_back_to_idle(monkeyp
         receipt = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
                    if (m.get("payload") or {}).get("kind") == "idle_sleep"]
         assert receipt and receipt[-1]["boundary_source"] == "after" and receipt[-1]["threshold"] == "after_hours"
+        # The ledger's phase row names whose sleep it is (Castor E2E 2026-11-10: it read operator_sleep).
+        phase_rows = [m["payload"] for m in read_host_markers(_registry().entities_dir, "castor", since_seq=-1.0)
+                      if (m.get("payload") or {}).get("kind") == "phase_changed" and m["payload"].get("to") == "sleep"]
+        assert phase_rows and phase_rows[0]["cause"] == "idle_sleep", phase_rows
         # Just slept: the next sweep does not put him to sleep again.
         again = entity_idle_sleep.idle_sweep_one(_registry(), "castor")
         assert again is None or again["action"] != "idle_sleep"
