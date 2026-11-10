@@ -9,6 +9,7 @@ loop-wake duty on close, and the `mode` passthrough pin on the state GET
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 
 import pytest
@@ -304,7 +305,7 @@ def test_visiting_mode_passes_through_state_and_card(monkeypatch: pytest.MonkeyP
         registry = get_gateway_service().entity_registry
         write_entity_state(
             registry.entities_dir / "castor", "asleep",
-            reason="in conversation with person:laurent (auto-yield)", mode="visiting",
+            reason="in conversation with person:laurent (auto-yield)", mode="visiting", fence=_LF.admit(registry.entities_dir / "castor")
         )
 
         state = client.get("/api/gateway/entities/Castor/state").json()
@@ -338,7 +339,7 @@ def test_open_adopts_visiting_posture_and_wakes_on_close(monkeypatch: pytest.Mon
         registry = get_gateway_service().entity_registry
         write_entity_state(
             registry.entities_dir / "castor", "asleep",
-            reason="in conversation with person:laurent (auto-yield)", mode="visiting",
+            reason="in conversation with person:laurent (auto-yield)", mode="visiting", fence=_LF.admit(registry.entities_dir / "castor")
         )
         # A CRASHED visit's posture is old; a fresh one refuses (P1-1 gate).
         _backdate_state(registry.entities_dir / "castor")
@@ -386,7 +387,7 @@ def test_operator_sleep_mid_chat_visit_survives_the_close(monkeypatch: pytest.Mo
         # yielded_loop stays False — no RUNNING loop was yielded).
         write_entity_state(
             home_dir, "asleep",
-            reason="in conversation with person:laurent (auto-yield)", mode="visiting",
+            reason="in conversation with person:laurent (auto-yield)", mode="visiting", fence=_LF.admit(home_dir)
         )
         _backdate_state(home_dir)  # stale, not mid-open (P1-1 gate)
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})

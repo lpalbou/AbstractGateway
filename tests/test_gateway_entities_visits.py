@@ -12,6 +12,7 @@ route exists.
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 
@@ -263,7 +264,7 @@ def test_reaper_repairs_a_stale_orphaned_yield_posture(monkeypatch: pytest.Monke
         home_dir = _home_dir()
 
         # The orphaned posture (what a killed gateway leaves behind).
-        write_entity_state(home_dir, "asleep", reason="in conversation with person:admin (auto-yield)", mode="visiting")
+        write_entity_state(home_dir, "asleep", reason="in conversation with person:admin (auto-yield)", mode="visiting", fence=_LF.admit(home_dir))
 
         # No chat probe wired => never guess, never repair.
         host._chat_probe = None
@@ -291,7 +292,7 @@ def test_reaper_repairs_a_stale_orphaned_yield_posture(monkeypatch: pytest.Monke
 
         # Fresh posture (inside the grace window) is never touched.
         monkeypatch.setattr(type(host), "STALE_YIELD_GRACE_S", 3600.0, raising=True)
-        write_entity_state(home_dir, "asleep", reason="auto-yield", mode="visiting")
+        write_entity_state(home_dir, "asleep", reason="auto-yield", mode="visiting", fence=_LF.admit(home_dir))
         assert host.reap_now() == 0
         assert read_entity_state(home_dir).get("state") == "asleep"
         _time.sleep(0)  # readability: grace is time-based, nothing to wait for here
@@ -573,7 +574,7 @@ def test_visit_open_auto_wakes_an_operator_asleep_entity(monkeypatch: pytest.Mon
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         # Operator puts him to sleep (not a visit-yield posture, no loop).
-        write_entity_state(_home_dir(), "asleep", reason="operator rest")
+        write_entity_state(_home_dir(), "asleep", reason="operator rest", fence=_LF.admit(_home_dir()))
 
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert opened.status_code == 200, opened.text  # NOT a 409 "wake him first"
@@ -619,7 +620,7 @@ def test_an_operator_sleep_never_refuses_an_open_visits_turns(monkeypatch: pytes
         assert opened.status_code == 200, opened.text
         run_id = opened.json()["run_id"]
 
-        write_entity_state(_home_dir(), "asleep", reason="an operator sleep written out of band")
+        write_entity_state(_home_dir(), "asleep", reason="an operator sleep written out of band", fence=_LF.admit(_home_dir()))
 
         turned = client.post(
             f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "still there?"}
@@ -728,7 +729,7 @@ def test_turn_refuses_after_a_failed_pause_teardown(monkeypatch: pytest.MonkeyPa
         run_id = client.post("/api/gateway/entities/Castor/visit/open", json={}).json()["run_id"]
         # Freeze the badge WITHOUT going through the teardown path (the
         # failed-teardown residue): the state says paused, the run is open.
-        write_entity_state(_home_dir(), "paused", reason="frozen out of band")
+        write_entity_state(_home_dir(), "paused", reason="frozen out of band", fence=_LF.admit(_home_dir()))
 
         refused = client.post(
             f"/api/gateway/entities/Castor/visit/{run_id}/turn", json={"text": "still there?"}
@@ -1545,7 +1546,7 @@ def test_loopless_awake_visit_writes_the_durable_visiting_posture(monkeypatch: p
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         # Awake, no loop — the exact case that used to write nothing.
-        write_entity_state(_home_dir(), "awake", reason="")
+        write_entity_state(_home_dir(), "awake", reason="", fence=_LF.admit(_home_dir()))
 
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert opened.status_code == 200, opened.text
@@ -1615,7 +1616,7 @@ def test_summon_wake_is_refused_on_a_visiting_posture(monkeypatch: pytest.Monkey
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         write_entity_state(
             _home_dir(), "asleep",
-            reason="in conversation with person:admin [visit visit-abc123]", mode="visiting",
+            reason="in conversation with person:admin [visit visit-abc123]", mode="visiting", fence=_LF.admit(_home_dir())
         )
         summoned = client.post("/api/gateway/entities/Castor/summon", json={"prompt": "status?"})
         assert summoned.status_code == 409, summoned.text
@@ -1659,7 +1660,7 @@ def test_bounded_sleep_keeps_its_wake_deadline_through_a_visit(monkeypatch: pyte
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         deadline = "2027-01-01T06:00:00+00:00"
-        write_entity_state(_home_dir(), "asleep", reason="bounded nap", wake_at=deadline)
+        write_entity_state(_home_dir(), "asleep", reason="bounded nap", wake_at=deadline, fence=_LF.admit(_home_dir()))
         assert read_entity_state(_home_dir()).get("wake_at")  # precondition: the bound stands
 
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})

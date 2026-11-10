@@ -7,6 +7,7 @@ ended at its start boundary."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 from datetime import datetime, timedelta, timezone
 
@@ -54,8 +55,7 @@ def _slept_at(at: datetime) -> dict:
     from abstractgateway import entity_phase
 
     reg = _registry()
-    with entity_phase.phase_lock(reg.entities_dir, "castor"):
-        rec = entity_phase.read_record(reg.entities_dir, "castor")
+    with entity_phase.fenced_here(reg.entities_dir, "castor") as rec:
         rec["last_maintenance"] = {"generation": 0, "at": at.isoformat(), "status": "done", "error": None}
         entity_phase.write_record(reg.entities_dir, "castor", rec)
         return dict(rec["last_maintenance"])
@@ -90,7 +90,7 @@ def test_a_night_ended_early_never_becomes_the_last_maintenance(monkeypatch, end
 
         def _visitor_arrives():
             write_entity_state(home, "asleep", reason="in conversation with person:admin [visit v-1]", mode="visiting",
-                               written_by="visit-door")
+                               written_by="visit-door", fence=_LF.admit(home))
 
         _night_that(monkeypatch, _visitor_arrives if ended_by == "visit" else (lambda: None))
         out = entity_idle_sleep.idle_sweep_one(_registry(), "castor")

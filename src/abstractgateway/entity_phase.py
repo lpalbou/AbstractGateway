@@ -30,6 +30,7 @@ flock is held only for read-check-write, never across a model call, a spawn or a
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -58,8 +59,28 @@ MAINTENANCE_ENDS = "when maintenance is done"
 KILL_SWITCH_REASON = "kill_switch: stopped by the operator"
 # The Stop receipt's own-time row (v3 D3): the kill switch takes his own time back.
 OWN_TIME_REVOKED_SENTENCE = "Own time was revoked."
-# A spawn claim older than this is a crashed claimant; a new reconcile may spawn.
-SPAWN_CLAIM_TTL_S = 30.0
+# Homes whose own-time spawn reconcile decided and has not yet handed to the runtime (this process
+# only, cleared in a finally: no clock). From the runtime's reservation on, loop_status phase
+# `starting` is the one truth (runtime 86666af; STOP-LANE-DESIGN §2.4).
+_STARTING: set = set()
+_STARTING_GUARD = threading.Lock()
+
+
+def own_time_starting(entities_dir: Path, slug: str, loop: Optional[Dict[str, Any]] = None) -> bool:
+    """A loop is being started for this home: the runtime's spawn reservation (loop_status phase
+    `starting`, running while its spawner or child lives) or a reconcile of this process between
+    its decision and that reservation."""
+    with _STARTING_GUARD:
+        if str(Path(entities_dir) / slug) in _STARTING:
+            return True
+    if loop is None:
+        from .entity_loop import loop_status
+
+        try:
+            loop = loop_status(Path(entities_dir) / slug)
+        except Exception:  # noqa: BLE001 - unreadable status: a start may be under way (fail closed)
+            return True
+    return str(loop.get("phase") or "") == "starting" and bool(loop.get("running"))
 # loop_status.stopped_by values that mean "the loop ended because it was asked to".
 REQUESTED_STOPS = ("stop_command", "stop_file", "operator", "personal_disarmed", "personal_off", "kill_switch", "settled_desk",
                    # the runtime batch's own words (2026-11-09): work turned off, a removed edge, and a
@@ -77,7 +98,6 @@ _DEFAULT_RECORD: Dict[str, Any] = {
     "last_activity_phase": None,
     "own_time_params": None,
     "start_error": None,
-    "spawning": None,
     "stop_outstanding": [],
     "maintenance": None,
     "sleep_since_override": None,
@@ -96,7 +116,24 @@ _DEFAULT_RECORD: Dict[str, Any] = {
 
 
 class GenerationMoved(Exception):
-    """A writer's captured generation is stale: a Stop landed after it began."""
+    """A writer's captured generation is stale: a Stop landed after it began (or the generation
+    cannot be read: fail closed, nothing is admitted on an unknown generation)."""
+
+
+class FencedRecord(dict):
+    """The sidecar record as `fenced()` / `fenced_here()` read it under the lifecycle lock, carrying
+    the fence its writes pass (STOP-LANE-DESIGN §2.2): `rec.fence` is the runtime LifecycleFence of
+    the admission (or KILL_SWITCH / RESUME for the Stop's and Resume's own writes), handed to every
+    runtime state writer inside the block. `write_record` accepts only this, and only while its
+    block is open: an unfenced sidecar write is a TypeError, never a silent write over a Stop."""
+
+    __slots__ = ("fence", "slug", "open")
+
+    def __init__(self, data: Dict[str, Any], *, fence: Any, slug: str) -> None:
+        super().__init__(data)
+        self.fence = fence
+        self.slug = slug
+        self.open = True
 
 
 # --------------------------------------------------------------------------- sidecar + locks
@@ -181,8 +218,12 @@ def read_record(entities_dir: Path, slug: str) -> Dict[str, Any]:
 
         try:
             rec["generation"] = int(read_lifecycle_generation(home_dir))
-        except ValueError as e:  # a corrupt phases.yaml: say so; the sidecar's number stands
-            logger.warning("lifecycle generation of %s unreadable (%s); using the sidecar's", slug, e)
+        except ValueError as e:
+            # FAIL CLOSED (STOP-LANE-DESIGN §6.3): a corrupt phases.yaml is an UNKNOWN generation,
+            # never the sidecar's old number — `fenced()` refuses every write admitted on it.
+            logger.warning("lifecycle generation of %s unreadable (%s): nothing is admitted", slug, e)
+            rec["generation"] = None
+            rec["generation_unreadable"] = str(e)
     return rec
 
 
@@ -196,6 +237,12 @@ def _bucket_resume_to(home_dir: Path, fallback: Optional[str]) -> Optional[str]:
 
 
 def write_record(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
+    """Write the sidecar record. ONLY the record a `fenced()` / `fenced_here()` block yielded, while
+    that block is open (the lifecycle lock held, the generation checked there): anything else is a
+    TypeError (STOP-LANE-DESIGN §2.2: the unfenced write does not run)."""
+    if not isinstance(rec, FencedRecord) or not rec.open or rec.slug != slug:
+        raise TypeError("write_record: only the record a fenced()/fenced_here() block yielded, inside that block "
+                        "(the sidecar is written under the lifecycle lock, fenced on the admission's generation)")
     if rec.pop("_resume_to_written", False):
         # The gateway's own word goes to the runtime's bucket, its one writer (the sidecar keeps a
         # projection only).
@@ -203,11 +250,12 @@ def write_record(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
         if home_dir.is_dir():
             from abstractruntime.identity.life import write_resume_to
 
-            write_resume_to(home_dir, rec.get("resume_to"), written_by="gateway")
+            write_resume_to(home_dir, rec.get("resume_to"), written_by="gateway", fence=rec.fence)
     path = sidecar_path(entities_dir, slug)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(f".tmp-{secrets.token_hex(4)}")
-    tmp.write_text(json.dumps(rec, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    data = {k: v for k, v in rec.items() if k != "generation_unreadable"}
+    tmp.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -225,8 +273,7 @@ def _note_resume_to(rec: Dict[str, Any], value: Optional[str]) -> bool:
 def set_resume_to(registry: Any, slug: str, value: Optional[str]) -> None:
     """The operator's own acts (a toggle, a deferred start) name the phase to return to."""
     entities_dir = Path(registry.entities_dir)
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with fenced_here(entities_dir, slug) as rec:
         if _note_resume_to(rec, value):
             write_record(entities_dir, slug, rec)
 
@@ -249,13 +296,13 @@ def admit_visit_posture(entities_dir: Path, slug: str, generation: int, *, reaso
             raise GenerationMoved("stopped")
         if only_if_not_ours and (only_if_not_ours in str(now.get("reason") or "") or now.get("mode") == "visiting"):
             return False
-        write_entity_state(home_dir, "asleep", reason=reason, mode="visiting", written_by="visit-door")
+        write_entity_state(home_dir, "asleep", reason=reason, mode="visiting", written_by="visit-door", fence=rec.fence)
         rec["admission_seq"] = int(rec.get("admission_seq") or 0) + 1
         write_record(entities_dir, slug, rec)
         return True
 
 
-def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any]) -> None:
+def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any], *, fence: Any) -> None:
     """THE write of a sleep a visit interrupted, at the visit's end (every lane: the durable visit's
     close, the chat's close, an aborted open). The same sleep continues (contract §4.4): its ORIGINAL
     reason, who chose it and its wake time are written back unchanged, and the sidecar keeps its
@@ -264,7 +311,8 @@ def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any]) -> None
     the sleep's reason, so the published snapshot is the one from before the visit: no `phase_changed`
     sleep -> sleep (the contract has no such edge). A standing state that already IS that sleep is
     left alone (nothing written). Callers hold the phase lock and have checked the posture is
-    theirs."""
+    theirs. `fence` (required): the visit's admission (a LifecycleFence or its generation) — the
+    restore never lands over a Stop since the visit was admitted (GenerationMoved, nothing written)."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
     home_dir = Path(entities_dir) / slug
@@ -273,40 +321,111 @@ def continue_sleep(entities_dir: Path, slug: str, prior: Dict[str, Any]) -> None
     mode = "" if mode == "visiting" else mode
     wake_at = str(prior.get("wake_at") or "")  # bounded sleeps keep their deadline (runtime c343)
     written_by = str(prior.get("written_by") or "operator")  # who chose it travels (contract-phases §4.4)
-    with phase_lock(entities_dir, slug):
+    with fenced(entities_dir, slug, fence) as rec:
         now = read_entity_state(home_dir)
         if (str(now.get("state") or ""), str(now.get("reason") or ""), str(now.get("mode") or ""),
                 str(now.get("wake_at") or ""), str(now.get("written_by") or "operator")) == (
                 "asleep", reason, mode, wake_at, written_by):
             return  # already this sleep: asleep is never written over the same asleep
-        rec = read_record(entities_dir, slug)
         override = rec.get("sleep_since_override") if isinstance(rec.get("sleep_since_override"), dict) else None
         if override and prior.get("changed_at") and str(override.get("changed_at") or "") == str(prior.get("changed_at")):
             since = override.get("since")  # the prior state was itself a continued sleep: its origin
         else:
             since = prior.get("changed_at")
-        write_entity_state(home_dir, "asleep", reason=reason, mode=mode, wake_at=wake_at, written_by=written_by)
+        write_entity_state(home_dir, "asleep", reason=reason, mode=mode, wake_at=wake_at, written_by=written_by,
+                           fence=rec.fence)
         if since:
             rec["sleep_since_override"] = {"changed_at": read_entity_state(home_dir).get("changed_at"), "since": since}
             write_record(entities_dir, slug, rec)
 
 
 def write_if_still_ours(entities_dir: Path, slug: str, predicate: Callable[[Dict[str, Any]], bool],
-                        write: Callable[[], Any]) -> bool:
+                        write: Callable[[Any], Any], *, fence: Any) -> bool:
     """An ownership-checked restore (a visit's close, an aborted open) as ONE locked step: the
-    standing state is re-read under the lifecycle lock and `write` runs only while `predicate`
-    still holds — a Stop (which writes under the same lock) is never overwritten."""
+    standing state is re-read under the lifecycle lock and `write(fence)` runs only while
+    `predicate` still holds and the admission's generation stands — a Stop (which writes under the
+    same lock) is never overwritten. False when either refused (nothing written)."""
     from abstractruntime.identity.life import read_entity_state
 
-    with phase_lock(entities_dir, slug):
-        if not predicate(read_entity_state(Path(entities_dir) / slug)):
-            return False
-        write()
-        return True
+    try:
+        with fenced(entities_dir, slug, fence) as rec:
+            if not predicate(read_entity_state(Path(entities_dir) / slug)):
+                return False
+            write(rec.fence)
+            return True
+    except GenerationMoved:
+        return False
 
 
 def generation_of(entities_dir: Path, slug: str) -> int:
-    return int(read_record(entities_dir, slug).get("generation") or 0)
+    """The home's lifecycle generation NOW (a door's admission). Raises GenerationMoved when it
+    cannot be read (fail closed: nothing is admitted on an unknown generation)."""
+    rec = read_record(entities_dir, slug)
+    if rec.get("generation") is None:
+        raise GenerationMoved(f"the lifecycle generation of {slug} cannot be read "
+                              f"({rec.get('generation_unreadable') or 'unknown'})")
+    return int(rec.get("generation") or 0)
+
+
+def admission_fence(entities_dir: Path, slug: str, generation: Any) -> Any:
+    """The runtime LifecycleFence of an admission: `generation` an int (a door's), a LifecycleFence
+    (returned as is) or None (admitted NOW, GenerationMoved when unreadable)."""
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence
+
+    if isinstance(generation, LifecycleFence):
+        return generation
+    if generation is None:
+        generation = generation_of(entities_dir, slug)
+    return LifecycleFence(Path(entities_dir) / slug, int(generation))
+
+
+# THE ACTING FENCES (STOP-LANE-DESIGN §2.2, gateway half): the gateway's shared, cached handles (the
+# registry's EntityHome, the entity runtimes' door-wrapped effects) are not opened per admission, so
+# the lane that acts through them names its fences for the duration of the act: every commit through
+# the shared home's memory and diary, and every effect of a door-wrapped entity runtime run in this
+# context, is refused once ANY of them moved. A mention mirrored into another entity's visit acts
+# under the source's fence beside the target's (Codex review 3 #2). Context-local (one thread's act;
+# a thread started inside does not inherit it — the acts here run in the caller's thread).
+_ACTING: "contextvars.ContextVar[Tuple[Any, ...]]" = contextvars.ContextVar("entity_acting_fences", default=())
+
+
+@contextlib.contextmanager
+def acting_under(*fences: Any) -> Iterator[Tuple[Any, ...]]:
+    """Run an act under these LifecycleFences (added to any already acting)."""
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence
+
+    for fence in fences:
+        if not isinstance(fence, LifecycleFence):
+            raise TypeError(f"acting_under: a LifecycleFence, not {fence!r}")
+    token = _ACTING.set(_ACTING.get() + tuple(fences))
+    try:
+        yield _ACTING.get()
+    finally:
+        _ACTING.reset(token)
+
+
+def acting_fences() -> Tuple[Any, ...]:
+    return _ACTING.get()
+
+
+def check_acting(where: str) -> None:
+    """Raise StoppedByOperator(where) when a fence of the act in progress moved (no act: nothing to
+    check — a write at an operator's own door, admitted by that door)."""
+    for fence in _ACTING.get():
+        fence.check(where)
+
+
+def acting_moved() -> bool:
+    return any(fence.moved() for fence in _ACTING.get())
+
+
+def moved_since(entities_dir: Path, slug: str, generation: Any) -> bool:
+    """True once a Stop moved the generation an admission saw (fail closed: unknown = moved). The
+    runtime fence's compare (plus one stat of the signal file), never a sidecar + yaml re-parse."""
+    try:
+        return admission_fence(entities_dir, slug, generation).moved()
+    except GenerationMoved:
+        return True
 
 
 @contextlib.contextmanager
@@ -321,14 +440,59 @@ def _home_state_lock(home_dir: Path) -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def fenced(entities_dir: Path, slug: str, generation: int) -> Iterator[Dict[str, Any]]:
+def fenced(entities_dir: Path, slug: str, generation: Any) -> Iterator[FencedRecord]:
     """Hold the phase lock and raise GenerationMoved when a Stop landed since `generation` was
-    captured. Every lifecycle writer wraps its state write in this (contract §3.3)."""
+    captured (an int, or the admission's LifecycleFence). Every lifecycle writer wraps its state
+    write in this (contract §3.3); the yielded record carries the fence (`rec.fence`) every runtime
+    writer inside the block is handed, and only it may be written (`write_record`).
+
+    `generation` KILL_SWITCH / RESUME (the runtime sentinels): the Stop's and the Resume's own
+    writes, admitted whatever the generation (the runtime writers accept them only for what a Stop
+    or a Resume writes)."""
+    from abstractruntime.identity.lifecycle_fence import LifecycleFence, is_sentinel
+
     with phase_lock(entities_dir, slug):
         rec = read_record(entities_dir, slug)
-        if int(rec.get("generation") or 0) != int(generation):
-            raise GenerationMoved(f"generation moved ({generation} -> {rec.get('generation')})")
-        yield rec
+        if is_sentinel(generation):
+            fence: Any = generation
+        else:
+            expected = generation.generation if isinstance(generation, LifecycleFence) else int(generation)
+            if rec.get("generation") is None:
+                raise GenerationMoved(f"the lifecycle generation of {slug} cannot be read "
+                                      f"({rec.get('generation_unreadable') or 'unknown'}): nothing admitted")
+            if int(rec.get("generation") or 0) != expected:
+                raise GenerationMoved(f"generation moved ({expected} -> {rec.get('generation')})")
+            fence = (generation if isinstance(generation, LifecycleFence)
+                     else LifecycleFence(Path(entities_dir) / slug, expected))
+        frec = FencedRecord(rec, fence=fence, slug=slug)
+        try:
+            yield frec
+        finally:
+            frec.open = False
+
+
+@contextlib.contextmanager
+def fenced_here_or_none(entities_dir: Path, slug: str) -> Iterator[Optional[FencedRecord]]:
+    """`fenced_here()`, yielding None (the lock still held) when the generation cannot be read:
+    for a step that refuses or records nothing then, without an exception."""
+    with phase_lock(entities_dir, slug):
+        probe = read_record(entities_dir, slug)
+        if probe.get("generation") is None:
+            yield None
+            return
+        with fenced(entities_dir, slug, int(probe["generation"])) as rec:
+            yield rec
+
+
+@contextlib.contextmanager
+def fenced_here(entities_dir: Path, slug: str) -> Iterator[FencedRecord]:
+    """`fenced()` admitted at the generation read HERE, under the lock: for a write decided inside
+    this one locked step (publish's rev, an operator's toggle, reconcile's own claim) — nothing it
+    decided can predate a Stop, which takes the same lock. GenerationMoved when the generation
+    cannot be read (fail closed)."""
+    with phase_lock(entities_dir, slug):
+        with fenced(entities_dir, slug, generation_of(entities_dir, slug)) as rec:
+            yield rec
 
 
 def _now_iso() -> str:
@@ -855,9 +1019,11 @@ def publish(
     slug = manifest.slug
     entities_dir = Path(registry.entities_dir)
     follow_up: Optional[str] = None
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with _publish_record(entities_dir, slug) as rec:
         facts = gather(registry, name, chat_host=chat_host, visit_host=visit_host)
+        if not isinstance(rec, FencedRecord):
+            facts["warnings"].append(f"#FALLBACK lifecycle generation unreadable "
+                                     f"({rec.get('generation_unreadable')}); nothing recorded, nothing admitted")
         snap = derive(facts, rec)
         prev = rec.get("snapshot") if isinstance(rec.get("snapshot"), dict) else None
         prev_phase = (prev or {}).get("phase")
@@ -894,7 +1060,7 @@ def publish(
             # request's end seen on read): restore what it interrupted.
             follow_up = "restore"
         if resume_changed and prev == semantic:
-            write_record(entities_dir, slug, rec)
+            _write_published(entities_dir, slug, rec)
         if prev != semantic:
             rec["rev"] = int(rec.get("rev") or 0) + 1
             rec["snapshot"] = semantic
@@ -903,7 +1069,7 @@ def publish(
                 rec["last_activity_phase"] = snap["phase"]
             rec["last_cause"] = str(cause or "observed")
             rec["last_from"] = prev_phase
-            write_record(entities_dir, slug, rec)
+            _write_published(entities_dir, slug, rec)
             # A loop that ended because it was asked to (graceful stop, personal off) hands the
             # phase back to the gateway: reconcile repairs a gate sleep and restarts own time when
             # personal is still on. A crash never does (no auto-respawn in v1).
@@ -912,7 +1078,7 @@ def publish(
                     facts["loop"].get("note") or ""
                 ):
                     follow_up = "own_time_ended"
-        if int(rec.get("rev") or 0) > int(rec.get("published_rev") or 0):
+        if isinstance(rec, FencedRecord) and int(rec.get("rev") or 0) > int(rec.get("published_rev") or 0):
             _announce(registry, manifest, rec)
         _arm_expiry_timer(registry, name, facts.get("personal_expires_at"))
         body = dict(rec["snapshot"])
@@ -926,6 +1092,24 @@ def publish(
         except Exception:  # noqa: BLE001 - the read stays served
             logger.exception("reconcile after own time ended failed for %s", slug)
     return body
+
+
+@contextlib.contextmanager
+def _publish_record(entities_dir: Path, slug: str) -> Iterator[Dict[str, Any]]:
+    """publish's record: fenced at the generation read under the lock; when that generation cannot
+    be read, the plain record (the read is served, `_write_published` writes nothing)."""
+    with phase_lock(entities_dir, slug):
+        probe = read_record(entities_dir, slug)
+        if probe.get("generation") is None:
+            yield probe
+            return
+        with fenced(entities_dir, slug, int(probe["generation"])) as rec:
+            yield rec
+
+
+def _write_published(entities_dir: Path, slug: str, rec: Dict[str, Any]) -> None:
+    if isinstance(rec, FencedRecord):
+        write_record(entities_dir, slug, rec)
 
 
 def _announce(registry: Any, manifest: Any, rec: Dict[str, Any]) -> None:
@@ -1091,28 +1275,38 @@ def stop(
     # the same step (v3 D3): the grant is revoked and `resume_to` cleared, so nothing restarts it.
     revoked = False
     revoke_error: Optional[str] = None
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    signal_error: Optional[str] = None
+    from abstractruntime.identity.lifecycle_fence import KILL_SWITCH
+
+    with fenced(entities_dir, slug, KILL_SWITCH) as rec:
         already = str(read_entity_state(home_dir).get("state") or "") == "paused"
         prior_outstanding = list(rec.get("stop_outstanding") or [])
         _note_resume_to(rec, None)
         try:
             if personal_grant_refusal(read_personal_grant(home_dir)) is None:
-                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch")
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", fence=KILL_SWITCH)
                 revoked = True
         except Exception as e:  # noqa: BLE001 - reported on its row; the stop goes on
             revoke_error = str(e)
             logger.exception("stop: the personal grant of %s could not be revoked", slug)
         from abstractruntime.identity.life import bump_lifecycle_generation
+        from abstractruntime.identity.lifecycle_fence import LifecycleSignalUnwritten
 
-        rec["generation"] = int(bump_lifecycle_generation(home_dir, written_by="gateway:kill_switch", timeout_s=None))
+        try:
+            rec["generation"] = int(bump_lifecycle_generation(home_dir, written_by="gateway:kill_switch", timeout_s=None))
+        except LifecycleSignalUnwritten as e:
+            # The Stop stands (phases.yaml moved, this process's fences see it); only the signal file
+            # other processes stat is missing — they see the Stop at their next read. Said on its row.
+            rec["generation"] = int(e.generation)
+            signal_error = str(e)
         maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
         if maint and maint.get("status") == "running":
             maint["status"] = "cancel_requested"
         write_record(entities_dir, slug, rec)
         if not already:
             stamp = f"[by {actor} via {via}]"
-            write_entity_state(home_dir, "paused", reason=f"stopped{(': ' + reason) if reason else ''} {stamp}")
+            write_entity_state(home_dir, "paused", reason=f"stopped{(': ' + reason) if reason else ''} {stamp}",
+                               fence=KILL_SWITCH)
     pause_seq: Optional[float] = None
     pause_error: Optional[str] = None
     if not already:
@@ -1129,6 +1323,10 @@ def stop(
     elif revoke_error:
         items.append(_item("own_time", None, "failed", "grant_revoke_failed",
                            f"His own time could not be taken back: {revoke_error}"))
+    if signal_error:
+        items.append(_item("signal", None, "failed", "lifecycle_signal_unwritten",
+                           "The Stop stands, but its signal file could not be written; other processes see it at "
+                           f"their next read. Press Stop again. ({signal_error})"))
 
     # 2a. A REPEATED STOP RETRIES what the last one could not finish (review #5), in the store the
     # item came from — a cancelled root no longer appears in live discovery, its failed child does
@@ -1206,8 +1404,7 @@ def stop(
     items.append(chat_row)
 
     outstanding = [i for i in items if i["outcome"] == "failed"]
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with fenced(entities_dir, slug, KILL_SWITCH) as rec:
         rec["stop_outstanding"] = outstanding
         write_record(entities_dir, slug, rec)
     body = publish(registry, name, "stop", chat_host=chat_host, visit_host=visit_host)
@@ -1475,22 +1672,32 @@ def resume(registry: Any, name: str, *, reason: str = "", actor: Optional[str] =
     actor = actor or _actor()
     reason = str(reason or "").strip()
     via = via.replace("{name}", slug)
-    with phase_lock(entities_dir, slug):
+    from abstractruntime.identity.lifecycle_fence import RESUME
+
+    with fenced(entities_dir, slug, RESUME) as rec:
         already = str(read_entity_state(home_dir).get("state") or "") != "paused"
         if not already:
-            write_entity_state(home_dir, "awake", reason=f"resumed{(': ' + reason) if reason else ''} [by {actor} via {via}]")
-            rec = read_record(entities_dir, slug)
+            write_entity_state(home_dir, "awake", reason=f"resumed{(': ' + reason) if reason else ''} [by {actor} via {via}]",
+                               fence=RESUME)
             rec["maintenance"] = None
             rec["stop_outstanding"] = []
             # Resume lands in idle, always (v3 D3; Codex review 2 #7): nothing remembered from before
             # the Stop, and a grant armed meanwhile by any path is considered cancelled.
             _note_resume_to(rec, None)
             if personal_grant_refusal(read_personal_grant(home_dir)) is None:
-                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch")
+                write_personal_grant(home_dir, mode="disabled", granted_by="kill_switch", fence=RESUME)
                 revoked_at_resume = True
             write_record(entities_dir, slug, rec)
     started = {"own_time": False, "pid": None}
     if not already:
+        # The runtime the gateway keeps open for this home acts again, at the generation now (runtime
+        # 5ee8049 readmit; the Stop cancelled every run of the old one).
+        readmit = getattr(registry, "readmit_cached_runtime", None)
+        if callable(readmit):
+            try:
+                readmit(slug)
+            except Exception:  # noqa: BLE001 - the next door admission readmits it
+                logger.exception("resume: the open runtime of %s could not be readmitted", slug)
         _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "paused", "reason": reason or "resumed", "by": actor})
         if revoked_at_resume:
             _marker(registry, manifest, "personal_grant_revoked",
@@ -1524,16 +1731,18 @@ def set_toggles(
     home_dir = entities_dir / slug
     actor = actor or _actor()
     changed: Dict[str, Any] = {"personal": None}
-    with phase_lock(entities_dir, slug):
+    with fenced_here_or_none(entities_dir, slug) as rec:
+        if rec is None:
+            raise ToggleRefused("stopped_use_resume")  # an unknown generation admits nothing
         if str(read_entity_state(home_dir).get("state") or "") == "paused":
             raise ToggleRefused("stopped_use_resume")
-        rec = read_record(entities_dir, slug)
         facts = gather(registry, name, chat_host=chat_host, visit_host=visit_host)
         if facts["archived"]:
             raise ToggleRefused("entity_archived")
         if personal is not None and bool(facts["personal"]) != bool(personal):
             changed["personal"] = {"from": bool(facts["personal"]), "to": bool(personal)}
-            write_personal_grant(home_dir, mode=("until_revoked" if personal else "disabled"), granted_by=actor)
+            write_personal_grant(home_dir, mode=("until_revoked" if personal else "disabled"), granted_by=actor,
+                                 fence=rec.fence)
     if changed["personal"] is not None:
         _marker(registry, manifest, "personal_granted" if personal else "personal_grant_revoked",
                 {"channel": "toggle", "by": actor, "mode": "until_revoked" if personal else "disabled"})
@@ -1574,16 +1783,36 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
     JOBS (contract v3 D1/D4): a queued loop job (a standing work order, a task left with him) starts
     the loop for WORK whatever the personal grant says — there is no work switch; the loop works,
     then returns to `resume_to` (personal only while granted) or ends idle."""
-    from abstractruntime.identity.life import write_entity_state
-
     if chat_host is None and visit_host is None:
         chat_host, visit_host = default_hosts()
     manifest = registry.manifest_for(name)
     slug = manifest.slug
     entities_dir = Path(registry.entities_dir)
+    try:
+        decision = _reconcile_decide(registry, name, slug, cause, chat_host=chat_host, visit_host=visit_host,
+                                     operator=operator)
+    except GenerationMoved:
+        return {"own_time": False, "pid": None, "reason": "lifecycle_unreadable"}
+    if "params" not in decision:
+        return decision
+    key = str(entities_dir / slug)
+    try:
+        return _reconcile_spawn(registry, manifest, cause, decision)
+    finally:
+        with _STARTING_GUARD:
+            _STARTING.discard(key)
+
+
+def _reconcile_decide(registry: Any, name: str, slug: str, cause: str, *, chat_host: Any, visit_host: Any,
+                      operator: bool) -> Dict[str, Any]:
+    """reconcile's decision, ONE locked step fenced at the generation read there. Returns its
+    answer, or the spawn it admitted ({params, generation, admission, return_to}); an admitted
+    spawn marks the home starting in this process until the runtime's reservation takes over."""
+    from abstractruntime.identity.life import write_entity_state
+
+    entities_dir = Path(registry.entities_dir)
     home_dir = entities_dir / slug
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with fenced_here(entities_dir, slug) as rec:
         generation = int(rec.get("generation") or 0)
         facts = gather(registry, name, chat_host=chat_host, visit_host=visit_host)
         state = facts["state"]
@@ -1598,7 +1827,7 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
             and not loop_alive
             and _sleep_kind(state, loop_alive) is None
         ):
-            write_entity_state(home_dir, "awake", reason="his own time ended; awake and reachable")
+            write_entity_state(home_dir, "awake", reason="his own time ended; awake and reachable", fence=rec.fence)
             facts = gather(registry, name, chat_host=chat_host, visit_host=visit_host)
         if facts["archived"]:
             return {"own_time": False, "pid": None, "reason": "archived"}
@@ -1640,31 +1869,58 @@ def reconcile(registry: Any, name: str, cause: str, *, chat_host: Any = None, vi
         crashed = "process is gone" in str(loop_facts.get("note") or "") or str(loop_facts.get("stopped_by") or "") == "failures"
         if crashed and not operator and not _restart_pending(rec, generation):
             return {"own_time": False, "pid": None, "reason": "loop_crashed"}
-        claim = rec.get("spawning") if isinstance(rec.get("spawning"), dict) else None
-        if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
+        # ONE START AT A TIME (STOP-LANE-DESIGN §2.4): the runtime's spawn reservation (loop_status
+        # `starting`) and this process's own decision-to-reservation window, never a claim with a clock.
+        if own_time_starting(entities_dir, slug, loop_facts):
             return {"own_time": False, "pid": None, "reason": "spawning"}
         admission = int(rec.get("admission_seq") or 0)
         # A loop started for queued jobs is told nothing (runtime v3: its gate works the queue, then
         # returns to the remembered phase or ends idle); the operator's act names personal.
         spawn_return_to = None if target == "work" else ("personal" if operator else target)
-        rec["spawning"] = {"at": time.time(), "generation": generation, "cause": cause}
-        rec["restart_resume"] = None  # the restart's restore is being attempted: spent
-        write_record(entities_dir, slug, rec)
-        params = dict(rec.get("own_time_params") or {})
+        if rec.get("restart_resume") is not None:
+            rec["restart_resume"] = None  # the restart's restore is being attempted: spent
+            write_record(entities_dir, slug, rec)
+        key = str(entities_dir / slug)
+        with _STARTING_GUARD:
+            if key in _STARTING:
+                return {"own_time": False, "pid": None, "reason": "spawning"}
+            _STARTING.add(key)  # reconcile discards it once the spawn returned (its finally)
+        return {"params": dict(rec.get("own_time_params") or {}), "generation": generation,
+                "admission": admission, "return_to": spawn_return_to}
 
+
+def _reconcile_spawn(registry: Any, manifest: Any, cause: str, decision: Dict[str, Any]) -> Dict[str, Any]:
+    """The admitted spawn, outside the lock (a spawn is never under it). The runtime refuses a
+    second start ("already starting" / "already in progress": another start is under way, said as
+    `spawning`) and a start a Stop beat (StoppedByOperator: `stopped`)."""
+    from abstractruntime.identity.life import LoopAlreadyRunning
+    from abstractruntime.identity.lifecycle_fence import StoppedByOperator
+
+    slug = manifest.slug
+    entities_dir = Path(registry.entities_dir)
+    home_dir = entities_dir / slug
+    generation = int(decision["generation"])
+    admission = int(decision["admission"])
     pid = None
     error: Optional[str] = None
     try:
         # The child is told which own-time phase it returns to: personal for the operator's own act,
         # the remembered phase for a restore (runtime seam `return_to`).
-        started = start_own_time(registry, manifest, params, return_to=spawn_return_to)
+        started = start_own_time(registry, manifest, decision["params"], return_to=decision["return_to"])
         pid = started.get("pid")
+    except StoppedByOperator:
+        return {"own_time": False, "pid": None, "reason": "stopped"}
+    except LoopAlreadyRunning:
+        return {"own_time": False, "pid": None, "reason": "running"}
     except Exception as e:  # noqa: BLE001 - reported as blocked, never raised at the trigger
-        error = str(getattr(e, "detail", "") or e) or e.__class__.__name__
+        text = str(getattr(e, "detail", "") or e) or e.__class__.__name__
+        if "already starting" in text or "already in progress" in text:
+            return {"own_time": False, "pid": None, "reason": "spawning"}
+        if "already running" in text:
+            return {"own_time": False, "pid": None, "reason": "running"}
+        error = text
 
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
-        rec["spawning"] = None
+    with fenced_here(entities_dir, slug) as rec:
         rec["start_error"] = error
         moved = int(rec.get("generation") or 0) != generation
         # A visit took the phase while the loop was being spawned (review #9): the visit wins.
@@ -1733,7 +1989,7 @@ def resume_after_restart(registry: Any, *, chat_host: Any = None, visit_host: An
             continue
         home_dir = entities_dir / slug
         try:
-            with phase_lock(entities_dir, slug):
+            with fenced_here(entities_dir, slug) as rec:
                 if str(read_entity_state(home_dir).get("state") or "") == "paused":
                     rows.append({"slug": slug, "action": "skipped", "reason": "stopped"})
                     continue
@@ -1748,7 +2004,6 @@ def resume_after_restart(registry: Any, *, chat_host: Any = None, visit_host: An
                 if entity_archived(slug, users_path=users_path_of(registry)):
                     rows.append({"slug": slug, "action": "skipped", "reason": "archived"})
                     continue
-                rec = read_record(entities_dir, slug)
                 rec["restart_resume"] = {"generation": int(rec.get("generation") or 0), "at": _now_iso()}
                 _note_resume_to(rec, "personal")
                 write_record(entities_dir, slug, rec)
@@ -1805,8 +2060,7 @@ def start_own_time(registry: Any, manifest: Any, params: Dict[str, Any], return_
 
 def remember_own_time_params(registry: Any, slug: str, params: Dict[str, Any]) -> None:
     entities_dir = Path(registry.entities_dir)
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with fenced_here(entities_dir, slug) as rec:
         rec["own_time_params"] = {k: v for k, v in params.items() if v is not None}
         write_record(entities_dir, slug, rec)
 
@@ -1815,8 +2069,7 @@ def retry(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any = 
     t0 = time.monotonic()
     manifest = registry.manifest_for(name)
     entities_dir = Path(registry.entities_dir)
-    with phase_lock(entities_dir, manifest.slug):
-        rec = read_record(entities_dir, manifest.slug)
+    with fenced_here(entities_dir, manifest.slug) as rec:
         rec["start_error"] = None
         write_record(entities_dir, manifest.slug, rec)
     started = reconcile(registry, name, "retry", chat_host=chat_host, visit_host=visit_host, operator=True)
@@ -1842,8 +2095,7 @@ def after_visit_closed(registry: Any, slug: str, prior: Optional[Dict[str, Any]]
     entities_dir = Path(registry.entities_dir)
     home_dir = entities_dir / slug
     try:
-        with phase_lock(entities_dir, slug):
-            rec = read_record(entities_dir, slug)
+        with fenced_here(entities_dir, slug) as rec:
             maint = rec.get("maintenance") if isinstance(rec.get("maintenance"), dict) else None
             st = read_entity_state(home_dir)
             if (
@@ -1854,7 +2106,7 @@ def after_visit_closed(registry: Any, slug: str, prior: Optional[Dict[str, Any]]
                 and str(st.get("state") or "") == "asleep"
                 and str(st.get("mode") or "") != "visiting"
             ):
-                write_entity_state(home_dir, "awake", reason="maintenance done; awake")
+                write_entity_state(home_dir, "awake", reason="maintenance done; awake", fence=rec.fence)
                 rec["maintenance"] = None
                 write_record(entities_dir, slug, rec)
             # A sleep the visit interrupted was written back by the close with its original since
@@ -1865,26 +2117,31 @@ def after_visit_closed(registry: Any, slug: str, prior: Optional[Dict[str, Any]]
     safe_publish(registry, slug, cause, chat_host=chat_host, visit_host=visit_host)
 
 
-def maintenance_started(registry: Any, slug: str) -> int:
-    """Record a running operator maintenance pass; returns the generation it runs under."""
+def maintenance_started(registry: Any, slug: str, generation: int) -> int:
+    """Record a running maintenance pass admitted at `generation` (the sleep's own admission, never
+    a generation read after it); returns it. GenerationMoved when a Stop landed since (nothing
+    recorded: the pass does not run)."""
     entities_dir = Path(registry.entities_dir)
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
-        gen = int(rec.get("generation") or 0)
+    with fenced(entities_dir, slug, int(generation)) as rec:
+        gen = int(generation)
         rec["maintenance"] = {"status": "running", "generation": gen, "started_at": _now_iso()}
         write_record(entities_dir, slug, rec)
         return gen
 
 
-def maintenance_write_if_owner(registry: Any, slug: str, generation: int, write: Callable[[], Any]) -> bool:
+def maintenance_write_if_owner(registry: Any, slug: str, generation: int, write: Callable[[Any], Any]) -> bool:
     """The maintenance pass's own state writes, checked and written in ONE locked step (review #1):
-    only while no Stop moved the generation and no visit took the posture."""
+    only while no Stop moved the generation and no visit took the posture. `write(fence)` is handed
+    the pass's fence for its runtime state write."""
     entities_dir = Path(registry.entities_dir)
-    with phase_lock(entities_dir, slug):
-        if not maintenance_may_write(registry, slug, generation):
-            return False
-        write()
-        return True
+    try:
+        with fenced(entities_dir, slug, int(generation)) as rec:
+            if not maintenance_may_write(registry, slug, generation):
+                return False
+            write(rec.fence)
+            return True
+    except GenerationMoved:
+        return False
 
 
 def maintenance_may_write(registry: Any, slug: str, generation: int) -> bool:
@@ -1894,8 +2151,8 @@ def maintenance_may_write(registry: Any, slug: str, generation: int) -> bool:
 
     entities_dir = Path(registry.entities_dir)
     rec = read_record(entities_dir, slug)
-    if int(rec.get("generation") or 0) != int(generation):
-        return False
+    if rec.get("generation") is None or int(rec.get("generation") or 0) != int(generation):
+        return False  # moved, or unreadable (fail closed)
     st = read_entity_state(entities_dir / slug)
     return str(st.get("state") or "") == "asleep" and str(st.get("mode") or "") != "visiting"
 
@@ -1918,8 +2175,9 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
     slug = manifest.slug
     entities_dir = Path(registry.entities_dir)
     home_dir = entities_dir / slug
-    with phase_lock(entities_dir, slug):
-        rec = read_record(entities_dir, slug)
+    with fenced_here_or_none(entities_dir, slug) as rec:
+        if rec is None:
+            return "stopped"  # an unreadable generation: nothing recorded, nothing woken (fail closed)
         mine = isinstance(rec.get("maintenance"), dict) and rec["maintenance"].get("generation") == int(generation)
         # The receipt of THIS pass (review #8): a failure or a superseded pass is always recorded.
         stopped_by_switch = int(rec.get("generation") or 0) != int(generation)
@@ -1954,7 +2212,7 @@ def maintenance_done(registry: Any, name: str, generation: int, *, failed: Optio
         if str(st.get("state") or "") != "asleep" or str(st.get("written_by") or "operator") not in ("operator", IDLE_SWEEP_WRITER):
             return "not_ours"  # a summon or a wake already ended this sleep
         reason = "maintenance done; awake" + (f" (the pass failed: {failed})" if failed else "")
-        write_entity_state(home_dir, "awake", reason=reason)
+        write_entity_state(home_dir, "awake", reason=reason, fence=rec.fence)
     # The wake is a moment of his life like any other (the sleep that ends has its own marker).
     _marker(registry, manifest, "wake", {"state": "awake", "prior_state": "asleep", "reason": "maintenance done",
                                          **({"failed": failed} if failed else {})})

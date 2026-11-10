@@ -9,6 +9,7 @@ lands its census marker with the words absent.
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import time
@@ -457,14 +458,14 @@ def test_waiting_behind_visit_is_legible(client: TestClient):
     _expire_seat_ttl(client)
 
     home_dir = get_gateway_service().entity_registry.entities_dir / "castor"
-    write_entity_state(home_dir, "asleep", reason="in conversation [visit chat-test]", mode="visiting", written_by="visit-door")
+    write_entity_state(home_dir, "asleep", reason="in conversation [visit chat-test]", mode="visiting", written_by="visit-door", fence=_LF.admit(home_dir))
     try:
         _attempt_queue_admission("Castor")
         p = client.get(f"/api/gateway/entities/Castor/queue/{qid}")
         assert p.json()["state"] == "queued", p.text
         assert p.json()["waiting_behind"] == "visit"
     finally:
-        write_entity_state(home_dir, "awake", reason="test cleanup")
+        write_entity_state(home_dir, "awake", reason="test cleanup", fence=_LF.admit(home_dir))
 
 
 def test_human_takes_ttl_held_seat_without_cancel(client: TestClient):

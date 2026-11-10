@@ -6,6 +6,7 @@ recoverably. Hermetic gateway; the own-time loop is a real child process."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import subprocess
@@ -122,7 +123,7 @@ def test_awake_with_nothing_running_is_idle_never_sleep():
 
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home_dir(), "awake", reason="woken")
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
         body = _ls(client)
         assert body["phase"] == "idle" and body["posture"] == "idle"
         assert body["sentence"] == "Awake and reachable; nothing of his own is running."
@@ -136,7 +137,7 @@ def test_a_gate_sleep_with_no_loop_is_idle_root_1178():
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         write_entity_state(_home_dir(), "asleep", reason="personal ended (grant_revoked) - the ruled landing is sleep",
-                           written_by="grant-gate", wake_at="2099-01-01T00:00:00+00:00")
+                           written_by="grant-gate", wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(_home_dir()))
         body = _ls(client)
         assert body["phase"] == "idle" and body["sleep"] is None
         assert body["state"] == "awake"  # the state word follows the phase: a gate sleep is no sleep
@@ -149,8 +150,8 @@ def test_stopped_personal_work_and_a_self_sleep(loops):
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home_dir()
-        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
-        write_entity_state(home, "awake", reason="woken")
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin", fence=_LF.admit(home))
+        write_entity_state(home, "awake", reason="woken", fence=_LF.admit(home))
         loops(home, "between")
         body = _ls(client)
         assert body["phase"] == "personal" and body["sentence"] == "On his own time, resting."
@@ -165,14 +166,14 @@ def test_stopped_personal_work_and_a_self_sleep(loops):
         (home / "work_order.md").unlink()
         loops(home, "between")
         write_entity_state(home, "asleep", reason="self-elected sleep: memory saturated", written_by="self",
-                           wake_at="2099-01-01T00:30:00+00:00")
+                           wake_at="2099-01-01T00:30:00+00:00", fence=_LF.admit(home))
         body = _ls(client)
         assert body["phase"] == "sleep" and body["sleep"]["kind"] == "self"
         assert body["sleep"]["ends"] == "2099-01-01T00:30:00+00:00"
         assert body["sleep"]["reason"] == "self-elected sleep: memory saturated"
         assert body["state"] == "asleep"
 
-        write_entity_state(home, "paused", reason="kill switch")
+        write_entity_state(home, "paused", reason="kill switch", fence=_LF.admit(home))
         body = _ls(client)
         assert body["phase"] == "stopped" and body["stopped"] is True and body["posture"] == "paused"
         assert body["state"] == "paused"
@@ -187,8 +188,8 @@ def test_a_crashed_loop_is_idle_blocked_with_a_retry(loops):
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home_dir()
-        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
-        write_entity_state(home, "awake", reason="woken")
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin", fence=_LF.admit(home))
+        write_entity_state(home, "awake", reason="woken", fence=_LF.admit(home))
         proc = loops(home, "day")
         proc.kill()
         proc.wait(5)
@@ -220,14 +221,14 @@ def test_an_open_visit_is_the_visit_phase(monkeypatch: pytest.MonkeyPatch):
 def test_rev_versions_the_snapshot_survives_a_restart_and_is_announced_once_per_rev():
     from abstractruntime.identity.life import write_entity_state
 
-    from abstractgateway.entity_phase import read_record, write_record
+    from abstractgateway.entity_phase import fenced_here, read_record, write_record
 
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home_dir()
         a = _ls(client)
         assert _ls(client) == a  # nothing changed: same rev, same content
-        write_entity_state(home, "asleep", reason="rest")  # a newborn starts idle; now a sleep
+        write_entity_state(home, "asleep", reason="rest", fence=_LF.admit(home))  # a newborn starts idle; now a sleep
         b = _ls(client)
         assert b["rev"] == a["rev"] + 1 and b["phase"] == "sleep"
         marks = _markers(home)
@@ -237,12 +238,11 @@ def test_rev_versions_the_snapshot_survives_a_restart_and_is_announced_once_per_
         assert last["toggles"] == b["toggles"] and last["sentence"] == b["sentence"] and last["since"] == b["since"]
 
         # A crash between the rev write and the marker: the next read announces it.
-        rec = read_record(home.parent, "castor")
-        write_entity_state(home, "paused", reason="stop")
+        write_entity_state(home, "paused", reason="stop", fence=_LF.admit(home))
         _ls(client)
-        rec = read_record(home.parent, "castor")
-        rec["published_rev"] = rec["rev"] - 1
-        write_record(home.parent, "castor", rec)
+        with fenced_here(home.parent, "castor") as rec:
+            rec["published_rev"] = rec["rev"] - 1
+            write_record(home.parent, "castor", rec)
         before = len(_markers(home))
         _ls(client)
         after = _markers(home)

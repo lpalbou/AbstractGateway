@@ -281,7 +281,9 @@ def _open_entity_runtime(slug: str) -> Any:
             continue
         with registry._open_lock:
             er = registry._entity_runtimes.get(slug)
-        if er is not None:
+        # A runtime a Stop moved past refuses every effect: it is no runtime to run on (the next door
+        # open admits a fresh one at the home's generation, `EntityRegistry.get_entity_runtime`).
+        if er is not None and not er.home.fence.moved():
             return er
     return None
 

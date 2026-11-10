@@ -126,7 +126,7 @@ def _state_seen(state: Dict[str, Any]) -> Tuple[str, ...]:
 def _not_idle(facts: Dict[str, Any], snap: Dict[str, Any], rec: Dict[str, Any]) -> Optional[str]:
     """Why this home may not be put to its idle sleep now, or None. The idle check and its recheck
     under the lifecycle lock are this one predicate."""
-    from .entity_phase import SPAWN_CLAIM_TTL_S
+    from .entity_phase import own_time_starting
 
     if snap["stopped"]:
         return "stopped"
@@ -136,9 +136,8 @@ def _not_idle(facts: Dict[str, Any], snap: Dict[str, Any], rec: Dict[str, Any]) 
         return str(snap["phase"])
     if int(facts.get("jobs_queued") or 0) > 0:
         return "job_queued"  # a queued job moves him to work (v3 D1), never to sleep
-    claim = rec.get("spawning") if isinstance(rec.get("spawning"), dict) else None
-    if claim and time.time() - float(claim.get("at") or 0) < SPAWN_CLAIM_TTL_S:
-        return "starting"  # a loop is being started for him (a job, his own time)
+    if own_time_starting(Path(facts["entities_dir"]), facts["manifest"].slug, facts.get("loop")):
+        return "starting"  # a loop is being started for him (a job, his own time): the runtime's reservation
     return None
 
 
@@ -148,6 +147,8 @@ def _look(registry: Any, slug: str, hosts: Tuple[Any, Any]) -> Optional[Dict[str
     from .entity_phase import derive, gather, read_record
 
     rec = read_record(Path(registry.entities_dir), slug)
+    if rec.get("generation") is None:
+        return None  # an unreadable lifecycle generation admits nothing (fail closed)
     facts = gather(registry, slug, chat_host=hosts[0], visit_host=hosts[1])
     if _not_idle(facts, derive(facts, rec), rec):
         return None

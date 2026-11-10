@@ -11,6 +11,7 @@ entity cannot meet itself.
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 
 import pytest
@@ -197,7 +198,7 @@ def test_rollback_closes_leg_a_when_a_REAL_second_leg_refuses(monkeypatch: pytes
         _create(client, "Castor")
         _create(client, "Pollux")
         # Pollux is a hard freeze: _preflight refuses leg B AFTER leg A is up.
-        write_entity_state(_home_dir("Pollux"), "paused", reason="frozen for the test")
+        write_entity_state(_home_dir("Pollux"), "paused", reason="frozen for the test", fence=_LF.admit(_home_dir("Pollux")))
 
         refused = client.post("/api/gateway/entities/meets/open",
                              json={"entity_a": "Castor", "entity_b": "Pollux"})

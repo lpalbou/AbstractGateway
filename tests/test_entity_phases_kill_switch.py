@@ -8,6 +8,7 @@ own-time loop is a real child process (never this test process)."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import subprocess
@@ -256,7 +257,7 @@ def test_stop_revokes_own_time_and_resume_is_idle(monkeypatch: pytest.MonkeyPatc
         # The operator gives own time (starts at once), later puts him to sleep, then stops him.
         assert client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": True}).status_code == 200
         assert spawned == ["castor"]
-        write_entity_state(home_dir, "asleep", reason="operator sleep")
+        write_entity_state(home_dir, "asleep", reason="operator sleep", fence=_LF.admit(home_dir))
         stopped = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["own_time_revoked"] is True
@@ -292,8 +293,8 @@ def test_resume_of_an_entity_that_had_no_own_time_stays_idle(monkeypatch: pytest
     monkeypatch.setattr(entity_phase, "start_own_time", lambda r, m, p, return_to=None: spawned.append(m.slug) or {"pid": 1})
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home_dir(), "awake", reason="woken")
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")  # granted, never run
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))  # granted, never run
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
         r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert r.status_code == 200 and r.json()["phase"] == "idle"
@@ -438,16 +439,16 @@ def test_stop_fences_before_it_observes_anything(monkeypatch: pytest.MonkeyPatch
         home = _home_dir()
         from abstractruntime.identity.life import write_personal_grant
 
-        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin", fence=_LF.admit(home))
         proc = _fake_loop(home, "between")
-        write_entity_state(home, "awake", reason="woken")
+        write_entity_state(home, "awake", reason="woken", fence=_LF.admit(home))
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "personal"
-        write_entity_state(home, "asleep", reason="self-elected sleep", written_by="self")
+        write_entity_state(home, "asleep", reason="self-elected sleep", written_by="self", fence=_LF.admit(home))
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "sleep"
         proc.kill()
         proc.wait(5)
         (home / "loop_status").write_text(json.dumps({"phase": "stopped", "pid": proc.pid, "stopped_by": "rest"}), encoding="utf-8")
-        write_entity_state(home, "awake", reason="woke", written_by="self")  # not observed yet
+        write_entity_state(home, "awake", reason="woke", written_by="self", fence=_LF.admit(home))  # not observed yet
         r = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"})
         assert r.status_code == 200 and r.json()["phase"] == "stopped"
         assert spawned == [], "own time was restored under the Stop"
@@ -542,7 +543,7 @@ def test_nothing_gives_own_time_back_across_a_stop(monkeypatch: pytest.MonkeyPat
         assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "stopped_use_resume", r.text
         assert read_personal_grant(_home_dir())["mode"] == "disabled"
 
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="someone")  # armed by another path
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="someone", fence=_LF.admit(_home_dir()))  # armed by another path
         entity_phase.set_resume_to(_registry(), "castor", "personal")
         back = client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"})
         assert back.status_code == 200, back.text

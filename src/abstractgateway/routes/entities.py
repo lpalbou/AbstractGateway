@@ -3632,12 +3632,26 @@ def _summon_core(
                     "retry after the visit ends"
                 ),
             )
-        from abstractruntime.identity.life import write_entity_state
+        from abstractruntime.identity.life import read_entity_state, write_entity_state
 
-        write_entity_state(
-            registry.entities_dir / entity_slug(name), "awake",
-            reason=f"woken by summon from person:{caller_id}",
-        )
+        from ..entity_phase import fenced_here_or_none
+
+        # One fenced step (STOP-LANE-DESIGN §2.2): the sleep this summon wakes is re-read under the
+        # lifecycle lock; a Stop or a visit landed since stands (the summon is refused as it would be).
+        _slug = entity_slug(name)
+        with fenced_here_or_none(registry.entities_dir, _slug) as _rec:
+            _now = read_entity_state(registry.entities_dir / _slug) if _rec is not None else {"state": "paused"}
+            if str(_now.get("state") or "") == "paused":
+                raise HTTPException(status_code=409, detail={
+                    "refused": True, "reason_code": "stopped_use_resume", "message": "Stopped. Resume him first.",
+                    "reasons": [f"#REFUSED summon: {home.entity_id} is paused — the kill switch"],
+                    "entity_id": home.entity_id})
+            if str(_now.get("state") or "") == "asleep" and str(_now.get("mode") or "") != "visiting":
+                write_entity_state(
+                    registry.entities_dir / _slug, "awake",
+                    reason=f"woken by summon from person:{caller_id}",
+                    fence=_rec.fence,
+                )
         entity_state = registry.state_of(name)
 
     try:
@@ -5368,7 +5382,9 @@ def get_entity_prompt(name: str) -> Dict[str, Any]:
     preview = ""
     warnings: List[str] = []
     try:
-        home = open_home(home_dir)
+        # A pure read (the prompt preview): an unfenced reader says so (runtime e410877: fence=None
+        # written explicitly, grep-able); nothing here writes.
+        home = open_home(home_dir, fence=None)
     except (SystemExit, Exception) as e:  # open_home refuses via SystemExit — never kill the worker
         raise HTTPException(status_code=500, detail=f"home open failed: {e}")
     try:
@@ -6629,6 +6645,9 @@ def get_entity_loop(name: str) -> Dict[str, Any]:
 def start_entity_loop(name: str, req: StartLoopRequest, response: Response = None) -> Dict[str, Any]:
     import os as _os
 
+    from abstractruntime.identity.life import LoopAlreadyRunning
+    from abstractruntime.identity.lifecycle_fence import StoppedByOperator
+
     from ..entity_loop import loop_status, start_loop
     from ..entity_replay import record_host_marker
 
@@ -6770,7 +6789,15 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
     # refusal above: Restore is the deliberate release of an emergency
     # stop, not ceremony. The visiting posture keeps its race guard below.
     if str(state.get("state") or "") == "asleep" and str(state.get("mode") or "") != "visiting":
-        write_entity_state(home_dir, "awake", reason=f"woken for personal time by {actor}")
+        from ..entity_phase import fenced_here_or_none
+
+        # One fenced step: the sleep re-read under the lifecycle lock (a Stop or a visit since stands).
+        with fenced_here_or_none(registry.entities_dir, manifest.slug) as _rec:
+            _now = read_entity_state(home_dir) if _rec is not None else {"state": "paused"}
+            if str(_now.get("state") or "") == "paused":
+                raise _loop_refuse(409, "paused", f"{manifest.entity_id} is paused (hard freeze) — wake him first")
+            if str(_now.get("state") or "") == "asleep" and str(_now.get("mode") or "") != "visiting":
+                write_entity_state(home_dir, "awake", reason=f"woken for personal time by {actor}", fence=_rec.fence)
         state = read_entity_state(home_dir)
     # Registration-window guard (observer 2026-07-09): a visit `open()` writes
     # the visiting posture (asleep + mode=visiting) BEFORE it registers in the
@@ -6848,10 +6875,18 @@ def start_entity_loop(name: str, req: StartLoopRequest, response: Response = Non
             context_window=int(context_window),
             return_to="personal",  # the operator's own start: own time is what it returns to
         )
+    except StoppedByOperator:
+        # The operator's Stop overtook this start (runtime 0da3f74): nothing runs, said plainly.
+        raise _loop_refuse(409, "stopped_use_resume", "Stopped. Resume him first.")
+    except LoopAlreadyRunning:
+        raise _loop_refuse(409, "already_running", f"{manifest.entity_id}'s own time is already running.")
     except RuntimeError as e:
+        text = str(e)
+        if "already starting" in text or "already in progress" in text:
+            raise _loop_refuse(409, "already_running", f"{manifest.entity_id}'s own time is already starting.")
         # Spawn/lease failure from the loop process — surface it structured so
         # the button shows the reason (B2), not a bare 409.
-        raise _loop_refuse(409, "start_failed", str(e))
+        raise _loop_refuse(409, "start_failed", text)
 
     try:
         home = registry.get_home(manifest.slug)
@@ -6934,7 +6969,15 @@ def stop_entity_loop(name: str, req: Optional[StopLoopRequest] = None, response:
     _deprecate(response, "life_state/toggles")
     from abstractruntime.identity.life import write_personal_grant as _wpg
 
-    _wpg(home_dir, mode="disabled", granted_by=actor)
+    from ..entity_phase import fenced_here_or_none
+
+    # The operator's revoke, one fenced step (admitted under the lifecycle lock: nothing it decided
+    # predates a Stop; an unreadable generation is never written over).
+    with fenced_here_or_none(registry.entities_dir, manifest.slug) as _rec:
+        if _rec is None:
+            raise HTTPException(status_code=409, detail="the lifecycle generation cannot be read (phases.yaml); "
+                                                        "repair it before changing own time")
+        _wpg(home_dir, mode="disabled", granted_by=actor, fence=_rec.fence)
     # Durable command, not a sentinel file (maintainer ruling 2026-07-08):
     # the loop consumes it at its next boundary; his thought finishes whole.
     status = stop_loop(home_dir, reason=reason, requested_by="operator")
@@ -7070,8 +7113,27 @@ def _apply_personal_grant(registry: EntityRegistry, manifest: Any, *, mode: str,
             detail=f"personal-grant change refused: the durable marker could not be recorded ({e}) — "
             "an unrecorded grant change is not allowed; retry when the home is reachable",
         )
+    from ..entity_phase import fenced_here_or_none
+
     try:
-        write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=expires_at)
+        # One fenced step (STOP-LANE-DESIGN §2.2): arming refuses while stopped, checked under the
+        # lifecycle lock with the write (a Stop between a check and the write can no longer arm him).
+        with fenced_here_or_none(registry.entities_dir, manifest.slug) as _rec:
+            if _rec is None:
+                raise HTTPException(status_code=409, detail="the lifecycle generation cannot be read (phases.yaml); "
+                                                            "repair it before changing own time")
+            if mode != "disabled":
+                from abstractruntime.identity.life import read_entity_state as _res
+
+                if str(_res(home_dir).get("state") or "") == "paused":
+                    message = _PHASE_SENTENCES["stopped_use_resume"]
+                    raise HTTPException(
+                        status_code=409,
+                        detail={"refused": True, "reason_code": "stopped_use_resume", "message": message,
+                                "reasons": [message]},
+                        headers={"X-Gateway-Error-Code": "stopped_use_resume"},
+                    )
+            write_personal_grant(home_dir, mode=mode, granted_by=actor, expires_at=expires_at, fence=_rec.fence)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

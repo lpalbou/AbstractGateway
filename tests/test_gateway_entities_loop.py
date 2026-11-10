@@ -12,6 +12,7 @@ file system directly").
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 
 import pytest
@@ -273,16 +274,16 @@ def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pyte
 
         # Since the 2026-11-08 ruling (contract-phases v2 §6.3) a running operator sleep is never cut
         # short by a start: the grant is armed and own time is DEFERRED to the end of that sleep.
-        write_entity_state(home_dir, "asleep", reason="operator rest")
+        write_entity_state(home_dir, "asleep", reason="operator rest", fence=_LF.admit(home_dir))
         r0 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r0.status_code == 200, r0.text
         assert r0.json()["deferred"] is True and r0.json()["started"] is False
         assert read_personal_grant(home_dir).get("mode") == "until_revoked"
         assert read_entity_state(home_dir).get("state") == "asleep"
-        write_entity_state(home_dir, "awake", reason="the sleep ended")
+        write_entity_state(home_dir, "awake", reason="the sleep ended", fence=_LF.admit(home_dir))
 
         # PAUSED entity: distinct reason_code.
-        write_entity_state(home_dir, "paused", reason="freeze drill")
+        write_entity_state(home_dir, "paused", reason="freeze drill", fence=_LF.admit(home_dir))
         r2 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r2.status_code == 409, r2.text
         assert r2.json()["detail"]["reason_code"] == "stopped_use_resume"  # contract-phases v2 §7
@@ -291,11 +292,11 @@ def test_loop_start_refusals_carry_reason_code_and_live_status(monkeypatch: pyte
         # + the live pid/phase, so the button can render "running" instead of nothing.
         # write_loop_status stamps pid=getpid() (this live test process), so the
         # status alive-check passes and the loop reads as running.
-        write_entity_state(home_dir, "awake", reason="ready")
+        write_entity_state(home_dir, "awake", reason="ready", fence=_LF.admit(home_dir))
         from abstractruntime.identity.life import write_loop_status
         import os as _os
 
-        write_loop_status(home_dir, "day")
+        write_loop_status(home_dir, "day", fence=_LF.admit(home_dir))
         r3 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r3.status_code == 409, r3.text
         assert r3.json()["detail"]["reason_code"] == "already_running"

@@ -8,6 +8,7 @@ never repairs a visiting posture while the loop has not yet yielded its day
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import os
@@ -141,7 +142,7 @@ def test_reaper_never_repairs_a_posture_while_the_loop_is_still_in_its_day(monke
         home_dir = _home_dir()
         write_entity_state(
             home_dir, "asleep", reason="in conversation with person:admin [visit v-1] (auto-yield)",
-            mode="visiting", written_by="visit-door",
+            mode="visiting", written_by="visit-door", fence=_LF.admit(home_dir)
         )
         host._chat_probe = lambda slug: False
         monkeypatch.setattr(type(host), "STALE_YIELD_GRACE_S", 0.0, raising=True)
@@ -172,7 +173,7 @@ def test_reaper_never_repairs_a_posture_while_a_visit_is_opening(monkeypatch: py
         home_dir = _home_dir()
         write_entity_state(
             home_dir, "asleep", reason="in conversation with person:admin [visit v-1] (auto-yield)",
-            mode="visiting", written_by="visit-door",
+            mode="visiting", written_by="visit-door", fence=_LF.admit(home_dir)
         )
         (home_dir / "loop_status").write_text(json.dumps({"phase": "between", "pid": os.getpid()}), encoding="utf-8")
         host._chat_probe = lambda slug: False
@@ -203,7 +204,7 @@ def test_the_door_keeps_its_posture_while_it_waits(monkeypatch: pytest.MonkeyPat
 
         def _wake_then_yield() -> None:
             _real_time.sleep(0.5)
-            write_entity_state(home_dir, "awake", reason="by the operator (web controls)", written_by="operator")
+            write_entity_state(home_dir, "awake", reason="by the operator (web controls)", written_by="operator", fence=_LF.admit(home_dir))
             _real_time.sleep(2.5)  # past the door's first poll
             (home_dir / "loop_status").write_text(json.dumps({"phase": "between", "pid": os.getpid()}), encoding="utf-8")
 

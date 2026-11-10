@@ -133,17 +133,31 @@ class _OtherVisitLive(Exception):
 
 def _wait_while(busy: Any, entities_dir: Any, slug: str, generation: Optional[int]) -> None:
     """Wait, WITHOUT a deadline (root ADR-0027; a visit never fails), while `busy()` holds. The
-    wait is cancellation-aware: a kill switch since the door's entry ends it (stopped)."""
-    from .entity_phase import generation_of
+    wait is cancellation-aware: a kill switch since the door's entry ends it (stopped). The check is
+    the runtime fence's compare + one stat of the signal file (STOP-LANE-DESIGN §7 (5c)), never a
+    sidecar + phases.yaml re-parse per poll."""
+    from .entity_phase import admission_fence
 
+    fence = admission_fence(entities_dir, slug, generation) if generation is not None else None
     while busy():
-        if generation is not None and generation_of(entities_dir, slug) != generation:
+        if fence is not None and fence.moved():
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
         time.sleep(0.25)
 
 
 # The one visit refusal (operator 2026-11-09; contract-phases §6.1, §7).
 STOPPED_VISIT_SENTENCE = "Stopped. Resume to visit."
+
+
+def _refuse_if_stopped_run(state: Any) -> None:
+    """A visit run the operator's Stop ended (the fence's cancelled outcome: run CANCELLED, error
+    KILL_SWITCH_REASON, Fable review F11) is answered with the one stopped sentence — never its
+    error string as a failure line. The Stop's own teardown finalizes it."""
+    from .entity_phase import KILL_SWITCH_REASON
+
+    status = str(getattr(getattr(state, "status", None), "value", getattr(state, "status", "")) or "")
+    if status == "cancelled" and str(getattr(state, "error", "") or "").startswith(KILL_SWITCH_REASON):
+        raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
 
 def _stopped(home_dir: Any) -> bool:
@@ -164,20 +178,22 @@ def hold_visiting_posture(home_dir: Any, *, reason: str, token: str, generation:
     CANCELLATION-AWARE BY GENERATION (review 2026-11-09 #1): the wait ends on any Stop since the
     door's entry — a Stop then Resume included, which a `paused` check alone missed — and the
     posture is re-written only through the locked, generation-checked admission."""
-    from .entity_phase import GenerationMoved, admit_visit_posture, generation_of
+    from .entity_phase import GenerationMoved, admission_fence, admit_visit_posture, generation_of
 
     home = Path(home_dir)
+    try:
+        fence = admission_fence(home.parent, home.name, generation)  # None: admitted now
+    except GenerationMoved:
+        raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
     def _poll(seconds: float) -> None:
         time.sleep(seconds)
-        if generation is not None and generation_of(home.parent, home.name) != generation:
+        if fence.moved():
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
         if not token:
             return
         try:
-            admit_visit_posture(home.parent, home.name, int(generation if generation is not None
-                                                              else generation_of(home.parent, home.name)),
-                                reason=reason, only_if_not_ours=token)
+            admit_visit_posture(home.parent, home.name, fence, reason=reason, only_if_not_ours=token)
         except GenerationMoved:
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
@@ -209,7 +225,8 @@ def visiting_posture_age_s(state: Dict[str, Any]) -> Optional[float]:
     return max(0.0, (datetime.now(timezone.utc) - changed).total_seconds())
 
 
-def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: str, token: str = "") -> None:
+def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: str, token: str = "",
+                         fence: Any) -> None:
     """Failed-open restore: put the OPERATOR's pre-visit word back (mutual-
     exclusivity wave — aborts used to hardcode awake/asleep, erasing the
     operator's word on half the paths).
@@ -218,16 +235,17 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
     ONLY while the standing state is still THIS visit's posture — an
     operator pause/sleep landed mid-window is the coordination authority and
     stands (the close paths' exact predicate). Best-effort: an abort
-    surfaces its own error, never a restore failure."""
+    surfaces its own error, never a restore failure. FENCED on the visit's
+    admission (`fence`, its generation): nothing written over a Stop since."""
     from abstractruntime.identity.life import read_entity_state, write_entity_state
 
-    from .entity_phase import phase_lock
+    from .entity_phase import fenced
 
     home = Path(home_dir)
     try:
         # One locked step with the kill switch's write (review 2026-11-09 #1): a Stop between the
         # ownership check and this write can no longer be overwritten.
-        with phase_lock(home.parent, home.name):
+        with fenced(home.parent, home.name, fence) as rec:
             if token:
                 st = read_entity_state(home_dir)
                 still_ours = (
@@ -245,11 +263,12 @@ def _restore_prior_state(home_dir: Any, prior_state: Dict[str, Any], *, suffix: 
                 # and since; the aborted open is not part of its reason.
                 from .entity_phase import continue_sleep
 
-                continue_sleep(home.parent, home.name, dict(prior_state or {}))
+                continue_sleep(home.parent, home.name, dict(prior_state or {}), fence=rec.fence)
                 return
             reason = str((prior_state or {}).get("reason") or "")
-            write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix))
-    except Exception:  # noqa: BLE001
+            write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix),
+                               fence=rec.fence)
+    except Exception:  # noqa: BLE001 - GenerationMoved included: the Stop's word stands
         pass
 
 
@@ -966,11 +985,24 @@ class EntityVisitHost:
                     return False  # an open durable visit owns it
             except Exception:
                 return False
-        write_entity_state(
-            home_dir,
-            "awake",
-            reason="stale visit yield repaired — no live session held this home (gateway reaper)",
-        )
+        # ONE fenced step (STOP-LANE-DESIGN §2.2): the posture it judged orphaned is re-read under the
+        # lifecycle lock and repaired only while it is still that very posture (a Stop, a new visit or
+        # an operator's word since then stands).
+        from .entity_phase import fenced_here_or_none
+
+        with fenced_here_or_none(self._registry.entities_dir, slug) as rec:
+            if rec is None:
+                return False  # an unreadable lifecycle generation: never written over
+            again = read_entity_state(home_dir)
+            if tuple(str(again.get(k) or "") for k in ("state", "mode", "changed_at")) != tuple(
+                    str(state.get(k) or "") for k in ("state", "mode", "changed_at")):
+                return False
+            write_entity_state(
+                home_dir,
+                "awake",
+                reason="stale visit yield repaired — no live session held this home (gateway reaper)",
+                fence=rec.fence,
+            )
         try:
             from .entity_replay import record_host_marker
 
@@ -1196,7 +1228,14 @@ class EntityVisitHost:
             # cannot answer. Coded so a door can say so (the mention door answers 503).
             raise VisitRefused(e.status, e.detail, code="mind_unresolved")
 
-        er = registry.get_entity_runtime(slug)
+        # The runtime that serves this admission: one admitted at the door's generation (a Stop since
+        # the door's entry moved it: refused, nothing of this open runs).
+        from .entity_phase import GenerationMoved
+
+        try:
+            er = registry.runtime_for_admission(slug, generation)
+        except GenerationMoved:
+            raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
         live = self._live_visit_run(er, janitor=True)
         if live is not None and join_existing:
@@ -1333,7 +1372,9 @@ class EntityVisitHost:
         # the kill switch.
         from .entity_phase import generation_of
 
-        if read_entity_state(home_dir).get("state") == "paused" or generation_of(registry.entities_dir, slug) != generation:
+        from .entity_phase import moved_since
+
+        if read_entity_state(home_dir).get("state") == "paused" or moved_since(registry.entities_dir, slug, generation):
             raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
 
         return {
@@ -1486,6 +1527,9 @@ class EntityVisitHost:
             # The operator's word before this visit touched the state —
             # durable in the run so a fresh host restores it at terminal.
             visit_ns["prior_state"] = dict(pre.get("prior_state") or {"state": "awake", "reason": ""})
+            # The lifecycle generation this visit was admitted at (STOP-LANE-DESIGN §2.2): its turns run
+            # only on a runtime admitted at it, and its terminal restore is fenced on it.
+            visit_ns["generation"] = int(pre.get("generation") or 0)
             # REGISTRATION IS FENCED (Codex review 2 #8): the stamped run becomes visible to Stop in
             # one step with the check of the generation the preflight saw, so a Stop between the
             # preflight and here can never miss it; a moved generation cancels the unregistered run.
@@ -1501,17 +1545,20 @@ class EntityVisitHost:
                 raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
             state_after = self._drive(er, wf, run_id, max_steps=_OPEN_MAX_TICKS)
+            _refuse_if_stopped_run(state_after)
         except Exception:
             # A failed open restores the OPERATOR's pre-visit word (mutual-
             # exclusivity wave: the old hardcoded awake/asleep branches
             # erased the operator's word on half the paths — adversary P2-3
             # residue closed by one uniform restore).
-            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit open failed)", token=str(pre.get("visit_token") or ""))
+            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit open failed)", token=str(pre.get("visit_token") or ""),
+                                 fence=int(pre.get("generation") or 0))
             raise
 
         output = dict(getattr(state_after, "output", None) or {})
         if str(getattr(state_after.status, "value", state_after.status)) == "completed" and output.get("refused"):
-            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit aborted: prelude refused)", token=str(pre.get("visit_token") or ""))
+            _restore_prior_state(home_dir, pre.get("prior_state") or {}, suffix="(visit aborted: prelude refused)", token=str(pre.get("visit_token") or ""),
+                                 fence=int(pre.get("generation") or 0))
             raise VisitRefused(409, "summon refused: " + "; ".join(str(r) for r in output.get("reasons", [])), code="summon_refused")
 
         with self._lock:
@@ -1618,6 +1665,7 @@ class EntityVisitHost:
         )
         state = self._resume(er, wf, run_id, payload=payload, max_steps=_TURN_MAX_TICKS,
                              wait_key=VISITOR_WAIT_KEY, manifest=manifest)
+        _refuse_if_stopped_run(state)
 
         status = str(getattr(state.status, "value", state.status))
         visit_vars = (state.vars or {}).get("_visit") or {}
@@ -1752,7 +1800,9 @@ class EntityVisitHost:
         if kind not in ("operator", "sleep", "pause"):
             raise VisitRefused(400, f"unknown closed_by {closed_by!r} (operator | sleep | pause)", code="bad_closed_by")
 
-        er, run, wf, manifest = self._load_visit(name, run_id)
+        # The kill switch's hard-freeze close (closed_by=pause) is the Stop's own teardown: it runs on
+        # whatever runtime serves the home now (no cognition: skip_reflection).
+        er, run, wf, manifest = self._load_visit(name, run_id, teardown=(kind == "pause"))
         payload: Dict[str, Any] = {"kind": "close", "closed_by": kind, "reason": str(reason or "")}
         if kind == "pause":
             # closed_by=pause is the HARD FREEZE: runtime's ROUTE honors
@@ -1811,6 +1861,7 @@ class EntityVisitHost:
         self._refuse_if_paused(manifest, verb="be driven")
 
         state = self._drive(er, wf, run_id, max_steps=_TURN_MAX_TICKS)
+        _refuse_if_stopped_run(state)
         out_status = str(getattr(state.status, "value", state.status))
         out: Dict[str, Any] = {"run_id": run_id, "status": out_status}
         if out_status == "completed":
@@ -2091,7 +2142,7 @@ class EntityVisitHost:
             self._specs[run.run_id] = wf
         return wf
 
-    def _load_visit(self, name: str, run_id: str, *, need_spec: bool = True):
+    def _load_visit(self, name: str, run_id: str, *, need_spec: bool = True, teardown: bool = False):
         """Load + verify a stamped visit run. `need_spec=False` is the PURE
         READ path (ledger/transcript-class reads): it skips `_spec_for`, which
         builds the whole react workflow (imports abstractagent, resolves the
@@ -2113,6 +2164,13 @@ class EntityVisitHost:
         stamp = ((run.vars or {}).get("_runtime") or {}).get("entity") or {}
         if str(stamp.get("entity_id") or "") != manifest.entity_id:
             raise VisitRefused(409, f"run {run_id!r} is not a stamped visit of {manifest.entity_id}", code="not_a_visit")
+        if need_spec and not teardown:
+            # THE VISIT'S FENCE (STOP-LANE-DESIGN §2.2): a visit admitted before a Stop never acts on the
+            # runtime admitted after it (the one serving the home now). A visit run from before the
+            # stamp existed runs where it is (a live one cannot predate a Stop: Stop cancels it).
+            admitted = ((run.vars or {}).get("_visit") or {}).get("generation")
+            if admitted is not None and int(admitted) != int(er.home.fence.generation):
+                raise VisitRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
         wf = self._spec_for(er, run) if need_spec else None
         return er, run, wf, manifest
 
@@ -2236,10 +2294,20 @@ class EntityVisitHost:
         wake_warning: Optional[str] = None
         prior: Dict[str, Any] = {}
         sleep_continued = False
-        from .entity_phase import phase_lock
+        from .entity_phase import GenerationMoved, fenced
 
         try:
-            with phase_lock(registry.entities_dir, manifest.slug):
+            run0 = er.run_store.load(run_id)
+            run_vars0 = (run0.vars or {}) if run0 is not None else {}
+        except Exception:  # noqa: BLE001
+            run_vars0 = {}
+        # FENCED ON THE VISIT'S ADMISSION (STOP-LANE-DESIGN T10): the generation the visit was admitted
+        # at (its stamp; a visit from before the stamp: the runtime's own, the one it ran on) — a Stop
+        # since then means its restore writes nothing over the Stop's word.
+        admitted = (run_vars0.get("_visit") or {}).get("generation")
+        visit_fence = int(admitted) if admitted is not None else er.home.fence
+        try:
+            with fenced(registry.entities_dir, manifest.slug, visit_fence) as frec:
                 st = read_entity_state(home_dir)
                 word = str(st.get("state") or "")
                 reason_now = str(st.get("reason") or "")
@@ -2279,17 +2347,21 @@ class EntityVisitHost:
                         # (the visit's facts are this close's `session_closed` marker).
                         from .entity_phase import continue_sleep
 
-                        continue_sleep(registry.entities_dir, manifest.slug, prior)
+                        continue_sleep(registry.entities_dir, manifest.slug, prior, fence=frec.fence)
                         sleep_continued = True
                     elif owned:
                         write_entity_state(home_dir, "awake", reason=f"visitor session ended ({output.get('turns', 0)} turns; "
-                                           f"{output.get('close_reason', 'closed')})")
+                                           f"{output.get('close_reason', 'closed')})", fence=frec.fence)
                     # b1_wake with prior=awake: already awake — no idle rewrite.
                 elif visiting_now:
                     wake_warning = (
                         "posture belongs to another session (ownership token mismatch) — left standing; "
                         "state is the authority"
                     )
+        except GenerationMoved:
+            # The operator's Stop since the visit was admitted: its word stands, nothing is restored. The
+            # prior state is still read from the run for the close's reconcile.
+            prior = dict((run_vars0.get("_visit") or {}).get("prior_state") or {})
         except Exception as e:
             wake_warning = f"#FALLBACK wake-on-terminal failed ({e}); the next open treats the visiting posture as yielded"
         details: Dict[str, Any] = {

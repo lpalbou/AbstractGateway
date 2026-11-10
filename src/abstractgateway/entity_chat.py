@@ -467,6 +467,10 @@ class _HostedChat:
     # (speaker, text, reply, tools_ran, at). Session-lived, never persisted
     # here — the entity's own memory is the durable record.
     transcript: List[Dict[str, Any]] = field(default_factory=list)
+    # The LifecycleFence this visit was admitted at (STOP-LANE-DESIGN §2.2): the home was opened
+    # with it (memory guard, book, artifacts, the session's every model call and effect) and the
+    # close's restore is fenced on it.
+    fence: Any = None
 
 
 class EntityChatHost:
@@ -542,7 +546,6 @@ class EntityChatHost:
             await_loop_quiescent,
             read_entity_state,
             read_loop_status,
-            write_entity_state,
         )
 
         manifest = self._registry.manifest_for(name)  # KeyError -> 404 at the route
@@ -721,10 +724,16 @@ class EntityChatHost:
                 # The kill switch landed while the door waited (contract-phases §3.3).
                 raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
             yielded = True
-        if read_entity_state(home_dir).get("state") == "paused" or generation_of(self._registry.entities_dir, slug) != generation:
+        from .entity_phase import admission_fence, moved_since
+
+        if read_entity_state(home_dir).get("state") == "paused" or moved_since(self._registry.entities_dir, slug, generation):
             from .entity_visits import STOPPED_VISIT_SENTENCE
 
             raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume")
+        # THE VISIT'S FENCE (STOP-LANE-DESIGN §2.2): the door's admission, the one generation this
+        # whole visit runs at — the home opens with it, the session's every model call, tool and
+        # effect checks it, and the close's restore is fenced on it.
+        visit_fence = admission_fence(self._registry.entities_dir, slug, generation)
 
         # One writer per home (plan item 1, GW-A): the visit IS a write
         # window. Acquired AFTER the auto-yield (the loop's day lease is
@@ -744,9 +753,7 @@ class EntityChatHost:
                 try:
                     lease = acquire_directory_lease(home_dir, holder="visit-host")
                 except DirectoryLeaseHeld as e:
-                    if read_entity_state(home_dir).get("state") == "paused" or generation_of(
-                        self._registry.entities_dir, slug
-                    ) != generation:
+                    if read_entity_state(home_dir).get("state") == "paused" or visit_fence.moved():
                         from .entity_visits import STOPPED_VISIT_SENTENCE
 
                         raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
@@ -762,7 +769,7 @@ class EntityChatHost:
             )
 
         try:
-            home = open_home(home_dir, embedder=self._registry._resolve_embedder())
+            home = open_home(home_dir, embedder=self._registry._resolve_embedder(), fence=visit_fence)
             llm_kwargs: Dict[str, Any] = {"model": model}
             # No output cap ever rides the wire: the model works at full capacity.
             if thinking:
@@ -809,25 +816,27 @@ class EntityChatHost:
                 # Version-tolerant: only widened summons require a driver
                 # that knows the knob (a default open works on older drivers).
                 session_kwargs["shelf_size"] = int(shelf_size)
-            session = ChatSession(home, llm, **session_kwargs)
+            session = ChatSession(home, llm, fence=visit_fence, **session_kwargs)
             # The models other than the mind (the summaries capability authors every record's title
             # and summary at formation, runtime 4eefddb): without it every turn forms pending records.
             session.llm_for_capability = self._registry.capability_llm_factory(slug)
-            # CANCELLATION AT EVERY EFFECT BOUNDARY (Codex review 2 #2; runtime ab060bf): once a Stop
-            # moves the lifecycle generation this session's turn runs no further tool, model call,
-            # formation or authoring, and raises TurnCancelled.
-            _entities_dir, _open_generation = self._registry.entities_dir, generation
-            session.cancel_check = lambda: generation_of(_entities_dir, slug) != _open_generation
+            # CANCELLATION AT EVERY EFFECT BOUNDARY (Codex review 2 #2; runtime 2c9b673): the session
+            # carries the home's fence (`ChatSession.fence`, from open_home), so once a Stop moves the
+            # lifecycle generation its turn runs no further tool, model call, formation or authoring.
+            if session.fence is not visit_fence:
+                raise RuntimeError("the hosted chat session does not carry the visit's fence (runtime drift)")
         except SystemExit as e:
             # A refused prelude aborts the summon — the reasons travel verbatim.
             if lease is not None:
                 lease.release()
-            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: prelude refused)", token=visit_token)
+            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: prelude refused)", token=visit_token,
+                                      fence=visit_fence)
             raise ChatOpenRefused(409, f"summon refused: {'; '.join(quiet) or e}")
         except BaseException:
             if lease is not None:
                 lease.release()
-            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: open failed)", token=visit_token)
+            self._restore_prior_state(home_dir, prior_state, suffix="(visit aborted: open failed)", token=visit_token,
+                                      fence=visit_fence)
             raise
 
         # The reflection-loss guard, web half (a2a 0007/171500Z): if a
@@ -858,6 +867,7 @@ class EntityChatHost:
             lease=lease,
             last_activity=_time.monotonic(),
             prior_state=dict(prior_state),
+            fence=visit_fence,
         )
         with self._lock:
             self._sessions[chat_id] = hosted
@@ -1051,7 +1061,8 @@ class EntityChatHost:
         return publish(self._registry, name, "observed", chat_host=self, visit_host=visit)
 
     @staticmethod
-    def _restore_prior_state(home_dir: Any, prior_state: Dict[str, str], *, suffix: str, token: str = "") -> None:
+    def _restore_prior_state(home_dir: Any, prior_state: Dict[str, str], *, suffix: str, token: str = "",
+                             fence: Any) -> None:
         """Failed-open restore: put the OPERATOR's pre-visit word back
         (mutual-exclusivity wave — the aborts used to hardcode awake/asleep,
         erasing the operator's word on half the paths).
@@ -1061,16 +1072,17 @@ class EntityChatHost:
         operator pause/sleep landed mid-window is the coordination authority
         and stands (the close paths' exact predicate; without it a quiescence
         timeout could erase the kill switch). Best-effort: an abort surfaces
-        its own error, never a restore failure."""
+        its own error, never a restore failure. FENCED on the visit's admission (`fence`): nothing is
+        written over a Stop since the visit was admitted."""
         from abstractruntime.identity.life import read_entity_state, write_entity_state
 
         from pathlib import Path as _P
 
-        from .entity_phase import phase_lock
+        from .entity_phase import fenced
 
         home = _P(home_dir)
         try:
-            with phase_lock(home.parent, home.name):
+            with fenced(home.parent, home.name, fence) as rec:
                 if token:
                     st = read_entity_state(home_dir)
                     still_ours = (
@@ -1088,11 +1100,12 @@ class EntityChatHost:
                     # c343) and since; the aborted open is not part of its reason.
                     from .entity_phase import continue_sleep
 
-                    continue_sleep(home.parent, home.name, dict(prior_state or {}))
+                    continue_sleep(home.parent, home.name, dict(prior_state or {}), fence=rec.fence)
                     return
                 reason = str((prior_state or {}).get("reason") or "")
-                write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix))
-        except Exception:  # noqa: BLE001
+                write_entity_state(home_dir, target, reason=(f"{reason} {suffix}".strip() if reason else suffix),
+                                   fence=rec.fence)
+        except Exception:  # noqa: BLE001 - GenerationMoved included: a Stop's word stands
             pass
 
     def has_open(self, slug: str) -> bool:
@@ -1126,9 +1139,10 @@ class EntityChatHost:
             hosted = self._sessions.get(chat_id) if chat_id else None
         if hosted is None:
             return {"outcome": "not_open", "chat_id": None}
+        # No further effect of the turn: the Stop already moved the session's fence (its bump ran before
+        # this row); the yield ends the turn at its next boundary too.
         try:
             hosted.session.yield_check = lambda: True
-            hosted.session.cancel_check = lambda: True  # no further effect of the turn (runtime ab060bf)
         except Exception:  # noqa: BLE001 - a session without the seam still closes after its turn
             pass
         # Its close record says what ended it: cancelled by the operator's kill switch.
@@ -1214,13 +1228,19 @@ class EntityChatHost:
     def _close_hosted(self, hosted: _HostedChat, *, reflect: bool) -> Dict[str, Any]:
         from abstractruntime.identity.life import write_entity_state
 
+        from .entity_phase import GenerationMoved, fenced
+
         reflection: Optional[Dict[str, Any]] = None
         warnings: List[str] = []
         sleep_continued = False
         try:
             if reflect and hosted.session.reports:
+                from abstractruntime.identity.chat import TurnCancelled
+
                 try:
                     reflection = hosted.session.reflect()
+                except TurnCancelled:
+                    pass  # the operator's Stop (the session's fence): no look-back, and never a failure line
                 except Exception as e:  # a reflection failure never voids the session
                     warnings.append(f"#FALLBACK reflection failed ({e}); the session's memories are intact")
             summary = hosted.session.close_summary()
@@ -1240,10 +1260,9 @@ class EntityChatHost:
                 # any lane's posture — the cross-lane clobber class).
                 from abstractruntime.identity.life import read_entity_state
 
-                from .entity_phase import phase_lock
-
-                # One locked step with the kill switch's write (review 2026-11-09 #1).
-                with phase_lock(self._registry.entities_dir, hosted.entity_slug):
+                # One locked step with the kill switch's write (review 2026-11-09 #1), FENCED on the
+                # visit's admission (STOP-LANE-DESIGN T10): nothing is restored over a Stop since.
+                with fenced(self._registry.entities_dir, hosted.entity_slug, hosted.fence) as rec:
                     home_dir = self._registry.entities_dir / hosted.entity_slug
                     st = read_entity_state(home_dir)
                     owned = (
@@ -1262,7 +1281,7 @@ class EntityChatHost:
                             # `session_closed` marker, never part of the reason.
                             from .entity_phase import continue_sleep
 
-                            continue_sleep(self._registry.entities_dir, hosted.entity_slug, prior)
+                            continue_sleep(self._registry.entities_dir, hosted.entity_slug, prior, fence=rec.fence)
                             sleep_continued = True
                         else:
                             # Wake-cue seeding (maintainer escalation 2026-07-09,
@@ -1278,12 +1297,14 @@ class EntityChatHost:
                             interests = [words for _rid, words in (reflection or {}).get("interests", []) if words]
                             if interests:
                                 reason += f" — you elected to pursue: {'; '.join(str(w)[:120] for w in interests[:2])}"
-                            write_entity_state(home_dir, "awake", reason=reason)
+                            write_entity_state(home_dir, "awake", reason=reason, fence=rec.fence)
                     else:
                         warnings.append(
                             "state changed hands mid-visit — left standing (the posture no longer "
                             "carries this visit's token; state is the authority, no restore-write)"
                         )
+            except GenerationMoved:
+                pass  # the operator's Stop since the visit was admitted: its word stands, nothing restored
             except Exception as e:  # noqa: BLE001 - close must finish; the state write is best-effort
                 warnings.append(f"#FALLBACK could not restore the pre-visit state: {e}")
             with self._lock:

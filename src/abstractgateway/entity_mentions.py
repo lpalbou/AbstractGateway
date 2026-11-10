@@ -783,9 +783,9 @@ def _mirror_into_bound_visits(
             out.append(row)
             continue
         if generation is not None:
-            from .entity_phase import generation_of
+            from .entity_phase import moved_since
 
-            if generation_of(registry.entities_dir, mentioned.slug) != generation:
+            if moved_since(registry.entities_dir, mentioned.slug, generation):
                 # Stopped after the admission: his words still never reach the other visit.
                 row["reply"] = None
                 row["error"] = f"{_display_name(mentioned)} was stopped; nothing was carried into this visit."

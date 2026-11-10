@@ -6,6 +6,7 @@ summon stays a visit. Hermetic gateway."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import subprocess
@@ -68,7 +69,7 @@ def _awake(client):
     from abstractruntime.identity.life import write_entity_state
 
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-    write_entity_state(_home_dir(), "awake", reason="woken")
+    write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
 
 
 def _put(client, body, **kw):
@@ -95,7 +96,7 @@ def test_personal_on_starts_own_time_and_off_never_puts_him_to_sleep(spawned):
 
         # The old loop gate's landing when own time ended: asleep + 6 h. Off = awake and reachable.
         write_entity_state(_home_dir(), "asleep", reason="personal ended (grant_revoked)", written_by="grant-gate",
-                           wake_at="2099-01-01T00:00:00+00:00")
+                           wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(_home_dir()))
         off = _put(client, {"personal": False})
         assert off.status_code == 200, off.text
         assert read_personal_grant(_home_dir())["mode"] == "disabled"
@@ -109,7 +110,7 @@ def test_personal_on_during_a_visit_waits_for_the_visit(spawned, monkeypatch: py
     with _client() as client:
         _awake(client)
         write_entity_state(_home_dir(), "asleep", reason="in conversation with person:admin [visit v-1]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home_dir()))
         r = _put(client, {"personal": True})
         assert r.status_code == 200, r.text
         assert r.json()["phase"] == "visit" and r.json()["toggles"]["personal"] is True
@@ -129,7 +130,7 @@ def test_toggle_body_validation_and_the_stopped_refusal():
         bad = client.put("/api/gateway/entities/Castor/life_state/toggles", content=b"nope",
                          headers={"Content-Type": "application/json"})
         assert bad.status_code == 422 and bad.json()["code"] == "invalid_body"
-        write_entity_state(_home_dir(), "paused", reason="stop")
+        write_entity_state(_home_dir(), "paused", reason="stop", fence=_LF.admit(_home_dir()))
         r = _put(client, {"personal": False})
         assert r.status_code == 409
         assert r.json()["detail"]["message"] == "Stopped. Resume him first, then choose what he may do."

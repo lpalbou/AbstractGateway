@@ -10,6 +10,7 @@ And the structural absence: there is NO DELETE route for entities.
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 from datetime import datetime, timedelta
@@ -242,7 +243,7 @@ def test_identity_card_composes_a_life():
         doors[0]["changed_at"] = (marker_at - timedelta(seconds=90)).isoformat()
         history.write_text("".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
 
-        write_entity_state(home_dir, "awake", reason="loop resumed runtime-side")
+        write_entity_state(home_dir, "awake", reason="loop resumed runtime-side", fence=_LF.admit(home_dir))
 
         moments = client.get("/api/gateway/entities/Castor/card").json()["moments"]
         state_moments = [(m["kind"], m["details"].get("reason") or "") for m in moments if m["kind"] in ("sleep", "wake")]

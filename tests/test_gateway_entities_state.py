@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 
 import pytest
@@ -82,7 +83,7 @@ def test_operator_sleep_only_changes_the_phase():
 
         manifest = ent._registry().manifest_for("Castor")
         home = ent._registry().entities_dir / manifest.slug
-        write_personal_grant(home, mode="until_revoked", granted_by="person:admin")
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin", fence=_LF.admit(home))
         (home / "work_order.md").write_text("stand up the daily report", encoding="utf-8")
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 

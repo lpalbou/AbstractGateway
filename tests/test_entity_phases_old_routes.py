@@ -7,6 +7,7 @@ sleep refuses during a visit (`in_visit`) and after a sleep (`already_asleep`). 
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import subprocess
@@ -86,8 +87,8 @@ def test_state_paused_is_the_kill_switch_and_restore_is_resume(spawned):
         _born(client)
         from abstractruntime.identity.life import write_entity_state
 
-        write_entity_state(_home_dir(), "awake", reason="woken")  # own time runs (not the newborn's sleep)
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))  # own time runs (not the newborn's sleep)
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
         from entity_fake_loop import spawn
 
         proc = spawn(_home_dir(), "between", 60)
@@ -122,13 +123,13 @@ def test_the_operator_sleep_refuses_during_a_visit_and_after_a_sleep(monkeypatch
         # A newborn's operator sleep takes the request as the SAME sleep (not a chained one).
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "sleep"}).status_code == 200
         # A sleep whose maintenance is running cannot be followed by another sleep.
-        write_entity_state(_home_dir(), "asleep", reason="maintenance", mode="dreaming")
+        write_entity_state(_home_dir(), "asleep", reason="maintenance", mode="dreaming", fence=_LF.admit(_home_dir()))
         asleep = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep"})
         assert asleep.status_code == 409
         assert asleep.json()["code"] == "already_asleep"
         assert asleep.json()["detail"]["message"] == "He is already resting; a sleep cannot follow a sleep."
 
-        write_entity_state(_home_dir(), "awake", reason="woken")
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert opened.status_code == 200, opened.text
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep"})
@@ -144,7 +145,7 @@ def test_loop_start_is_personal_on_and_never_starts_under_a_visit(spawned):
     with _client() as client:
         _born(client)
         write_entity_state(_home_dir(), "asleep", reason="in conversation with person:admin [visit v-5]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home_dir()))
         r = client.post("/api/gateway/entities/Castor/loop/start", json={"tick_seconds": 7.0})
         assert r.status_code == 200, r.text
         _deprecated(r, "/life_state/toggles")
@@ -153,14 +154,14 @@ def test_loop_start_is_personal_on_and_never_starts_under_a_visit(spawned):
         assert read_personal_grant(_home_dir())["mode"] == "until_revoked"
         assert spawned == []
 
-        write_entity_state(_home_dir(), "awake", reason="visit over")
+        write_entity_state(_home_dir(), "awake", reason="visit over", fence=_LF.admit(_home_dir()))
         from abstractgateway import entity_phase
         from abstractgateway.routes.entities import _registry
 
         entity_phase.reconcile(_registry(), "castor", "visit_closed")
         assert spawned and spawned[-1].get("tick_seconds") == 7.0  # the remembered parameters
 
-        write_entity_state(_home_dir(), "paused", reason="stop")
+        write_entity_state(_home_dir(), "paused", reason="stop", fence=_LF.admit(_home_dir()))
         refused = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert refused.status_code == 409 and refused.json()["detail"]["reason_code"] == "stopped_use_resume"
 
@@ -170,8 +171,8 @@ def test_graceful_loop_stop_also_turns_personal_off_and_freeze_is_the_kill_switc
 
     with _client() as client:
         _born(client)
-        write_entity_state(_home_dir(), "awake", reason="woken")
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
         r = client.post("/api/gateway/entities/Castor/loop/stop", json={})
         assert r.status_code == 200, r.text
         _deprecated(r, "/life_state/toggles")
@@ -189,7 +190,7 @@ def test_personal_grant_put_is_the_personal_toggle(spawned):
 
     with _client() as client:
         _born(client)
-        write_entity_state(_home_dir(), "awake", reason="woken")
+        write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
         r = client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"})
         assert r.status_code == 200, r.text
         _deprecated(r, "/life_state/toggles")

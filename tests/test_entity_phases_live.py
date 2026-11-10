@@ -6,6 +6,7 @@ it. The stream's generator is driven directly (a life has no terminal state)."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import asyncio
 import copy
 import json
@@ -103,7 +104,7 @@ def test_a_change_made_inside_the_loop_reaches_an_open_stream_and_survives_a_rec
                 # The backlog (the newborn's own phase marker included) drains first.
                 await _read_until(gen, lambda e: _is_phase(e, "idle"))
                 # Another process writes the state file itself: no gateway route is involved.
-                write_entity_state(_home_dir(), "asleep", reason="put to rest outside the gateway")
+                write_entity_state(_home_dir(), "asleep", reason="put to rest outside the gateway", fence=_LF.admit(_home_dir()))
                 seen = await _read_until(gen, lambda e: _is_phase(e, "sleep"))
                 ident, env = seen[-1]
                 payload = env["payload"]

@@ -416,10 +416,22 @@ class EntityHome:
         # in a home opened WITHOUT the queue enqueues no rebuild task, so nothing would ever be
         # rebuilt. Every home the door opens has its queue; the visit runtime's home (the runtime's
         # `open_home`) opens the same way on the runtime side.
-        self.memory = MemorySystem(store=self.store, journal=self.journal, embedder=embedder, task_queue=True)
+        # THE STOP FENCE on the shared handle (STOP-LANE-DESIGN §2.2): memory's commit guard runs inside
+        # every write transaction and the book's before every append, checking the fences of the act in
+        # progress (`entity_phase.acting_under`: a sleep pass, the authoring drainer, a mirrored turn) —
+        # a write decided before the operator's Stop never lands after it. An operator's own door write
+        # acts under no fence (its door admitted it).
+        self.memory = MemorySystem(store=self.store, journal=self.journal, embedder=embedder, task_queue=True,
+                                   commit_guard=self._commit_guard)
         self._book_db = SqliteDatabase(str(self.home_dir / BOOK_FILENAME))
         self._book_ledger = SqliteLedgerStore(self._book_db)
-        self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger)
+        self.diary = DiaryStore(entity_id=manifest.entity_id, ledger_store=self._book_ledger, guard=self._commit_guard)
+
+    @staticmethod
+    def _commit_guard(where: str) -> None:
+        from .entity_phase import check_acting
+
+        check_acting(where)
 
     # -- identity ----------------------------------------------------------
 
@@ -991,6 +1003,7 @@ class EntityRegistry:
         self._create_lock = threading.Lock()
         self._open_homes: Dict[str, EntityHome] = {}
         self._entity_runtimes: Dict[str, Any] = {}  # slug -> EntityRuntime (GW-C)
+        self._readmit_locks: Dict[str, threading.Lock] = {}  # slug -> the runtime's readmit lock
         self._open_lock = threading.Lock()
         self._embedder_factory = embedder_factory
         self._embedder: Any = None
@@ -1372,10 +1385,13 @@ class EntityRegistry:
             if bool(result.created):
                 try:
                     from abstractruntime.identity.life import write_entity_state
+                    from abstractruntime.identity.lifecycle_fence import LifecycleFence
 
+                    # Admitted at the home's generation now (its first: nothing could have stopped it).
                     write_entity_state(
                         home_dir, "awake",
                         reason="newborn — awake and reachable; own time starts when the operator gives it",
+                        fence=LifecycleFence.admit(home_dir),
                     )
                 except Exception as e:  # noqa: BLE001
                     warnings.append(f"#FALLBACK newborn birth state not written: {e}")
@@ -1737,11 +1753,17 @@ class EntityRegistry:
                 self._refuse_if_held(slug)
                 from abstractruntime.core.models import EffectType
                 from abstractruntime.identity.entity_runtime import open_entity_runtime
+                from abstractruntime.identity.lifecycle_fence import LifecycleFence
 
                 from .entity_gate import wrap_entity_runtime_routing
 
                 er = open_entity_runtime(
                     self.entities_dir / slug,
+                    # THE RUNTIME'S FENCE (STOP-LANE-DESIGN §2.2): admitted at the home's generation now
+                    # (LifecycleUnreadable, fail closed, when it cannot be read). A Stop moves it and every
+                    # effect is refused until a door admits new work and readmits it
+                    # (`runtime_for_admission`, runtime 5ee8049 FenceHolder).
+                    fence=LifecycleFence.admit(self.entities_dir / slug),
                     embedder=embedder,
                     # A capability-tagged LLM_CALL (the visit lane's title/summary authoring, runtime
                     # bb6d17a) goes to that capability's own model, never the mind.
@@ -1770,6 +1792,56 @@ class EntityRegistry:
                 wire_entity_runtime_email(er.runtime, slug)
                 self._entity_runtimes[slug] = er
             return er
+
+    def readmit_cached_runtime(self, name: str) -> bool:
+        """Resume's step for the runtime kept open (runtime 5ee8049): a cached runtime a Stop moved
+        past is readmitted at the home's generation now, so the work that does not come through a
+        door (the entity's mail notices) runs again. Never opens one. True when it readmitted."""
+        from .entity_phase import GenerationMoved, generation_of
+
+        slug = self.manifest_for(name).slug
+        with self._open_lock:
+            er = self._entity_runtimes.get(slug)
+        if er is None or not er.home.fence.moved():
+            return False
+        try:
+            self.runtime_for_admission(slug, generation_of(self.entities_dir, slug))
+        except GenerationMoved:
+            return False
+        return True
+
+    def runtime_for_admission(self, name: str, generation: int) -> Any:
+        """The cached entity runtime for work admitted at `generation` (a visit's, a mention's, a
+        drain's). A runtime a Stop moved past is READMITTED here at the admission (runtime 5ee8049:
+        `EntityRuntime.readmit`, swapped inside the home state lock) — new work after a Resume is the
+        first act of the new generation; the Stop already cancelled the old generation's runs, and a
+        visit run admitted before it is refused at its door (`_load_visit` compares its stamped
+        generation). GenerationMoved when the admission itself is stale (a Stop since it)."""
+        from abstractruntime.identity.lifecycle_fence import LifecycleFence, StoppedByOperator
+
+        from .entity_phase import GenerationMoved
+
+        slug = self.manifest_for(name).slug
+        er = self.get_entity_runtime(slug)
+        fence = er.home.fence
+        if int(fence.generation) == int(generation) and not fence.moved():
+            return er
+        # The per-slug readmit lock, never the registry's open lock: readmit takes the home state lock,
+        # and a publish holding that lock reads the runtime through `get_entity_runtime` (lock order).
+        with self._open_lock:
+            readmit_lock = self._readmit_locks.setdefault(slug, threading.Lock())
+        with readmit_lock:
+            fence = er.home.fence
+            if int(fence.generation) != int(generation) or fence.moved():
+                admitted = LifecycleFence(self.entities_dir / slug, int(generation))
+                if admitted.moved():
+                    raise GenerationMoved(f"this work was admitted at lifecycle generation {generation}; "
+                                          "the operator's Stop happened since")
+                try:
+                    er.readmit(admitted)
+                except StoppedByOperator as e:  # StaleLifecycleGeneration: a Stop raced the readmit
+                    raise GenerationMoved(str(e)) from None
+        return er
 
     def _resolve_entity_provider(self, provider: str) -> Tuple[str, Dict[str, Any]]:
         """Resolve an entity substrate provider to (concrete_provider, kwargs).
@@ -2430,7 +2502,10 @@ class EntityRegistry:
         # landing meanwhile is never written over.
         from .entity_phase import GenerationMoved, fenced, generation_of
 
-        entry_generation = generation_of(self.entities_dir, manifest.slug)
+        try:
+            entry_generation = generation_of(self.entities_dir, manifest.slug)
+        except GenerationMoved as e:  # an unreadable lifecycle generation admits nothing (fail closed)
+            raise ValueError(f"the state change cannot be admitted: {e}") from None
         admit: Optional[Callable[[], Optional[str]]] = None
         reserved: Any = None
         reserved_generation: Optional[int] = None
@@ -2453,15 +2528,15 @@ class EntityRegistry:
             except DirectoryLeaseHeld:
                 raise SleepNotAdmitted("home_busy") from None
         try:
-            with fenced(self.entities_dir, manifest.slug, entry_generation):
+            with fenced(self.entities_dir, manifest.slug, entry_generation) as frec:
                 refusal = admit() if admit is not None else None
                 if refusal:
                     raise SleepNotAdmitted(refusal)
                 prior = read_entity_state(home_dir)
-                written = write_entity_state(home_dir, state2, reason=reason, written_by=written_by)
+                written = write_entity_state(home_dir, state2, reason=reason, written_by=written_by, fence=frec.fence)
                 if admit is not None:
                     # Recorded in the same locked step: the pass runs under the admission's generation.
-                    reserved_generation = maintenance_started(self, manifest.slug)
+                    reserved_generation = maintenance_started(self, manifest.slug, entry_generation)
         except BaseException as e:
             if reserved is not None:
                 reserved.release()
@@ -2518,32 +2593,52 @@ class EntityRegistry:
                 # The kill switch's fence (contract-phases §3.3): the pass runs under the
                 # generation it started with; its `finally` restores its own sleep only when no
                 # Stop landed and no visit took the posture meanwhile.
-                from .entity_phase import maintenance_started, maintenance_write_if_owner
+                from abstractruntime.identity.lifecycle_fence import StoppedByOperator
 
-                maintenance_generation = (reserved_generation if reserved_generation is not None
-                                          else maintenance_started(self, manifest.slug))
+                from .entity_phase import (
+                    KILL_SWITCH_REASON,
+                    acting_under,
+                    admission_fence,
+                    maintenance_started,
+                    maintenance_write_if_owner,
+                )
+
+                # The pass runs under the SLEEP's admission (its state write's generation), never a
+                # generation read after it: a Stop since then means no pass at all.
+                maintenance_generation: Optional[int] = reserved_generation
+                if maintenance_generation is None:
+                    try:
+                        maintenance_generation = maintenance_started(self, manifest.slug, entry_generation)
+                    except GenerationMoved:
+                        maintenance_generation = None
                 # The sleep is announced BEFORE the pass runs (contract-phases §4.3): every open
                 # app shows "resting for maintenance" while this request is still working.
                 from .entity_phase import safe_publish
 
                 safe_publish(self, manifest.slug, "operator_sleep")
                 try:
+                    if maintenance_generation is None:
+                        raise _MaintenanceSuperseded()  # a Stop landed since the sleep was admitted
+                    # THE PASS'S FENCE (STOP-LANE-DESIGN §2.2; Codex review 3 #5): every memory commit
+                    # and book append of the night checks it inside its transaction (the shared home's
+                    # commit guard, `acting_under`), and memory's `cancelled=` ends the night before its
+                    # completion marker. The two together: nothing of the night lands after a Stop.
+                    pass_fence = admission_fence(self.entities_dir, manifest.slug, maintenance_generation)
                     # PRESENT-TENSE mode (entity forensics c2465 ask 3): the
                     # dreaming badge is true only WHILE the pass runs — it
                     # finishes in seconds, and a badge claiming consolidation
                     # for a whole sleep conflates dreaming with napping. Set
                     # before, clear after (state stays asleep either way).
                     if not maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
-                                                      lambda: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming",
-                                                                                 written_by=written_by)):
+                                                      lambda fence: write_entity_state(home_dir, "asleep", reason=reason, mode="dreaming",
+                                                                                       written_by=written_by, fence=fence)):
                         raise _MaintenanceSuperseded()
                     def _pass_cancelled() -> bool:
                         # The hard Stop (Codex review 3 #5): the lifecycle generation moved. FAIL
-                        # CLOSED: a generation that cannot be read is a Stop, never "not stopped".
-                        from abstractruntime.identity.life import read_lifecycle_generation
-
+                        # CLOSED: a generation that cannot be read is a Stop, never "not stopped". The
+                        # fence's compare + stat, then phases.yaml itself (a stage boundary's re-read).
                         try:
-                            return int(read_lifecycle_generation(home_dir)) != int(maintenance_generation)
+                            return bool(pass_fence.truth_moved())
                         except Exception:  # noqa: BLE001 - unreadable = stopped
                             return True
 
@@ -2563,12 +2658,13 @@ class EntityRegistry:
                     # no completion. `should_continue` is the graceful yield at its stage boundaries.
                     pass_kwargs = ({"should_continue": _pass_may_continue, "cancelled": _pass_cancelled}
                                    if _night_is_full else {})
-                    result = _night_pass(
-                        home.memory,
-                        scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
-                        owner_id=eid,
-                        **pass_kwargs,
-                    )
+                    with acting_under(pass_fence):
+                        result = _night_pass(
+                            home.memory,
+                            scopes=[(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)],
+                            owner_id=eid,
+                            **pass_kwargs,
+                        )
                     dream_result = dict(result) if isinstance(result, dict) else {"result": result}
                     if not _night_is_full:
                         dream_result["warning"] = (
@@ -2580,6 +2676,10 @@ class EntityRegistry:
                 except _MaintenanceSuperseded:
                     # A Stop or a visit took the home before the pass began: no pass, nothing written.
                     dream_result = {"skipped": True, "superseded": True}
+                except StoppedByOperator:
+                    # The operator's Stop refused a commit of the night (memory rolled it back): a clean
+                    # record, stopped by the operator — never a failed pass.
+                    dream_result = {"cancelled": True, "cancelled_by": "operator", "reason": KILL_SWITCH_REASON}
                 except Exception as e:  # noqa: BLE001 - review #8: a failed pass still completes
                     logger.exception("maintenance pass failed for %s", manifest.slug)
                     dream_result = {"failed": True, "error": f"{e.__class__.__name__}: {e}"}
@@ -2588,8 +2688,10 @@ class EntityRegistry:
 
                     # Checked and written in ONE locked step (review #1): a Stop or a visit landing
                     # between the check and the write is never overwritten.
-                    maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
-                                               lambda: write_entity_state(home_dir, "asleep", reason=reason, written_by=written_by))
+                    if maintenance_generation is not None:
+                        maintenance_write_if_owner(self, manifest.slug, maintenance_generation,
+                                                   lambda fence: write_entity_state(home_dir, "asleep", reason=reason,
+                                                                                    written_by=written_by, fence=fence))
                     written = _read_state(home_dir)
                     if lease is not None:
                         lease.release()

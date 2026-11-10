@@ -9,6 +9,7 @@ An interrupted sleep continues as the same sleep (§4.4). Hermetic gateway; the 
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import os
@@ -108,8 +109,8 @@ def _born_awake_with_personal(client, personal: bool = True):
 
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     if personal:
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
-    write_entity_state(_home_dir(), "awake", reason="woken")
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
+    write_entity_state(_home_dir(), "awake", reason="woken", fence=_LF.admit(_home_dir()))
 
 
 @pytest.fixture
@@ -183,7 +184,7 @@ def test_a_grant_revoked_during_the_visit_means_idle_after_it(spawned, own_time)
         # time back, even once a grant stands again (only the operator's own act starts it).
         from abstractruntime.identity.life import write_personal_grant
 
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
         again = client.post("/api/gateway/entities/Castor/visit/open", json={})
         client.post(f"/api/gateway/entities/Castor/visit/{again.json()['run_id']}/close", json={"closed_by": "operator"})
         assert spawned == []
@@ -194,10 +195,10 @@ def test_a_spontaneous_sleep_returns_to_own_time_when_it_ends(spawned, own_time)
 
     with _client() as client:
         proc = own_time.start(client)
-        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self")
+        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self", fence=_LF.admit(_home_dir()))
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "sleep"
         own_time.end(proc)
-        write_entity_state(_home_dir(), "awake", reason="woke", written_by="self")
+        write_entity_state(_home_dir(), "awake", reason="woke", written_by="self", fence=_LF.admit(_home_dir()))
         client.get("/api/gateway/entities/Castor/life_state")  # the gateway observes the wake
         assert spawned == ["castor"]
 
@@ -256,7 +257,7 @@ def test_an_interrupted_sleep_continues_as_the_same_sleep(spawned, writer):
 
             proc = spawn(home, "between", 60)
             procs.append(proc)
-        write_entity_state(home, "asleep", reason="resting", written_by=writer, wake_at="2099-01-01T00:00:00+00:00")
+        write_entity_state(home, "asleep", reason="resting", written_by=writer, wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(home))
         before = client.get("/api/gateway/entities/Castor/life_state").json()
         assert before["phase"] == "sleep"
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
@@ -295,9 +296,9 @@ def test_reconcile_never_starts_under_a_visit_opening_or_a_stop(spawned):
     with _client() as client:
         _born_awake_with_personal(client)
         write_entity_state(_home_dir(), "asleep", reason="in conversation with person:admin [visit v-9]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home_dir()))
         assert entity_phase.reconcile(_registry(), "castor", "test")["reason"] == "visit"
-        write_entity_state(_home_dir(), "paused", reason="stop")
+        write_entity_state(_home_dir(), "paused", reason="stop", fence=_LF.admit(_home_dir()))
         assert entity_phase.reconcile(_registry(), "castor", "test")["reason"] == "stopped"
         assert spawned == []
 
@@ -389,7 +390,7 @@ def test_a_visit_during_maintenance_takes_the_wake_to_its_close(spawned, monkeyp
 
     def _pass_then_a_visitor(*args, **kwargs):
         write_entity_state(_home_dir(), "asleep", reason="in conversation with person:admin [visit v-3]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home_dir()))
         return {"ok": True}
 
     monkeypatch.setattr(abstractmemory, "sleep_pass", _pass_then_a_visitor)
@@ -403,7 +404,7 @@ def test_a_visit_during_maintenance_takes_the_wake_to_its_close(spawned, monkeyp
         assert read_entity_state(_home_dir())["mode"] == "visiting"  # the pass never wrote over the visit
         assert spawned == []
         # The visit closes and restores the interrupted sleep; its maintenance is done: he wakes.
-        write_entity_state(_home_dir(), "asleep", reason="operator sleep restored (visit ended)", written_by="operator")
+        write_entity_state(_home_dir(), "asleep", reason="operator sleep restored (visit ended)", written_by="operator", fence=_LF.admit(_home_dir()))
         entity_phase.after_visit_closed(_registry(), "castor", {"state": "asleep"})
         assert read_entity_state(_home_dir())["state"] == "awake"
         assert spawned == ["castor"]
@@ -430,7 +431,7 @@ def test_next_names_where_an_interruption_returns(spawned, own_time):
     with _client() as client:
         own_time.start(client)
         write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self",
-                           wake_at="2099-01-01T00:00:00+00:00")
+                           wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(_home_dir()))
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
         assert ls["phase"] == "sleep" and ls["next"]["phase"] == "personal"
         assert ls["next"]["sentence"] == "When he wakes and his own time resumes."
@@ -441,7 +442,7 @@ def test_next_during_a_visit_that_interrupted_a_sleep_is_the_sleep(spawned):
 
     with _client() as client:
         _born_awake_with_personal(client)
-        write_entity_state(_home_dir(), "asleep", reason="operator sleep")
+        write_entity_state(_home_dir(), "asleep", reason="operator sleep", fence=_LF.admit(_home_dir()))
         opened = client.post("/api/gateway/entities/Castor/visit/open", json={})
         assert opened.status_code == 200, opened.text
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
@@ -494,10 +495,6 @@ def test_a_restore_tells_the_child_the_remembered_phase(spawned, own_time):
         # returns to the remembered phase or ends idle).
         (_home_dir() / "work_order.md").write_text("Sort the archive.\n", encoding="utf-8")
         reg = _registry()
-        with entity_phase.phase_lock(reg.entities_dir, "castor"):
-            rec = entity_phase.read_record(reg.entities_dir, "castor")
-            rec.pop("spawning", None)
-            entity_phase.write_record(reg.entities_dir, "castor", rec)
         before = len(spawned)
         assert entity_phase.reconcile(reg, "castor", "test")["own_time"] is True
         assert len(spawned) == before + 1 and spawned.return_to[-1] is None
@@ -524,7 +521,7 @@ def test_a_loop_that_ends_on_purpose_hands_the_phase_back(spawned, own_time, sto
 
     with _client() as client:
         proc = own_time.start(client)
-        write_entity_state(_home_dir(), "asleep", reason="own time ended", written_by="loop")
+        write_entity_state(_home_dir(), "asleep", reason="own time ended", written_by="loop", fence=_LF.admit(_home_dir()))
         own_time.end(proc, stopped_by=stopped_by)
         body = client.get("/api/gateway/entities/Castor/life_state").json()
         assert read_entity_state(_home_dir())["state"] == "awake", "the gate sleep was left in place"
@@ -539,7 +536,7 @@ def test_his_own_sleep_ends_when_its_maintenance_is_done(spawned, own_time):
 
     with _client() as client:
         proc = own_time.start(client)
-        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self")
+        write_entity_state(_home_dir(), "asleep", reason="self-elected sleep: tired", written_by="self", fence=_LF.admit(_home_dir()))
         ls = client.get("/api/gateway/entities/Castor/life_state").json()
         assert ls["phase"] == "sleep" and ls["sleep"]["kind"] == "self"
         assert ls["sleep"]["ends"] == "when maintenance is done"
@@ -571,10 +568,10 @@ def test_resume_to_is_the_runtimes_bucket(spawned):
     with _client() as client:
         _born_awake_with_personal(client)
         reg = _registry()
-        write_resume_to(_home_dir(), None, written_by="loop")  # the bucket exists (the runtime wrote it)
+        write_resume_to(_home_dir(), None, written_by="loop", fence=_LF.admit(_home_dir()))  # the bucket exists (the runtime wrote it)
         entity_phase.set_resume_to(reg, "castor", "personal")
         assert read_resume_to(_home_dir())["phase"] == "personal"  # the gateway's word reaches the bucket
-        write_resume_to(_home_dir(), None, written_by="loop")  # the loop ended idle
+        write_resume_to(_home_dir(), None, written_by="loop", fence=_LF.admit(_home_dir()))  # the loop ended idle
         assert entity_phase.read_record(reg.entities_dir, "castor")["resume_to"] is None
 
 
@@ -616,7 +613,7 @@ def test_a_work_return_never_becomes_own_time_because_a_grant_stands(spawned):
 
     with _client() as client:
         _born_awake_with_personal(client)
-        write_resume_to(_home_dir(), "work", written_by="loop")
+        write_resume_to(_home_dir(), "work", written_by="loop", fence=_LF.admit(_home_dir()))
         assert entity_phase.reconcile(_registry(), "castor", "observed")["own_time"] is False
         assert spawned == []
 
@@ -662,8 +659,8 @@ def test_a_restart_never_resumes_a_stopped_home_or_idle_without_a_grant(spawned)
         body = client.get("/api/gateway/entities/Castor/life_state").json()
         assert body["phase"] == "idle" and body["next"] is None
         # Stopped with a grant standing (written behind the kill switch's back): the Stop's word stands.
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
-        write_entity_state(_home_dir(), "paused", reason="stop")
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
+        write_entity_state(_home_dir(), "paused", reason="stop", fence=_LF.admit(_home_dir()))
         rows = _restart_pass()
         assert spawned == [] and [r["reason"] for r in rows if r["slug"] == "castor"] == ["stopped"]
         assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "stopped"
@@ -702,8 +699,8 @@ def test_a_stop_after_the_restart_cancels_its_pending_restore(spawned, own_time)
         # Awake again by a path that is not the Resume route (the CLI's restore writes the state).
         from abstractruntime.identity.life import write_entity_state, write_personal_grant
 
-        write_entity_state(_home_dir(), "awake", reason="restored by hand")
-        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin")
+        write_entity_state(_home_dir(), "awake", reason="restored by hand", fence=_LF.admit(_home_dir()))
+        write_personal_grant(_home_dir(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home_dir()))
         entity_phase.set_resume_to(_registry(), "castor", "personal")
         (_home_dir() / "loop_status").write_text(json.dumps({"phase": "between", "pid": proc.pid}), encoding="utf-8")
         assert entity_phase.reconcile(_registry(), "castor", "test")["reason"] == "loop_crashed"
@@ -749,7 +746,7 @@ def test_a_sleep_keeps_its_reason_and_since_across_three_visits(spawned, lane):
     with _client() as client:
         _born_awake_with_personal(client, personal=False)
         home = _home_dir()
-        write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator")
+        write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator", fence=_LF.admit(home))
         before = client.get("/api/gateway/entities/Castor/life_state").json()
         assert before["phase"] == "sleep" and before["sleep"]["reason"] == "by the operator (roster)"
         origin = read_entity_state(home)["changed_at"]
@@ -787,12 +784,12 @@ def test_an_aborted_open_keeps_the_sleep_as_it_was(spawned):
     with _client() as client:
         _born_awake_with_personal(client, personal=False)
         home = _home_dir()
-        write_entity_state(home, "asleep", reason="resting", written_by="operator", wake_at="2099-01-01T00:00:00+00:00")
+        write_entity_state(home, "asleep", reason="resting", written_by="operator", wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(home))
         before = client.get("/api/gateway/entities/Castor/life_state").json()
         prior = dict(read_entity_state(home))
         write_entity_state(home, "asleep", reason="in conversation with person:admin [visit v-1]", mode="visiting",
-                           written_by="visit-door")
-        _restore_prior_state(home, prior, suffix="(visit open failed)", token="[visit v-1]")
+                           written_by="visit-door", fence=_LF.admit(home))
+        _restore_prior_state(home, prior, suffix="(visit open failed)", token="[visit v-1]", fence=_LF.admit(home))
         st = read_entity_state(home)
         assert (st["state"], st["reason"], st.get("wake_at")) == ("asleep", "resting", "2099-01-01T00:00:00+00:00")
         after = client.get("/api/gateway/entities/Castor/life_state").json()
@@ -823,9 +820,9 @@ def test_a_visit_closing_on_a_sleep_adds_only_the_visit_rows(spawned, lane, writ
 
             procs.append(spawn(home, "between", 60))
             write_entity_state(home, "asleep", reason="self-elected sleep: tired", written_by="self",
-                               mode="resting", wake_at="2099-01-01T00:00:00+00:00")
+                               mode="resting", wake_at="2099-01-01T00:00:00+00:00", fence=_LF.admit(home))
         else:
-            write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator")
+            write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator", fence=_LF.admit(home))
         before = client.get("/api/gateway/entities/Castor/life_state").json()
         assert before["phase"] == "sleep"
         st0 = read_entity_state(home)
@@ -860,9 +857,9 @@ def test_a_restore_onto_the_same_sleep_writes_nothing(spawned):
     with _client() as client:
         _born_awake_with_personal(client, personal=False)
         home = _home_dir()
-        write_entity_state(home, "asleep", reason="resting", written_by="operator")
+        write_entity_state(home, "asleep", reason="resting", written_by="operator", fence=_LF.admit(home))
         st0 = read_entity_state(home)
         lines0 = (home / "state_history.jsonl").read_text(encoding="utf-8").count("\n")
-        entity_phase.continue_sleep(home.parent, "castor", dict(st0))
+        entity_phase.continue_sleep(home.parent, "castor", dict(st0), fence=_LF.admit(home))
         assert read_entity_state(home)["changed_at"] == st0["changed_at"]
         assert (home / "state_history.jsonl").read_text(encoding="utf-8").count("\n") == lines0

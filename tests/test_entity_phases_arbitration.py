@@ -7,6 +7,7 @@ completes with a receipt and a stale completion never touches a newer pass. Herm
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import subprocess
@@ -94,7 +95,7 @@ def test_the_visit_wait_ends_on_a_stop_then_resume_and_never_writes_over_a_stop(
         # A Stop then a Resume while the door waited: awake again, but the wait must still end.
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "stop"}).status_code == 200
         assert client.post("/api/gateway/entities/Castor/lifecycle", json={"action": "resume"}).status_code == 200
-        write_entity_state(home, "awake", reason="resumed")
+        write_entity_state(home, "awake", reason="resumed", fence=_LF.admit(home))
         with pytest.raises(VisitRefused) as e:
             poll(0)
         assert e.value.code == "stopped_use_resume"
@@ -109,7 +110,8 @@ def test_a_visit_restore_never_overwrites_a_stop_landing_mid_restore(monkeypatch
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home()
-        life.write_entity_state(home, "asleep", reason="in conversation [visit v-2]", mode="visiting", written_by="visit-door")
+        life.write_entity_state(home, "asleep", reason="in conversation [visit v-2]", mode="visiting", written_by="visit-door", fence=_LF.admit(home))
+        admitted = _LF.admit(home)  # the visit's admission, before the Stop
         real_read = life.read_entity_state
         fired = []
 
@@ -121,7 +123,7 @@ def test_a_visit_restore_never_overwrites_a_stop_landing_mid_restore(monkeypatch
             return st
 
         monkeypatch.setattr(life, "read_entity_state", _read_with_a_stop)
-        _restore_prior_state(home, {"state": "awake"}, suffix="(aborted)", token="[visit v-2]")
+        _restore_prior_state(home, {"state": "awake"}, suffix="(aborted)", token="[visit v-2]", fence=admitted)
         monkeypatch.setattr(life, "read_entity_state", real_read)
         fired[0].join(15)
         assert real_read(home)["state"] == "paused", "the restore wrote over the Stop"
@@ -135,8 +137,8 @@ def test_a_maintenance_write_never_overwrites_a_stop_landing_after_its_check(mon
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         home = _home()
-        write_entity_state(home, "asleep", reason="maintenance")
-        gen = entity_phase.maintenance_started(_registry(), "castor")
+        write_entity_state(home, "asleep", reason="maintenance", fence=_LF.admit(home))
+        gen = entity_phase.maintenance_started(_registry(), "castor", entity_phase.generation_of(home.parent, "castor"))
         real_check = entity_phase.maintenance_may_write
         fired = []
 
@@ -149,7 +151,7 @@ def test_a_maintenance_write_never_overwrites_a_stop_landing_after_its_check(mon
 
         monkeypatch.setattr(entity_phase, "maintenance_may_write", _check_then_stop)
         entity_phase.maintenance_write_if_owner(_registry(), "castor", gen,
-                                                lambda: write_entity_state(home, "asleep", reason="maintenance done"))
+                                                lambda fence: write_entity_state(home, "asleep", reason="maintenance done", fence=fence))
         fired[0].join(15)
         assert read_entity_state(home)["state"] == "paused"
 
@@ -173,8 +175,8 @@ def test_a_visit_taking_the_phase_during_a_spawn_wins(monkeypatch: pytest.Monkey
     monkeypatch.setattr(entity_phase, "start_own_time", _start_while_a_visit_opens)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home(), "awake", reason="woken")
-        write_personal_grant(_home(), mode="until_revoked", granted_by="person:admin")
+        write_entity_state(_home(), "awake", reason="woken", fence=_LF.admit(_home()))
+        write_personal_grant(_home(), mode="until_revoked", granted_by="person:admin", fence=_LF.admit(_home()))
         rows = []
         real_kill = entity_phase._kill_loop
         monkeypatch.setattr(entity_phase, "_kill_loop", lambda *a, **k: rows.append(real_kill(*a, **k)) or rows[-1])
@@ -226,7 +228,7 @@ def test_a_visit_opening_during_the_maintenance_pass_is_never_torn_down(monkeypa
     monkeypatch.setattr(EntityRegistry, "set_state", _set_state_then_let_the_visit_in)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home(), "awake", reason="woken")
+        write_entity_state(_home(), "awake", reason="woken", fence=_LF.admit(_home()))
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "dream": True})
         assert r.status_code == 200, r.text
         assert r.json()["maintenance"] == "after_visit"
@@ -247,7 +249,7 @@ def test_a_failed_pass_completes_with_a_receipt_and_a_stale_completion_touches_n
     monkeypatch.setattr(abstractmemory, "sleep_pass", _boom)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home(), "awake", reason="woken")
+        write_entity_state(_home(), "awake", reason="woken", fence=_LF.admit(_home()))
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "dream": True})
         assert r.status_code == 200, r.text
         assert r.json()["maintenance"] == "woke"
@@ -261,8 +263,7 @@ def test_a_failed_pass_completes_with_a_receipt_and_a_stale_completion_touches_n
 
         old = entity_phase.generation_of(_home().parent, "castor")
         new = bump_lifecycle_generation(_home(), written_by="test")
-        with entity_phase.phase_lock(_home().parent, "castor"):
-            rec = entity_phase.read_record(_home().parent, "castor")
+        with entity_phase.fenced_here(_home().parent, "castor") as rec:
             rec["maintenance"] = {"status": "running", "generation": new}
             entity_phase.write_record(_home().parent, "castor", rec)
         assert entity_phase.maintenance_done(_registry(), "castor", old) == "stopped"
@@ -295,11 +296,11 @@ def test_a_visit_waits_for_another_opening_instead_of_retry_shortly(door):
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         write_entity_state(_home(), "asleep", reason="in conversation with person:bob [visit v-other]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home()))
 
         def _the_other_open_gives_up():
             time.sleep(0.8)
-            write_entity_state(_home(), "awake", reason="the other open was aborted")
+            write_entity_state(_home(), "awake", reason="the other open was aborted", fence=_LF.admit(_home()))
 
         threading.Thread(target=_the_other_open_gives_up, daemon=True).start()
         path, body = ("visit/open", {}) if door == "visit" else ("chat/open", {"context_window": 32000})

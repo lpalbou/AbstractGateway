@@ -5,6 +5,7 @@ lives with the summon tests: tests/test_gateway_entities_summon.py.) Hermetic ga
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 import threading
@@ -140,7 +141,7 @@ def test_a_maintenance_pass_stopped_midway_records_a_clean_cancellation(monkeypa
     monkeypatch.setattr(abstractmemory, "sleep_pass", _pass_with_a_stop)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        write_entity_state(_home(), "awake", reason="woken")
+        write_entity_state(_home(), "awake", reason="woken", fence=_LF.admit(_home()))
         r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "dream": True})
         assert r.status_code == 200, r.text
         receipt = entity_phase.read_record(_home().parent, "castor")["last_maintenance"]
@@ -223,7 +224,7 @@ def test_stop_reaches_every_effect_boundary(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(authoring_mod, "drain_authoring", _drain)
         from abstractruntime.identity.life import write_entity_state
 
-        write_entity_state(home(), "awake", reason="test")
+        write_entity_state(home(), "awake", reason="test", fence=_LF.admit(home()))
         entity_authoring.drain_after_close(reg(), "castor")
         assert callable(seen.get("drain")) and seen["drain"]() is False
         bump_lifecycle_generation(home(), written_by="test")

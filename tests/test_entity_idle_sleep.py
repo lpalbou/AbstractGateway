@@ -3,6 +3,7 @@ maintenance pass is faked (its machinery is tested elsewhere)."""
 
 from __future__ import annotations
 
+from abstractruntime.identity.lifecycle_fence import LifecycleFence as _LF
 import copy
 import json
 from datetime import datetime, timedelta, timezone
@@ -56,8 +57,7 @@ def _slept_at(at: datetime, slug: str = "castor") -> None:
     from abstractgateway import entity_phase
 
     reg = _registry()
-    with entity_phase.phase_lock(reg.entities_dir, slug):
-        rec = entity_phase.read_record(reg.entities_dir, slug)
+    with entity_phase.fenced_here(reg.entities_dir, slug) as rec:
         rec["last_maintenance"] = {"generation": 0, "at": at.isoformat(), "status": "done", "error": None}
         entity_phase.write_record(reg.entities_dir, slug, rec)
 
@@ -165,7 +165,7 @@ def test_only_an_idle_entity_is_put_to_sleep(monkeypatch: pytest.MonkeyPatch):
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         _slept_at(datetime.now(timezone.utc) - timedelta(hours=25))
         write_entity_state(_home(), "asleep", reason="in conversation with person:admin [visit v-1]",
-                           mode="visiting", written_by="visit-door")
+                           mode="visiting", written_by="visit-door", fence=_LF.admit(_home()))
         assert entity_idle_sleep.idle_sweep_one(_registry(), "castor") is None
         assert read_entity_state(_home())["mode"] == "visiting"
 
