@@ -2380,6 +2380,10 @@ class EntityRegistry:
                         # #FALLBACK notice says so). Structured: never parsed
                         # from the `[artifact: <id>]` line.
                         "artifact_id": election.artifact_id,
+                        # Structured hit count of a memory search (AbstractRuntime 0.19.2 ToolElection.hits:
+                        # graph + book matches; None for every other tool): the live activity panel reads
+                        # "N found" from it, never from the text the model reads.
+                        **({"hits": election.hits} if election.hits is not None else {}),
                     }
                 )
             out: Dict[str, Any] = {"mode": "executed", "results": results}

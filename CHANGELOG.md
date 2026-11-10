@@ -336,8 +336,11 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Changed
 
-- Dependency floor: AbstractRuntime 0.19.1 (`identity.self_brief.read_self_brief`, the brief the new route serves;
-  the host-build check names it when missing).
+- Dependency floor: AbstractRuntime 0.19.2 (0.19.1: `identity.self_brief.read_self_brief`, the brief the new route
+  serves; 0.19.2: the visit ledger's activity fields the Entity app's live activity panel reads, `topic` on recall
+  handles, `iteration`/`max_iterations` on the reason call, `hits` on memory searches, and the membership-only topic
+  read `memory_facade.community_keys_of`; the host-build check names each when missing). The visit lane's tool-result
+  entries copy `hits` from the runtime's election beside `artifact_id`.
 - **The line the conversation's agent gets when a message mentions entities is imperative and last** (the agent read the softer line and still answered for the mentioned entity after a long workspace search). It is
   now "The mentioned entities (<names>) answer this message themselves. Unless the user addressed you directly,
   reply with an empty message.", the last system instruction before the person's words. The mentions are the

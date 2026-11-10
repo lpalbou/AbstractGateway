@@ -127,7 +127,9 @@ _role_lock = threading.Lock()
 #         `drain_authoring` (entity_authoring.py) and `TOOL_RESULT_ARTIFACT_KIND` (routes/entity_replay.py).
 # 0.19.1: the self-knowledge brief (`identity.self_brief.read_self_brief`, served by GET /entities/{name}/self-brief
 #         and written into the prefix at the end of a sleep).
-ABSTRACTRUNTIME_FLOOR = "0.19.1"
+# 0.19.2: the visit ledger's activity fields (`topic` on recall handles, `iteration`/`max_iterations` on the
+#         reason call, `hits` on memory searches) and `memory_facade.community_keys_of` (the stamp's read).
+ABSTRACTRUNTIME_FLOOR = "0.19.2"
 
 
 def _installed_runtime_version() -> str:
@@ -1009,6 +1011,15 @@ def require_runtime_features(runtime: Any) -> None:
         from abstractruntime.identity.self_brief import read_self_brief  # noqa: F401
     except ImportError:
         missing.append("the self-knowledge brief reader (abstractruntime.identity.self_brief.read_self_brief, AbstractRuntime 0.19.1)")
+    # AbstractRuntime 0.19.2: the visit ledger's activity fields (the live activity panel reads them) and the
+    # membership-only topic read the recall stamp makes.
+    try:
+        from abstractruntime.integrations.abstractmemory.memory_facade import community_keys_of
+
+        if not callable(community_keys_of):
+            raise ImportError("community_keys_of is not callable")
+    except ImportError:
+        missing.append("the membership-only topic read (abstractruntime.integrations.abstractmemory.memory_facade.community_keys_of, AbstractRuntime 0.19.2)")
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).

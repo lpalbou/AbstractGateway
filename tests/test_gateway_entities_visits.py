@@ -1073,6 +1073,7 @@ def test_visit_tool_results_rest_as_home_artifacts_and_are_served(monkeypatch: p
             {"call_id": "s1", "name": "web_search", "arguments": {"query": "durable artifacts"}},
             {"call_id": "f1", "name": "read_file", "arguments": {"path": "shared/notes.txt"}},
             {"call_id": "p1", "name": "read_file", "arguments": {"path": "shared/pic.png"}},
+            {"call_id": "m1", "name": "search_memory", "arguments": {"query": "durable artifacts"}},
         ]},
         {"content": "Kept all three."},
         {"content": "Reflection: kept."},
@@ -1085,7 +1086,7 @@ def test_visit_tool_results_rest_as_home_artifacts_and_are_served(monkeypatch: p
         from abstractruntime.identity.tool_policy import write_policy_file
         from abstractruntime.identity.tools import TOOL_RESULT_ARTIFACT_KIND
 
-        write_policy_file(_home_dir(), {"visit": ["web_search", "read_file", "list_files"]})
+        write_policy_file(_home_dir(), {"visit": ["web_search", "read_file", "list_files", "search_memory"]})
         png, _png_abs = _plant_png("shared/pic.png")
         notes_path = _home_dir() / "workspace" / "shared" / "notes.txt"
         notes_bytes = ("".join(f"line {i:05d} of the long notes file\n" for i in range(900))).encode("utf-8")
@@ -1123,6 +1124,10 @@ def test_visit_tool_results_rest_as_home_artifacts_and_are_served(monkeypatch: p
                 for row in result.get("results") or []:
                     rows[row.get("call_id")] = row
         assert rows["s1"]["artifact_id"] == search_meta.artifact_id
+        # AbstractRuntime 0.19.2: a memory search's structured hit count rides the entry (the live activity panel's
+        # "N found"); every other tool has none.
+        assert isinstance(rows["m1"]["hits"], int) and rows["m1"]["hits"] >= 0, rows["m1"]
+        assert "hits" not in rows["s1"] and "hits" not in rows["f1"]
         assert rows["s1"]["output"].endswith(f"[artifact: {search_meta.artifact_id}]")
         assert rows["f1"]["artifact_id"] == notes_meta.artifact_id and rows["f1"]["output"].endswith(f"[artifact: {notes_meta.artifact_id}]")
         assert rows["p1"]["artifact_id"] == png_meta.artifact_id and rows["p1"]["output"]["rendered"].endswith(f"[artifact: {png_meta.artifact_id}]")

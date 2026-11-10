@@ -700,7 +700,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 
     from abstractgateway import live_deltas as ld
 
-    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.1"
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.2"
     assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
@@ -708,7 +708,8 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     assert ld._version_tuple("0.18.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.18.4") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert not (ld._version_tuple("0.19.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert ld._version_tuple("0.19.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.19.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
@@ -724,11 +725,12 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """AbstractRuntime 0.19.0: the one iteration default, the Stop fence and registered skill roots; 0.19.1: the
     self-knowledge brief reader. A runtime without one of them is refused by the host-build check, which names
-    the 0.19.1 floor."""
+    the 0.19.2 floor (0.19.2: the membership-only topic read)."""
     import types
 
     import abstractruntime
     from abstractruntime.identity import lifecycle_fence, self_brief
+    from abstractruntime.integrations.abstractmemory import memory_facade
     from abstractruntime.integrations.abstractcore import skill_roots
 
     from abstractgateway import live_deltas as ld
@@ -741,13 +743,18 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
         (lifecycle_fence, "LifecycleFence", "LifecycleFence"),
         (skill_roots, "register_skill_roots", "register_skill_roots"),
         (self_brief, "read_self_brief", "read_self_brief"),
+        (memory_facade, "community_keys_of", "community_keys_of"),
     ):
         with monkeypatch.context() as m:
-            m.delattr(module, name)
+            if module is memory_facade:
+                # the facade re-exports memory's names lazily (module __getattr__): the mutant is a non-callable
+                m.setattr(module, name, None, raising=False)
+            else:
+                m.delattr(module, name)
             with pytest.raises(ld.RuntimeTooOld) as info:
                 ld.require_runtime_features(runtime)
         text = str(info.value)
-        assert words in text and "abstractruntime>=0.19.1" in text, text  # the floor; each item names its own version
+        assert words in text and "abstractruntime>=0.19.2" in text, text  # the floor; each item names its own version
 
 
 def test_an_older_runtime_reaches_the_floor_check_instead_of_an_import_error(tmp_path: Path) -> None:
