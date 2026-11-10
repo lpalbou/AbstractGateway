@@ -35,3 +35,7 @@
 - **A mention mirrored into another entity's visit carries nothing after the mentioned entity's Stop** (Codex review 3
   #2, design T9): the join and the mirrored turn run under the source's fence beside the visited entity's own, and
   the visit door re-checks every acting fence under the visited home's writer lease right before it runs anything.
+- **The authoring drainer never runs after a Stop it was admitted before** (Codex review 3 #4): its fence is
+  admitted before the paused check, the lease and the runtime lookup, revalidated under the lease, the runtime it
+  drains through is the one admitted at that generation, and its writes run under the fence; a Stop refusing a write
+  ends the drain as `stopped`, never an authoring failure.

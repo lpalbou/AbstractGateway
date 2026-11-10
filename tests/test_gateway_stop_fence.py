@@ -198,3 +198,33 @@ def test_a_source_stopped_after_the_last_check_carries_nothing_into_the_visit(mo
         run = er.run_store.load(nerin_run)
         assert run.vars["_visit"]["history"] == history_before
         assert str(getattr(run.status, "value", run.status)) == "waiting"  # Nerin's own visit goes on
+
+
+# ------------------------------------------------------------------------------------------------- finding 4
+def test_a_drain_admitted_before_a_stop_never_runs_after_it(monkeypatch):
+    """Codex review 3 #4: the authoring drainer read its generation AFTER the paused check, the lease and the runtime
+    lookup, so a Stop landing in between became the drain's own generation and it ran while paused (`should_stop()`
+    False). The admission is now read first and revalidated under the lease."""
+    import abstractruntime.identity.authoring as authoring
+    import abstractruntime.identity.cognition_profile as cognition_profile
+
+    from abstractgateway.entity_authoring import drain_after_close
+
+    drained = []
+    monkeypatch.setattr(authoring, "drain_authoring",
+                        lambda *a, **kw: drained.append(kw["should_stop"]()) or {"considered": 0})
+    real_policy = cognition_profile.rebuild_policy
+    fired = []
+
+    def _policy_then_stop(home_dir):
+        if not fired:
+            fired.append(_stop("castor"))  # between the initial state check and the runtime lookup
+        return real_policy(home_dir)
+
+    with _client() as client:
+        _born(client, "Castor")
+        monkeypatch.setattr(cognition_profile, "rebuild_policy", _policy_then_stop)
+        out = drain_after_close(_registry(), "castor")
+        assert fired
+        assert out == {"skipped": "stopped"}, out
+        assert drained == [], "the drainer ran after the operator's Stop"

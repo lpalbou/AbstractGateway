@@ -31,14 +31,24 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
     """Run the authoring drainer once over a loop-less home. Never raises; returns the receipt or
     `{"skipped": <why>}`."""
     from abstractruntime.identity.authoring import drain_authoring
+    from abstractruntime.identity.chat import TurnCancelled
     from abstractruntime.identity.cognition_profile import rebuild_policy
     from abstractruntime.identity.life import read_entity_state
     from abstractruntime.storage.lease import DirectoryLeaseHeld, acquire_directory_lease
 
     from .entity_loop import loop_status
 
+    from .entity_phase import GenerationMoved, acting_under, admission_fence
+
     home_dir = Path(registry.entities_dir) / slug
     try:
+        # ADMITTED FIRST (Codex review 3 #4): the generation this drain runs at is read before anything it
+        # decides on - the paused check, the lease, the runtime - never after them (a Stop landing in
+        # between was adopted as the drain's own generation, and it ran while paused).
+        try:
+            fence = admission_fence(registry.entities_dir, slug, None)
+        except GenerationMoved:
+            return {"skipped": "stopped"}  # an unreadable generation admits nothing (fail closed)
         if str(read_entity_state(home_dir).get("state") or "") == "paused":
             return {"skipped": "stopped"}
         if bool(loop_status(home_dir).get("running")):
@@ -51,34 +61,44 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
         except DirectoryLeaseHeld:
             return {"skipped": "home_busy"}
         try:
-            from .entity_phase import generation_of
-
-            home = registry.get_entity_runtime(slug).home
-            entry_generation = generation_of(registry.entities_dir, slug)
+            # REVALIDATED under the lease: no Stop since the admission, not stopped now, and the runtime it
+            # drains through acts at the admission's generation (`runtime_for_admission`).
+            if fence.moved() or str(read_entity_state(home_dir).get("state") or "") == "paused":
+                return {"skipped": "stopped"}
+            try:
+                home = registry.runtime_for_admission(slug, fence.generation).home
+            except GenerationMoved:
+                return {"skipped": "stopped"}
 
             def _diary_text(entry_id: str) -> Optional[str]:
                 entry = home.diary.get_entry(entry_id) if entry_id else None
                 return str((entry or {}).get("text") or "") or None
 
-            receipt = drain_authoring(
-                home.ms,
-                llm_for_capability=registry.capability_llm_factory(slug),
-                artifacts=home.artifacts,
-                home_dir=home.home_dir,
-                entity=str(home.entity_id),
-                holder="gateway:visit-close",
-                cap=cap,
-                window="visit",
-                diary_text=_diary_text,
-                out=lambda line: logger.info("authoring drain %s: %s", slug, line),
-                # A Stop since the drain began: no further call, and nothing written after it.
-                should_stop=lambda: generation_of(registry.entities_dir, slug) != entry_generation,
-            )
+            with acting_under(fence):
+                receipt = drain_authoring(
+                    home.ms,
+                    llm_for_capability=registry.capability_llm_factory(slug),
+                    artifacts=home.artifacts,
+                    home_dir=home.home_dir,
+                    entity=str(home.entity_id),
+                    holder="gateway:visit-close",
+                    cap=cap,
+                    window="visit",
+                    diary_text=_diary_text,
+                    out=lambda line: logger.info("authoring drain %s: %s", slug, line),
+                    # A Stop since the admission: no further call; its writes are refused inside their
+                    # transactions by the home's own fence (the runtime's commit guard).
+                    should_stop=fence.moved,
+                )
         finally:
             lease.release()
         if receipt.get("considered"):
             logger.info("authoring drain after a visit closed on %s: %s", slug, receipt)
         return receipt
+    except TurnCancelled:
+        # The operator's Stop refused a write of the drain (the home's fence, inside its transaction): a
+        # clean record - stopped, never an authoring failure.
+        return {"skipped": "stopped"}
     except Exception as e:  # noqa: BLE001 - a drain never breaks a close; the records stay pending
         logger.exception("authoring drain after a visit closed on %s failed", slug)
         return {"skipped": "error", "error": f"{type(e).__name__}: {e}"}
