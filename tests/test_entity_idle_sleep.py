@@ -89,8 +89,7 @@ def test_the_thresholds_decide(monkeypatch: pytest.MonkeyPatch):
     t0 = datetime.now(timezone.utc) - timedelta(minutes=1)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
-        # The hours and events thresholds alone (the fragmented share has its own test: a newborn's titles are
-        # still being written, so it would fire here).
+        # The hours and events thresholds alone (the fragmented share has its own test).
         assert client.put("/api/gateway/entities/castor/cognition-profile",
                           json={"sleep": {"after_fragmented_share": 1.0}}).status_code == 200
         _slept_at(t0)
@@ -113,7 +112,7 @@ def test_the_thresholds_decide(monkeypatch: pytest.MonkeyPatch):
 
 def test_the_fragmented_share_puts_him_to_sleep_once_something_new_formed():
     """The third trigger (operator 2026-11-10): more than `sleep.after_fragmented_share` of his memories fragmented
-    (here: titles still being written, a newborn's and four more) puts an idle home to sleep, the reason naming the
+    (here: four titles still being written) puts an idle home to sleep, the reason naming the
     share; not again when nothing formed since his last sleep; not over the profile's share."""
     import warnings
 
@@ -153,10 +152,11 @@ def test_without_an_embedder_what_has_no_vector_is_not_fragmentation_a_sleep_fix
     fragmented share (a vectorless gateway would otherwise sleep every home at every new memory)."""
     from abstractgateway.entity_idle_sleep import _fixable_share
 
-    fragmented = {"count": 6, "share": 0.6, "provisional": 0, "unvectored": 6, "pending": 0}
+    fragmented = {"count": 6, "share": 0.6, "provisional": 0, "unvectored": 6, "pending": 0}  # 10 live
     assert _fixable_share(fragmented, can_embed=True) == 0.6
     assert _fixable_share(fragmented, can_embed=False) == 0.0
-    assert _fixable_share({**fragmented, "count": 9, "pending": 3}, can_embed=False) == pytest.approx(0.2)
+    # Four of the six also have a title being written: those a sleep still fixes.
+    assert _fixable_share({**fragmented, "pending": 4}, can_embed=False) == pytest.approx(0.4)
     assert _fixable_share(None, can_embed=True) == 0.0
 
 

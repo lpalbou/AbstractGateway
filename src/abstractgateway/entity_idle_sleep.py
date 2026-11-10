@@ -97,9 +97,11 @@ def _can_embed(registry: Any) -> bool:
 
 
 def _fixable_share(fragmented: Any, *, can_embed: bool) -> float:
-    """The share of his memories a sleep would make whole, from memory's `fragmented` {count, share, provisional,
-    unvectored, pending} (None: a store that cannot say -> 0). Without an embedder the night embeds nothing, so the
-    records without a vector are not counted: a vectorless gateway is never put to sleep for what no sleep fixes."""
+    """The share of his memories a sleep would make whole, from memory's `fragmented` {count (distinct records),
+    share = count / live, provisional, unvectored, pending} (None: a store that cannot say -> 0). Without an
+    embedder the night embeds nothing: only what it can still fix counts - the records placed provisionally and
+    the ones whose title or summary is being written (their sum, at most `count`) - so a vectorless gateway is
+    never put to sleep for what no sleep fixes."""
     if not isinstance(fragmented, dict):
         return 0.0
     share = float(fragmented.get("share") or 0.0)
@@ -107,7 +109,8 @@ def _fixable_share(fragmented: Any, *, can_embed: bool) -> float:
         return share
     count = int(fragmented.get("count") or 0)
     live = count / share
-    return max(0, count - int(fragmented.get("unvectored") or 0)) / live if live else 0.0
+    fixable = min(count, int(fragmented.get("provisional") or 0) + int(fragmented.get("pending") or 0))
+    return fixable / live if live else 0.0
 
 
 def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -145,7 +148,7 @@ def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Op
     # fragmented (placed provisionally, no vector, a title or summary still being written): the sleep forms his
     # topics and repairs them. Only once something formed since the last completed sleep (`count`): a home whose
     # fragmentation that sleep could not reduce is not put to sleep again and again with nothing new; and without
-    # an embedder, what has no vector is not counted (`_fixable_share`).
+    # an embedder, only what the night can still fix counts (`_fixable_share`).
     share = _fixable_share(fragmented, can_embed=_can_embed(registry))
     if count >= 1 and share > float(thresholds["after_fragmented_share"]):
         return {"threshold": "after_fragmented_share",
