@@ -2581,6 +2581,11 @@ class EntityRegistry:
                 if refusal:
                     raise SleepNotAdmitted(refusal)
                 prior = read_entity_state(home_dir)
+                # A sleep written onto the standing sleep is that sleep (the door takes an operator sleep on his
+                # sleep as the same sleep, with its pass when `dream`): it records no new sleep moment below.
+                from .entity_phase import standing_sleep
+
+                same_sleep = state2 == "asleep" and standing_sleep(frec, prior)
                 written = write_entity_state(home_dir, state2, reason=reason, written_by=written_by, fence=frec.fence)
                 if admit is not None:
                     # Recorded in the same locked step: the pass runs under the admission's generation.
@@ -2735,6 +2740,12 @@ class EntityRegistry:
 
         verb = {"asleep": "sleep", "awake": "wake", "paused": "pause"}[state2]
         out: Dict[str, Any] = {"state": written, "prior": prior, "marker_seq": None, "dream": dream_result}
+        if same_sleep:
+            # No "Fell asleep" for a sleep that began before (castor 2026-11-10: the row landed after the
+            # pass, an hour into the sleep). The pass's own rows tell it: the night's records, and the
+            # wake when maintenance is done.
+            out["same_sleep"] = True
+            return out
         try:
             marker = record_host_marker(
                 entities_dir=self.entities_dir,
@@ -3002,6 +3013,7 @@ class EntityRegistry:
 
             if as_of is None and history_path.exists():
                 verb_of = {"asleep": "sleep", "awake": "wake", "paused": "pause"}
+                standing: Optional[str] = None  # the state the previous history line left
                 for line in history_path.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
                     if not line:
@@ -3023,6 +3035,13 @@ class EntityRegistry:
                         if marker == "phase_changed":
                             details.update({k: entry.get(k) for k in ("from", "to") if entry.get(k) is not None})
                         moments.append({"kind": marker, "at": str(entry.get("at") or ""), "seq": None, "details": details})
+                        continue
+                    line_state = str(entry.get("state") or "")
+                    repeats = bool(line_state) and line_state == standing
+                    standing = line_state or standing
+                    if repeats:
+                        # The standing state written again (a new reason, a pass's dreaming mode, a sleep the
+                        # door took as the same sleep, a visit's posture on a sleep): not a new moment.
                         continue
                     kind = verb_of.get(str(entry.get("state") or ""), str(entry.get("state") or "state"))
                     at = str(entry.get("changed_at") or "")

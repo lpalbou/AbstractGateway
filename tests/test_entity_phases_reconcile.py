@@ -851,6 +851,68 @@ def test_a_visit_closing_on_a_sleep_adds_only_the_visit_rows(spawned, lane, writ
         p.kill()
 
 
+def _host_rows():
+    path = _home_dir().parent / ".host_stream" / "castor.jsonl"
+    return [(json.loads(x).get("payload") or {}) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+@pytest.mark.parametrize("dream", [True, False])
+def test_an_operator_sleep_on_his_sleep_adds_no_sleep_rows(spawned, dream):
+    """castor 2026-11-10 (the topics night): the operator asked for a sleep with its maintenance pass while
+    he was already asleep (the door takes it as the SAME sleep). The new reason and then the pass's
+    dreaming mode each wrote a phase_changed sleep -> sleep row, and the pass ended with a `sleep` moment
+    ("Fell asleep") of a sleep that had begun an hour before. A sleep that is already the current phase
+    writes no phase_changed row and no sleep moment (host marker or card moment); the pass tells its own
+    story (the night's records, the wake when maintenance is done)."""
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        write_entity_state(home, "asleep", reason="by the operator (roster)", written_by="operator", fence=_LF.admit(home))
+        before = client.get("/api/gateway/entities/Castor/life_state").json()
+        assert before["phase"] == "sleep", before
+        rows0 = len(_host_rows())
+        sleep_moments0 = [m for m in _registry().life_moments("castor") if m["kind"] == "sleep"]
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "reason": "topics night", "dream": dream})
+        assert r.status_code == 200, r.text
+        during = client.get("/api/gateway/entities/Castor/life_state").json()
+        added = _host_rows()[rows0:]
+        assert not [p for p in added if p.get("kind") == "phase_changed" and p.get("from") == p.get("to") == "sleep"], added
+        assert "sleep" not in [p.get("kind") for p in added], added
+        assert [m for m in _registry().life_moments("castor") if m["kind"] == "sleep"] == sleep_moments0
+        # The snapshot is still versioned (life_state readers see the new reason), only never announced.
+        assert during["rev"] > before["rev"]
+        if dream:
+            # The operator's sleep ends with its maintenance: the wake and the sleep -> idle row are written.
+            assert r.json()["maintenance"] == "woke"
+            assert "wake" in [p.get("kind") for p in added]
+            assert [(p.get("from"), p.get("to")) for p in added if p.get("kind") == "phase_changed"] == [("sleep", "idle")], added
+        else:
+            assert during["phase"] == "sleep" and "topics night" in during["state_reason"]
+            assert [p.get("kind") for p in added if p.get("kind") == "phase_changed"] == [], added
+
+
+@pytest.mark.parametrize("before_state", ["awake", "gate"])
+def test_a_sleep_with_its_pass_from_awake_still_falls_asleep(spawned, before_state):
+    """The counterpart: from idle (awake, or a gate sleep, whose stored word is asleep while the phase is
+    idle) the sleep is a new phase: its idle -> sleep row and its sleep moment are written."""
+    from abstractruntime.identity.life import write_entity_state
+
+    with _client() as client:
+        _born_awake_with_personal(client, personal=False)
+        home = _home_dir()
+        if before_state == "gate":
+            write_entity_state(home, "asleep", reason="personal time ended", written_by="self", fence=_LF.admit(home))
+        assert client.get("/api/gateway/entities/Castor/life_state").json()["phase"] == "idle"
+        rows0 = len(_host_rows())
+        r = client.post("/api/gateway/entities/Castor/state", json={"state": "sleep", "reason": "a night", "dream": True})
+        assert r.status_code == 200, r.text
+        added = _host_rows()[rows0:]
+        assert [(p.get("from"), p.get("to")) for p in added if p.get("kind") == "phase_changed"] == [("idle", "sleep"), ("sleep", "idle")], added
+        assert [p.get("kind") for p in added].count("sleep") == 1, added
+
+
 def test_a_restore_onto_the_same_sleep_writes_nothing(spawned):
     from abstractgateway import entity_phase
     from abstractruntime.identity.life import read_entity_state, write_entity_state

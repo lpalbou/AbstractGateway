@@ -714,6 +714,20 @@ def running_sleep(facts: Dict[str, Any]) -> Optional[str]:
     return _sleep_kind(facts["state"], bool(facts["loop"].get("running")))
 
 
+def standing_sleep(rec: Dict[str, Any], state: Dict[str, Any]) -> bool:
+    """True when `state` (the home's state file before a write) is a sleep that is the current phase:
+    an operator's or the idle sweep's sleep (a sleep phase on its own), or his own sleep while the
+    phase the gateway last versioned (`rec`'s snapshot) is sleep. A visit's posture and a gate sleep
+    (1178: the stored word is asleep, the phase idle) are not. A sleep written onto a standing sleep is
+    the same sleep: no `sleep` moment, no phase_changed row (castor 2026-11-10)."""
+    if str(state.get("state") or "") != "asleep" or str(state.get("mode") or "") == "visiting":
+        return False
+    if _sleep_kind(state, False) is not None:
+        return True
+    snap = rec.get("snapshot") if isinstance(rec.get("snapshot"), dict) else {}
+    return snap.get("phase") == "sleep"
+
+
 def visit_live(facts: Dict[str, Any]) -> bool:
     st = facts["state"]
     return (
@@ -1091,16 +1105,27 @@ def publish(
         if resume_changed and prev == semantic:
             _write_published(entities_dir, slug, rec)
         if prev != semantic:
+            # The same sleep with new details (a new reason, the pass's dreaming mode, its end): versioned
+            # for the life_state readers, never announced (castor 2026-11-10: the operator's sleep with its
+            # pass on his standing sleep wrote two "sleep -> sleep" rows). A toggle change is still a row.
+            same_sleep = (prev_phase == "sleep" and snap["phase"] == "sleep"
+                          and (prev or {}).get("toggles") == semantic.get("toggles"))
+            announced_up_to_date = int(rec.get("published_rev") or 0) >= int(rec.get("rev") or 0)
             rec["rev"] = int(rec.get("rev") or 0) + 1
             rec["snapshot"] = semantic
             rec["since"] = since
             if snap["phase"] in ACTIVITY_PHASES:
                 rec["last_activity_phase"] = snap["phase"]
-            # Entering `stopped` is the kill switch's act whichever write point published it (Castor E2E
-            # 2026-11-10: the visit the Stop closed published first and the Stop's row read visit_closed).
-            entering_stop = snap["phase"] == "stopped" and prev_phase != "stopped"
-            rec["last_cause"] = KILL_SWITCH_CAUSE if entering_stop else str(cause or "observed")
-            rec["last_from"] = prev_phase
+            if same_sleep:
+                if announced_up_to_date:
+                    rec["published_rev"] = int(rec["rev"])
+                # else: a change still unannounced keeps its own from/cause; this rev announces it.
+            else:
+                # Entering `stopped` is the kill switch's act whichever write point published it (Castor E2E
+                # 2026-11-10: the visit the Stop closed published first and the Stop's row read visit_closed).
+                entering_stop = snap["phase"] == "stopped" and prev_phase != "stopped"
+                rec["last_cause"] = KILL_SWITCH_CAUSE if entering_stop else str(cause or "observed")
+                rec["last_from"] = prev_phase
             _write_published(entities_dir, slug, rec)
             # A loop that ended because it was asked to (graceful stop, personal off) hands the
             # phase back to the gateway: reconcile repairs a gate sleep and restarts own time when
