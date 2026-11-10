@@ -93,6 +93,11 @@ from typing import Any, Dict, Optional, Tuple
 # This module is the ONLY Gateway module that may import it.
 from abstractruntime.integrations.abstractcore import config_facade
 
+# AbstractCore's error for a settings file it cannot parse (not JSON, or not an object): the one AbstractCore name
+# the gateway imports, an exception type (no config/LLM/tool surface; the runtime's config facade does not re-export
+# it). The readers below let it through to app.py's 503 that names the file, never into "no default configured".
+from abstractcore.config import ConfigParseError as CoreConfigParseError  # noqa: E402
+
 # THE TEXT-GENERATION ROUTE, BY NAME. `output.text` is the canonical read;
 # AbstractCore canonicalizes it to the storage key `input.text`, which stays
 # readable so a config carrying only the storage key still resolves.
@@ -662,6 +667,8 @@ def text_default(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     }
     try:
         payload = gateway_capability_defaults_payload(base_dir=base_dir)
+    except CoreConfigParseError:
+        raise  # an unreadable settings file is the 503 that names it, never "no default configured"
     except Exception:
         return out
     rows = payload.get("routes") if isinstance(payload, dict) else None

@@ -52,13 +52,14 @@ def _abstractcore_imports(path: Path) -> list[str]:
 # API for the descriptor): presentation text only, no config/LLM/tool surface.
 # The web console's About (console.py `console_about_config`, kit 0.7.0)
 # reads GET /about directly and imports nothing from AbstractCore.
-# The app's 503 for an unreadable Core settings file catches AbstractCore's own error class
+# The 503 for an unreadable Core settings file catches AbstractCore's own error class
 # (`abstractcore.config.ConfigParseError`, exported for exactly this): an exception type, no
-# config/LLM/tool surface; AbstractRuntime's config facade does not re-export it yet.
+# config/LLM/tool surface; AbstractRuntime's config facade does not re-export it yet. Imported once,
+# by the Core-config seam (core_config.py), which re-exports it to app.py and provider_defaults.py.
 _BOOTSTRAP_EXEMPTIONS = frozenset({
     ("cli.py", "import abstractcore"),
     ("app.py", "from abstractcore.utils.identity import about_lines, app_identity, gateway_version_rows"),
-    ("app.py", "from abstractcore.config import ConfigParseError"),
+    ("core_config.py", "from abstractcore.config import ConfigParseError"),
 })
 
 

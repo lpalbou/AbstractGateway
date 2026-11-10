@@ -587,3 +587,46 @@ def test_an_unreadable_core_settings_file_is_a_503_naming_it_and_the_rest_keeps_
         assert body["path"] == str(cfg) and "Expecting property name" in body["error"]
         assert client.get("/api/gateway/entities").status_code == 200  # the rest keeps serving
     assert cfg.read_text(encoding="utf-8") == "{ not json"  # left exactly as it is
+
+
+def test_an_unreadable_core_settings_file_is_a_503_where_the_runtime_needs_its_text_default(monkeypatch, tmp_path):
+    """On an install the text default lives in AbstractCore's settings file, and the shipped bundles (basic-agent)
+    need it to build the runtime. The text-default readers swallowed `ConfigParseError`, so with that file
+    unreadable the runtime build said "no default provider/model is configured" and the route answered 500 (a
+    scratch gateway, 2026-11-10). The parse error now reaches the 503 handler: the file and the parse error."""
+    import os
+    import shutil
+
+    flows = tmp_path / "flows"
+    flows.mkdir()
+    shutil.copy2(Path(__file__).resolve().parents[1] / "flows" / "bundles" / "basic-agent.flow", flows / "basic-agent.flow")
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    cfg = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])  # the scratch HOME's Core store (conftest)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("{ not json", encoding="utf-8")
+    with _client() as client:
+        r = client.get("/api/gateway/config/capability-defaults")
+        assert r.status_code == 503, r.text
+        body = r.json()
+        assert body["code"] == "core_config_unreadable" and r.headers.get("X-Gateway-Error-Code") == "core_config_unreadable"
+        assert str(cfg) in body["detail"] and "not valid JSON" in body["detail"]
+        assert body["path"] == str(cfg) and "Expecting property name" in body["error"]
+        assert "no default provider/model" not in r.text
+    assert cfg.read_text(encoding="utf-8") == "{ not json"  # left exactly as it is
+
+
+def test_the_text_default_readers_never_swallow_an_unreadable_core_settings_file(monkeypatch):
+    """`core_config.text_default`, `provider_defaults._gateway_capability_text_default` and
+    `default_text_route_connection_kwargs` let `ConfigParseError` through (a missing default stays None)."""
+    import os
+
+    from abstractgateway import core_config, provider_defaults
+
+    cfg = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    core_config.text_default()  # no file: AbstractCore's own defaults, no error
+    cfg.write_text("{ not json", encoding="utf-8")
+    for read in (core_config.text_default, provider_defaults._gateway_capability_text_default,
+                 lambda: provider_defaults.default_text_route_connection_kwargs("lmstudio")):
+        with pytest.raises(core_config.CoreConfigParseError):
+            read()

@@ -990,6 +990,12 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   reconcile or loading the host pause state raised at start, its warning named an undefined `logger`, so the boot
   stopped with a NameError instead of logging and carrying on. Both now log a warning (`abstractgateway.service`) and
   the boot continues.
+- **An unreadable AbstractCore settings file is the same 503 wherever the gateway needs its text default**
+  (`core_config.py`, `provider_defaults.py`). On an install the text default lives in that file, and its readers took
+  the parse error for "nothing configured": building the runtime failed with "no default provider/model is
+  configured" and `GET /config/capability-defaults` answered 500. `ConfigParseError` now reaches the 503
+  `core_config_unreadable` with the file's path and the parse error, on that route and on every route that needs the
+  runtime (`/runs`, `/entities`, discovery); the console page still loads.
 
 ### Security
 

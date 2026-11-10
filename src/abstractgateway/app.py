@@ -423,7 +423,7 @@ async def _maintenance_hold_409(request, exc):  # noqa: ANN001 - FastAPI handler
 # AbstractCore's settings file is unreadable (abstractcore 8b970550 `ConfigParseError`: not JSON, or not an
 # object): every route that reads Core settings answers 503 naming the file and the parse error, and the rest of
 # the gateway keeps serving (never a 500 "Internal error"). The file is left exactly as it is.
-from abstractcore.config import ConfigParseError as _CoreConfigParseError  # noqa: E402
+from .core_config import CoreConfigParseError as _CoreConfigParseError  # noqa: E402
 
 
 @app.exception_handler(_CoreConfigParseError)

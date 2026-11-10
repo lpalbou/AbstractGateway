@@ -58,8 +58,8 @@ Upgrading to 0.21.0:
   passes its own everywhere.
 - Entity homes open with AbstractMemory 0.5.0's task queue: a title or summary that cannot be authored at once is
   pending, and the next sleep's repair authors it.
-- AbstractCore 2.35.0 never replaces a settings file it cannot parse with defaults (`ConfigParseError`): fix or
-  remove the file it names.
+- AbstractCore 2.35.0 never replaces a settings file it cannot parse with defaults (`ConfigParseError`): the
+  gateway answers 503 `core_config_unreadable` with the file's path and the parse error until you fix or remove it.
 - `GET /entities/{name}/communities` serves AbstractMemory's payload version 2 (`key` beside `id`, `pending`,
   `first_sleep_pending`); `life_state.toggles` is `{personal}` (there is no work switch: `work` answers 422); the old
   lifecycle routes (`POST .../state {state: "paused"}`, `.../loop/start|stop`) still work and answer

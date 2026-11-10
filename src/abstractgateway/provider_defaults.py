@@ -84,6 +84,7 @@ from typing import Any, Dict, Optional, Tuple
 # named once, on the AbstractCore config seam, and re-exported here under the
 # names this module's error messages use.
 from .core_config import (
+    CoreConfigParseError,
     TEXT_ROUTE_KEY as TEXT_GENERATION_ROUTE_KEY,
     TEXT_ROUTE_KEYS as TEXT_DEFAULT_ROUTE_KEYS,
     TEXT_ROUTE_STORAGE_KEY as TEXT_GENERATION_FALLBACK_ROUTE_KEY,
@@ -135,6 +136,8 @@ def _gateway_capability_text_default(
         model = _clean_model(row.get("model"))
         if provider and model:
             return provider, model, str(row.get("source") or "abstractcore_config")
+    except CoreConfigParseError:
+        raise  # an unreadable settings file is the 503 that names it, never "no default provider/model"
     except Exception:
         pass
     return None, None, None
@@ -163,6 +166,8 @@ def default_text_route_connection_kwargs(provider: Any, *, base_dir: Optional[Pa
         from .core_config import text_default
 
         row = text_default(base_dir=base_dir)
+    except CoreConfigParseError:
+        raise
     except Exception:
         return {}
     base_url = str(row.get("base_url") or "").strip()
