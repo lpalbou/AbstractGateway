@@ -332,3 +332,45 @@ def test_a_visit_closed_after_a_stop_restores_nothing(monkeypatch, lane):
         assert (after["state"], after.get("mode"), after["changed_at"]) == (
             posture["state"], posture.get("mode"), posture["changed_at"]), after
         assert _history_lines() == lines, "the close wrote a state over the Stop"
+
+
+# ------------------------------------------------------------------------------------------------- finding 3
+def test_a_busy_visited_home_never_holds_up_the_mentioned_entitys_stop(monkeypatch):
+    """Codex review 3 #3: the mirror's admission held the mentioned entity's lifecycle lock while it waited for the
+    visited home's writer lease, so a busy visit blocked that entity's Stop. The lease is now waited for outside every
+    lifecycle lock (the wait ends on the Stop), and only the brief check-and-join runs under it."""
+    import time
+
+    from abstractruntime.storage.lease import acquire_directory_lease
+
+    llm = _install_llm(monkeypatch, ["Nerin: hello.", "Castor: the bridge holds."])
+    with _client() as client:
+        _born(client, "Nerin", "Castor")
+        opened = client.post("/api/gateway/entities/Nerin/visit/open", json={}).json()
+        sid, nerin_run = opened["session_id"], opened["run_id"]
+        assert client.post(f"/api/gateway/entities/Nerin/visit/{nerin_run}/turn",
+                           json={"text": "@Castor does the bridge hold?"}).status_code == 200
+        busy = acquire_directory_lease(_home("nerin"), holder="test: the visited home is busy")
+        out = {}
+        try:
+            mention = threading.Thread(target=lambda: out.__setitem__("r", client.post(
+                f"/api/gateway/sessions/{sid}/mentions",
+                json={"entity": "Castor", "text": "@Castor does the bridge hold?", "mention_index": 0})), daemon=True)
+            mention.start()
+            deadline = time.monotonic() + 120
+            while len(llm.calls) < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)  # Castor answered: the mirror is next, and Nerin's home is held
+            assert len(llm.calls) == 2
+            time.sleep(1.0)  # the mirror is waiting for Nerin's writer lease
+            stopper = threading.Thread(target=lambda: out.__setitem__("stop", _stop("castor")), daemon=True)
+            stopper.start()
+            stopper.join(30)
+            assert "stop" in out, "the Stop of the mentioned entity waited for the visited home's writer"
+        finally:
+            busy.release()
+        mention.join(60)
+        r = out["r"]
+        assert r.status_code == 200, r.text
+        (mirror,) = r.json()["mirrors"]
+        assert mirror["reply"] is None and "was stopped; nothing was carried" in mirror["error"], mirror
+        assert len(llm.calls) == 2

@@ -42,3 +42,6 @@
 - **A hosted chat opened across a Stop is never left live** (Codex review 3 #8): its registration is one locked step
   with the check of the visit's original admission; a session refused there is disposed (home closed, lease released,
   nothing restored over the Stop), and a Stop during the pending look-back is a refusal, never a failure line.
+- **A busy visited home never holds up a mentioned entity's Stop** (Codex review 3 #3): the mirror waits for the
+  visited home's writer lease outside every lifecycle lock (the wait ends on the mentioned entity's Stop); only the
+  brief check-and-join runs under its lifecycle lock.

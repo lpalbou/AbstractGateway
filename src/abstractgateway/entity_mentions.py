@@ -770,13 +770,14 @@ def _mirror_into_bound_visits(
         source_fence = admission_fence(registry.entities_dir, mentioned.slug, generation) if generation is not None else None
         try:
             with acting_under(*([source_fence] if source_fence is not None else [])):
-                if source_fence is not None:
-                    # ATOMIC ADMISSION (Codex review 2 #3): the check and the join in one step under the
-                    # mentioned entity's lifecycle lock.
-                    with fenced(registry.entities_dir, mentioned.slug, source_fence):
-                        visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
-                else:
-                    visit_host.join_participant(child.name, live.run_id, str(mentioned.entity_id))
+                # ATOMIC ADMISSION (Codex review 2 #3) WITHOUT A LOCK ACROSS A WAIT (Codex review 3 #3): the
+                # visited home's writer lease is waited for outside every lifecycle lock (the wait ends on the
+                # mentioned entity's Stop), then the check and the join are one brief step under the mentioned
+                # entity's lifecycle lock.
+                visit_host.join_participant(
+                    child.name, live.run_id, str(mentioned.entity_id),
+                    admit=(lambda: fenced(registry.entities_dir, mentioned.slug, source_fence))
+                    if source_fence is not None else None)
                 turned = visit_host.turn(child.name, live.run_id, text=speaker_line(author, reply),
                                          speaker=str(mentioned.entity_id))
         except GenerationMoved:
