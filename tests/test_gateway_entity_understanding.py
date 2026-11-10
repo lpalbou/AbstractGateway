@@ -429,3 +429,38 @@ def test_the_identity_cards_statements_carry_cut_from_their_records_writer():
         rows2 = [s for key in ("values", "purposes", "traits") for s in identity.get(key) or []]
         assert rows2 and all(s["cut"] is True for s in rows2), rows2
         assert [s["statement"] for s in rows2] == [s["statement"] for s in rows]  # the words themselves unchanged
+
+
+def test_an_authored_reflection_is_never_cut_whatever_writer_formed_it():
+    """Castor E2E C4_04 (2026-11-10): two visit-close summaries AUTHORED by the summaries capability at formation
+    (digest_method `authored:summaries`, the record's `metadata_authored`) served `cut: true`: their formation source
+    is the session reflection writer and their reading names no author of record. An authored reading is whole: the
+    record read and the replay's block say `cut: false`; the unauthored reflection beside them still reads cut."""
+    reflection = {"source": "entity-visit-run-reflection-v0", "actor": "entity-reflection"}
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Nerin", "spark": _spark("Nerin")}).status_code == 201
+        home, owner = _home("nerin")
+        visit_ep = _form(home, owner, "ep-visit", "episode", "Laurent: the 1890 storm ledger was misfiled. Nerin: noted.")
+        authored = _form(home, owner, "sum-authored", "summary", "Laurent reported the 1890 storm ledger was misfiled.",
+                         title="Session note: 1890 storm ledger reported misfiled",
+                         attributes={"digest_method": "authored:summaries"}, provenance=reflection,
+                         edges=(("summarizes", visit_ep),))
+        stamped = _form(home, owner, "sum-stamped", "summary", "The storm-ledger answer kept apart from what I verified.",
+                        title="Session note: storm-ledger answer kept separate",
+                        attributes={"digest_method": "", "metadata_authored": {"fields": ["title", "summary"],
+                                                                               "capability": "summaries"}},
+                        provenance=reflection, edges=(("summarizes", visit_ep),))
+        old = _form(home, owner, "sum-old", "summary", "Thank you for the time and the clear purpose.",
+                    title="session reflection: v-1", attributes={"digest_method": ""}, provenance=reflection,
+                    edges=(("summarizes", visit_ep),))
+
+        def read(gid):
+            r = client.get(f"/api/gateway/entities/Nerin/records/{gid}/verbatim")
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        assert read(authored)["cut"] is False and read(stamped)["cut"] is False and read(old)["cut"] is True
+        envelopes = _lines(client.get("/api/gateway/entities/Nerin/replay").text)
+        formed = {e["display"]["record_id"]: e["display"]["cut"] for e in envelopes
+                  if isinstance(e.get("display"), dict) and "cut" in e["display"]}
+        assert formed.get(authored) is False and formed.get(old) is True, formed

@@ -57,11 +57,27 @@ RETIRED_CUTTING_WRITERS = frozenset({"mechanical-flow-v1"})
 REFLECTION_WRITER_SOURCES = frozenset({"entity-visit-run-reflection-v0", "entity-reflection-v1", "entity-chat-reflection-v1"})
 
 
+def _digest_authored(stamp: Any) -> bool:
+    """A `metadata_authored` stamp (runtime visit_workflow: {fields, capability, model, ...}) that covers the words:
+    its fields name the summary, or name nothing (the whole record)."""
+    if not isinstance(stamp, Mapping) or not stamp:
+        return False
+    fields = stamp.get("fields")
+    return not fields or "summary" in [str(f) for f in fields]
+
+
 def cut_when_saved(reading: Mapping[str, Any], source: Any) -> bool:
     """`cut` for one reading (memory's fields: digest_method, digest_version, authored_by) of a record whose
-    formation provenance names `source`."""
+    formation provenance names `source`. An AUTHORED reading is never cut (Castor E2E C4_04, 2026-11-10: two
+    visit-close summaries authored by the summaries capability served cut): its digest_method `authored:<capability>`
+    (runtime authored_digest_attributes), the record's `metadata_authored` stamp, or an authored formation provenance
+    (`source` = `authored:<capability>`) - whatever else the reading says."""
     authored = reading.get("authored_by") if isinstance(reading.get("authored_by"), Mapping) else {}
-    writer = str(reading.get("digest_method") or authored.get("id") or "").strip()
+    method = str(reading.get("digest_method") or "").strip()
+    if method.startswith("authored:") or _digest_authored(reading.get("metadata_authored")) \
+            or str(source or "").strip().startswith("authored:"):
+        return False
+    writer = str(method or authored.get("id") or "").strip()
     if writer in RETIRED_CUTTING_WRITERS:
         return True
     original = reading.get("digest_version") in (None, 0)
@@ -118,13 +134,14 @@ class RecordUnderstandings:
     distinct record), so a replay that recalls the same memory a thousand times reads it once. Scoped to one response
     or one stream chunk, never kept across them: a fresh read always sees the store as it is."""
 
-    __slots__ = ("_home", "_understood", "_versions", "_sources", "_identity")
+    __slots__ = ("_home", "_understood", "_versions", "_sources", "_authored", "_identity")
 
     def __init__(self, home: Any) -> None:
         self._home = home
         self._understood: Dict[str, Optional[Dict[str, Any]]] = {}
         self._versions: Dict[str, List[Dict[str, Any]]] = {}
         self._sources: Dict[str, str] = {}
+        self._authored: Dict[str, Any] = {}
         self._identity: Optional[Dict[tuple, str]] = None
 
     def identity_record_id(self, kind: str, title: Any) -> Optional[str]:
@@ -149,7 +166,9 @@ class RecordUnderstandings:
         return self._sources.get(rid, "")
 
     def cut(self, record_id: Any, reading: Mapping[str, Any]) -> bool:
-        return cut_when_saved(reading, self.source(record_id))
+        source = self.source(record_id)  # reads the record (and its metadata_authored stamp) once
+        stamp = self._authored.get(str(record_id or "").strip())
+        return cut_when_saved({**dict(reading), "metadata_authored": stamp} if stamp else reading, source)
 
     def read(self, record_id: Any) -> Optional[Dict[str, Any]]:
         """Memory's `record_understanding` for a formed, non-diary record (private ones included); None for a diary
@@ -169,6 +188,8 @@ class RecordUnderstandings:
                 out = self._home.memory.record_understanding(rid)
                 provenance = getattr(assertion, "provenance", None)
                 self._sources[rid] = str((provenance or {}).get("source") or "") if isinstance(provenance, dict) else ""
+                if attrs.get("metadata_authored"):
+                    self._authored[rid] = attrs["metadata_authored"]
         self._understood[rid] = out
         return out
 
