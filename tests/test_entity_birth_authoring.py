@@ -103,3 +103,28 @@ def test_a_failing_capability_forms_them_pending_with_a_failure_line(monkeypatch
         home_dir = get_gateway_service().entity_registry.entities_dir / "castor"
         log = (home_dir / "own_time.log").read_text(encoding="utf-8")
         assert log.count("#AUTHORING_FAILURE") >= _unnamed_count() and "engram" in log, log[-1500:]
+
+
+@pytest.mark.capability_models
+def test_the_birth_authoring_briefing_names_the_entity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AbstractRuntime 0.19.0's summaries briefing names whose memories these are (`entity_name`, required): the
+    gateway's birth author passes the entity's name as its home holds it (spark.yaml `name`, else the entity id,
+    open_home's rule), so every birth record's call is briefed with it."""
+    from abstractgateway import entity_chat
+
+    class _Briefed(_Titles):
+        def __init__(self) -> None:
+            super().__init__()
+            self.system_prompts: List[str] = []
+
+        def generate(self, *args: Any, response_model: Any = None, **kwargs: Any) -> Any:
+            self.system_prompts.append(str(kwargs.get("system_prompt") or ""))
+            return super().generate(*args, response_model=response_model, **kwargs)
+
+    model = _Briefed()
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", lambda provider, **kw: model)
+    with _client() as client:
+        r = client.post("/api/gateway/entities", json={"name": "Orion", "spark": _spark("Orion")})
+        assert r.status_code == 201, r.text
+    assert model.n == _unnamed_count() and model.system_prompts, model.system_prompts
+    assert all("Orion is the entity whose memories these are" in p for p in model.system_prompts), model.system_prompts

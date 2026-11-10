@@ -1392,7 +1392,11 @@ class EntityRegistry:
                 # gets its title from the entity's summaries capability before it forms (a home carried two
                 # "trait-0"), the call kept as a home artifact; a failure forms it pending with its failure line.
                 # Under the birth's admission: a Stop during the birth makes no further model call.
-                from abstractruntime.identity.authoring import capability_formation_author, log_pass_authoring_failures
+                from abstractruntime.identity.authoring import (
+                    capability_formation_author,
+                    entity_name_of,
+                    log_pass_authoring_failures,
+                )
                 from abstractruntime.identity.lifecycle_fence import LifecycleFence
                 from abstractruntime.storage.artifacts import FileArtifactStore
 
@@ -1406,6 +1410,9 @@ class EntityRegistry:
                     author=capability_formation_author(
                         self.capability_llm_factory(manifest.slug), FileArtifactStore(str(home_dir / "artifacts")),
                         author_seen, should_stop=birth_fence.moved,
+                        # The briefing names whose memories these are (AbstractRuntime 0.19.0): the name as the
+                        # home holds it, open_home's rule (spark.yaml `name`, else the entity id).
+                        entity_name=entity_name_of(home_dir, manifest.entity_id),
                     ),
                 )
                 log_pass_authoring_failures(result.to_dict(), home_dir=home_dir, entity=manifest.entity_id,

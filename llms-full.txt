@@ -16718,6 +16718,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   count the listed kind. A purpose, never the creating client. AbstractNote reads its automations
   by id, so its Processing page is unchanged. A docs-qa run named by a namespaced `flow_id`
   (without `bundle_id`) is now marked `docs` too.
+- **Birth records are authored under the entity's name** (`entities.py`). AbstractRuntime 0.19.0's summaries briefing
+  names whose memories these are (`entity_name`, a required argument): the birth author passes the entity's name as
+  its home holds it (`spark.yaml`'s `name`, else the entity id), so a new entity's first records refer to it by name.
 
 ### Deprecated
 
