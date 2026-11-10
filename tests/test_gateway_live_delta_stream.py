@@ -700,7 +700,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 
     from abstractgateway import live_deltas as ld
 
-    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.2"
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.3"
     assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
@@ -709,14 +709,21 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     assert ld._version_tuple("0.18.4") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert not (ld._version_tuple("0.19.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert ld._version_tuple("0.19.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.19.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
         ld.require_runtime_features(runtime)
     text = str(info.value)
     assert "(0.15.2)" in text and f"abstractruntime>={ld.ABSTRACTRUNTIME_FLOOR}" in text and "0965" in text
-    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.3")
+    # 0.19.3's own version gate (the own-time withdrawal rule, a behaviour): 0.19.2 is refused by version too,
+    # naming the rule; 0.19.3 and an unknown metadata (a source checkout) are accepted.
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.2")
+    with pytest.raises(ld.RuntimeTooOld) as info:
+        ld.require_runtime_features(runtime)
+    assert "(0.19.2)" in str(info.value) and "own-time withdrawal rule" in str(info.value)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.3")
     ld.require_runtime_features(runtime)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
     ld.require_runtime_features(runtime)
@@ -725,7 +732,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """AbstractRuntime 0.19.0: the one iteration default, the Stop fence and registered skill roots; 0.19.1: the
     self-knowledge brief reader. A runtime without one of them is refused by the host-build check, which names
-    the 0.19.2 floor (0.19.2: the membership-only topic read)."""
+    the 0.19.3 floor (0.19.2: the membership-only topic read; 0.19.3: the own-time withdrawal rule, version-gated)."""
     import types
 
     import abstractruntime
@@ -736,8 +743,8 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
     from abstractgateway import live_deltas as ld
 
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
-    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.18.4")
-    ld.require_runtime_features(runtime)  # the 0.19.0 API present: accepted
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.3")
+    ld.require_runtime_features(runtime)  # the API present and the version at the floor: accepted
     for module, name, words in (
         (abstractruntime, "DEFAULT_MAX_ITERATIONS", "abstractruntime.DEFAULT_MAX_ITERATIONS"),
         (lifecycle_fence, "LifecycleFence", "LifecycleFence"),
@@ -754,7 +761,7 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
             with pytest.raises(ld.RuntimeTooOld) as info:
                 ld.require_runtime_features(runtime)
         text = str(info.value)
-        assert words in text and "abstractruntime>=0.19.2" in text, text  # the floor; each item names its own version
+        assert words in text and "abstractruntime>=0.19.3" in text, text  # the floor; each item names its own version
 
 
 def test_an_older_runtime_reaches_the_floor_check_instead_of_an_import_error(tmp_path: Path) -> None:

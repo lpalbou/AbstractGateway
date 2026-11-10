@@ -129,7 +129,10 @@ _role_lock = threading.Lock()
 #         and written into the prefix at the end of a sleep).
 # 0.19.2: the visit ledger's activity fields (`topic` on recall handles, `iteration`/`max_iterations` on the
 #         reason call, `hits` on memory searches) and `memory_facade.community_keys_of` (the stamp's read).
-ABSTRACTRUNTIME_FLOOR = "0.19.2"
+# 0.19.3: own time withdrawn = the turn in flight finishes whole, then nothing runs (no tick look-back, no
+#         authoring drain, no day look-back, no next tick): entity_phase's "Own time withdrawn: he finishes what he
+#         is doing, then goes idle." is only true with it (a behaviour, not an API: version-gated below).
+ABSTRACTRUNTIME_FLOOR = "0.19.3"
 
 
 def _installed_runtime_version() -> str:
@@ -1023,6 +1026,11 @@ def require_runtime_features(runtime: Any) -> None:
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.19.3"):
+        missing.append(
+            "the own-time withdrawal rule (the turn in flight finishes, then nothing runs; AbstractRuntime 0.19.3; "
+            "0.19.2 still ran the day's look-back after a revoke)"
+        )
     if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.15.3"):
         missing.append(
             "a change token that holds across the index build (JsonFileRunStore, AbstractRuntime 0.15.3; "

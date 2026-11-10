@@ -60,7 +60,9 @@ dependencies = [
   # GET /entities/{name}/self-brief and the runtime writes it at the end of a sleep).
   # 0.19.2: the visit ledger's activity fields (topic on recall handles, iteration/max_iterations on the
   # reason call, hits on memory searches) and `memory_facade.community_keys_of`.
-  "AbstractRuntime>=0.19.2",
+  # 0.19.3: own time withdrawn = the turn in flight finishes, then nothing runs (no look-back, no next tick):
+  # the toggle's served sentence is only true with it.
+  "AbstractRuntime>=0.19.3",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -196,7 +198,7 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.19.2",
+  "AbstractRuntime[apple]>=0.19.3",
   "abstractagent[apple]>=0.6.1",
   "AbstractMemory[all-apple]>=0.5.0",
 ]
@@ -204,7 +206,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.19.2",
+  "AbstractRuntime[gpu]>=0.19.3",
   "abstractagent[gpu]>=0.6.1",
   "AbstractMemory[all-gpu]>=0.5.0",
 ]

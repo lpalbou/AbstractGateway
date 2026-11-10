@@ -347,7 +347,8 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Changed
 
-- Dependency floor: AbstractRuntime 0.19.2 (0.19.1: `identity.self_brief.read_self_brief`, the brief the new route
+- Dependency floor: AbstractRuntime 0.19.3 (0.19.3: the own-time withdrawal rule, the turn in flight finishes then nothing
+  runs, which the toggle's sentence promises; 0.19.1: `identity.self_brief.read_self_brief`, the brief the new route
   serves; 0.19.2: the visit ledger's activity fields the Entity app's live activity panel reads, `topic` on recall
   handles, `iteration`/`max_iterations` on the reason call, `hits` on memory searches, and the membership-only topic
   read `memory_facade.community_keys_of`; the host-build check names each when missing). The visit lane's tool-result
