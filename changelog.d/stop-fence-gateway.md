@@ -39,3 +39,6 @@
   admitted before the paused check, the lease and the runtime lookup, revalidated under the lease, the runtime it
   drains through is the one admitted at that generation, and its writes run under the fence; a Stop refusing a write
   ends the drain as `stopped`, never an authoring failure.
+- **A hosted chat opened across a Stop is never left live** (Codex review 3 #8): its registration is one locked step
+  with the check of the visit's original admission; a session refused there is disposed (home closed, lease released,
+  nothing restored over the Stop), and a Stop during the pending look-back is a refusal, never a failure line.

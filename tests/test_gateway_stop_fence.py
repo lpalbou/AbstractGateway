@@ -269,3 +269,37 @@ def test_a_stop_during_the_night_refuses_every_later_write_of_the_pass(monkeypat
         assert seen.get("write") == "refused", seen.get("write")
         assert _memory_dump() == seen["after_stop"], "the night wrote after the operator's Stop"
         assert out["maintenance"] == "stopped", out
+
+
+# ------------------------------------------------------------------------------------------------- finding 8
+def test_a_stop_while_the_chat_opens_leaves_no_session_lease_or_effect(monkeypatch):
+    """Codex review 3 #8: the hosted chat registered its session after the last admission check, the session's
+    construction and the pending look-back: a Stop landing there missed the session, which was then returned open.
+    Registration is now fenced on the original admission; a refused session is disposed."""
+    from abstractruntime.identity.chat import ChatSession
+    from abstractruntime.identity.life import read_entity_state
+    from abstractruntime.storage.lease import acquire_directory_lease
+
+    from abstractgateway.routes.entities import _chat_host
+
+    llm = _install_llm(monkeypatch, [])
+    real_lookback = ChatSession.run_pending_lookback
+    fired = []
+
+    def _stop_then_lookback(self):
+        if not fired:
+            fired.append(_stop("castor"))  # after the session's construction, before its registration
+        return real_lookback(self)
+
+    with _client() as client:
+        _born(client, "Castor")
+        monkeypatch.setattr(ChatSession, "run_pending_lookback", _stop_then_lookback)
+        r = client.post("/api/gateway/entities/Castor/chat/open", json={})
+        assert fired
+        assert r.status_code == 409, r.text
+        assert not _chat_host().has_open("castor"), "a session opened across the Stop is live"
+        acquire_directory_lease(_home(), holder="test").release()  # the visit's writer lease was released
+        assert read_entity_state(_home())["state"] == "paused"
+        assert llm.calls == []
+        stream = _home().parent / ".host_stream" / "castor.jsonl"
+        assert '"summon"' not in (stream.read_text(encoding="utf-8") if stream.exists() else "")

@@ -844,11 +844,19 @@ class EntityChatHost:
         # look-back runs FIRST, over its own sheet, attributed to its own
         # session id — never a re-opened closed sheet. Version-tolerant:
         # older drivers without the guard just skip (labeled).
+        from abstractruntime.identity.chat import TurnCancelled
+
+        from .entity_phase import GenerationMoved, fenced
+        from .entity_visits import STOPPED_VISIT_SENTENCE
+
         salvage: Optional[Dict[str, Any]] = None
+        stopped_while_opening = False
         lookback = getattr(session, "run_pending_lookback", None)
         if callable(lookback):
             try:
                 salvage = lookback()
+            except TurnCancelled:
+                stopped_while_opening = True  # the operator's Stop (the session's fence): never a failure line
             except Exception as e:  # a salvage failure never blocks the new visit
                 quiet.append(f"#FALLBACK pending look-back failed ({e}); the marker stays for the next open")
         else:
@@ -869,9 +877,26 @@ class EntityChatHost:
             prior_state=dict(prior_state),
             fence=visit_fence,
         )
-        with self._lock:
-            self._sessions[chat_id] = hosted
-            self._by_slug[slug] = chat_id
+        # REGISTRATION IS FENCED ON THE ORIGINAL ADMISSION (Codex review 3 #8): the session becomes visible to
+        # Stop (`stop_open_visit` reads `_by_slug`) in one locked step with the check of the generation this
+        # visit was admitted at - a Stop that landed anywhere since (construction, the salvage) refuses the
+        # open, and a Stop after it finds the session and closes it. A refused session is disposed: its home
+        # closed, its lease released, nothing restored over the Stop.
+        try:
+            if stopped_while_opening:
+                raise GenerationMoved("stopped while the visit opened")
+            with fenced(self._registry.entities_dir, slug, visit_fence):
+                with self._lock:
+                    self._sessions[chat_id] = hosted
+                    self._by_slug[slug] = chat_id
+        except GenerationMoved:
+            try:
+                home.close()
+            except Exception:  # noqa: BLE001
+                pass
+            if lease is not None:
+                lease.release()
+            raise ChatOpenRefused(409, STOPPED_VISIT_SENTENCE, code="stopped_use_resume") from None
 
         self._marker(
             hosted, "summon",
