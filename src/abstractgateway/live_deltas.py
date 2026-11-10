@@ -119,7 +119,13 @@ _role_lock = threading.Lock()
 # 0.18.0: the digital identity record (`abstractruntime.identity.digital_identity`, entity_identity.py) and
 #         `set_model_idle_unload` / `set_model_residency_locks` on the host facade (kept_models.py).
 # 0.18.1: replay `public_update` messages carry the run's `identity_ref`.
-ABSTRACTRUNTIME_FLOOR = "0.18.1"
+# 0.19.0: the Stop fence (`identity.lifecycle_fence.LifecycleFence`; `fence=` is required by `open_home`,
+#         `open_entity_runtime`, `ChatSession`, `spawn_loop_process` and `build_consolidator`), the one
+#         iteration default `DEFAULT_MAX_ITERATIONS` (runtime_config.py), `register_skill_roots`
+#         (skills_library.py), the entity phases (`home_state_lock`, `read_lifecycle_generation`,
+#         `read_job_queue`, `TurnCancelled`), the cognition profile and `sleep_thresholds`, turn authors,
+#         `drain_authoring` (entity_authoring.py) and `TOOL_RESULT_ARTIFACT_KIND` (routes/entity_replay.py).
+ABSTRACTRUNTIME_FLOOR = "0.19.0"
 
 
 def _installed_runtime_version() -> str:
@@ -982,6 +988,20 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("durable decisions (AbstractCoreRunFacade.decide, AbstractRuntime 0.16.0)")
     except ImportError:
         missing.append("the AbstractCore run facade (abstractruntime.integrations.abstractcore.run_facade.AbstractCoreRunFacade)")
+    # AbstractRuntime 0.19.0. The gateway reads these lazily (runtime_config.builtin_max_iterations and the
+    # entity modules), so an older runtime reaches this check instead of failing at import.
+    try:
+        from abstractruntime import DEFAULT_MAX_ITERATIONS  # noqa: F401
+    except ImportError:
+        missing.append("the one iteration default (abstractruntime.DEFAULT_MAX_ITERATIONS, AbstractRuntime 0.19.0)")
+    try:
+        from abstractruntime.identity.lifecycle_fence import LifecycleFence  # noqa: F401
+    except ImportError:
+        missing.append("the Stop fence (abstractruntime.identity.lifecycle_fence.LifecycleFence, AbstractRuntime 0.19.0)")
+    try:
+        from abstractruntime.integrations.abstractcore.skill_roots import register_skill_roots  # noqa: F401
+    except ImportError:
+        missing.append("registered skill roots (abstractruntime.integrations.abstractcore.skill_roots.register_skill_roots, AbstractRuntime 0.19.0)")
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).

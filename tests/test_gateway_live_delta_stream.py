@@ -700,14 +700,15 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 
     from abstractgateway import live_deltas as ld
 
-    assert ld.ABSTRACTRUNTIME_FLOOR == "0.18.1"
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.0"
     assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.17.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert ld._version_tuple("0.18.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert not (ld._version_tuple("0.18.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
-    assert not (ld._version_tuple("0.18.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert ld._version_tuple("0.18.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert ld._version_tuple("0.18.4") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.19.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert not (ld._version_tuple("0.19.1") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
@@ -718,6 +719,62 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     ld.require_runtime_features(runtime)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
     ld.require_runtime_features(runtime)
+
+
+def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AbstractRuntime 0.19.0: the one iteration default, the Stop fence and registered skill roots.
+    A runtime without one of them is refused by the host-build check, which names the 0.19.0 floor."""
+    import types
+
+    import abstractruntime
+    from abstractruntime.identity import lifecycle_fence
+    from abstractruntime.integrations.abstractcore import skill_roots
+
+    from abstractgateway import live_deltas as ld
+
+    runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.18.4")
+    ld.require_runtime_features(runtime)  # the 0.19.0 API present: accepted
+    for module, name, words in (
+        (abstractruntime, "DEFAULT_MAX_ITERATIONS", "abstractruntime.DEFAULT_MAX_ITERATIONS"),
+        (lifecycle_fence, "LifecycleFence", "LifecycleFence"),
+        (skill_roots, "register_skill_roots", "register_skill_roots"),
+    ):
+        with monkeypatch.context() as m:
+            m.delattr(module, name)
+            with pytest.raises(ld.RuntimeTooOld) as info:
+                ld.require_runtime_features(runtime)
+        text = str(info.value)
+        assert words in text and "AbstractRuntime 0.19.0" in text and "abstractruntime>=0.19.0" in text, text
+
+
+def test_an_older_runtime_reaches_the_floor_check_instead_of_an_import_error(tmp_path: Path) -> None:
+    """The gateway reads DEFAULT_MAX_ITERATIONS lazily (runtime_config.builtin_max_iterations): on a
+    runtime without it the app still imports and the fresh-install seed stores nothing, so the
+    host build's RuntimeTooOld is what the person reads, not an ImportError at import."""
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import abstractruntime\n"
+        "del abstractruntime.DEFAULT_MAX_ITERATIONS\n"
+        "import abstractgateway.app\n"
+        "from abstractgateway import cli\n"
+        "from pathlib import Path\n"
+        "cli._seed_fresh_install(Path(%r))\n"
+        "from abstractgateway import runtime_config\n"
+        "try:\n"
+        "    runtime_config.builtin_max_iterations()\n"
+        "except ImportError:\n"
+        "    print('LAZY-OK')\n"
+    ) % str(tmp_path / "data")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ABSTRACTGATEWAY_")}
+    env["HOME"] = str(tmp_path / "home")
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=180, env=env)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    assert proc.stdout.strip().splitlines()[-1] == "LAZY-OK"
 
 
 def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

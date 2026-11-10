@@ -267,7 +267,7 @@ def memory_backend_unavailable_reason(backend: str) -> Optional[str]:
         store_class = getattr(memory_facade, class_name, None)
     except Exception as e:  # the facade's install hint: AbstractMemory itself is missing or too old
         return (
-            "AbstractMemory is not available (the gateway needs AbstractMemory>=0.4.0 through AbstractRuntime). "
+            "AbstractMemory is not available (the gateway needs AbstractMemory>=0.5.0 through AbstractRuntime). "
             f"Install/repair the base Gateway environment with `pip install abstractgateway`. Import error: {e}"
         )
 

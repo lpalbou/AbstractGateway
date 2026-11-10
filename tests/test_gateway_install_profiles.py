@@ -47,20 +47,24 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.34.0" in deps
+    assert "abstractcore>=2.35.0" in deps
     assert "abstractvoice>=0.20.0" in deps
-    assert "abstractagent>=0.6.0" in deps
-    assert "AbstractMemory[lancedb]>=0.4.0" in deps
-    assert "abstractskill>=0.3.4" in deps
+    assert "abstractagent>=0.6.1" in deps
+    assert "AbstractMemory[lancedb]>=0.5.0" in deps
+    assert "abstractskill>=0.3.11" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
     assert "uvicorn[standard]<1.0.0,>=0.38.0" in deps
     # 0.1.1: the frozen avatar design catalog with `watch_code` (framework ADR 0052): the identity door
-    # refuses a design the Watch cannot draw (backlog 1128 item 5).
-    assert _floor(deps, "abstractavatar") >= Version("0.1.1")
+    # refuses a design the Watch cannot draw (backlog 1128 item 5). 0.2.0: `retired()` and `resolve_style`
+    # (entity_identity.py answers 503 "too old" without them).
+    assert _floor(deps, "abstractavatar") >= Version("0.2.0")
     # 4.0.0: the parser's bound on auto-completed table cells (3.0.0 has none: a 44 KB table took 44 GB).
     assert _floor(deps, "markdown-it-py") >= Version("4.0.0")
+    # The resolver's "AbstractMemory is not available" sentence names the same floor (memory_store.py).
+    memory_floor = _floor(deps, "AbstractMemory")
+    assert f"AbstractMemory>={memory_floor}" in (ROOT / "src" / "abstractgateway" / "memory_store.py").read_text(encoding="utf-8")
     joined = "\n".join(deps)
     assert "mcp-worker" not in joined
     assert "multimodal" not in joined
@@ -146,7 +150,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.34.0" in embeddings
+    assert "abstractcore[embeddings]>=2.35.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -156,17 +160,17 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     apple = "\n".join(extras["apple"])
     assert f"AbstractRuntime[apple]>={ABSTRACTRUNTIME_FLOOR}" in apple
-    assert "abstractagent[apple]>=0.6.0" in apple
+    assert "abstractagent[apple]>=0.6.1" in apple
     assert "abstractagent[all-apple]" not in apple
-    assert "AbstractMemory[all-apple]>=0.4.0" in apple
+    assert "AbstractMemory[all-apple]>=0.5.0" in apple
     assert "abstractcore[" not in apple
     assert "abstractvision" not in apple
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
     assert f"AbstractRuntime[gpu]>={ABSTRACTRUNTIME_FLOOR}" in gpu
-    assert "abstractagent[gpu]>=0.6.0" in gpu
-    assert "AbstractMemory[all-gpu]>=0.4.0" in gpu
+    assert "abstractagent[gpu]>=0.6.1" in gpu
+    assert "AbstractMemory[all-gpu]>=0.5.0" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
     assert "abstractvoice" not in gpu

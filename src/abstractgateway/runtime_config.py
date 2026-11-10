@@ -1699,7 +1699,26 @@ def _write_streaming_default(stored: Dict[str, Any], raw: Any, applied: Dict[str
 MAX_ITERATIONS_DEFAULT_KEY = "agents.max_iterations"
 # Unset = the framework default, AbstractRuntime's DEFAULT_MAX_ITERATIONS (50): the one constant every
 # reader imports (operator 2026-11-08: "By default, set it to 50 everywhere"). Never copy the number.
-from abstractruntime import DEFAULT_MAX_ITERATIONS as BUILTIN_MAX_ITERATIONS  # noqa: E402
+
+
+def builtin_max_iterations() -> int:
+    """AbstractRuntime's DEFAULT_MAX_ITERATIONS (AbstractRuntime 0.19.0), read when it is first needed.
+
+    Imported lazily on purpose: this module loads with the app, and a module-level import would stop
+    a gateway on an older runtime with a bare ImportError before the host build's RuntimeTooOld
+    (live_deltas.require_runtime_features) can name the floor and the upgrade command."""
+    from abstractruntime import DEFAULT_MAX_ITERATIONS
+
+    return int(DEFAULT_MAX_ITERATIONS)
+
+
+def __getattr__(name: str) -> Any:
+    # `from .runtime_config import BUILTIN_MAX_ITERATIONS` keeps working (cli.py, routes/gateway.py).
+    if name == "BUILTIN_MAX_ITERATIONS":
+        return builtin_max_iterations()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # Past this the console shows a warning line; it is never a refusal (operator 2026-11-08: no wall).
 MAX_ITERATIONS_WARN_ABOVE = 200
 
@@ -1718,11 +1737,11 @@ def _max_iterations_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
         "key": MAX_ITERATIONS_DEFAULT_KEY,
         "value": int(raw) if ok else None,
         "source": "stored" if ok else "default",
-        "default": BUILTIN_MAX_ITERATIONS,
+        "default": builtin_max_iterations(),
         "label": "Iteration limit",
         "help": (
             "How many cycles an agent run may take when the app does not set its own limit "
-            f"(input_data._limits.max_iterations). Empty = the framework default ({BUILTIN_MAX_ITERATIONS})."
+            f"(input_data._limits.max_iterations). Empty = the framework default ({builtin_max_iterations()})."
         ),
         "warn_above": MAX_ITERATIONS_WARN_ABOVE,
     }
@@ -1760,9 +1779,9 @@ def seed_fresh_install_defaults(data_dir: Path) -> List[str]:
             agents = stored.get("agents") if isinstance(stored.get("agents"), dict) else {}
             if MAX_ITERATIONS_DEFAULT_KEY in seeded or "max_iterations" in agents:
                 return []
-            write_runtime_config(data_dir, {MAX_ITERATIONS_DEFAULT_KEY: BUILTIN_MAX_ITERATIONS}, actor="first-run")
+            write_runtime_config(data_dir, {MAX_ITERATIONS_DEFAULT_KEY: builtin_max_iterations()}, actor="first-run")
             stored = _read_store(data_dir, strict=True)
-            seeded[MAX_ITERATIONS_DEFAULT_KEY] = {"value": BUILTIN_MAX_ITERATIONS, "at": _now_iso()}
+            seeded[MAX_ITERATIONS_DEFAULT_KEY] = {"value": builtin_max_iterations(), "at": _now_iso()}
             stored[SEEDED_DEFAULTS_KEY] = seeded
             _write_store(data_dir, stored)
             return [MAX_ITERATIONS_DEFAULT_KEY]
@@ -1877,7 +1896,7 @@ def resolve_run_iteration_limit(requested: Any, data_dir: Path) -> Dict[str, Any
     stored = resolve_max_iterations_default(Path(data_dir))
     if stored is not None:
         return {"max_iterations": int(stored), "source": "gateway_default"}
-    return {"max_iterations": BUILTIN_MAX_ITERATIONS, "source": "builtin"}
+    return {"max_iterations": builtin_max_iterations(), "source": "builtin"}
 
 
 def _write_agents_changes(

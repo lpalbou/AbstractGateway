@@ -761,10 +761,12 @@ def _record_serve_stop() -> None:
 def _seed_fresh_install(data_dir: Path) -> None:
     """A fresh data dir stores the framework defaults the console would (operator decision D2:
     the iteration limit is 50 everywhere, also for a bundle that bakes its own smaller value)."""
-    from .runtime_config import BUILTIN_MAX_ITERATIONS, seed_fresh_install_defaults
+    # The value is read only after a seed landed: on an older AbstractRuntime the seed stores nothing and
+    # the host build's RuntimeTooOld names the floor (a bare ImportError here would come first).
+    from .runtime_config import builtin_max_iterations, seed_fresh_install_defaults
 
     if seed_fresh_install_defaults(data_dir):
-        _stderr(f"Iteration limit: {BUILTIN_MAX_ITERATIONS} stored for this new install "
+        _stderr(f"Iteration limit: {builtin_max_iterations()} stored for this new install "
                 "(`abstractgateway config set agents.max_iterations N` changes it)")
 
 
