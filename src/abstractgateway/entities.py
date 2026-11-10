@@ -1388,12 +1388,29 @@ class EntityRegistry:
             if home.embedding_pin_warning:
                 warnings.append(home.embedding_pin_warning)
             try:
+                # BIRTH RECORDS ARE AUTHORED (AbstractMemory 82178c9 engram(author=)): a spark item without a name
+                # gets its title from the entity's summaries capability before it forms (castor carried two
+                # "trait-0"), the call kept as a home artifact; a failure forms it pending with its failure line.
+                # Under the birth's admission: a Stop during the birth makes no further model call.
+                from abstractruntime.identity.authoring import capability_formation_author, log_pass_authoring_failures
+                from abstractruntime.identity.lifecycle_fence import LifecycleFence
+                from abstractruntime.storage.artifacts import FileArtifactStore
+
+                author_seen: Dict[str, Any] = {}
+                birth_fence = LifecycleFence.admit(home_dir)
                 result = engram(
                     home.memory,
                     spark_doc,
                     owner_id=manifest.entity_id,
                     spark_artifact_ref=SPARK_FILENAME,
+                    author=capability_formation_author(
+                        self.capability_llm_factory(manifest.slug), FileArtifactStore(str(home_dir / "artifacts")),
+                        author_seen, should_stop=birth_fence.moved,
+                    ),
                 )
+                log_pass_authoring_failures(result.to_dict(), home_dir=home_dir, entity=manifest.entity_id,
+                                            reader=author_seen.get("reader"),
+                                            out=lambda line: logger.warning("birth of %s: %s", manifest.slug, line))
             finally:
                 home.close()
 
