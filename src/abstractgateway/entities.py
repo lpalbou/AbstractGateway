@@ -2203,6 +2203,7 @@ class EntityRegistry:
                     "search_memory_fn": reader.search_memory,
                     "read_memory_fn": reader.read_memory,
                     "recent_memories_fn": reader.recent_memories,
+                    "topics_fn": reader.topics,  # his topics (memory's communities, runtime identity/topics.py)
                 }
             except ImportError:
                 # Older runtime without the reader: the tools refuse

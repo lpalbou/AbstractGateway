@@ -390,3 +390,37 @@ def test_entity_llm_result_never_carries_raw_response_or_reasoning(monkeypatch) 
 
         assert "a secret thought" not in _json.dumps({k: v for k, v in res.items() if k != "content"})
         assert "leaked into reasoning" not in _json.dumps(res)
+
+
+def test_the_topics_tool_runs_through_the_door(monkeypatch: pytest.MonkeyPatch) -> None:
+    """His topics (runtime identity/topics.py, memory's communities read) reach the visit lane: a `topics` call
+    through the real door handler executes on HomeMemoryReader.topics - never the executor's '#FALLBACK topics
+    elected but no resolver wired' - and answers what memory serves (no version yet: the first sleep)."""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "memtools-secret")
+    from abstractgateway.app import app
+
+    with TestClient(app, headers={"Authorization": "Bearer memtools-secret"}) as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
+
+        from abstractgateway.service import get_gateway_service
+
+        registry = get_gateway_service().entity_registry
+        registry.get_entity_runtime("castor")
+        handler = registry._entity_tool_handler("castor")
+
+        class _Run:
+            run_id = "run-topics"
+            vars = {"_runtime": {"turn_id": "t-0001"}}
+
+        class _Effect:
+            payload = {"tool_calls": [{"name": "topics", "arguments": {}, "call_id": "c1"}]}
+
+        out = handler(_Run(), _Effect())
+        assert getattr(out, "status", None) == "completed", getattr(out, "error", None)
+        [res] = out.result["results"]
+        assert res["name"] == "topics" and res["success"] is True, res
+        assert not any("no resolver wired" in str(n) for n in out.result.get("notices") or []), out.result
+        assert "not enabled in this session" not in str(res["output"]), res
+        assert "the first grouping happens during your next sleep" in str(res["output"]), res

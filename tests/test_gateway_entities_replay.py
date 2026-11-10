@@ -828,38 +828,3 @@ def test_pair_members_get_title_rewrite_and_sibling_cues_match(tmp_path: Path):
         assert "interest: something real" in titles  # untouched member passes by identity
     finally:
         registry.close_all()
-
-
-def test_entity_communities_route(tmp_path: Path):
-    """The topic-communities serving end (operator 2026-07-17): thin route
-    over abstractruntime.identity.memory_communities, cached per journal
-    high-water; 404 on unknown entities."""
-    registry = EntityRegistry(data_dir=tmp_path / "runtime")
-    registry.create(name="Castor", spark=_spark())
-    home = registry.get_home("castor")
-    try:
-        from abstractmemory.records import MemoryRecordInput
-
-        home.memory.remember_many(
-            records=[
-                MemoryRecordInput(kind="episode", title="a", digest="d1", keywords=("dam", "verification", "x1")),
-                MemoryRecordInput(kind="episode", title="b", digest="d2", keywords=("dam", "verification", "x2")),
-                MemoryRecordInput(kind="episode", title="c", digest="d3", keywords=("voyager", "coherence", "y1")),
-                MemoryRecordInput(kind="episode", title="d", digest="d4", keywords=("voyager", "coherence", "y2")),
-            ],
-            scope="life",
-            owner_id=home.entity_id,
-            turn_id="t-comm",
-            idempotency_key="t-comm-1",
-        )
-        from abstractruntime.identity.communities import memory_communities
-
-        out = memory_communities(home.store)
-        assert out["node_count"] >= 4
-        assert isinstance(out["communities"], list)
-        covered = set(out["unclustered"])
-        for c in out["communities"]:
-            covered.update(c["member_ids"])
-        assert len(covered) == out["node_count"]
-    finally:
-        registry.close_all()

@@ -114,10 +114,12 @@ def cognition_profile_view(home_dir: Path) -> Dict[str, Any]:
         },
         "lookback": {"context": profile["lookback"]["context"], "source": profile["lookback"]["source"]},
         # When an IDLE entity goes to sleep (contract v3 D2): hours since his last completed sleep, or
-        # new memories formed since it — whichever comes first.
+        # new memories formed since it, or (operator 2026-11-10) the share of his memories that are not
+        # yet in a topic — whichever comes first.
         "sleep": {
             "after_hours": int(profile["sleep"]["after_hours"]),
             "after_events": int(profile["sleep"]["after_events"]),
+            "after_fragmented_share": float(profile["sleep"]["after_fragmented_share"]),
             "sources": dict(profile["sleep"]["sources"]),
         },
         "mind": mind,
@@ -177,6 +179,7 @@ def plan_cognition_profile_put(
         validate_sensitivity,
         validate_shelf_size,
         validate_sleep_after_events,
+        validate_sleep_after_fragmented_share,
         validate_sleep_after_hours,
     )
 
@@ -227,7 +230,8 @@ def plan_cognition_profile_put(
             ("recall", {"shelf_size": validate_shelf_size}),
             ("rebuild", {"sensitivity": validate_sensitivity, "cap_per_turn": validate_cap_per_turn}),
             ("lookback", {"context": validate_lookback_context}),
-            ("sleep", {"after_hours": validate_sleep_after_hours, "after_events": validate_sleep_after_events}),
+            ("sleep", {"after_hours": validate_sleep_after_hours, "after_events": validate_sleep_after_events,
+                       "after_fragmented_share": validate_sleep_after_fragmented_share}),
         ):
             if block not in body:
                 continue
@@ -236,7 +240,7 @@ def plan_cognition_profile_put(
                 "recall": '{"shelf_size": 50}',
                 "rebuild": '{"sensitivity": 0.5, "cap_per_turn": 3}',
                 "lookback": '{"context": "day"}',
-                "sleep": '{"after_hours": 24, "after_events": 500}',
+                "sleep": '{"after_hours": 24, "after_events": 500, "after_fragmented_share": 0.15}',
             }[block]
             if not isinstance(raw, Mapping):
                 raise CognitionProfileRefused(400, f"{block} must be an object, for example {example}.")

@@ -1593,44 +1593,59 @@ def entity_tile(name: str) -> Dict[str, Any]:
     )
 
 
-# Communities are recomputed only when the life GREW: cache keyed on the
-# HOME DIRECTORY (unique per principal AND per entity — adversary F3: a
-# name-keyed cache would serve tenant A's life to tenant B's same-named
-# entity whenever their journal seqs collide; the home dir also folds
-# name-case aliasing) + the journal high-water seq (the same freshness
-# signal the replay stream anchors on). Compute is ~70ms at 369 records —
-# the cache exists so a polling view costs nothing.
+# Topics (COMMUNITIES-DESIGN 2026-11-10; operator: "memory owns the graph operations"): memory forms
+# the communities while he sleeps (the runtime's night stage, after the repair) and keeps them as
+# `community` records; this route serves memory's read through the runtime facade, never a compute.
+# Cached per HOME DIRECTORY (unique per principal AND per entity, adversary F3: a name-keyed cache
+# would serve tenant A's life to tenant B's same-named entity) + the journal high-water seq: the O(1)
+# freshness key (Fable F7: learning the version seq itself is a scan); a `placed` event or a new
+# version moves it, and the read folds both.
 _COMMUNITIES_CACHE: Dict[str, Tuple[int, Dict[str, Any]]] = {}
+
+
+def _home_ladder(home: Any) -> List[Tuple[str, str]]:
+    from ..entities import DIARY_SCOPE, LIFE_SCOPE, SELF_SCOPE
+
+    eid = str(home.entity_id)
+    return [(SELF_SCOPE, eid), (DIARY_SCOPE, eid), (LIFE_SCOPE, eid)]
+
+
+def communities_payload(home: Any) -> Dict[str, Any]:
+    """Memory's communities payload (version 2) for this home, exactly as memory serves it: nothing added,
+    renamed or dropped (no version yet = memory's own `first_sleep_pending: true`, `communities: []`; no
+    stand-in partition). Cached per home dir + journal seq. The facade name is imported by name: a runtime
+    without it raises ImportError (the route's 501)."""
+    from abstractruntime.integrations.abstractmemory.memory_facade import communities as memory_communities
+
+    cache_key = str(getattr(home, "home_dir", None) or getattr(home, "path", None) or home.entity_id)
+    seq = int(home.memory.current_seq())
+    cached = _COMMUNITIES_CACHE.get(cache_key)
+    if cached is not None and cached[0] == seq:
+        return cached[1]
+    out = memory_communities(home.memory, scopes=_home_ladder(home), owner_id=str(home.entity_id))
+    _COMMUNITIES_CACHE[cache_key] = (seq, out)
+    return out
 
 
 @router.get("/{name}/communities")
 def entity_communities(name: str) -> Dict[str, Any]:
-    """Topic communities over the memory graph (operator ask 2026-07-17:
-    louvain-class regrouping for a topic-level view; computed at the
-    RUNTIME level for durability — abstractruntime.identity.communities;
-    this route is the thin serving end, same read posture as /card).
-    Pure read; deterministic per store state; exceptional gateway edit
-    authorized by the operator with the gateway seat offline (owner-review
-    ask on the room record)."""
+    """His topics: the communities memory formed during his sleeps, payload version 2 (memory's
+    `communities()` through the runtime facade, passed through unchanged: `version`, `version_seq`,
+    `algorithm`, `communities` [{id (the version's record id), key (stable across versions), title,
+    summary, pending, verdict, size, kinds, members [{id, via}], provisional_ids, cohesion, layout {xy,
+    radius, seats}, centroid_stale, facts}], `links` [{a, b, weight}]). A home with no version yet:
+    `first_sleep_pending: true`, `communities: []` (the app says his topics form at his first sleep).
+    Pure read; nothing is computed on GET."""
     try:
-        from abstractruntime.identity.communities import memory_communities
-
         home = _registry().get_home(name)
-        cache_key = str(getattr(home, "home_dir", None) or getattr(home, "path", None) or name)
-        seq = int(home.memory.current_seq())
-        cached = _COMMUNITIES_CACHE.get(cache_key)
-        if cached is not None and cached[0] == seq:
-            return cached[1]
-        out = memory_communities(home.store)
-        out["journal_seq"] = seq
-        _COMMUNITIES_CACHE[cache_key] = (seq, out)
-        return out
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
-    except ImportError as e:
-        raise HTTPException(status_code=501, detail=f"communities unavailable: {e}")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    try:
+        return communities_payload(home)
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=f"communities unavailable: {e}")
 
 
 @router.get("/{name}/verify")

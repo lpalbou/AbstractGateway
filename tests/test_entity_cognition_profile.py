@@ -113,7 +113,8 @@ def test_get_without_a_file_shows_the_mind_everywhere_and_the_defaults(world) ->
         },
         "lookback": {"context": "day", "source": "default"},
         # When an idle entity sleeps (contract v3 D2): the runtime's defaults.
-        "sleep": {"after_hours": 24, "after_events": 500, "sources": {"after_hours": "default", "after_events": "default"}},
+        "sleep": {"after_hours": 24, "after_events": 500, "after_fragmented_share": 0.15,
+                  "sources": {"after_hours": "default", "after_events": "default", "after_fragmented_share": "default"}},
         "mind": {**mind, "source": "gateway"},
     }
     assert not (world["home"] / "cognition.yaml").exists()
@@ -273,6 +274,26 @@ def test_the_creator_is_bound_to_the_offered_models_and_others_are_refused(world
     assert r.status_code == 403, r.text
     assert r.json()["detail"]["message"] == "Only an admin or aster's creator can change how it thinks."
     assert c.get(URL, headers=world["admin"]).json()["recall"]["shelf_size"] == 21
+
+
+def test_the_fragmented_share_sleep_threshold_is_set_refused_and_reset(world) -> None:
+    """sleep.after_fragmented_share (operator 2026-11-10; runtime validate_sleep_after_fragmented_share): the
+    PUT takes it beside after_hours/after_events, refuses a share outside 0 < x <= 1 with the runtime's sentence
+    (nothing written), and null returns it to the default."""
+    c, admin = world["c"], world["admin"]
+    r = c.put(URL, headers=admin, json={"sleep": {"after_fragmented_share": 0.3}})
+    assert r.status_code == 200, r.text
+    assert r.json()["sleep"]["after_fragmented_share"] == 0.3
+    assert r.json()["sleep"]["sources"]["after_fragmented_share"] == "profile"
+    stored = yaml.safe_load((world["home"] / "cognition.yaml").read_text(encoding="utf-8"))
+    assert stored["sleep"] == {"after_fragmented_share": 0.3}
+    for bad in (0, 1.5, -0.1, "lots", True):
+        refused = c.put(URL, headers=admin, json={"sleep": {"after_fragmented_share": bad}})
+        assert refused.status_code == 400, (bad, refused.text)
+        assert "after_fragmented_share" in refused.json()["detail"] or "share" in refused.json()["detail"].lower(), refused.text
+    assert c.get(URL, headers=admin).json()["sleep"]["after_fragmented_share"] == 0.3
+    body = c.put(URL, headers=admin, json={"sleep": {"after_fragmented_share": None}}).json()
+    assert body["sleep"]["after_fragmented_share"] == 0.15 and body["sleep"]["sources"]["after_fragmented_share"] == "default"
 
 
 def test_lookback_context_is_set_kept_and_reset(world) -> None:
