@@ -420,6 +420,32 @@ async def _maintenance_hold_409(request, exc):  # noqa: ANN001 - FastAPI handler
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+# AbstractCore's settings file is unreadable (abstractcore 8b970550 `ConfigParseError`: not JSON, or not an
+# object): every route that reads Core settings answers 503 naming the file and the parse error, and the rest of
+# the gateway keeps serving (never a 500 "Internal error"). The file is left exactly as it is.
+from abstractcore.config import ConfigParseError as _CoreConfigParseError  # noqa: E402
+
+
+@app.exception_handler(_CoreConfigParseError)
+async def _core_config_unreadable_503(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    from fastapi.responses import JSONResponse
+
+    try:
+        from .core_config import core_store_path
+
+        found = core_store_path()  # the Core store, by AbstractCore's own resolver (the one door)
+        path = str(found) if found is not None else None
+    except Exception:  # noqa: BLE001 - the message names the file too
+        path = None
+    cause = exc.__cause__
+    return JSONResponse(
+        status_code=503,
+        content={"detail": str(exc), "code": "core_config_unreadable", "path": path,
+                 "error": str(cause) if cause is not None else str(exc)},
+        headers={"X-Gateway-Error-Code": "core_config_unreadable"},
+    )
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_cors_safe(request, exc):  # noqa: ANN001 - FastAPI handler signature
     import logging

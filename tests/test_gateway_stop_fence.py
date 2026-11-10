@@ -563,3 +563,24 @@ def test_the_same_visitor_hands_over_a_visit_parked_on_an_approval(monkeypatch):
         assert "another conversation" in str(old.error or "")
         assert "Read that memory." in str(er.ledger_store.list(run_a))  # his words and what ran stay readable
         assert llm.calls == 1, "the tool waiting for its approval ran, or the old visit thought again"
+
+
+# ------------------------------------------------------------------------------- an unreadable Core settings file
+def test_an_unreadable_core_settings_file_is_a_503_naming_it_and_the_rest_keeps_serving(monkeypatch):
+    """AbstractCore refuses an unparseable settings file (abstractcore 8b970550 `ConfigParseError`; it never runs on
+    defaults). The routes that read Core settings answered 500 "Internal error"; they answer 503 naming the file and
+    the parse error, and the rest of the gateway keeps serving."""
+    import os
+
+    cfg = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])  # the scratch HOME's Core store (conftest)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text("{ not json", encoding="utf-8")
+    with _client() as client:
+        r = client.get("/api/gateway/config/capability-defaults")
+        assert r.status_code == 503, r.text
+        body = r.json()
+        assert body["code"] == "core_config_unreadable"
+        assert str(cfg) in body["detail"] and "not valid JSON" in body["detail"]
+        assert body["path"] == str(cfg) and "Expecting property name" in body["error"]
+        assert client.get("/api/gateway/entities").status_code == 200  # the rest keeps serving
+    assert cfg.read_text(encoding="utf-8") == "{ not json"  # left exactly as it is
