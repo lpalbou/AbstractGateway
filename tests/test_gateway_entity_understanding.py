@@ -403,3 +403,29 @@ def test_words_a_retired_writer_cut_when_saved_are_flagged_from_the_writer_never
         # He rewrote the reflection in his sleep: its words now are his, whole.
         _rewrite(home, old_summary, "The admin gave me time to look outward; I said I would come back with what I found.")
         assert read(old_summary)["cut"] is False
+
+
+def test_the_identity_cards_statements_carry_cut_from_their_records_writer():
+    """The identity card's statement blocks (GET /card `identity`: values, purposes, traits) carry `cut` like the card
+    briefs (5c2f5db7), derived from the writer stamp of each statement's own record, never from its words. A spark's
+    statements are the operator's (spark-v1): whole. Were that writer a retired cutting one, every statement it wrote
+    reads cut, and only those."""
+    from abstractgateway import entity_understanding
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Nerin", "spark": _spark("Nerin")}).status_code == 201
+        identity = client.get("/api/gateway/entities/Nerin/card").json()["identity"]
+        rows = [s for key in ("values", "purposes", "traits") for s in identity.get(key) or []]
+        assert rows and all(s["cut"] is False for s in rows), rows
+
+        import pytest as _pytest
+
+        mp = _pytest.MonkeyPatch()
+        try:
+            mp.setattr(entity_understanding, "RETIRED_CUTTING_WRITERS", frozenset({"spark-v1"}))
+            identity = client.get("/api/gateway/entities/Nerin/card").json()["identity"]
+        finally:
+            mp.undo()
+        rows2 = [s for key in ("values", "purposes", "traits") for s in identity.get(key) or []]
+        assert rows2 and all(s["cut"] is True for s in rows2), rows2
+        assert [s["statement"] for s in rows2] == [s["statement"] for s in rows]  # the words themselves unchanged

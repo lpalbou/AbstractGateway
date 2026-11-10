@@ -11,3 +11,5 @@
   and "Older record: its summary was cut when saved; he rewrites it in his sleep."
 - Known gap: on a machine that ran AbstractRuntime between 2a1c698 and the authored-at-formation release,
   reflections formed then were whole but are also unstamped, so they read `cut: true` until rewritten.
+- The identity card's statement blocks (`GET /entities/{name}/card` `identity`: values, purposes, traits) carry `cut`
+  too, from the writer stamp of each statement's own self record (matched by kind and title), never from the words.

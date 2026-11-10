@@ -72,6 +72,9 @@ def cut_when_saved(reading: Mapping[str, Any], source: Any) -> bool:
 #: The card sections whose record briefs carry the fields (`(section, list key)`). Questions and problems are diary
 #: rows and stay as they are.
 CARD_RECORD_LISTS = (("discoveries", "interests"), ("lessons", "lessons"), ("key_moments", "moments"))
+#: The identity section's statement lists and the record kind each statement is (memory's entity card: one statement
+#: per self record, named by its title; limits are traits).
+CARD_IDENTITY_LISTS = (("values", "value"), ("purposes", "purpose"), ("traits", "trait"), ("limits", "trait"))
 
 
 def is_diary_record(assertion: Any) -> bool:
@@ -115,13 +118,28 @@ class RecordUnderstandings:
     distinct record), so a replay that recalls the same memory a thousand times reads it once. Scoped to one response
     or one stream chunk, never kept across them: a fresh read always sees the store as it is."""
 
-    __slots__ = ("_home", "_understood", "_versions", "_sources")
+    __slots__ = ("_home", "_understood", "_versions", "_sources", "_identity")
 
     def __init__(self, home: Any) -> None:
         self._home = home
         self._understood: Dict[str, Optional[Dict[str, Any]]] = {}
         self._versions: Dict[str, List[Dict[str, Any]]] = {}
         self._sources: Dict[str, str] = {}
+        self._identity: Optional[Dict[tuple, str]] = None
+
+    def identity_record_id(self, kind: str, title: Any) -> Optional[str]:
+        """The self record an identity statement of the card shows (record kind + title, as memory's card names it);
+        None when the home holds no such record (one `self_records` read per response)."""
+        if self._identity is None:
+            from .entities import SELF_SCOPE
+
+            rows = self._home.memory.self_records(scope=SELF_SCOPE, owner_id=self._home.entity_id)
+            self._identity = {}
+            for row in rows:
+                attrs = row.attributes if isinstance(row.attributes, dict) else {}
+                self._identity.setdefault((str(attrs.get("record_kind") or ""), str(attrs.get("title") or "")),
+                                          str(row.subject))
+        return self._identity.get((str(kind), str(title or "")))
 
     def source(self, record_id: Any) -> str:
         """The writer the record's formation provenance names (`provenance.source`), "" when none (read with it)."""
@@ -242,4 +260,19 @@ def card_with_understanding(card: Dict[str, Any], reads: RecordUnderstandings) -
             briefs.append({**brief, **understanding_fields(understood), "cut": reads.cut(brief.get("record_id"), understood)}
                           if understood is not None else brief)
         out[section_key] = {**section, list_key: briefs}
+    identity = out.get("identity")
+    if isinstance(identity, dict):
+        # The identity card's statement blocks carry `cut` too, from the writer of each statement's own record
+        # (its current reading), never from the words.
+        flagged = dict(identity)
+        for list_key, kind in CARD_IDENTITY_LISTS:
+            if not isinstance(identity.get(list_key), list):
+                continue
+            rows = []
+            for entry in identity[list_key]:
+                rid = reads.identity_record_id(kind, entry.get("title")) if isinstance(entry, dict) else None
+                understood = reads.read(rid) if rid else None
+                rows.append({**entry, "cut": reads.cut(rid, understood)} if understood is not None else entry)
+            flagged[list_key] = rows
+        out["identity"] = flagged
     return out
