@@ -136,11 +136,42 @@ ABSTRACTRUNTIME_FLOOR = "0.19.3"
 
 
 def _installed_runtime_version() -> str:
-    """The installed abstractruntime's version string ("unknown" when metadata is missing)."""
-    try:
-        from importlib.metadata import version
+    """The installed abstractruntime's version string ("unknown" when metadata is missing).
 
-        return version("abstractruntime")
+    An EDITABLE install (a source checkout, `pip install -e`) keeps the metadata version of the moment it was
+    installed, not the checkout's: the dev stack of 2026-11-11 said 0.18.4 while the checkout was 0.19.4, and the
+    version gate refused the runtime (RuntimeTooOld) until the operator noticed. For an editable install the version
+    is read from the checkout's own pyproject.toml; when that cannot be read, "unknown" (accepted: a source checkout
+    is the developer's responsibility, the API probes above still run)."""
+    try:
+        from importlib.metadata import distribution
+
+        dist = distribution("abstractruntime")
+        raw = dist.read_text("direct_url.json")
+        if raw:
+            import json
+
+            info = json.loads(raw)
+            if isinstance(info, dict) and (info.get("dir_info") or {}).get("editable") and str(info.get("url", "")).startswith("file://"):
+                from pathlib import Path
+                from urllib.parse import unquote, urlparse
+
+                root = Path(unquote(urlparse(str(info["url"])).path))
+                return _pyproject_version(root / "pyproject.toml")
+        return dist.version
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _pyproject_version(path: Any) -> str:
+    """`[project].version` of a pyproject.toml, or "unknown"."""
+    try:
+        import tomllib
+
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+        value = str(((data.get("project") or {}).get("version")) or "").strip()
+        return value or "unknown"
     except Exception:  # noqa: BLE001
         return "unknown"
 

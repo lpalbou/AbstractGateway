@@ -16839,6 +16839,9 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ### Fixed
 
+- The runtime version gate reads an EDITABLE abstractruntime (a source checkout) by its pyproject.toml, not by the
+  stale metadata of the moment it was installed (a dev stack said 0.18.4 while the checkout was 0.19.4 and the gateway
+  refused to build the runtime after a respawn, 2026-11-11).
 - A visit attachment that is a symlink loop is refused 400 `attachment_unreadable` on every Python: on 3.13
   `Path.resolve()` no longer raises on a loop and `is_file()` swallowed the ELOOP, so the door said 404 "no file"
   (found by the 0.21.0 release gate's 3.13 shard); the validator now stats once before classifying.

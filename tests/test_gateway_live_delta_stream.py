@@ -841,3 +841,38 @@ def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: 
             bundles_dir=bundles, data_dir=tmp_path / "data2", run_store=InMemoryRunStore(),
             ledger_store=InMemoryLedgerStore(), artifact_store=None,
         )
+
+
+def test_an_editable_runtime_checkout_is_versioned_by_its_pyproject_not_its_stale_metadata(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """2026-11-11: the dev stack's editable abstractruntime said 0.18.4 in its metadata while the checkout was 0.19.4,
+    and the version gate refused it (RuntimeTooOld) after a respawn. An editable install is versioned by the
+    checkout's pyproject.toml; an unreadable one is "unknown" (accepted)."""
+    import json
+    import types
+
+    from abstractgateway import live_deltas as ld
+
+    root = tmp_path / "abstractruntime"
+    root.mkdir()
+    (root / "pyproject.toml").write_text('[project]\nname = "abstractruntime"\nversion = "0.19.4"\n', encoding="utf-8")
+
+    class _Dist:
+        version = "0.18.4"
+
+        def read_text(self, name):
+            assert name == "direct_url.json"
+            return json.dumps({"dir_info": {"editable": True}, "url": root.as_uri()})
+
+    import importlib.metadata as im
+
+    monkeypatch.setattr(im, "distribution", lambda name: _Dist())
+    assert ld._installed_runtime_version() == "0.19.4"
+    (root / "pyproject.toml").unlink()
+    assert ld._installed_runtime_version() == "unknown"
+
+    class _Wheel(_Dist):
+        def read_text(self, name):
+            return None
+
+    monkeypatch.setattr(im, "distribution", lambda name: _Wheel())
+    assert ld._installed_runtime_version() == "0.18.4"
