@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1391,7 +1391,10 @@ can see what it is doing and act on it in one click:</p>
   that applies a change. See <em>Network and addresses</em> below.</li>
 <li><strong>Settings</strong> — <strong>Start at login</strong> (a check item that shows whether this
   gateway WOULD start at your next login, and switches it; see <em>Start at
-  login</em>), <strong>Warn when memory is almost full</strong>, <strong>Classic menu</strong>.</li>
+  login</em>), <strong>Keep the Mac awake while the gateway runs</strong> (the same setting as
+  the web console's switch: checked = this Mac does not idle-sleep while the
+  gateway runs; a change applies at once; greyed when <code>serve --keep-awake</code>
+  pinned it for this run), <strong>Warn when memory is almost full</strong>, <strong>Classic menu</strong>.</li>
 <li><strong>Help</strong> — Documentation, Report a Problem, the developer API reference,
   Copy Console Link, <strong>Check for Updates…</strong> (while no update is known) and
   About: the gateway's version, console address and data folder, the
@@ -1426,7 +1429,7 @@ Models ▸            [Memory 40.6 GB of 128 GB (32%) · this gateway 10.9 GB] |
 Apps ▸              Open Observer | Open Continuum | Install Code… | [Entity] | Install Flow… | [Installs unavailable now · Console → Apps] | Manage Apps in Console…
 ────────
 Connect ▸           [Now: localhost only · 127.0.0.1:8080] | [Addresses — click one to copy it] | http://127.0.0.1:8080 · this computer | http://192.168.1.23:8080 · local network (Wi-Fi) | http://mymac.local:8080 · this computer's name | [Who can reach it] | ● Localhost only | ○ Local network | ○ Internet… | Open Network in Console…
-Settings ▸          ☑ Start at login | ☑ Warn when memory is almost full | ☐ Classic menu
+Settings ▸          ☑ Start at login | ☑ Keep the Mac awake while the gateway runs | ☑ Warn when memory is almost full | ☐ Classic menu
 Help ▸              Documentation | Report a Problem… | Developer API Reference | Copy Console Link | Check for Updates… | About AbstractGateway…
 ────────
 Restart…
@@ -1573,11 +1576,14 @@ automation's occurrence. An automation's run is listed under <strong>Automations
 Running (N)</strong> instead, with the same row and submenu: the runtime tags every run
 with a <code>session_kind</code> (<code>chat</code> / <code>discussion</code> = a conversation, <code>automation</code> /
 <code>occurrence</code> = an automation's run; <code>GET /host/runs</code> serves it on each row) and
-the menu sorts by that tag alone. A wake that runs in its caller's conversation
+the menu sorts by that tag alone. AbstractNote's own work (its captures and its
+processing automations, session purpose <code>notes</code>) is in neither menu: <code>GET
+/host/runs</code> leaves it out. A wake that runs in its caller's conversation
 is tagged <code>chat</code> and stays a conversation. A row reads under its <strong>title</strong>: the
-automation's name for an occurrence, else the first line of what the person typed (cut at
-60 characters), else the workflow's name (<code>GET /host/runs</code> serves it as
-<code>title</code> with <code>title_source</code>; the Observer's cards use the same text). The list
+automation's name for an occurrence, else the first line of what the person typed (folded at
+60 characters with a visible "…"), else the workflow's name (<code>GET /host/runs</code> serves it as
+<code>title</code> with <code>title_source</code>, and the whole first line as <code>title_whole</code>; the Observer's cards use
+the same text). The list
 is <strong>host-wide</strong>, not per-principal: memory, GPU and loaded models on this menu
 describe the machine, and the conversation list has to describe the same machine.
 Catalog-published workflows are shown under the name you know them by and are
@@ -2161,7 +2167,7 @@ have to honour the LGPL relinking terms.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

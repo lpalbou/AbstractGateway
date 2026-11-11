@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -2087,7 +2087,7 @@ for a trigger with no clock time (manual, email).</p>
 </thead>
 <tbody>
 <tr>
-<td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;cursor=&amp;limit=</code></td>
+<td><code>GET /api/gateway/automations?status=&amp;archived_only=&amp;kind=&amp;cursor=&amp;limit=</code></td>
 <td><code>{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}</code>, in the <a href="#listing-order">listing order</a></td>
 </tr>
 <tr>
@@ -2105,6 +2105,14 @@ for a trigger with no clock time (manual, email).</p>
   <code>archived_automations_count</code> are how many of yours are paused and archived,
   on every page, whatever the filter (<code>archived_automations</code> is the same
   count as <code>archived_automations_count</code>).</li>
+<li><code>kind</code> is what the automations are for: <code>user</code> (the default: the ones a
+  person creates and manages), <code>notes</code> (AbstractNote's own processing, the
+  "Process my notes", "Reflect on my notes" and "Consolidate my notes"
+  automations, recognised by their target's <code>abstractnote</code> bundle id) or
+  <code>all</code>. A purpose, never the client that created it. Every row carries
+  <code>kind</code>; the paused and archived counts count the listed kind. AbstractNote
+  reads its automations by id (<code>GET /automations/{automation_id}</code> and its
+  Processing page), so they work while every app's list leaves them out.</li>
 <li>Read every page, following <code>next_cursor</code> until it is <code>null</code>.
   <code>changed_since</code> is refused (422 <code>unsupported_feature</code>); poll complete
   pages instead.</li>
@@ -2501,6 +2509,12 @@ automation:</p>
 </table>
 <p>A growing automation's occurrences have <code>session_kind: "automation"</code>; an
 independent automation's occurrences have <code>session_kind: "occurrence"</code>.</p>
+<p>Every row also carries <code>kind</code>, the session's purpose
+(<a href="../api/#listing-behaviour">api.md</a>): an automation's occurrence sessions are
+<code>kind: "automation"</code> and leave the default conversation list (<code>kind=automation</code>,
+<code>kind=conversation,automation</code> or <code>session_kind=automation,occurrence</code> list
+them); AbstractNote's <code>note-process</code>, <code>note-reflect</code> and <code>note-consolidate</code>
+occurrences are <code>kind: "process"</code>, its captures and drains <code>notes</code>.</p>
 <ul>
 <li><strong><code>session_kind</code> filter.</strong> A comma-separated subset, for example
   <code>session_kind=chat,discussion</code>. An unknown kind answers 400.</li>
@@ -2682,7 +2696,7 @@ number of their own.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

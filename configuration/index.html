@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -608,6 +608,17 @@
     <span class="md-ellipsis">
       
         Stream replies by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iteration-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iteration limit
       
     </span>
   </a>
@@ -1649,6 +1660,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#iteration-limit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Iteration limit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#skills-shelf" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1940,14 +1962,14 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.18.1</code> (the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, <code>set_model_idle_unload</code> / <code>set_model_residency_locks</code>; a gateway stop interrupts a run instead of failing it, <code>update_kind</code> in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through <code>run_facade.decide</code>, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- <code>abstractcore&gt;=2.34.0</code> (the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, <code>ModelNotDownloadedError</code>, the <code>decision</code> output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- <code>AbstractRuntime&gt;=0.19.3</code> (own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at <code>/entities/{name}/self-brief</code>; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, <code>set_model_idle_unload</code> / <code>set_model_residency_locks</code>; a gateway stop interrupts a run instead of failing it, <code>update_kind</code> in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through <code>run_facade.decide</code>, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for <code>/api/gateway/memory/*</code>, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, <code>schedule_run</code> wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- <code>abstractcore&gt;=2.35.0</code> (AbstractRuntime 0.19.0's own floor: an unreachable model endpoint parks a run, <code>EndpointUnreachableError</code>; a settings file that cannot be parsed is never replaced by defaults, <code>ConfigParseError</code>; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, <code>ModelNotDownloadedError</code>, the <code>decision</code> output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - <code>abstractvoice&gt;=0.20.0</code> (segment offsets on streamed speech for the exact read-aloud resume; the voice listings import <code>abstractvoice.engine_runtime</code>; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
-- <code>abstractagent&gt;=0.6.0</code> (public updates typed <code>progress</code> or <code>finding</code>; ReAct honours <code>_runtime.conversation</code>: public conversation updates and questions on entity visits and task starts; the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
-- <code>AbstractMemory[lancedb]&gt;=0.4.0</code> (the memory graph, <code>abstractmemory.graph</code>)
-- <code>abstractskill&gt;=0.3.4</code> (the curated skill shelf the gateway seeds into <code>&lt;data dir&gt;/skills/registry</code>)
-- <code>abstractavatar&gt;=0.1.1</code> (the avatar design catalog: an entity's identity names a design this catalog has and the
-  Watch can draw; without it no identity is set or recorded. At each start the gateway writes the recorded default
+- <code>abstractagent&gt;=0.6.1</code> (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed <code>progress</code> or <code>finding</code>; ReAct honours <code>_runtime.conversation</code>: public conversation updates and questions on entity visits and task starts; the <code>schedule_run</code> tool for ReAct agents, and Python execution inside the run's command sandbox)
+- <code>AbstractMemory[lancedb]&gt;=0.5.0</code> (the memory graph, <code>abstractmemory.graph</code>; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
+- <code>abstractskill&gt;=0.3.11</code> (the curated skill shelf the gateway seeds into <code>&lt;data dir&gt;/skills/registry</code>, with the abstractcore skill beside abstractframework-gateway)
+- <code>abstractavatar&gt;=0.2.0</code> (the avatar design catalog: an entity's identity names a design this catalog has and the
+  Watch can draw, a retired design is drawn as its replacement; without it no identity is set or recorded. At each start the gateway writes the recorded default
   identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
   skipped. See <a href="../entities/">entities.md</a>)</p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -2387,10 +2409,35 @@ its own name in its Origin and is still refused. Use <code>allowed_origins</code
 for a proxy or tunnel with a name of its own. The console shows this under
 <strong>Network → Reached through another address?</strong>.</p>
 <h3 id="reached-through-tailscale-https">Reached through Tailscale (https)<a class="headerlink" href="#reached-through-tailscale-https" title="Permanent link">&para;</a></h3>
-<p>Reached through Tailscale? On the gateway machine run
-<code>tailscale serve --bg http://127.0.0.1:&lt;port&gt;</code> and open
-<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/</code> (the console at <code>/console</code>, the apps at
-<code>/apps/&lt;app&gt;/</code>). <code>tailscale serve reset</code> undoes it. Voice and camera in the
+<p>Tailscale is optional, never required: the gateway runs fully without it. It is
+offered as the easy way to an https address when this computer has no domain
+name (voice and camera on phones need https). If you want that: install
+Tailscale (open-source client) on this computer and on the phone
+(tailscale.com/download), sign both in to the same tailnet, and turn on
+MagicDNS and HTTPS Certificates in the Tailscale admin console (DNS page). The
+gateway notices within 30 seconds and the console's <strong>Network</strong> page shows the
+<code>https://…ts.net</code> address to open on the phone; while Tailscale is installed
+but not ready, that page says which step is missing. Without Tailscale the page
+shows one line offering it, and nothing else.</p>
+<p>Reached through Tailscale? Nothing to set up: while it runs, the gateway serves
+<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/</code> itself (the console at <code>/console</code>, the apps
+at <code>/apps/&lt;app&gt;/</code>). At launch it starts <code>tailscale serve
+http://127.0.0.1:&lt;port&gt;</code> in the foreground, as its own child, so the address
+exists only while the gateway is up: Tailscale removes it the moment the
+command ends, and a watchdog ends the command within a second if the gateway
+stops abruptly. While the address is not served (Tailscale not running yet,
+HTTPS certificates not enabled for the tailnet, the command ended), the gateway
+checks again every 30 seconds, so Tailscale coming up later needs no restart.
+It never replaces an existing <code>tailscale serve</code> or <code>tailscale funnel</code> on port
+443 (someone's <code>--bg</code> configuration, another gateway): the console's
+<strong>Network</strong> page says so. For a <code>tailscale serve --bg</code>, <code>tailscale serve reset</code>
+hands the address back to the gateway; a Tailscale Funnel (open to the
+internet) is left as it is, and resetting it would end the public address.
+<code>serve --tailscale-https off</code> turns this off. <code>GET /api/gateway/network</code>
+reports it as <code>tailscale_https</code>: <code>{state: off | unavailable | taken | starting
+| active | failed, url, target, reason}</code>; the command's output is in
+<code>&lt;data dir&gt;/logs/tailscale-https.log</code>. The tailnet needs MagicDNS and HTTPS
+Certificates (Tailscale admin console → DNS). Voice and camera in the
 browser need this https address: browsers offer the microphone, the camera,
 the clipboard and <code>crypto.randomUUID</code> only on https pages (or on the gateway
 machine itself), never on a plain <code>http://</code> address such as
@@ -3071,6 +3118,43 @@ effective default from <code>GET /api/gateway/discovery/capabilities</code>
 </tr>
 </tbody>
 </table>
+<h3 id="iteration-limit">Iteration limit<a class="headerlink" href="#iteration-limit" title="Permanent link">&para;</a></h3>
+<p><code>agents.max_iterations</code> (a whole number of 1 or more; unset by default) is how
+many cycles an agent run may take when the app that started it sets no limit
+of its own. It applies to <code>POST /runs/start</code> (written to
+<code>input_data._limits.max_iterations</code>) and to the backlog helpers. Unset, the
+framework default applies: 50 (AbstractRuntime <code>DEFAULT_MAX_ITERATIONS</code>, the
+one constant every package reads; the read shows it as <code>default: 50</code>). The
+value governs the whole run tree, including the agent loop the built-in agent
+runs in a child run; only an Agent node whose own config sets <code>max_iterations</code>
+overrides it inside that workflow. A
+bool, a decimal or a word is refused with a sentence; there is no upper
+limit, and past 200 the read carries a <code>warning</code> line. Every start answers
+which rung applied (<code>limits: {max_iterations, source: request |
+gateway_default | builtin}</code>, see <a href="../api/#2-start-a-run">API</a>); apps without
+admin rights read the default from <code>capabilities.agent_limits.max_iterations</code>.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Web console</th>
+<th>CLI / API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read</td>
+<td>Workflows → <em>Settings</em> → <em>Iteration limit</em></td>
+<td><code>abstractgateway config get agents.max_iterations</code></td>
+</tr>
+<tr>
+<td>Change</td>
+<td>the number field, <em>Save</em> (<em>Use the default</em> clears it)</td>
+<td><code>abstractgateway config set agents.max_iterations 30</code>, <code>config unset agents.max_iterations</code>; <code>POST /api/gateway/admin/runtime-config {"agents": {"max_iterations": 30}}</code></td>
+</tr>
+</tbody>
+</table>
+<p>The console TUI does not show this setting yet.</p>
 <h3 id="skills-shelf">Skills shelf<a class="headerlink" href="#skills-shelf" title="Permanent link">&para;</a></h3>
 <p><code>skills.shelf</code> is the folder the gateway reads skills from (it holds
 <code>skills/&lt;name&gt;/SKILL.md</code> and the trust files <code>validations.yaml</code>,
@@ -3300,7 +3384,7 @@ are user-level; every write is admin-only.</p>
 </tr>
 <tr>
 <td><code>GET /api/gateway/host/runs</code></td>
-<td>Recent runs across every data plane on this machine (<code>limit</code>, <code>window_hours</code>), newest first, with a readable <code>label</code> and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in <code>skipped_entity_planes</code>.</td>
+<td>Recent runs across every data plane on this machine (<code>limit</code>, <code>window_hours</code>, <code>kind</code>: AbstractNote's own work only with <code>kind=notes</code> or <code>all</code>), newest first, with a readable <code>label</code> and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in <code>skipped_entity_planes</code>.</td>
 </tr>
 <tr>
 <td><code>GET /api/gateway/host/tray</code></td>
@@ -3322,8 +3406,26 @@ are user-level; every write is admin-only.</p>
 <td><code>POST /api/gateway/host/update/check</code> / <code>start</code></td>
 <td>Check for a newer release (an AbstractFramework installer install: the newest AbstractFramework release; otherwise PyPI; offline is an in-band answer) / run the update in the background (the installer, or the package manager's upgrade). See <a href="../tray/#restart-and-update">tray.md</a>.</td>
 </tr>
+<tr>
+<td><code>PUT /api/gateway/host/keep-awake</code></td>
+<td>Body <code>{"enabled": true|false}</code> (admin). Stores the setting <code>host.keep_awake</code> and applies it now; answers <code>{keep_awake: {value, source, held, platform_supported}}</code>, the same shape <code>GET /host/runner</code> carries.</td>
+</tr>
 </tbody>
 </table>
+<p><strong>Keep the Mac awake while the gateway runs.</strong> On macOS the gateway holds the
+<code>PreventUserIdleSystemSleep</code> assertion (what <code>caffeinate -i</code> holds), named <code>AbstractGateway</code>,
+while the setting <code>host.keep_awake</code> is on — the default, so nothing changes for an existing
+install. Closing the lid or choosing Sleep still sleeps the Mac; the display still turns off.
+The setting is the user's: switch it in the web console (the Gateway card, beside <em>Start at
+login</em>), in the tray's <em>Settings ▸</em> submenu (the check item right under <em>Start at login</em>), with
+<code>abstractgateway config set host.keep_awake on|off</code>, or <code>PUT /host/keep-awake</code>. Turning it off
+releases the assertion at once; turning it on holds it again; no restart. <code>serve --keep-awake
+on|off</code> sets it for one run and wins over the saved value (<code>source: "flag"</code>; the saved value
+applies at the next start). <code>GET /host/runner</code> reports <code>keep_awake: {value, source: flag|stored|
+default, held, platform_supported}</code> — <code>held</code> is the live fact of this process. Other systems have
+no such assertion: <code>platform_supported</code> is false, nothing is held, the setting still stores. The
+independent check on a Mac is <code>pmset -g assertions</code>: <code>AbstractGateway</code> is listed under
+PreventUserIdleSystemSleep while held and absent otherwise.</p>
 <p>The tray icon has <strong>no setting</strong>: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
 machine or the launch — no display, no <code>tray</code> extra, <code>serve --reload</code>, a
@@ -3445,7 +3547,11 @@ and a short fingerprint. AbstractCore owns model capability metadata, so normal
 setup does not ask users to classify models manually.</p>
 <p>The console's <strong>Test</strong> action calls the selected provider through
 <code>POST /api/gateway/config/provider-endpoint-profiles/discover-models</code> and
-previews model discovery before saving. Leave <strong>Visible models</strong>
+previews model discovery before saving. A stored key is sent only to the
+address it was saved for: Test with another address runs without a key, and
+saving a connection with a new address requires typing its key again (a
+connection with an address and no key calls it with none, never with
+<code>OPENAI_API_KEY</code>). Leave <strong>Visible models</strong>
 empty to keep live discovery active, or select one or more models to store a
 fixed allowlist. The <strong>Multimodal Capabilities</strong> tab shows configured provider
 connections and direct providers that are already usable from scoped
@@ -3984,13 +4090,16 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]</code>.
   Host and port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is configured, else
   <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.
   <code>--unsandboxed-commands</code>, <code>--push-relay</code>, <code>--pool-*</code>, <code>--run-index</code> and <code>--gc-tuning</code> have no
   environment variable.
-  While the gateway runs, the Mac does not idle-sleep; closing the lid or choosing Sleep still sleeps it.
+  While the gateway runs, the Mac does not idle-sleep unless the setting <em>Keep the Mac awake while the
+  gateway runs</em> is off; closing the lid or choosing Sleep still sleeps it.
+  - <code>--keep-awake on|off</code>: that setting for this run only (default: the saved <code>host.keep_awake</code>, else on);
+    see <a href="#host-control-pause-desktop-tray-restart-update">Host control</a>.
   - <code>--no-runner</code>: serve the HTTP API only, next to <code>abstractgateway runner</code>
     (<a href="#split-mode-api-and-runner-in-two-processes-opt-in">split mode</a>).
   - <code>--model-host process|in-process</code>: where the models run (default <code>process</code> on every OS,
@@ -4001,6 +4110,9 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
   - <code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch gateway next to your
     usual one. A start with <code>--host 127.0.0.1</code>, a <code>--port</code> other than the configured one and
     <code>--print-token</code> is treated as a test gateway and shows no icon either.
+  - <code>--tailscale-https on|off</code> (default <code>on</code>): serve <code>https://&lt;this computer's Tailscale name&gt;</code> to
+    this gateway while it runs, and pick it up when Tailscale comes up later; <code>off</code> for a test or
+    scratch gateway. See <a href="#reached-through-tailscale-https">Reached through Tailscale</a>.
   - <code>--watchdog-seconds N</code> (default 30, <code>0</code> = off): a gateway whose event loop stays blocked for N
     seconds writes the blocked stacks to its log and exits with code 75 so its service manager
     restarts it; see <a href="../deployment/">deployment.md</a>.
@@ -4137,7 +4249,7 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

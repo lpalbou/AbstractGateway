@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1498,7 +1498,15 @@ for example <code>mlx</code> / <code>jaredpalmer/kev-4b</code>); the setup guide
 shows the same row (<a href="../api/#decisions">api.md</a>).</p>
 <p><strong>Edit multimodal capability</strong> (a route's <strong>Edit</strong>) sets the route's provider
 and model, an optional <strong>Base URL</strong> and <strong>Options</strong> (JSON); text routes add the
-reasoning effort and MTP, and <strong>Test</strong> sends a one-word probe. For voice output
+reasoning effort and MTP, and <strong>Test</strong> sends a one-word probe. A Base URL other
+than the provider's configured (or default) address is called without the
+provider's configured key. Reasoning and MTP
+follow the chosen model, here, in the <strong>Sandbox</strong> and in the entity create form:
+changing the provider or the model puts them back on the default (and saving
+does not carry the old model's MTP over), Off and the MTP depths are offered only
+when the gateway says that model supports MTP (otherwise the control is disabled
+and says why), and the entity create form offers only the reasoning levels the
+model serves. For voice output
 (<code>output.voice</code>) the provider, model and voice are the shared voice picker of
 every app (abstractuic <code>VoiceSettings</code>): voices by name under <strong>Your voices</strong>,
 <strong>Engine voices</strong> and <strong>Shared voices</strong>, a language filter when the engine
@@ -1604,7 +1612,7 @@ entity"). Only the actions that apply to a row are shown: your own row has no
 44 px targets. Hover one, or reach it with the keyboard, and a tooltip says
 what it does for whom: "Email address and mailbox of alice", "OpenAI API
 access for alice", "Activity log of alice", "Workspaces alice's agents may
-use", "Manage castor (mind, voice, prompt…)", "Rotate alice's sign-in
+use", "Manage orion (mind, voice, prompt…)", "Rotate alice's sign-in
 token", "Archive alice (kept, hidden)". The same tooltip explains every icon
 button in the console (Workflows, Models, Apps, the top bar…): it appears
 after a short pause, stays inside the window and Escape hides it. The table never scrolls sideways: long names and
@@ -1620,7 +1628,7 @@ default and your browser remembers it.</p>
   signed out until you turn Active back on."). Your own account and the last
   active admin cannot be switched off.</li>
 <li><strong>Active</strong> for an entity: off suspends it (it stops acting and its gateway
-  credential is switched off) after "Suspend castor? It stops acting until you
+  credential is switched off) after "Suspend orion? It stops acting until you
   turn Active back on."; on resumes it in the state it had before.</li>
 <li><strong>Email</strong> opens a dialog. On your own row it is <strong>My email</strong>: a compact header
   (your address) and three tabs (<a href="../email/">email.md</a>). <strong>Mailboxes</strong>: one list,
@@ -1676,7 +1684,7 @@ default and your browser remembers it.</p>
   entity's creator changes its mind, voice, tools per phase and instructions
   (the creator picks among the models and voices the gateway offers; a tier-2
   tool's box stays off for the creator, with the tooltip "Only an admin can
-  give castor a tier-2 tool: …"); sleep and wake, personal time, freeze, the
+  give orion a tier-2 tool: …"); sleep and wake, personal time, freeze, the
   work order and the memory index rebuild are an administrator's. Anyone else
   reads the current values as text.</li>
 <li><strong>Archive</strong> asks in a row under the account ("Archive alice? They can't sign
@@ -2800,7 +2808,7 @@ you can click.</p>
   <strong>Configure capability default</strong> is one dialog with:</p>
 </li>
 <li>the choice between use default and override;</li>
-<li><strong>Provider</strong>, <strong>Model</strong>, <strong>Base URL (optional)</strong>, <strong>Reasoning</strong> (text route), <strong>Options (JSON, optional)</strong>, <strong>MTP</strong>, and <strong>Voice</strong> on output.voice;</li>
+<li><strong>Provider</strong>, <strong>Model</strong>, <strong>Base URL (optional)</strong>, <strong>Reasoning</strong> (text route), <strong>Options (JSON, optional)</strong>, <strong>MTP</strong>, and <strong>Voice</strong> on output.voice. As on the web, changing the provider or the model puts Reasoning and MTP back on the default (a save then clears the old model's MTP), and MTP (Off included) is offered only when the gateway says that model supports it; otherwise it is disabled and the line under it says why;</li>
 <li>
 <p>the buttons <strong>[Cancel] [Clear] [Test] [Save]</strong>.
   Cancel, ✕ and Esc ask "Discard changes?" when you have edited something. A configured model that is not in the provider's discovered list yet stays selected, under the sentence "Configured model "<m>" is not currently in the discovered <scope> catalog for <provider>." with a <strong>Download</strong> button. When discovery fails, the field takes a typed model id and offers <strong>Retry model discovery</strong>. Clear asks first; downloads ask first and name the size.</p>
@@ -2824,7 +2832,7 @@ you can click.</p>
 </li>
 <li>
 <p><strong>T Sandbox</strong> tries a model directly. <strong>Output</strong> is a choice: <strong>Text</strong>, <strong>Image</strong>, <strong>Voice</strong>, <strong>Music</strong>, <strong>SFX</strong> or <strong>Video</strong>. Each choice's tooltip names the provider and model it uses, or says "not configured". A line says what the next message generates and which route it comes from.
-  <strong>System prompt</strong>, <strong>Reasoning</strong> and <strong>MTP</strong> sit on one row, with the web's help sentences as tooltips. <strong>Length (seconds)</strong> appears for Music and SFX: 0.5 to 600, remembered per mode.
+  <strong>System prompt</strong>, <strong>Reasoning</strong> and <strong>MTP</strong> sit on one row, with the web's help sentences as tooltips. As on the web, changing the provider or the model puts Reasoning and MTP back on the default, and MTP (Off included) is offered only when the gateway says the model supports it; otherwise it is disabled and the line under the row says why. <strong>Length (seconds)</strong> appears for Music and SFX: 0.5 to 600, remembered per mode.
   Under the message field, the buttons are <strong>Send</strong> (<code>g</code>, or <code>Enter</code> in the field), <strong>Attach</strong> (<code>a</code>), <strong>Speak</strong> (<code>v</code>, speaks a text reply through output.voice), <strong>Play audio</strong> (<code>p</code>) and <strong>Stop</strong> (<code>s</code>) after a clip, and <strong>Clear chat</strong> (<code>x</code>).
   <strong>Attach a file</strong> is a dialog with <strong>[Upload] [Remove all] [Close]</strong>. When Sandbox refuses an action, it says why under the buttons (for example "output.music is not configured — configure it on Multimodal (0) first"). The session's change journal sits below.</p>
 </li>
@@ -3002,7 +3010,7 @@ a locked model; in-flight calls on the model are cancelled first.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
