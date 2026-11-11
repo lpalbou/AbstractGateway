@@ -2,7 +2,7 @@
 
 > Package: AbstractGateway (diary read route: the ledger event), AbstractEntity (the monitor's automatic calibration read at page load)
 > Type: enhancement
-> Status: proposed
+> Status: proposed (likely moot: Entity 0.12.0's F4 fix, 2026-11-11, makes the monitor's automatic read stop using the diary door; verify after the tag, then deprecate)
 > Created: 2026-11-11
 > Priority: P3
 > Labels: entities, ledger, honesty
