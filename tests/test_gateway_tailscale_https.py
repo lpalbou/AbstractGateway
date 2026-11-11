@@ -217,8 +217,12 @@ def test_tailscale_coming_up_later_is_picked_up_without_a_restart(fake: Path, tm
         # The command ends on its own: the loop starts it again.
         pid = int((fake / "serve.pid").read_text())
         os.kill(pid, signal.SIGTERM)
-        assert _wait(lambda: (fake / "serve.pid").exists() and int((fake / "serve.pid").read_text()) != pid
-                     and ts.status()["state"] == "active"), ts.status()
+        def _restarted() -> bool:
+            # The fake writes serve.pid in two steps (open, then write): an empty read is "not yet", never an error.
+            text = (fake / "serve.pid").read_text().strip() if (fake / "serve.pid").exists() else ""
+            return bool(text) and int(text) != pid and ts.status()["state"] == "active"
+
+        assert _wait(_restarted), ts.status()
     finally:
         stop.set()
         loop.join(timeout=5)
