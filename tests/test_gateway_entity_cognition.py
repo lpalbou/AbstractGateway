@@ -163,6 +163,9 @@ def test_cognition_working_flag_and_loop_spend_fold(monkeypatch: pytest.MonkeyPa
         assert client.post("/api/gateway/entities", json={"name": "Pollux", "spark": _spark("Pollux")}).status_code == 201
         # Newborn = sleep (c1503): wake so the day-phase fold reads personal.
         assert client.post("/api/gateway/entities/Pollux/state", json={"state": "awake"}).status_code == 200
+        # Since d99a0883 (operator 2026-11-10: a withdrawn grant is idle at once) a living loop reads "personal"
+        # only while the grant is ON: grant it, as a real personal day has.
+        assert client.put("/api/gateway/entities/Pollux/life_state/toggles", json={"personal": True}).status_code == 200
 
         from abstractgateway import entity_loop
         from abstractgateway.service import get_gateway_service

@@ -164,14 +164,30 @@ def _installed_runtime_version() -> str:
 
 
 def _pyproject_version(path: Any) -> str:
-    """`[project].version` of a pyproject.toml, or "unknown"."""
+    """`[project].version` of a pyproject.toml, or "unknown". tomllib is 3.11+; on 3.10 the file is scanned for the
+    `version = "..."` key of the `[project]` table (a config file, not model text)."""
     try:
-        import tomllib
-
-        with open(path, "rb") as fh:
-            data = tomllib.load(fh)
-        value = str(((data.get("project") or {}).get("version")) or "").strip()
-        return value or "unknown"
+        try:
+            import tomllib  # Python 3.11+
+        except ModuleNotFoundError:  # Python 3.10: the gateway supports 3.10-3.13
+            tomllib = None
+        if tomllib is not None:
+            with open(path, "rb") as fh:
+                data = tomllib.load(fh)
+            value = str(((data.get("project") or {}).get("version")) or "").strip()
+            return value or "unknown"
+        table = ""
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                text = line.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    table = text[1:-1].strip()
+                    continue
+                if table == "project" and text.startswith("version"):
+                    key, sep, value = text.partition("=")
+                    if key.strip() == "version" and sep:
+                        return value.strip().strip('"').strip("'") or "unknown"
+        return "unknown"
     except Exception:  # noqa: BLE001
         return "unknown"
 
