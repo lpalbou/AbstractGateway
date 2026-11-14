@@ -279,7 +279,7 @@ enable` again to let the Network setting apply". `service enable` rewrites it.
 | macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
 | Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
 | Linux without a systemd user manager | XDG autostart entry `~/.config/autostart/abstractgateway.desktop` (starts at graphical login) | `<data dir>/logs/gateway.log` |
-| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin) | `<data dir>\logs\gateway.log` |
+| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts a compact per-user bootstrap with `pythonw.exe` (no console window, no admin) | `<data dir>\logs\gateway.log` |
 
 Details:
 
@@ -396,3 +396,13 @@ start unless auth is configured (`ABSTRACTGATEWAY_USER_AUTH=1` or
 - [security.md](./security.md): auth, origins, limits
 - [tray.md](./tray.md): the desktop tray icon
 - [troubleshooting.md](./troubleshooting.md): sign-in links, login service, network modes
+
+### Windows login registration
+
+The Run command stays within Windows' 260-character limit. Full launch arguments are stored
+in `%LOCALAPPDATA%\AbstractGateway\AbstractGateway.json` beside the `.pyw` bootstrap
+(named instances use their own files). Status validates both files and the instance. If an
+older registration says **needs repair** or **broken**, run `abstractgateway service enable`
+or turn **Start at login** off and on. This updates the next-login registration without
+restarting the running gateway. A path too long to represent produces an actionable error.
+Windows service integration remains experimental pending native login validation.

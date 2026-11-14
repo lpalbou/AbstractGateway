@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.21.0"
+version = "0.21.1"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -62,7 +62,7 @@ dependencies = [
   # reason call, hits on memory searches) and `memory_facade.community_keys_of`.
   # 0.19.3: own time withdrawn = the turn in flight finishes, then nothing runs (no look-back, no next tick):
   # the toggle's served sentence is only true with it.
-  "AbstractRuntime>=0.19.3",
+  "AbstractRuntime>=0.19.6",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -96,7 +96,7 @@ dependencies = [
   # `abstractcore.residency` log line ("unloaded <model> after N min idle; freed X GB").
   # 2.35.0: AbstractRuntime 0.19.0's own floor (EndpointUnreachableError); never below the runtime's core
   # floor (tests/test_gateway_install_profiles.py), so an upgrade of the gateway also moves Core.
-  "abstractcore>=2.35.0",
+  "abstractcore>=2.35.2",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -124,7 +124,7 @@ dependencies = [
   "abstractagent>=0.6.1",
   # 0.5.0: `MemorySystem(task_queue=True)` at every entity home open, `records_since_maintenance(after=)`
   # and its `fragmented` counts (the idle sleep), `sleep_pass(cancelled=)`, `record_understanding`.
-  "AbstractMemory[lancedb]>=0.5.0",
+  "AbstractMemory[lancedb]>=0.5.2",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
   # 0.3.4: the shelf it seeds carries the abstractframework-website skill and the
@@ -171,7 +171,7 @@ dependencies = [
 
 embeddings = [
   # 2.35.0: see the base dependency above.
-  "abstractcore[embeddings]>=2.35.0",
+  "abstractcore[embeddings]>=2.35.2",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -198,17 +198,17 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.19.3",
+  "AbstractRuntime[apple]>=0.19.6",
   "abstractagent[apple]>=0.6.1",
-  "AbstractMemory[all-apple]>=0.5.0",
+  "AbstractMemory[all-apple]>=0.5.2",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.19.3",
+  "AbstractRuntime[gpu]>=0.19.6",
   "abstractagent[gpu]>=0.6.1",
-  "AbstractMemory[all-gpu]>=0.5.0",
+  "AbstractMemory[all-gpu]>=0.5.2",
 ]
 dev = [
   "pytest>=7.0.0",

@@ -83,7 +83,8 @@ def test_linux_without_systemd_uses_xdg_only_with_a_desktop_session(tmp_path: Pa
     assert not (tmp_path / "home" / ".config" / "autostart" / "abstractgateway.desktop").exists()
 
 
-def test_windows_run_value_toggle_and_missing_registry(tmp_path: Path) -> None:
+def test_windows_run_value_toggle_and_missing_registry(short_startup_path: Path) -> None:
+    tmp_path = short_startup_path
     data = tmp_path / "data"
     reg = Registry()
     kw = _kw(tmp_path, "windows", registry=reg)

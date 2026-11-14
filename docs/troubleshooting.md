@@ -649,3 +649,27 @@ See [tray.md](./tray.md#restart-and-update).
 - [first-run.md](./first-run.md), [getting-started.md](./getting-started.md)
 - [configuration.md](./configuration.md), [security.md](./security.md)
 - [push.md](./push.md), [email.md](./email.md)
+
+### Windows Start at login is enabled but nothing starts
+
+Run `abstractgateway service status`. Overlong legacy Run commands, missing or damaged
+bootstrap/configuration files, a removed interpreter and Task Manager's disabled startup
+entry are reported as broken. Run `abstractgateway service enable` to regenerate the
+registration. Full launch arguments live beside the compact per-user bootstrap under
+`%LOCALAPPDATA%\AbstractGateway`; keep the files together. If the compact command itself
+exceeds 260 characters, use a shorter Python or local application-data path.
+
+### Gateway reopens after tray Exit in a local workspace stack
+
+Restart the workspace stack with the updated launcher. Its Gateway restart policy preserves
+a clean Quit as stopped until an explicit launch. Nonzero exits and watchdog failures still
+restart. Quit preserves Start at login, so Gateway can start at the next login. Force-killing
+a process is a failure and can trigger recovery.
+
+### Hugging Face says too many requests
+
+The model browser shows a rate-limit message and retry deadline. Wait until that deadline;
+changing queries, refreshing or opening Details does not bypass the shared Core cooldown.
+Search uses summary pages; **Details and versions** reads only the selected repository.
+Cached results remain available. Unknown sizes stay unknown or estimated until metadata
+is available. Check network connectivity for an offline error, rather than a quota response.

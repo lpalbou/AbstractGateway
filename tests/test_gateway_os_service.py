@@ -2,7 +2,7 @@
 
 Every OS's artifact is rendered on every OS through the pure renderers and a
 monkeypatched platform/home: no launchctl, systemctl or PowerShell ever runs
-here (a recording runner stands in), and nothing is written outside tmp_path.
+here (a recording runner stands in), and writes stay in owned temporary roots.
 """
 
 from __future__ import annotations
@@ -92,20 +92,23 @@ def test_systemd_quotes_paths_with_spaces(tmp_path: Path) -> None:
     assert 'WorkingDirectory="/srv/My Data/gw"' in unit
 
 
-def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(tmp_path: Path) -> None:
+def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(short_startup_path: Path) -> None:
+    tmp_path = short_startup_path
     home = tmp_path / "Users" / "u"
     appdata = str(tmp_path / "Roaming")
     data = tmp_path / "Local" / "My Data" / "AbstractGateway"
     exe = [str(tmp_path / "venv" / "Scripts" / "python.exe"), "-m", "abstractgateway"]
     plan = os_service.build_install_plan(platform="win32", home=home, host="127.0.0.1", port=8080, data_dir=data, exe_argv=exe, env={"APPDATA": appdata})
     assert plan.experimental is True and plan.mechanism == "registry-run"
-    assert plan.files == []
+    assert len(plan.files) == 2
     set_op, approved_op = plan.registry
     assert set_op["op"] == "set" and set_op["key"] == r"Software\Microsoft\Windows\CurrentVersion\Run" and set_op["name"] == "AbstractGateway"
     argv = os_service.windows_split(set_op["value"])
-    assert argv[0].endswith("pythonw.exe") and argv[1:4] == ["-m", "abstractgateway.os_service", "launch"]
-    assert argv[argv.index("--data-dir") + 1] == str(data)  # a path with a space survives the round trip
-    assert argv[-2:] == ["--", "serve"]
+    assert argv[0].endswith("pythonw.exe") and argv[1].endswith(".pyw")
+    assert os_service.windows_run_units(set_op["value"]) <= 260
+    launch = json.loads(plan.files[0]["content"])["argv"]
+    assert launch[launch.index("--data-dir") + 1] == str(data)
+    assert launch[-2:] == ["--", "serve"]
     assert approved_op == {"op": "delete", "key": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", "name": "AbstractGateway", "missing_ok": True}
     shortcut = str(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "AbstractGateway.lnk")
     assert shortcut in plan.remove, "an older Startup shortcut would start a second gateway"
@@ -135,12 +138,16 @@ def test_xdg_exec_round_trips_quotes_dollars_and_percent(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
-def test_dry_run_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], platform: str) -> None:
+def test_dry_run_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], platform: str, request: pytest.FixtureRequest) -> None:
     from abstractgateway.firstrun_cli import run_service
     import argparse
 
     home = tmp_path / "home"
     data = tmp_path / "data"
+    if platform == "win32":
+        startup_root = request.getfixturevalue("short_startup_path")
+        home = startup_root / "home"
+        monkeypatch.setattr(os_service, "current_gateway_argv", lambda platform=None: [str(startup_root / "python.exe"), "-m", "abstractgateway"])
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
     monkeypatch.setattr(os_service, "_default_runner", lambda argv: pytest.fail(f"dry-run ran {argv}"))
     args = argparse.Namespace(service_cmd="install", data_dir=None, json=True, host="127.0.0.1", port=18777, dry_run=True, no_start=False, no_wait=True, wait_s=1.0, no_claim=True)
@@ -184,7 +191,7 @@ def test_a_failing_start_command_is_loud(tmp_path: Path) -> None:
     assert "service install failed" in str(e.value)
 
 
-def test_no_start_keeps_registration_but_skips_starting(tmp_path: Path) -> None:
+def test_no_start_keeps_registration_but_skips_starting(tmp_path: Path, short_startup_path: Path) -> None:
     home = tmp_path / "h"
     for platform, expected in (
         ("darwin", []),
@@ -192,7 +199,7 @@ def test_no_start_keeps_registration_but_skips_starting(tmp_path: Path) -> None:
     ):
         plan = os_service.build_install_plan(platform=platform, home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501, env={})
         assert os_service.without_start(plan) == expected
-    wplan = os_service.build_install_plan(platform="win32", home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), env={"APPDATA": str(tmp_path)})
+    wplan = os_service.build_install_plan(platform="win32", home=short_startup_path / "home", host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=[str(short_startup_path / "python.exe"), "-m", "abstractgateway"], env={"APPDATA": str(tmp_path)})
     assert os_service.without_start(wplan) == [] and wplan.registry, "the Run value is the registration; only the start is skipped"
     xplan = os_service.build_install_plan(platform="linux", home=home, host="127.0.0.1", port=8080, data_dir=tmp_path / "d", exe_argv=_exe(home), env={}, linux_mechanism="xdg")
     assert os_service.without_start(xplan) == [] and xplan.files
@@ -215,7 +222,8 @@ def test_non_loopback_pinned_install_warns_about_auth(tmp_path: Path) -> None:
     assert any("--pin-command-line" in n and "does NOT apply" in n for n in plan.notes)
 
 
-def test_windows_launcher_redirects_output_and_runs_the_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_windows_launcher_redirects_output_and_runs_the_cli(short_startup_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tmp_path = short_startup_path
     import sys
 
     from abstractgateway import cli as gateway_cli
@@ -260,14 +268,19 @@ _QUIET = {"discover": lambda: ([], "test"), "hostname_fn": lambda: None}
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "linux-xdg", "win32"])
-def test_every_os_registers_plain_serve_unless_pinned(tmp_path: Path, platform: str) -> None:
+def test_every_os_registers_plain_serve_unless_pinned(tmp_path: Path, platform: str, request: pytest.FixtureRequest) -> None:
     home = tmp_path / "home"
     plat, lm = ("linux", "xdg") if platform == "linux-xdg" else (platform, None)
     env = {"APPDATA": str(tmp_path / "Roaming")}
+    exe = _exe(home)
+    if platform == "win32":
+        startup_root = request.getfixturevalue("short_startup_path")
+        home = startup_root / "home"
+        exe = [str(startup_root / "python.exe"), "-m", "abstractgateway"]
 
     def served(plan) -> List[str]:
         if plan.registry:
-            argv = os_service.windows_split(plan.registry[0]["value"])
+            argv = json.loads(plan.files[0]["content"])["argv"]
         elif plan.files[0]["path"].endswith(".plist"):
             argv = plistlib.loads(plan.files[0]["content"].encode())["ProgramArguments"]
         elif plan.files[0]["path"].endswith(".desktop"):
@@ -278,7 +291,7 @@ def test_every_os_registers_plain_serve_unless_pinned(tmp_path: Path, platform: 
             argv = line[len("ExecStart="):].split(" ")
         return argv[argv.index("serve"):]
 
-    kw = dict(platform=plat, home=home, host="127.0.0.1", port=18871, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501, env=env, linux_mechanism=lm)
+    kw = dict(platform=plat, home=home, host="127.0.0.1", port=18871, data_dir=tmp_path / "d", exe_argv=exe, uid=501, env=env, linux_mechanism=lm)
     plain = os_service.build_install_plan(**kw)
     assert served(plain) == ["serve"]
     assert plain.public_dict()["bind_source"] == "network_setting" and plain.public_dict()["serve_args"] == ["serve"]
@@ -565,3 +578,16 @@ def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as e:
         os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
     assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service install" in str(e.value)
+
+
+def test_windows_cli_install_returns_actionable_json_for_unrepresentable_run_command(short_startup_path, monkeypatch, capsys):
+    tmp_path = short_startup_path
+    import argparse
+    from abstractgateway.firstrun_cli import run_service
+    monkeypatch.setenv('ABSTRACTGATEWAY_DATA_DIR',str(tmp_path/'data'))
+    monkeypatch.setattr(os_service,'current_gateway_argv',lambda platform:[str(tmp_path/('p'*100)/'python.exe'),'-m','abstractgateway'])
+    args=argparse.Namespace(service_cmd='install',data_dir=None,json=True,host='127.0.0.1',port=18777,dry_run=True,no_start=False,no_wait=True,wait_s=1.0,no_claim=True)
+    assert run_service(args,platform='win32',home=tmp_path/('h'*180)) == 2
+    result=json.loads(capsys.readouterr().out)
+    assert result['ok'] is False and '260 characters' in result['error']
+    assert not (tmp_path/'data').exists()

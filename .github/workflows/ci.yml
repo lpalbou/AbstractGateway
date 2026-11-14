@@ -35,7 +35,7 @@ jobs:
           files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
           echo "$files" | grep -qE '^(console-tui/|\.github/workflows/ci\.yml$)' && echo "tui=true" >> "$GITHUB_OUTPUT" || echo "tui=false" >> "$GITHUB_OUTPUT"
           echo "$files" | grep -qE '^(docker/|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "docker=true" >> "$GITHUB_OUTPUT" || echo "docker=false" >> "$GITHUB_OUTPUT"
-          echo "$files" | grep -qE '^(src/abstractgateway/(model_host|model_host_child|split_mode|cli|os_service)\.py$|tests/(test_model_host_portable|model_host_fakes)\.py$|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "windows=true" >> "$GITHUB_OUTPUT" || echo "windows=false" >> "$GITHUB_OUTPUT"
+          echo "$files" | grep -qE '^(src/abstractgateway/(model_host|model_host_child|split_mode|cli|os_service|autostart|firstrun_cli)\.py$|tests/(test_model_host_portable|model_host_fakes|test_gateway_os_service|test_gateway_autostart|test_gateway_start_at_login|conftest)\.py$|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "windows=true" >> "$GITHUB_OUTPUT" || echo "windows=false" >> "$GITHUB_OUTPUT"
 
   test:
     # Pull requests: ONE Python (3.12), the suite split in 4 parallel shards (whole test files,
@@ -120,6 +120,8 @@ jobs:
         env:
           ABSTRACTGATEWAY_EMBEDDING_PROVIDER: "disabled"
         run: python -m pytest -p no:cacheprovider tests/test_model_host_portable.py
+      - name: Windows login bootstrap and registration contracts
+        run: python -m pytest -p no:cacheprovider tests/test_gateway_os_service.py tests/test_gateway_autostart.py tests/test_gateway_start_at_login.py -k "windows or win32 or no_start_keeps_registration"
 
   build:
     runs-on: ubuntu-latest

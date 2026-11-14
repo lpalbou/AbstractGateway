@@ -27,6 +27,11 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.21.1:** bounded Hugging Face summary searches and explicit repository
+details with a shared quota cooldown; compact, verified Windows login registration;
+private-safe close-time question-resolution notices. Requires Runtime 0.19.6, Core 2.35.2
+and Memory 0.5.2. Windows login integration remains experimental.
+
 **What's new in 0.21.0** ([CHANGELOG](CHANGELOG.md#0210---2026-11-10)): an entity lives one phase at a time
 (visit, idle, work, its own time or sleep, or stopped). `GET /entities/{name}/life_state` serves the phase bar,
 `PUT .../life_state/toggles` gives or takes back its own time (the operator's to give; work starts when a job is

@@ -10,6 +10,19 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-14
+
+### Changed
+
+- Requires AbstractRuntime 0.19.6, AbstractCore 2.35.2 and AbstractMemory 0.5.2.
+
+### Fixed
+
+- Hugging Face model searches request bounded summaries; **Details and versions** fetches only the selected repository. Rate-limit notices show when to retry and preserve cached results.
+- Windows Start at login uses a compact, verified bootstrap configuration within the Run command length limit. Broken legacy commands and missing or damaged configuration are reported for repair with `abstractgateway service enable`. Windows integration remains experimental pending native login validation.
+- Close-time question-resolution notices survive visit history, are deduplicated in ledger order and omit private titles.
+- Docker Compose defaults and local-build examples use the current Gateway release for both image tags and the installed package.
+
 ## [0.21.0] - 2026-11-10
 
 (0.20.3 was prepared but never published; its changes are part of this release.)

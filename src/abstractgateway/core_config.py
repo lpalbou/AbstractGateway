@@ -1241,12 +1241,14 @@ def core_model_catalog(
     fits_only: bool = False,
     hub: bool = False,
     tags: Optional[list] = None,
-    **paging: int,
+    **paging: Any,
 ) -> Dict[str, Any]:
     """Contract C (`model_catalog_v1`). `paging`: `hub_page` / `hub_page_size`, passed only when
     asked (the facade refuses them in words on an AbstractCore without Hugging Face pages)."""
 
     if paging and not _accepts_kwargs(config_facade.model_catalog, paging):
+        if "detail_repo" in paging and not _accepts_kwargs(config_facade.model_catalog, ["detail_repo"]):
+            raise RuntimeTooOld("Selected Hugging Face repository details", missing="model_catalog(detail_repo=)")
         if "extended" in paging and not _accepts_kwargs(config_facade.model_catalog, ["extended"]):
             raise RuntimeTooOld("Every quant of a model", missing="model_catalog(extended=)")
         raise RuntimeTooOld("Hugging Face search pages", missing="model_catalog(hub_page=, hub_page_size=)")

@@ -547,6 +547,7 @@ CATALOG_JS = r"""
       const hub = mcHfMode(view.filters) && d && d.hub;
       if (!hub || hub.ok !== false) return "";
       const errs = Array.isArray(hub.errors) ? hub.errors.map(String).filter(Boolean) : [];
+      if (hub.rate_limited) return `<div class="ui-alert tone-warn" role="alert" data-mc-notice="hub"><strong>Hugging Face is rate limiting requests.</strong><span>Wait ${Math.max(1, Math.ceil(Number(hub.retry_at || 0) - Date.now()/1000))} seconds before searching again. Cached results remain available.</span></div>`;
       return `<div class="ui-alert tone-warn" role="alert" data-mc-notice="hub"><strong>Hugging Face could not be reached, so these results may be incomplete.</strong>`
         + `<span>Check that the gateway host is online, then search again.</span>`
         + (errs.length ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(errs.join("\n"))}</pre></details>` : "")
@@ -842,6 +843,7 @@ CATALOG_JS = r"""
         + (item.arts.length > MC_VERSION_PREVIEW ? `<button type="button" class="ui-btn is-quiet mc-versions" data-mc-action="versions" data-mc-version-key="${esc(versionKey)}" aria-controls="${esc(versionsId)}" aria-expanded="${expanded}" aria-label="${esc((expanded ? "Show fewer versions of " : "Show all versions of ") + (row.display_name || row.id))}" data-af-tip="${esc(expanded ? "Show the primary build" : `Compare all ${item.arts.length} builds`)}"><span class="mc-version-count" aria-hidden="true">${item.arts.length}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>` : '<span class="mc-versions-slot" aria-hidden="true"></span>')
         + `</header>`
         + `<ul class="mc-arts" id="${esc(versionsId)}">${arts.map((a,i) => mcArtMarkup(row, a, mcArts(row).length === 1, view, i === 0)).join("")}</ul>`
+        + (mcHfMode(view.filters) ? [...new Set(mcArts(row).filter(a=>["huggingface","mlx"].includes(a.provider)).map(a=>String(a.artifact).split(":")[0]))].map(repo=>`<button type="button" class="ui-btn is-quiet" data-mc-action="hub-details" data-mc-repo="${esc(repo)}" ${mcStore.busy.has("details:"+repo) ? "disabled" : ""}>Details and versions: ${esc(repo)}</button>`).join("") : "")
         + `</article>`;
     }
     function mcListMarkup(view, list, extras) {
@@ -1113,14 +1115,15 @@ CATALOG_JS = r"""
     // Hugging Face mode: the catalog route with `hub=true` and the query.
     // One request per Enter (the Hub rate-limits; AbstractCore caches 24 h).
     async function mcHubFetch(q, page) {
-      // An explicit online search enumerates all upstream versions (`extended=true`).
-      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true&extended=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
+      // Summary listings only; full metadata is an explicit selected-repository action.
+      const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(q)}&hub=true${page > 1 ? `&hub_page=${page}` : ""}`, { slow: true });
       if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) {
         throw new Error(`The gateway answered with an unexpected catalog (schema ${JSON.stringify((data && data.schema) || null)}, expected "model_catalog_v1").`);
       }
       return data;
     }
     async function mcHubLoad(q) {
+      if (mcStore.hub.q === q && mcStore.hub.loading) return;
       const seq = ++mcStore.hub.seq;
       mcStore.hub = { q, data: null, error: "", loading: true, seq, page: 1, loadingMore: false, moreError: "" };
       mcRender();
@@ -1134,7 +1137,27 @@ CATALOG_JS = r"""
       }
       mcRender();
     }
+    async function mcHubDetails(view, repo) {
+      const key = "details:" + repo, hub = mcStore.hub;
+      if (mcStore.busy.has(key)) return;
+      mcStore.busy.add(key); mcRender();
+      try {
+        const data = await api(`/api/gateway/models/catalog?q=${encodeURIComponent(hub.q || "")}&hub=true&extended=true&detail_repo=${encodeURIComponent(repo)}`, { slow: true });
+        if (hub.seq !== mcStore.hub.seq) return;
+        if (!data || data.schema !== "model_catalog_v1" || !Array.isArray(data.rows)) throw new Error("Unexpected repository details response");
+        const current = mcStore.hub; // pagination may have replaced the object while details loaded
+        const owns = art => ["huggingface","mlx"].includes(art.provider) && String(art.artifact).split(":")[0] === repo;
+        const updates = new Map(data.rows.filter(row=>mcArts(row).some(owns)).map(row=>[row.id,row]));
+        current.data = Object.assign({}, current.data, { rows: mcRowsOf(current.data).map(row=> {
+          const update = updates.get(row.id);
+          return update ? Object.assign({}, row, update, {artifacts:mcArts(row).filter(art=>!owns(art)).concat(mcArts(update).filter(owns))}) : row;
+        }), hub: Object.assign({}, current.data.hub, data.hub, {search:current.data.hub && current.data.hub.search}) });
+      } catch (error) { if (hub.seq === mcStore.hub.seq) view.message = {tone:"err", text:String(error.message || error)}; }
+      finally { mcStore.busy.delete(key); mcRender(); }
+    }
     async function mcHubSearch(view, query) {
+      const limit = mcStore.hub.data && mcStore.hub.data.hub;
+      if (limit && limit.rate_limited && Number(limit.retry_at) * 1000 > Date.now()) { mcRender(); return; }
       const q = String(query || "").trim();
       view.filters = Object.assign({}, view.filters, { hf: q });
       mcWriteHash(view);
@@ -1318,6 +1341,7 @@ CATALOG_JS = r"""
       mcRender();
     }
     function mcAction(view, action, b) {
+      if (action === "hub-details") { mcHubDetails(view, b.dataset.mcRepo); return; }
       if (action === "versions") {
         const key = b.dataset.mcVersionKey;
         if (view.expanded.has(key)) { view.expanded.delete(key); if (view.buildOrders) view.buildOrders.delete(key); }

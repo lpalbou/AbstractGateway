@@ -2738,7 +2738,7 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | `GET /engines/jobs`, `GET /engines/jobs/{id}` | user | | engine install jobs |
 | `POST /engines/jobs/{id}/continue`, `/cancel` | admin | `{"action"?}` | the job |
 | `POST /engines/{id}/start`, `/stop` | admin | | Ollama / LM Studio server state |
-| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
+| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable), `hub_page`, `hub_page_size`, `detail_repo`, `extended=1` | `model_catalog_v1` |
 | `GET /models/installed` | user | `provider` | `models_installed_v1` |
 | `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}`; with `recommended`, `{"ok": true, "recommended": true, "jobs": [...], "group": {...}}` |
 | `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` (a `grp_...` id returns the parent job) |
@@ -2757,6 +2757,14 @@ Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 `decision` (`tag=decision`); their capability route is `output.decision`, and
 the console's Models page filters them with its **Decision** chip. See
 [Decisions](#decisions).
+
+**Hub discovery.** `hub=true` with `q` requests bounded summary pages, without
+per-result metadata lookups. `detail_repo=org/repo` requires `hub=true` and reads
+only that selected repo; add `extended=true` to enumerate its verified quant
+variants. Search sizes can be unknown or estimates. `hub.rate_limited`,
+`retry_at` (Unix seconds) and `retry_after_seconds` report a shared Core cooldown;
+queries and details during it do not retry upstream. Start page 1 before later
+pages. Authentication still runs on every Gateway request.
 
 **Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
 unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").

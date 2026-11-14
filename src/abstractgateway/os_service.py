@@ -15,7 +15,7 @@ per user, without admin rights.
   `abstractgateway.autostart`).
 - Windows (EXPERIMENTAL, unverified on a real VM): a per-user `HKCU\\...\\Run`
   value `AbstractGateway` (no admin) whose command is
-  `pythonw.exe -m abstractgateway.os_service launch ...`, so no console window
+  `pythonw.exe <per-user bootstrap.pyw>`, with full arguments in adjacent JSON, so no console window
   appears, with output going to a log file. It replaced the Startup-folder
   shortcut an earlier release used: a Run value is a plain string, so the
   registration can be READ BACK and verified (a `.lnk` cannot without COM),
@@ -393,6 +393,84 @@ def windows_launch_argv(*, exe_argv: Sequence[str], host: str, port: int, data_d
         "--",
         *_serve_args(host, port, pinned=pinned),
     ]
+
+
+WINDOWS_RUN_MAX_UNITS = 260
+WINDOWS_BOOTSTRAP_SOURCE = """import json
+from pathlib import Path
+from abstractgateway.os_service import launch_main
+config = json.loads(Path(__file__).with_suffix('.json').read_text(encoding='utf-8'))
+if not isinstance(config, dict) or config.get('schema') != 'gateway_login_v1' or not isinstance(config.get('argv'), list):
+    raise ValueError('Invalid Gateway login configuration; run service enable to repair')
+launch_main(config['argv'])
+"""
+
+
+def windows_bootstrap_path(home: Path, env: Optional[Dict[str, str]] = None) -> Path:
+    local = (env or {}).get("LOCALAPPDATA") or str(home / "AppData" / "Local")
+    return Path(local) / "AbstractGateway" / (windows_run_value() + ".pyw")
+
+
+def windows_run_units(command: str) -> int:
+    return len(command.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def windows_bootstrap_files(launch: Sequence[str], *, home: Path, env: Optional[Dict[str, str]]) -> tuple[List[str], List[Dict[str, Any]]]:
+    script = windows_bootstrap_path(home, env)
+    command = [str(launch[0]), str(script)]
+    if windows_run_units(windows_join(command)) > WINDOWS_RUN_MAX_UNITS:
+        raise ValueError("Windows login command exceeds 260 characters; use a shorter Python installation or LOCALAPPDATA path")
+    config = {"schema": "gateway_login_v1", "argv": list(launch[3:])}
+    return command, [
+        {"path": str(script.with_suffix(".json")), "content": json.dumps(config, ensure_ascii=False, indent=2) + "\n", "mode": 0o600},
+        {"path": str(script), "content": WINDOWS_BOOTSTRAP_SOURCE, "mode": 0o600},
+    ]
+
+
+def windows_bootstrap_args(argv: Sequence[str], *, home: Path, env: Optional[Dict[str, str]]) -> List[str]:
+    """Read back our exact bootstrap and validate the launcher configuration."""
+    script = windows_bootstrap_path(home, env)
+    if len(argv) != 2 or str(argv[1]) != str(script):
+        raise ValueError("unrecognized Windows login command; run service enable to repair")
+    if script.read_text(encoding="utf-8") != WINDOWS_BOOTSTRAP_SOURCE:
+        raise ValueError("the Windows login bootstrap changed; run service enable to repair")
+    config = json.loads(script.with_suffix(".json").read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        raise ValueError("Windows login configuration must be an object")
+    args = config.get("argv")
+    if config.get("schema") != "gateway_login_v1" or not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        raise ValueError("invalid Windows login configuration")
+    import argparse
+    import ntpath
+    from .instances import current_instance, suffix
+
+    class Parser(argparse.ArgumentParser):
+        def error(self, message):
+            raise ValueError("invalid Windows login arguments: " + message)
+
+    parser = Parser(add_help=False)
+    parser.add_argument("command", choices=["launch"])
+    parser.add_argument("--log-file", required=True)
+    parser.add_argument("--data-dir", required=True)
+    if "--" not in args:
+        raise ValueError("missing launcher separator")
+    split = args.index("--")
+    options = parser.parse_args(args[:split])
+    for path in (options.log_file, options.data_dir):
+        if not path or not (ntpath.isabs(path) or Path(path).is_absolute()):
+            raise ValueError("login log and data paths must be absolute")
+    serve = Parser(add_help=False)
+    serve.add_argument("--instance", default=None)
+    serve.add_argument("command", choices=["serve"])
+    serve.add_argument("--host")
+    serve.add_argument("--port", type=int)
+    parsed = serve.parse_args(args[split + 1:])
+    expected_instance = current_instance() if suffix() else None
+    if parsed.instance != expected_instance:
+        raise ValueError("login configuration names another Gateway instance")
+    if (parsed.host is None) != (parsed.port is None) or (parsed.port is not None and not 1 <= parsed.port <= 65535):
+        raise ValueError("invalid pinned login bind")
+    return [str(argv[0]), "-m", "abstractgateway.os_service", *args]
 
 
 def windows_join(argv: Sequence[str]) -> str:
@@ -864,7 +942,9 @@ def build_install_plan(
         plan.experimental = True
         logf = log_dir("windows", home, data_dir) / "gateway.log"
         launch = windows_launch_argv(exe_argv=exe_argv, host=host, port=port, data_dir=data_dir, log_file=logf, pinned=pinned)
-        plan.registry.append({"op": "set", "key": WINDOWS_RUN_KEY, "name": windows_run_value(), "value": windows_join(launch)})
+        run_argv, bootstrap_files = windows_bootstrap_files(launch, home=home, env=env)
+        plan.files.extend(bootstrap_files)
+        plan.registry.append({"op": "set", "key": WINDOWS_RUN_KEY, "name": windows_run_value(), "value": windows_join(run_argv)})
         # A "disabled" switch Task Manager left for an earlier registration
         # would silently veto the new one: registering means ON.
         plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": windows_run_value(), "missing_ok": True})
@@ -954,6 +1034,8 @@ def build_uninstall_plan(
         plan.registry.append({"op": "delete", "key": WINDOWS_RUN_KEY, "name": windows_run_value(), "missing_ok": True})
         plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": windows_run_value(), "missing_ok": True})
         plan.remove.append(str(windows_startup_shortcut_path(home, env)))
+        script = windows_bootstrap_path(home, env)
+        plan.remove.extend([str(script), str(script.with_suffix(".json"))])
         plan.notes.append(keeps_running)
     plan.remove.append(str(service_record_path(data_dir)))
     plan.notes.append(f"Your data is kept: {data_dir}")

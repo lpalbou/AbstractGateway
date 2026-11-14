@@ -102,6 +102,10 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
+The Compose files default to Gateway 0.21.1 for both the image tag and PyPI build version.
+To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
+in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
+
 For the experimental NVIDIA image on a GPU host with the NVIDIA Container
 Toolkit:
 
@@ -358,7 +362,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.13.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.21.1-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

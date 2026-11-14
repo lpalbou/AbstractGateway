@@ -293,6 +293,14 @@ def _read_windows(registry: Any, *, home: Path, env: Optional[Dict[str, str]]) -
         "problems": [],
     }
     info["problems"] += _program_problems(info["program"], windows=True)
+    if os_service.windows_run_units(str(value)) > os_service.WINDOWS_RUN_MAX_UNITS:
+        info["problems"].append("the Windows login command exceeds the 260-character Run limit; turn Start at login off and on to repair")
+    if len(argv) == 2 or (len(argv) > 1 and str(argv[1]).endswith(".pyw")):
+        try:
+            launch = os_service.windows_bootstrap_args(argv, home=home, env=env)
+            info.update(argv=launch, data_dir=_arg_after(launch, "--data-dir"), port=_arg_after(launch, "--port"), host=_arg_after(launch, "--host"))
+        except (OSError, ValueError, TypeError) as exc:
+            info["problems"].append(f"the Windows login configuration needs repair ({exc})")
     try:
         approved = registry.get(os_service.WINDOWS_STARTUP_APPROVED_KEY, os_service.windows_run_value())
     except Exception:  # noqa: BLE001
@@ -505,10 +513,13 @@ def enable_autostart(
         return {"ok": False, "action": "enable", "error": str(exc), "before": before, "after": before, "plan": None, "results": [], "network": None}
     lm = linux_mechanism or (detect_linux_mechanism(runner) if plat == "linux" else None)
     exe = list(exe_argv) if exe_argv else os_service.current_gateway_argv(plat)
-    plan = os_service.build_install_plan(
-        platform=plat, home=home_p, host=str(bind["host"]), port=int(bind["port"]), data_dir=Path(data_dir), exe_argv=exe,
-        uid=uid, env=env_d, linux_mechanism=lm, pinned=bool(bind["pinned"]), network=bind,
-    )
+    try:
+        plan = os_service.build_install_plan(
+            platform=plat, home=home_p, host=str(bind["host"]), port=int(bind["port"]), data_dir=Path(data_dir), exe_argv=exe,
+            uid=uid, env=env_d, linux_mechanism=lm, pinned=bool(bind["pinned"]), network=bind,
+        )
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "action": "enable", "error": str(exc), "before": before, "after": before, "plan": None, "results": [], "network": None}
     if plat == "linux" and lm == "systemd":
         # An XDG entry from an earlier fallback would start a SECOND gateway.
         plan.remove.append(str(os_service.xdg_autostart_path(home_p, env_d)))
