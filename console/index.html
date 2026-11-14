@@ -2183,7 +2183,7 @@ guide's model step shows the same bar.</p>
   gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
   the results show as the same cards, with a <strong>Hugging Face</strong> badge: provider,
   artifact id, quantization when the result names one ("Not stated"
-  otherwise, never guessed), size from the Hub, fit, and <strong>Download</strong> with
+  otherwise, never guessed), size when known (or an estimate), fit, and <strong>Download</strong> with
   the same progress bar. Capabilities of a Hub result are unknown until it is
   installed, so it offers no <strong>Use as default</strong> from here. When the Hub has
   nothing for the query the view says so; when the gateway host cannot reach
@@ -2195,14 +2195,18 @@ guide's model step shows the same bar.</p>
   the next page. An exact repo handle (<code>Qwen/Qwen3.5-9B</code>) lists that repo first,
   then the builds of its name. When the Hub has no such repo, the line says so.
   The catalog's own models that match the words are listed too.
-  In <strong>Catalog</strong> mode, a search of three characters or more also asks Hugging Face
-  once typing pauses. Its results come under <strong>From Hugging Face</strong>, below the
-  catalog's cards, with the same filters, count and <strong>Show more results</strong>.
-  Switching to <strong>Hugging Face</strong> mode then reuses that answer.</li>
-<li><strong>Every quant, always</strong>: each model lists every quantization its own repositories ship (from 1-bit to
-  BF16), each with its size and its fit on this computer. The quantization filter's <strong>All</strong> shows them all,
-  and <strong>4-bit</strong>, <strong>8-bit</strong> and <strong>Other</strong> filter them. The first load asks Hugging Face, and the answer is
-  cached for 24 hours. There is no separate switch.</li>
+  In <strong>Catalog</strong> mode, typing filters the local catalog without searching Hugging Face.
+  Switch to <strong>Hugging Face</strong> for online search. Search returns bounded summary pages,
+  not full metadata for every result. <strong>Details and versions</strong> reads only the repository
+  you select. When Hugging Face limits requests, the notice says when to retry and
+  cached results remain available; searches and details share the same cooldown.</li>
+<li><strong>Known quantizations</strong>: <strong>All</strong>, <strong>4-bit</strong>, <strong>8-bit</strong> and <strong>Other</strong> filter the builds
+  already known to the catalog or search result. <strong>Details and versions</strong> can add
+  verified variants for the selected Hugging Face repository. Browsing the catalog
+  does not enumerate every upstream repository or quantization.
+  Missing sizes remain unknown; selecting details can supply exact file sizes when
+  the repository exposes them. Results without verified download filenames offer
+  details before downloading.</li>
 <li><strong>Provider</strong>, <strong>Capability</strong> and <strong>Status</strong> (Downloaded, Not downloaded)
   chips, each with the number of builds it would show (the rows under "Not in
   the catalog" included).</li>

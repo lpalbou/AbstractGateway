@@ -6068,7 +6068,7 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <tr>
 <td><code>GET /models/catalog</code></td>
 <td>user</td>
-<td><code>q</code>, <code>engine</code>, <code>fits=1</code>, <code>hub=1</code>, <code>tag</code> (repeatable)</td>
+<td><code>q</code>, <code>engine</code>, <code>fits=1</code>, <code>hub=1</code>, <code>tag</code> (repeatable), <code>hub_page</code>, <code>hub_page_size</code>, <code>detail_repo</code>, <code>extended=1</code></td>
 <td><code>model_catalog_v1</code></td>
 </tr>
 <tr>
@@ -6145,6 +6145,13 @@ are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractc
 <code>decision</code> (<code>tag=decision</code>); their capability route is <code>output.decision</code>, and
 the console's Models page filters them with its <strong>Decision</strong> chip. See
 <a href="#decisions">Decisions</a>.</p>
+<p><strong>Hub discovery.</strong> <code>hub=true</code> with <code>q</code> requests bounded summary pages, without
+per-result metadata lookups. <code>detail_repo=org/repo</code> requires <code>hub=true</code> and reads
+only that selected repo; add <code>extended=true</code> to enumerate its verified quant
+variants. Search sizes can be unknown or estimates. <code>hub.rate_limited</code>,
+<code>retry_at</code> (Unix seconds) and <code>retry_after_seconds</code> report a shared Core cooldown;
+queries and details during it do not retry upstream. Start page 1 before later
+pages. Authentication still runs on every Gateway request.</p>
 <p><strong>Catalog artifacts.</strong> <code>model_catalog_v1</code> is AbstractCore's payload, served
 unchanged (field reference: AbstractCore <code>docs/models.md</code>, "The catalog").
 Besides <code>quant</code> (the artifact's own label, lowercased, or <code>null</code>) and <code>bits</code>

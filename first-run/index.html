@@ -446,6 +446,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Related docs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#windows-login-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Windows login registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1185,6 +1202,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Related docs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#windows-login-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Windows login registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1589,7 +1623,7 @@ enable</code> again to let the Network setting apply". <code>service enable</cod
 </tr>
 <tr>
 <td>Windows (experimental)</td>
-<td>per-user Run entry <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway</code> that starts the gateway with <code>pythonw.exe</code> (no console window, no admin)</td>
+<td>per-user Run entry <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway</code> that starts a compact per-user bootstrap with <code>pythonw.exe</code> (no console window, no admin)</td>
 <td><code>&lt;data dir&gt;\logs\gateway.log</code></td>
 </tr>
 </tbody>
@@ -1751,6 +1785,14 @@ start unless auth is configured (<code>ABSTRACTGATEWAY_USER_AUTH=1</code> or
 <li><a href="../tray/">tray.md</a>: the desktop tray icon</li>
 <li><a href="../troubleshooting/">troubleshooting.md</a>: sign-in links, login service, network modes</li>
 </ul>
+<h3 id="windows-login-registration">Windows login registration<a class="headerlink" href="#windows-login-registration" title="Permanent link">&para;</a></h3>
+<p>The Run command stays within Windows' 260-character limit. Full launch arguments are stored
+in <code>%LOCALAPPDATA%\AbstractGateway\AbstractGateway.json</code> beside the <code>.pyw</code> bootstrap
+(named instances use their own files). Status validates both files and the instance. If an
+older registration says <strong>needs repair</strong> or <strong>broken</strong>, run <code>abstractgateway service enable</code>
+or turn <strong>Start at login</strong> off and on. This updates the next-login registration without
+restarting the running gateway. A path too long to represent produces an actionable error.
+Windows service integration remains experimental pending native login validation.</p>
 
 
 

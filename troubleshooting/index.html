@@ -1531,6 +1531,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Related docs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#windows-start-at-login-is-enabled-but-nothing-starts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Windows Start at login is enabled but nothing starts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway-reopens-after-tray-exit-in-a-local-workspace-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway reopens after tray Exit in a local workspace stack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hugging-face-says-too-many-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hugging Face says too many requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -2223,6 +2262,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Related docs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#windows-start-at-login-is-enabled-but-nothing-starts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Windows Start at login is enabled but nothing starts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gateway-reopens-after-tray-exit-in-a-local-workspace-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway reopens after tray Exit in a local workspace stack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hugging-face-says-too-many-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hugging Face says too many requests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -2871,6 +2949,24 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span>status<spa
 <li><a href="../configuration/">configuration.md</a>, <a href="../security/">security.md</a></li>
 <li><a href="../push/">push.md</a>, <a href="../email/">email.md</a></li>
 </ul>
+<h3 id="windows-start-at-login-is-enabled-but-nothing-starts">Windows Start at login is enabled but nothing starts<a class="headerlink" href="#windows-start-at-login-is-enabled-but-nothing-starts" title="Permanent link">&para;</a></h3>
+<p>Run <code>abstractgateway service status</code>. Overlong legacy Run commands, missing or damaged
+bootstrap/configuration files, a removed interpreter and Task Manager's disabled startup
+entry are reported as broken. Run <code>abstractgateway service enable</code> to regenerate the
+registration. Full launch arguments live beside the compact per-user bootstrap under
+<code>%LOCALAPPDATA%\AbstractGateway</code>; keep the files together. If the compact command itself
+exceeds 260 characters, use a shorter Python or local application-data path.</p>
+<h3 id="gateway-reopens-after-tray-exit-in-a-local-workspace-stack">Gateway reopens after tray Exit in a local workspace stack<a class="headerlink" href="#gateway-reopens-after-tray-exit-in-a-local-workspace-stack" title="Permanent link">&para;</a></h3>
+<p>Restart the workspace stack with the updated launcher. Its Gateway restart policy preserves
+a clean Quit as stopped until an explicit launch. Nonzero exits and watchdog failures still
+restart. Quit preserves Start at login, so Gateway can start at the next login. Force-killing
+a process is a failure and can trigger recovery.</p>
+<h3 id="hugging-face-says-too-many-requests">Hugging Face says too many requests<a class="headerlink" href="#hugging-face-says-too-many-requests" title="Permanent link">&para;</a></h3>
+<p>The model browser shows a rate-limit message and retry deadline. Wait until that deadline;
+changing queries, refreshing or opening Details does not bypass the shared Core cooldown.
+Search uses summary pages; <strong>Details and versions</strong> reads only the selected repository.
+Cached results remain available. Unknown sizes stay unknown or estimated until metadata
+is available. Check network connectivity for an offline error, rather than a quota response.</p>
 
 
 

@@ -1237,6 +1237,9 @@ the server. The default env keeps user auth enabled and bootstraps
 docker<span class="w"> </span>compose<span class="w"> </span>--env-file<span class="w"> </span>docker/abstractgateway-server/.env<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d
 </code></pre></div>
+<p>The Compose files default to Gateway 0.21.1 for both the image tag and PyPI build version.
+To pin another release, set both <code>ABSTRACTGATEWAY_IMAGE_TAG</code> and <code>ABSTRACTGATEWAY_VERSION</code>
+in the env file; for the experimental NVIDIA overlay also set <code>ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG</code>.</p>
 <p>For the experimental NVIDIA image on a GPU host with the NVIDIA Container
 Toolkit:</p>
 <div class="highlight"><pre><span></span><code>docker<span class="w"> </span>compose<span class="w"> </span>--env-file<span class="w"> </span>docker/abstractgateway-server/.env<span class="w"> </span><span class="se">\</span>
@@ -1461,7 +1464,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.13.1-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.21.1-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the
