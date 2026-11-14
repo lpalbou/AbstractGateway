@@ -5893,7 +5893,7 @@ result rather than making Flow authoring nodes unavailable.</p>
 <p><code>/api/gateway/memory/*</code> serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (<code>abstractruntime.integrations.abstractmemory.memory_facade</code>); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.14.0 and AbstractMemory 0.4.0.</p>
+(ADR 0001). Requires AbstractRuntime 0.19.6 and AbstractMemory 0.5.2.</p>
 <p><strong>Plane and home.</strong> Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:</p>
 <ul>
