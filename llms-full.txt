@@ -14291,6 +14291,10 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
+The Compose files default to Gateway 0.21.1 for both the image tag and PyPI build version.
+To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
+in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
+
 For the experimental NVIDIA image on a GPU host with the NVIDIA Container
 Toolkit:
 
@@ -14547,7 +14551,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.13.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.21.1-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -16245,6 +16249,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - Hugging Face model searches request bounded summaries; **Details and versions** fetches only the selected repository. Rate-limit notices show when to retry and preserve cached results.
 - Windows Start at login uses a compact, verified bootstrap configuration within the Run command length limit. Broken legacy commands and missing or damaged configuration are reported for repair with `abstractgateway service enable`. Windows integration remains experimental pending native login validation.
 - Close-time question-resolution notices survive visit history, are deduplicated in ledger order and omit private titles.
+- Docker Compose defaults and local-build examples use the current Gateway release for both image tags and the installed package.
 
 ## [0.21.0] - 2026-11-10
 

@@ -302,6 +302,7 @@ def test_versions_shipped_by_0_6_0_are_still_shipped(name: str) -> None:
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:
+    version = _pyproject()["project"]["version"]
     dockerfile = (ROOT / "docker" / "abstractgateway-server" / "Dockerfile").read_text(encoding="utf-8")
     compose = (ROOT / "docker" / "abstractgateway-server" / "compose.yml").read_text(encoding="utf-8")
     nvidia_compose = (ROOT / "docker" / "abstractgateway-server" / "compose.nvidia.yml").read_text(
@@ -313,11 +314,13 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.13.1}" in compose
+    assert f"ghcr.io/lpalbou/abstractgateway:${{ABSTRACTGATEWAY_IMAGE_TAG:-{version}}}" in compose
+    assert f"ABSTRACTGATEWAY_VERSION: ${{ABSTRACTGATEWAY_VERSION:-{version}}}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.13.1-gpu}" in nvidia_compose
+    assert f"ghcr.io/lpalbou/abstractgateway:${{ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-{version}-gpu}}" in nvidia_compose
+    assert f"ABSTRACTGATEWAY_VERSION: ${{ABSTRACTGATEWAY_VERSION:-{version}}}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 
