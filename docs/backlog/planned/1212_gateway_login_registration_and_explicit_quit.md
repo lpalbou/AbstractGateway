@@ -24,7 +24,10 @@ Deferred governance, spoken-language, Core reasoning/usage, composer redesign an
 
 ## Validation
 
-72 isolated startup tests, real-child supervisor exit tests, independent startup review. Native Windows login and actual macOS tray execution remain unverified; no machine persistence installed.
+73 isolated startup tests, real-child supervisor exit tests, independent startup review. The
+TCP Gateway → Runtime → Core discovery proof confirms two cold Apple listings, zero repeats,
+one selected detail and shared cooldown after a simulated 429. Native Windows login and actual
+macOS tray execution remain unverified; no machine persistence installed.
 
 ## Release acceptance
 
