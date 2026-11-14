@@ -427,16 +427,22 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
     )
     chosen = {"port": bind["port"], "source": bind["port_source"], "busy_skipped": bind["busy_skipped"]}
     exe = os_service.current_gateway_argv(plat)
-    plan = os_service.build_install_plan(
-        platform=plat,
-        home=home_p,
-        host=str(bind["host"]),
-        port=int(bind["port"]),
-        data_dir=data_dir,
-        exe_argv=exe,
-        pinned=bool(bind["pinned"]),
-        network=bind,
-    )
+    try:
+        plan = os_service.build_install_plan(
+            platform=plat,
+            home=home_p,
+            host=str(bind["host"]),
+            port=int(bind["port"]),
+            data_dir=data_dir,
+            exe_argv=exe,
+            pinned=bool(bind["pinned"]),
+            network=bind,
+        )
+    except (ValueError, OSError) as exc:
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+            return 2
+        raise SystemExit(str(exc)) from exc
     plan.notes.insert(0, os_service.describe_seed(bind))
     if chosen.get("busy_skipped"):
         plan.notes.insert(0, f"Ports in use, skipped: {', '.join(str(p) for p in chosen['busy_skipped'])}; using {chosen['port']}.")

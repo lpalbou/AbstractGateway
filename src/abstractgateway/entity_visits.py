@@ -370,17 +370,30 @@ _CLOSE_FORMATIONS = (("t-reflect-interest-", "interest"), ("t-reflect-lesson-", 
 
 
 def close_notices(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """`[{kind, record_id, title, text}]`: each election staged during the visit that its close FORMED, read from
+    """Close-time formation and confirmed question-resolution notices in ledger order.
+
+    `[{kind, record_id, title, text?}]`: each election staged during the visit that its close FORMED, read from
     the run's own ledger, in formation order (the shape of turn.notices; `record_id` is the formed record's graph
     id). A refused formation (no record) is not listed. The record's words and title come from the started row
     (a completed row's large payload fields may be slimmed), its id from the completed row's result."""
     rows: Dict[str, Dict[str, Any]] = {}
     formed: Dict[str, List[str]] = {}
     order: List[str] = []
-    for rec in records:
+    completed_at: Dict[str, int] = {}
+    resolutions: List[Tuple[int, Dict[str, Any]]] = []
+    for index, rec in enumerate(records):
         if not isinstance(rec, dict):
             continue
         effect = rec.get("effect") or {}
+        if str(effect.get("type") or "").lower() == "llm_call" and str(rec.get("status") or "").lower() == "completed":
+            payload = effect.get("payload") if isinstance(effect.get("payload"), dict) else {}
+            result = rec.get("result") if isinstance(rec.get("result"), dict) else {}
+            if payload.get("turn_id") == "t-reflect":
+                from abstractruntime.identity.chat import question_resolved_notice
+                for meta in result.get("diary_entries") or []:
+                    notice = question_resolved_notice(meta)
+                    if notice:
+                        resolutions.append((index, notice))
         if str(effect.get("type") or "").lower() != "memory_form":
             continue
         payload = effect.get("payload") if isinstance(effect.get("payload"), dict) else {}
@@ -395,14 +408,22 @@ def close_notices(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             formed[tid] = [str(r) for r in (result.get("record_ids") or []) if str(r or "").strip()]
             if tid not in order:
                 order.append(tid)
-    out: List[Dict[str, Any]] = []
+                completed_at[tid] = index
+    notices: List[Tuple[int, Dict[str, Any]]] = list(resolutions)
     for tid in order:
         if not formed.get(tid):
             continue
         kind = next(k for prefix, k in _CLOSE_FORMATIONS if tid.startswith(prefix))
         row = rows.get(tid) or {}
-        out.append({"kind": kind, "record_id": formed[tid][0], "title": str(row.get("title") or ""),
-                    "text": str(row.get("digest") or "")})
+        notices.append((completed_at[tid], {"kind": kind, "record_id": formed[tid][0], "title": str(row.get("title") or ""),
+                    "text": str(row.get("digest") or "")}))
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for _, notice in sorted(notices, key=lambda item: item[0]):
+        key = (notice["kind"], notice["record_id"])
+        if key not in seen:
+            seen.add(key)
+            out.append(notice)
     return out
 
 

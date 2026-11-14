@@ -28619,6 +28619,7 @@ async def models_catalog_get(
     tag: Optional[List[str]] = Query(None, description="Keep rows carrying every tag."),
     hub_page: Optional[int] = Query(None, ge=1, description="Page of Hugging Face search results (with hub and q); AbstractCore reports it in hub.search."),
     hub_page_size: Optional[int] = Query(None, ge=1, le=100, description="Hugging Face search results per lane and page (AbstractCore's default: 20)."),
+    detail_repo: Optional[str] = Query(None, pattern=r"^[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*$", description="Read metadata for one selected Hugging Face repository."),
     extended: bool = Query(False, description="With hub: every quant the rows' own GGUF repos ship (AbstractCore 0865)."),
 ) -> Any:
     """Downloadable models with presence and a fit verdict for this host (contract C)."""
@@ -28629,7 +28630,13 @@ async def models_catalog_get(
     paging: Dict[str, Any] = {k: v for k, v in (("hub_page", hub_page), ("hub_page_size", hub_page_size)) if v is not None}
     if extended:
         paging["extended"] = True
-    key = ("catalog", q or "", engine or "", fits, hub, tuple(sorted(tag or [])), hub_page, hub_page_size, extended)
+    if detail_repo:
+        if not hub:
+            raise HTTPException(status_code=400, detail="detail_repo requires hub=true")
+        paging["detail_repo"] = detail_repo
+    q = (q or "").strip() or None
+    engine = (engine or "").strip() or None
+    key = ("catalog", q or "", engine or "", fits, hub, tuple(sorted(tag or [])), hub_page or 1, hub_page_size or 20, extended, detail_repo)
     return await catalog_read(key, lambda: _core_host_call(
         core_model_catalog, (q or "").strip() or None, engine=(engine or "").strip() or None, fits_only=fits, hub=hub, tags=tag or None,
         **paging,

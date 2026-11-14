@@ -31,10 +31,10 @@ from typing import List
 def clear_fastapi_memo_caches() -> List[str]:
     """Clear every `functools.lru_cache` defined by a loaded `fastapi` module; return their names."""
     cleared: List[str] = []
-    for mod_name, mod in list(sys.modules.items()):
+    for mod_name, mod in sys.modules.copy().items():
         if mod is None or not (mod_name == "fastapi" or mod_name.startswith("fastapi.")):
             continue
-        for attr, obj in list(vars(mod).items()):
+        for attr, obj in vars(mod).copy().items():
             if not (callable(getattr(obj, "cache_clear", None)) and callable(getattr(obj, "cache_info", None))):
                 continue
             # Only FastAPI's own caches (a module may re-export another library's).

@@ -21,9 +21,9 @@ can trust without importing local gateway packages.
 
 ## Counts
 
-- Planned: 25
-- Proposed: 56
-- Completed: 72
+- Planned: 28
+- Proposed: 59
+- Completed: 69
 - Deprecated: 5
 - Recurrent: 0
 
@@ -79,10 +79,10 @@ Agora was unavailable at intake; 1010's hub mirror remains pending.
 
 ## Priority Bands
 
-- Completed: 010 capability discovery and thin-client feature gating.
-- Completed: 020 AbstractFlow gateway-first editor contract and validation.
-- Completed: 030 Gateway-owned session prompt-cache lifecycle.
-- Completed: 040 Generated-media artifact and direct image contract.
+- Completed: 69 capability discovery and thin-client feature gating.
+- Completed: 69 AbstractFlow gateway-first editor contract and validation.
+- Completed: 69 Gateway-owned session prompt-cache lifecycle.
+- Completed: 69 Generated-media artifact and direct image contract.
 - Completed: model residency truth, truthful media residency, durable bloc prompt-cache exposure, direct music contract truth, and Runtime boundary cleanup for workspace/comms/Telegram.
 - Completed: install profiles and configuration entrypoint.
 - Completed: memory store resolver and TripleStore abstraction.
@@ -359,3 +359,7 @@ Catalog performance: [0986](completed/0986_catalog_fetch_latency.md) closes the 
 2026-10-30: [1005 Accounts action containment](completed/1005_accounts_action_layout_containment.md), operator screenshot of action buttons escaping their rows.
 
 2026-11-01: [1006 App cards: registration template, families, illustrations](completed/1006_app_cards_registration_template_and_families.md), operator request to merge the two Assistant cards and make the card a template.
+
+2026-11-14: added planned [1212](planned/1212_gateway_login_registration_and_explicit_quit.md) for the accepted release-recovery scope (root 1209).
+
+2026-11-14: added planned [1216](planned/1216_close_resolution_notices_and_ci_reliability.md) for the accepted release-recovery scope (root 1209).

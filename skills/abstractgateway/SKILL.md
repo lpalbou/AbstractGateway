@@ -4,7 +4,7 @@ description: Operate AbstractGateway through its CLI and authenticated HTTP APIs
 license: MIT
 compatibility: Python 3.10+. A reachable Gateway and Gateway user credentials are required for run APIs. Local inference needs the matching Apple or GPU install profile and explicitly downloaded models.
 metadata:
-  package-version: "0.21.0"
+  package-version: "0.21.1"
 ---
 
 # AbstractGateway
@@ -288,3 +288,16 @@ its exhausted recovery budget. `stopping` means cleanup has not closed it yet.
 - [Inference endpoints](https://raw.githubusercontent.com/lpalbou/AbstractGateway/main/docs/openai-api.md): direct Core versus Gateway `/v1` credentials.
 - [Troubleshooting](https://raw.githubusercontent.com/lpalbou/AbstractGateway/main/docs/troubleshooting.md): failure diagnosis and recovery.
 - [Full docs](https://raw.githubusercontent.com/lpalbou/AbstractGateway/main/llms-full.txt): expanded reference.
+
+## Model discovery and login registration
+
+`GET /api/gateway/models/catalog?q=...&hub=true` searches summaries. Full metadata is
+explicit: add `detail_repo=org/repo&extended=true` for one selected repository. On
+`hub.rate_limited`, wait for `retry_at`/`retry_after_seconds`; changing queries cannot
+bypass Core's shared cooldown. Sizes may remain unknown or estimated.
+
+Windows Start at login uses a compact pythonw bootstrap plus adjacent JSON arguments
+under LOCALAPPDATA. Status reports damaged, missing or overlong registrations as broken;
+`abstractgateway service enable` repairs next-login registration without restarting the
+running service unless asked. This integration remains experimental pending native login
+validation. Quit preserves the next-login preference. See first-run and troubleshooting.

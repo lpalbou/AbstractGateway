@@ -99,13 +99,15 @@ def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(
     exe = [str(tmp_path / "venv" / "Scripts" / "python.exe"), "-m", "abstractgateway"]
     plan = os_service.build_install_plan(platform="win32", home=home, host="127.0.0.1", port=8080, data_dir=data, exe_argv=exe, env={"APPDATA": appdata})
     assert plan.experimental is True and plan.mechanism == "registry-run"
-    assert plan.files == []
+    assert len(plan.files) == 2
     set_op, approved_op = plan.registry
     assert set_op["op"] == "set" and set_op["key"] == r"Software\Microsoft\Windows\CurrentVersion\Run" and set_op["name"] == "AbstractGateway"
     argv = os_service.windows_split(set_op["value"])
-    assert argv[0].endswith("pythonw.exe") and argv[1:4] == ["-m", "abstractgateway.os_service", "launch"]
-    assert argv[argv.index("--data-dir") + 1] == str(data)  # a path with a space survives the round trip
-    assert argv[-2:] == ["--", "serve"]
+    assert argv[0].endswith("pythonw.exe") and argv[1].endswith(".pyw")
+    assert os_service.windows_run_units(set_op["value"]) <= 260
+    launch = json.loads(plan.files[0]["content"])["argv"]
+    assert launch[launch.index("--data-dir") + 1] == str(data)
+    assert launch[-2:] == ["--", "serve"]
     assert approved_op == {"op": "delete", "key": r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", "name": "AbstractGateway", "missing_ok": True}
     shortcut = str(Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "AbstractGateway.lnk")
     assert shortcut in plan.remove, "an older Startup shortcut would start a second gateway"
@@ -267,7 +269,7 @@ def test_every_os_registers_plain_serve_unless_pinned(tmp_path: Path, platform: 
 
     def served(plan) -> List[str]:
         if plan.registry:
-            argv = os_service.windows_split(plan.registry[0]["value"])
+            argv = json.loads(plan.files[0]["content"])["argv"]
         elif plan.files[0]["path"].endswith(".plist"):
             argv = plistlib.loads(plan.files[0]["content"].encode())["ProgramArguments"]
         elif plan.files[0]["path"].endswith(".desktop"):
@@ -565,3 +567,15 @@ def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as e:
         os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
     assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service install" in str(e.value)
+
+
+def test_windows_cli_install_returns_actionable_json_for_unrepresentable_run_command(tmp_path, monkeypatch, capsys):
+    import argparse
+    from abstractgateway.firstrun_cli import run_service
+    monkeypatch.setenv('ABSTRACTGATEWAY_DATA_DIR',str(tmp_path/'data'))
+    monkeypatch.setattr(os_service,'current_gateway_argv',lambda platform:[str(tmp_path/('p'*100)/'python.exe'),'-m','abstractgateway'])
+    args=argparse.Namespace(service_cmd='install',data_dir=None,json=True,host='127.0.0.1',port=18777,dry_run=True,no_start=False,no_wait=True,wait_s=1.0,no_claim=True)
+    assert run_service(args,platform='win32',home=tmp_path/('h'*180)) == 2
+    result=json.loads(capsys.readouterr().out)
+    assert result['ok'] is False and '260 characters' in result['error']
+    assert not (tmp_path/'data').exists()

@@ -274,13 +274,15 @@ def test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes(env) -> None:
     env.mp.setattr(session_kinds, "_load", lk)
     env.mp.setattr(session_archive, "REVALIDATE_S", 3600.0)
     env.mp.setattr(session_kinds, "REVALIDATE_S", 3600.0)
+    # Publish fixture runs before boot's session-index warm-up can observe them.
+    store = JsonFileRunStore(env.data)
+    for sid in ("s1", "s2"):
+        store.save(RunState(run_id=f"root-{sid}", workflow_id="chat", status=RunStatus.COMPLETED, current_node="n", vars={}, session_id=sid))
     with TestClient(env.app) as client:
-        store = JsonFileRunStore(env.data)
-        for sid in ("s1", "s2"):
-            store.save(RunState(run_id=f"root-{sid}", workflow_id="chat", status=RunStatus.COMPLETED, current_node="n", vars={}, session_id=sid))
         url = "/api/gateway/runs?root_only=true&include_ledger_len=false"
         first = client.get(url, headers=H)
         assert first.status_code == 200, first.text
+        assert {item.get("session_id") for item in first.json()["items"]} >= {"s1", "s2"}
         before = dict(loads)
         for _ in range(5):
             assert client.get(url, headers=H).status_code == 200

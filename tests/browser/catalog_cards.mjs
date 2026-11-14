@@ -279,7 +279,7 @@ try {
   check(hubRequests.length===0&&await root.locator('[data-mc-hub-beside]').count()===0,`${theme}: typing filters only the local catalogue`);
   const localBefore=await page.evaluate(()=>({...mcStore.views.get('tab').filters,q:'Qwen'}));await root.locator('[data-af-scope="hf"]').click();await root.getByRole('searchbox',{name:'Search Hugging Face',exact:true}).waitFor();
   await page.waitForFunction(()=>!mcStore.hub.loading&&mcStore.hub.q==='Qwen');
-  check(hubRequests.length===1&&hubRequests[0].includes('hub=true')&&hubRequests[0].includes('extended=true'),`${theme}: choosing Hugging Face explicitly requests all upstream versions`);
+  check(hubRequests.length===1&&hubRequests[0].includes('hub=true')&&!hubRequests[0].includes('extended=true'),`${theme}: choosing Hugging Face requests bounded summary listings`);
   check(!await fits.isChecked()&&await root.locator('[data-af-facet="quant"][data-af-value="all"]').getAttribute('aria-pressed')==='true',`${theme}: online search starts with every precision and no guessed-fit exclusion`);
   await root.locator('[data-af-scope="catalog"]').click();
   check(await localSearch.inputValue()==='Qwen'&&await page.evaluate(before=>JSON.stringify(mcStore.views.get('tab').filters)===JSON.stringify(before),localBefore),`${theme}: return to Catalogue restores the local query and filters`);

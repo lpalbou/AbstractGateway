@@ -1459,7 +1459,7 @@ enable` again to let the Network setting apply". `service enable` rewrites it.
 | macOS | LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist` (`RunAtLoad`, restarted if it crashes), loaded with `launchctl bootstrap gui/<uid>` | `~/Library/Logs/AbstractGateway/` |
 | Linux | systemd user unit `~/.config/systemd/user/abstractgateway.service` (`Restart=on-failure`), enabled with `systemctl --user enable --now` | `journalctl --user -u abstractgateway.service` |
 | Linux without a systemd user manager | XDG autostart entry `~/.config/autostart/abstractgateway.desktop` (starts at graphical login) | `<data dir>/logs/gateway.log` |
-| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts the gateway with `pythonw.exe` (no console window, no admin) | `<data dir>\logs\gateway.log` |
+| Windows (experimental) | per-user Run entry `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\AbstractGateway` that starts a compact per-user bootstrap with `pythonw.exe` (no console window, no admin) | `<data dir>\logs\gateway.log` |
 
 Details:
 
@@ -1576,6 +1576,16 @@ start unless auth is configured (`ABSTRACTGATEWAY_USER_AUTH=1` or
 - [security.md](docs/security.md): auth, origins, limits
 - [tray.md](docs/tray.md): the desktop tray icon
 - [troubleshooting.md](docs/troubleshooting.md): sign-in links, login service, network modes
+
+### Windows login registration
+
+The Run command stays within Windows' 260-character limit. Full launch arguments are stored
+in `%LOCALAPPDATA%\AbstractGateway\AbstractGateway.json` beside the `.pyw` bootstrap
+(named instances use their own files). Status validates both files and the instance. If an
+older registration says **needs repair** or **broken**, run `abstractgateway service enable`
+or turn **Start at login** off and on. This updates the next-login registration without
+restarting the running gateway. A path too long to represent produces an actionable error.
+Windows service integration remains experimental pending native login validation.
 
 ---
 
@@ -8319,7 +8329,7 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | `GET /engines/jobs`, `GET /engines/jobs/{id}` | user | | engine install jobs |
 | `POST /engines/jobs/{id}/continue`, `/cancel` | admin | `{"action"?}` | the job |
 | `POST /engines/{id}/start`, `/stop` | admin | | Ollama / LM Studio server state |
-| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable) | `model_catalog_v1` |
+| `GET /models/catalog` | user | `q`, `engine`, `fits=1`, `hub=1`, `tag` (repeatable), `hub_page`, `hub_page_size`, `detail_repo`, `extended=1` | `model_catalog_v1` |
 | `GET /models/installed` | user | `provider` | `models_installed_v1` |
 | `POST /models/download` | admin | `{"provider", "artifact", "dry_run", "expected_bytes"?}` or `{"recommended": true}` | `{"ok": true, "job": {...}}`; with `recommended`, `{"ok": true, "recommended": true, "jobs": [...], "group": {...}}` |
 | `GET /models/download/{job}` | user | | `{"ok": true, "job": {...}}` (a `grp_...` id returns the parent job) |
@@ -8338,6 +8348,14 @@ Empty query values (`q=`, `engine=`) mean "no filter". `probe`, `fits` and
 `decision` (`tag=decision`); their capability route is `output.decision`, and
 the console's Models page filters them with its **Decision** chip. See
 [Decisions](#decisions).
+
+**Hub discovery.** `hub=true` with `q` requests bounded summary pages, without
+per-result metadata lookups. `detail_repo=org/repo` requires `hub=true` and reads
+only that selected repo; add `extended=true` to enumerate its verified quant
+variants. Search sizes can be unknown or estimates. `hub.rate_limited`,
+`retry_at` (Unix seconds) and `retry_after_seconds` report a shared Core cooldown;
+queries and details during it do not retry upstream. Start page 1 before later
+pages. Authentication still runs on every Gateway request.
 
 **Catalog artifacts.** `model_catalog_v1` is AbstractCore's payload, served
 unchanged (field reference: AbstractCore `docs/models.md`, "The catalog").
@@ -14569,6 +14587,11 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.21.1:** bounded Hugging Face summary searches and explicit repository
+details with a shared quota cooldown; compact, verified Windows login registration;
+private-safe close-time question-resolution notices. Requires Runtime 0.19.6, Core 2.35.2
+and Memory 0.5.2. Windows login integration remains experimental.
+
 **What's new in 0.21.0** ([CHANGELOG](CHANGELOG.md#0210---2026-11-10)): an entity lives one phase at a time
 (visit, idle, work, its own time or sleep, or stopped). `GET /entities/{name}/life_state` serves the phase bar,
 `PUT .../life_state/toggles` gives or takes back its own time (the operator's to give; work starts when a job is
@@ -16171,6 +16194,30 @@ See [tray.md](docs/tray.md#restart-and-update).
 - [configuration.md](docs/configuration.md), [security.md](docs/security.md)
 - [push.md](docs/push.md), [email.md](docs/email.md)
 
+### Windows Start at login is enabled but nothing starts
+
+Run `abstractgateway service status`. Overlong legacy Run commands, missing or damaged
+bootstrap/configuration files, a removed interpreter and Task Manager's disabled startup
+entry are reported as broken. Run `abstractgateway service enable` to regenerate the
+registration. Full launch arguments live beside the compact per-user bootstrap under
+`%LOCALAPPDATA%\AbstractGateway`; keep the files together. If the compact command itself
+exceeds 260 characters, use a shorter Python or local application-data path.
+
+### Gateway reopens after tray Exit in a local workspace stack
+
+Restart the workspace stack with the updated launcher. Its Gateway restart policy preserves
+a clean Quit as stopped until an explicit launch. Nonzero exits and watchdog failures still
+restart. Quit preserves Start at login, so Gateway can start at the next login. Force-killing
+a process is a failure and can trigger recovery.
+
+### Hugging Face says too many requests
+
+The model browser shows a rate-limit message and retry deadline. Wait until that deadline;
+changing queries, refreshing or opening Details does not bypass the shared Core cooldown.
+Search uses summary pages; **Details and versions** reads only the selected repository.
+Cached results remain available. Unknown sizes stay unknown or estimated until metadata
+is available. Check network connectivity for an offline error, rather than a quota response.
+
 ---
 
 ## CHANGELOG.md
@@ -16186,6 +16233,18 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.21.1] - 2026-11-14
+
+### Changed
+
+- Requires AbstractRuntime 0.19.6, AbstractCore 2.35.2 and AbstractMemory 0.5.2.
+
+### Fixed
+
+- Hugging Face model searches request bounded summaries; **Details and versions** fetches only the selected repository. Rate-limit notices show when to retry and preserve cached results.
+- Windows Start at login uses a compact, verified bootstrap configuration within the Run command length limit. Broken legacy commands and missing or damaged configuration are reported for repair with `abstractgateway service enable`. Windows integration remains experimental pending native login validation.
+- Close-time question-resolution notices survive visit history, are deduplicated in ledger order and omit private titles.
 
 ## [0.21.0] - 2026-11-10
 

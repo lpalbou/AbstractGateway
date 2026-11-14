@@ -315,6 +315,28 @@ if (__SCRIPT__ === "sameFiles") {
     mcSameFiles({provider:"lmstudio",artifact:"model@4bit"},{provider:"lmstudio",artifact:"model"})
   ]`, ctx);
 }
+if (__SCRIPT__ === "detailsRace") {
+  const first = JSON.parse(JSON.stringify(FIXTURE.rows[0]));
+  first.artifacts = first.artifacts.filter(a=>a.provider === "mlx");
+  const second = {...JSON.parse(JSON.stringify(first)),id:"page-two"};
+  let finishDetails;
+  const detail = {...FIXTURE,rows:[{...first,artifacts:first.artifacts.map(a=>({...a,download_bytes:9876543}))}],hub:{ok:true}};
+  const page = {...FIXTURE,rows:[second],hub:{ok:true,search:{has_more:false,page:2}}};
+  ctx.api = async(path) => {
+    calls.push({path,method:"GET"});
+    if(path.includes("detail_repo=")) return new Promise(resolve=>{finishDetails=resolve;});
+    return page;
+  };
+  ctx.raceFirst=first;
+  vm.runInContext(`mcStore.views.get('tab').filters.hf='race'; mcStore.hub={q:'race',seq:99,page:1,data:{schema:'model_catalog_v1',rows:[raceFirst],hub:{ok:true,search:{has_more:true,page:1}}}}`,ctx);
+  const repo=first.artifacts[0].artifact.split(":")[0];
+  const pending=vm.runInContext(`mcHubDetails(mcStore.views.get('tab'),${JSON.stringify(repo)})`,ctx);
+  await vm.runInContext('mcHubMore()',ctx);
+  finishDetails(detail); await pending;
+  out.rows=vm.runInContext('mcStore.hub.data.rows.map(row=>row.id)',ctx);
+  out.bytes=vm.runInContext('mcStore.hub.data.rows[0].artifacts[0].download_bytes',ctx);
+  out.paths=calls.filter(c=>c.path.includes('q=race')).map(c=>c.path);
+}
 console.log(JSON.stringify(out));
 """
 
@@ -494,7 +516,7 @@ def _hub(rows: int) -> dict:
 def check_hf(out: dict, hub: dict) -> None:
     n = len(hub["rows"])
     arts = sum(len(r["artifacts"]) for r in hub["rows"])
-    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true"]
+    assert out["hubCalls"] == ["/api/gateway/models/catalog?q=smol%20lm&hub=true"]
     # The Hub answer is drawn as the SAME cards and rows, every one of them.
     assert out["initial"]["cards"] == n and out["initial"]["arts"] == n
     assert out["initial"]["count"] == [n, n, arts]
@@ -505,7 +527,7 @@ def check_hf(out: dict, hub: dict) -> None:
     assert set(out["initial"]["boldQuant"]) == {"8-bit", "Not stated"}
     assert 'data-mc-action="download"' in out["html"]
     assert out["backToCatalog"]["hash"] == "#catalog" and out["backToCatalog"]["cards"] == 80
-    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true&extended=true"
+    assert out["hubCalls2"][-1] == "/api/gateway/models/catalog?q=qwen%20coder&hub=true"
     assert out["second"]["hash"] == "#catalog?quant=all&fits=0&hf=qwen%20coder"
 
 
@@ -568,9 +590,9 @@ def test_hugging_face_results_page_with_a_count_and_show_more() -> None:
     assert out["page3"]["cards"] == 10 and 'data-mc-hub-count="10">Showing 10 Hugging Face results.</span>' in out["html3"]
     assert 'data-mc-action="hub-more"' not in out["html3"]
     assert out["hubCalls"] == [
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=2",
-        "/api/gateway/models/catalog?q=smol%20lm&hub=true&extended=true&hub_page=3",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=2",
+        "/api/gateway/models/catalog?q=smol%20lm&hub=true&hub_page=3",
     ]
 
 
@@ -588,7 +610,7 @@ def test_catalogue_search_stays_local_until_hugging_face_is_selected() -> None:
     out = _run(cat, "beside", "#catalog?q=org-1&quant=all", hub=hub)
     assert out["hubCalls"] == [] and 'data-mc-hub-beside' not in out["html"]
     assert out["html"].count('data-mc-model="hf:') == 0
-    assert out["hubCalls2"] == ["/api/gateway/models/catalog?q=org-1&hub=true&extended=true"]
+    assert out["hubCalls2"] == ["/api/gateway/models/catalog?q=org-1&hub=true"]
     assert out["hf"]["hash"] == "#catalog?quant=all&fits=0&hf=org-1"
     assert out["hfHtml"].count('data-mc-model="hf:') == 3
 
@@ -617,11 +639,11 @@ def test_all_lists_every_quant_and_there_is_no_every_quant_switch() -> None:
 
 def test_a_hugging_face_search_lists_every_quant() -> None:
     """Operator ruling (2026-10-29): "this is a Hugging Face search, it should show what's available,
-    period". The Hugging Face tab always asks `extended=true`."""
+    period". The Hugging Face tab uses bounded summary searches."""
     cat = _catalog(10)
     hub = _hub_page(0, 3, page=1, more=False)
     out = _run(cat, "hf", "#catalog?quant=all&hf=unsloth%2FQwen3.8-27B-GGUF", hub=hub)
-    assert out["hubCalls"][0] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true&extended=true"
+    assert out["hubCalls"][0] == "/api/gateway/models/catalog?q=unsloth%2FQwen3.8-27B-GGUF&hub=true"
 
 
 def _gpu_limit_catalog() -> dict:
@@ -781,3 +803,12 @@ def test_primary_build_prefers_ready_inventory_then_default_without_reordering_e
     assert out['primaryInitial']==first and out['expandedPrimary']==first
     assert out['primaryDefault']==default
     assert out['catalogReads']==['/api/gateway/models/catalog']
+
+
+def test_selected_details_survive_same_query_pagination_replacing_hub_state():
+    out = _run(_catalog(1), "detailsRace")
+    assert out["rows"] == ["model-0", "page-two"]
+    assert out["bytes"] == 9876543
+    assert len(out["paths"]) == 2
+    assert "detail_repo=" in out["paths"][0]
+    assert "hub_page=2" in out["paths"][1]
