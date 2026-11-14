@@ -719,8 +719,8 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
         ld.require_runtime_features(runtime)
     text = str(info.value)
     assert "(0.15.2)" in text and f"abstractruntime>={ld.ABSTRACTRUNTIME_FLOOR}" in text and "0965" in text
-    # 0.19.3's own version gate (the own-time withdrawal rule, a behaviour): 0.19.2 is refused by version too,
-    # naming the rule; 0.19.3 and an unknown metadata (a source checkout) are accepted.
+    # Cancellation publication is a behavioral requirement: older versions are
+    # refused even with all named APIs; the floor and unknown source metadata pass.
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
         ld.require_runtime_features(runtime)
@@ -737,7 +737,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     """AbstractRuntime 0.19.0: the one iteration default, the Stop fence and registered skill roots; 0.19.1: the
     self-knowledge brief reader. A runtime without one of them is refused by the host-build check, which names
-    the 0.19.3 floor (0.19.2: the membership-only topic read; 0.19.3: the own-time withdrawal rule, version-gated)."""
+    the current floor, including cancellation publication and diary-resolution projection."""
     import types
 
     import abstractruntime
@@ -769,7 +769,7 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
             with pytest.raises(ld.RuntimeTooOld) as info:
                 ld.require_runtime_features(runtime)
         text = str(info.value)
-        assert words in text and "abstractruntime>=0.19.3" in text, text  # the floor; each item names its own version
+        assert words in text and f"abstractruntime>={ld.ABSTRACTRUNTIME_FLOOR}" in text, text
 
 
 def test_an_older_runtime_reaches_the_floor_check_instead_of_an_import_error(tmp_path: Path) -> None:
