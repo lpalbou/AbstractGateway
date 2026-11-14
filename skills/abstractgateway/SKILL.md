@@ -20,13 +20,14 @@ Gateway workflow runs.
 
 ## Install and verify
 
-This skill includes unreleased endpoint controls. Install the matching source
-checkout at the AbstractGateway repository root:
+This skill covers AbstractGateway 0.21.1. Install the published Python package:
 
 ```bash
-python -m pip install -e .
-# For local engines instead: -e '.[apple]' or -e '.[gpu]'
+python -m pip install "abstractgateway==0.21.1"
+# For local engines: "abstractgateway[apple]==0.21.1" or "abstractgateway[gpu]==0.21.1"
 ```
+
+For package development from a matching source checkout, use `python -m pip install -e .`.
 
 Check the installed distribution and the taught feature before operating it:
 
@@ -38,7 +39,7 @@ try:
     from abstractgateway.routes.core_endpoint import EndpointChange
     from abstractgateway.routes.gateway import StartRunRequest
 except (ImportError, PackageNotFoundError) as exc:
-    raise SystemExit(f"Install the matching Gateway checkout: {exc}") from None
+    raise SystemExit(f"Install AbstractGateway 0.21.1 or newer: {exc}") from None
 if "direct_enabled" not in EndpointChange.model_fields:
     raise SystemExit("This Gateway lacks the direct HTTP control; use its matching docs/skill.")
 if "conversation" not in StartRunRequest.model_fields:
@@ -47,8 +48,7 @@ assert EndpointChange(direct_enabled=False).direct_enabled is False
 print(f"abstractgateway {installed}; direct endpoint control available")
 ```
 
-For a published installation, its installed-version docs take precedence over
-this unreleased skill. Ask the operator to place a Gateway **user bearer token**
+Use the docs and skill for the installed Gateway version. Ask the operator to place a Gateway **user bearer token**
 in `GATEWAY_TOKEN` locally, never in chat. Set `GATEWAY_URL` explicitly, for
 example `http://127.0.0.1:8080`. Stop on the first `401`/`403` and correct the
 identity, token or policy before another call. Gateway `/v1` API keys cannot

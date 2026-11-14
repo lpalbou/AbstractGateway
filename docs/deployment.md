@@ -35,7 +35,7 @@ existing deployments; use `abstractgateway` for new ones.
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.5.0`
+- `AbstractMemory[lancedb]>=0.5.2`
 - `abstractagent`
 - FastAPI/Uvicorn
 

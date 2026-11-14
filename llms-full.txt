@@ -1632,11 +1632,11 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.19.3` (own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.35.0` (AbstractRuntime 0.19.0's own floor: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `AbstractRuntime>=0.19.6` (cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `abstractcore>=2.35.2` (bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice>=0.20.0` (segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent>=0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
-- `AbstractMemory[lancedb]>=0.5.0` (the memory graph, `abstractmemory.graph`; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
+- `AbstractMemory[lancedb]>=0.5.2` (resolved-diary replay metadata; the memory graph, `abstractmemory.graph`; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
 - `abstractskill>=0.3.11` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`, with the abstractcore skill beside abstractframework-gateway)
 - `abstractavatar>=0.2.0` (the avatar design catalog: an entity's identity names a design this catalog has and the
   Watch can draw, a retired design is drawn as its replacement; without it no identity is set or recorded. At each start the gateway writes the recorded default
@@ -3256,8 +3256,8 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   the terminal console say, per loaded model, "Unused for 12 min, unloads in 48 min", "Kept loaded:
   never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
   loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
-  LM Studio, llama.cpp server) keeps its own rule. Needs AbstractRuntime 0.18 or later; an older runtime
-  is reported in the log.
+  LM Studio, llama.cpp server) keeps its own rule. The underlying idle-unload API needs
+  AbstractRuntime 0.18 or later; this Gateway requires 0.19.6 or later.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -8220,7 +8220,7 @@ result rather than making Flow authoring nodes unavailable.
 `/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.14.0 and AbstractMemory 0.4.0.
+(ADR 0001). Requires AbstractRuntime 0.19.6 and AbstractMemory 0.5.2.
 
 **Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:
@@ -11468,7 +11468,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.7.0 or later): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, 0.19.6 or later): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -12591,7 +12591,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.7.0 or later. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.19.6 or later. A gateway installed against
   an older runtime does not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -14228,7 +14228,7 @@ existing deployments; use `abstractgateway` for new ones.
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.5.0`
+- `AbstractMemory[lancedb]>=0.5.2`
 - `abstractagent`
 - FastAPI/Uvicorn
 
@@ -15252,7 +15252,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.15.3 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.19.6 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -15597,7 +15597,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.12.0"
+pip install -U "abstractruntime>=0.19.6"
 ```
 
 ### The one-time sign-in link does not work
@@ -15637,7 +15637,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.19.6 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
