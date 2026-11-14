@@ -510,7 +510,8 @@ def test_windows_long_unicode_configuration_executes_short_bootstrap_and_readbac
     tmp_path = short_startup_path
     import json
     home = tmp_path / 'h'
-    data = tmp_path / ('long data Éléonore ' * 8) / 'Gateway'
+    # Keep Unicode/internal spaces and a long command, with a Windows-valid folder name.
+    data = tmp_path / ' '.join(['long data Éléonore'] * 8) / 'Gateway'
     env = {'LOCALAPPDATA': str(tmp_path / 'Local')}
     exe = [str(_win_python(tmp_path)), '-m', 'abstractgateway']
     reg = Registry()
