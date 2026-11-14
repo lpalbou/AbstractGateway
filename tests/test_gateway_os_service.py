@@ -92,7 +92,8 @@ def test_systemd_quotes_paths_with_spaces(tmp_path: Path) -> None:
     assert 'WorkingDirectory="/srv/My Data/gw"' in unit
 
 
-def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(tmp_path: Path) -> None:
+def test_windows_run_value_is_experimental_hidden_and_replaces_the_old_shortcut(short_startup_path: Path) -> None:
+    tmp_path = short_startup_path
     home = tmp_path / "Users" / "u"
     appdata = str(tmp_path / "Roaming")
     data = tmp_path / "Local" / "My Data" / "AbstractGateway"
@@ -217,7 +218,8 @@ def test_non_loopback_pinned_install_warns_about_auth(tmp_path: Path) -> None:
     assert any("--pin-command-line" in n and "does NOT apply" in n for n in plan.notes)
 
 
-def test_windows_launcher_redirects_output_and_runs_the_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_windows_launcher_redirects_output_and_runs_the_cli(short_startup_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tmp_path = short_startup_path
     import sys
 
     from abstractgateway import cli as gateway_cli
@@ -569,7 +571,8 @@ def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service install" in str(e.value)
 
 
-def test_windows_cli_install_returns_actionable_json_for_unrepresentable_run_command(tmp_path, monkeypatch, capsys):
+def test_windows_cli_install_returns_actionable_json_for_unrepresentable_run_command(short_startup_path, monkeypatch, capsys):
+    tmp_path = short_startup_path
     import argparse
     from abstractgateway.firstrun_cli import run_service
     monkeypatch.setenv('ABSTRACTGATEWAY_DATA_DIR',str(tmp_path/'data'))

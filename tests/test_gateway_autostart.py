@@ -217,7 +217,8 @@ def _win_python(tmp_path: Path) -> Path:
     return scripts / "python.exe"
 
 
-def test_windows_enable_writes_the_run_value_clears_task_manager_veto_and_the_old_shortcut(tmp_path: Path) -> None:
+def test_windows_enable_writes_the_run_value_clears_task_manager_veto_and_the_old_shortcut(short_startup_path: Path) -> None:
+    tmp_path = short_startup_path
     home, data = tmp_path / "home", tmp_path / "Local" / "AbstractGateway"
     reg = Registry()
     reg.values[(os_service.WINDOWS_STARTUP_APPROVED_KEY, "AbstractGateway")] = bytes([3]) + bytes(11)
@@ -249,14 +250,16 @@ def test_windows_enable_writes_the_run_value_clears_task_manager_veto_and_the_ol
     assert off["after"]["state"] == "off"
 
 
-def test_windows_run_value_pointing_at_a_removed_python_is_broken(tmp_path: Path) -> None:
+def test_windows_run_value_pointing_at_a_removed_python_is_broken(short_startup_path: Path) -> None:
+    tmp_path = short_startup_path
     reg = Registry()
     reg.values[(os_service.WINDOWS_RUN_KEY, "AbstractGateway")] = os_service.windows_join(["C:\\gone\\pythonw.exe", "-m", "abstractgateway.os_service", "launch", "--data-dir", str(tmp_path)])
     st = autostart.autostart_status(data_dir=tmp_path, platform="win32", home=tmp_path, registry=reg, env={})
     assert st["state"] == "broken" and "is gone" in st["summary"]
 
 
-def test_windows_without_a_registry_backend_fails_loudly_not_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_windows_without_a_registry_backend_fails_loudly_not_silently(short_startup_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tmp_path = short_startup_path
     monkeypatch.setattr(os_service, "default_registry", lambda platform=None: None)
     out = autostart.enable_autostart(data_dir=tmp_path / "d", host="127.0.0.1", port=1, platform="win32", home=tmp_path, exe_argv=[str(_win_python(tmp_path)), "-m", "abstractgateway"], env={})
     assert out["ok"] is False and "registry" in out["error"]
@@ -348,7 +351,8 @@ def _set_network(data: Path, mode: str, port: int) -> None:
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "linux-xdg", "win32"])
-def test_a_legacy_pinned_registration_needs_repair_on_every_os_and_enable_rewrites_it_keeping_lan(tmp_path: Path, platform: str) -> None:
+def test_a_legacy_pinned_registration_needs_repair_on_every_os_and_enable_rewrites_it_keeping_lan(short_startup_path: Path, platform: str) -> None:
+    tmp_path = short_startup_path
     home, data = tmp_path / "home", tmp_path / "data"
     plat, lm = ("linux", "xdg") if platform == "linux-xdg" else (platform, "systemd" if platform == "linux" else None)
     env = {"APPDATA": str(tmp_path / "Roaming")}
@@ -502,7 +506,8 @@ def test_the_install_plan_no_longer_prints_an_unconditional_linger_hint(tmp_path
     assert not any("enable-linger" in n for n in plan.notes)
 
 
-def test_windows_long_unicode_configuration_executes_short_bootstrap_and_readback_detects_damage(tmp_path, monkeypatch):
+def test_windows_long_unicode_configuration_executes_short_bootstrap_and_readback_detects_damage(short_startup_path, monkeypatch):
+    tmp_path = short_startup_path
     import json
     home = tmp_path / 'h'
     data = tmp_path / ('long data Éléonore ' * 8) / 'Gateway'
@@ -531,7 +536,8 @@ def test_windows_long_unicode_configuration_executes_short_bootstrap_and_readbac
     assert autostart.autostart_status(data_dir=data, platform='win32', home=home, env=env, registry=reg)['state'] == 'broken'
 
 
-def test_windows_unrepresentable_login_command_fails_before_registration(tmp_path):
+def test_windows_unrepresentable_login_command_fails_before_registration(short_startup_path):
+    tmp_path = short_startup_path
     home = tmp_path / ('x' * 180)
     with pytest.raises(ValueError, match='260 characters'):
         os_service.build_install_plan(platform='win32', home=home, data_dir=tmp_path/'d', host='127.0.0.1', port=8080,
@@ -539,7 +545,8 @@ def test_windows_unrepresentable_login_command_fails_before_registration(tmp_pat
 
 
 @pytest.mark.parametrize('bad', [None, [], 'text', {'schema': 'gateway_login_v1', 'argv': ['launch', '--log-file', '--data-dir', '--', 'serve']}, {'schema': 'gateway_login_v1', 'argv': ['launch', '--log-file', '/tmp/log', '--data-dir', '/tmp/data', '--', '--instance', 'foreign', 'serve']}])
-def test_windows_status_reports_malformed_configuration_as_broken(tmp_path, bad):
+def test_windows_status_reports_malformed_configuration_as_broken(short_startup_path, bad):
+    tmp_path = short_startup_path
     import json
     home, data = tmp_path/'h', tmp_path/'d'
     env = {'LOCALAPPDATA': str(tmp_path/'Local')}
@@ -552,7 +559,8 @@ def test_windows_status_reports_malformed_configuration_as_broken(tmp_path, bad)
     assert status['state'] == 'broken' and 'configuration needs repair' in status['summary']
 
 
-def test_windows_enable_returns_error_for_command_that_cannot_fit_without_writing_registration(tmp_path):
+def test_windows_enable_returns_error_for_command_that_cannot_fit_without_writing_registration(short_startup_path):
+    tmp_path = short_startup_path
     reg = Registry()
     result = autostart.enable_autostart(data_dir=tmp_path/'d', host='127.0.0.1', port=8080, platform='win32',
                                        home=tmp_path/('h'*180), env={}, registry=reg,

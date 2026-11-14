@@ -45,6 +45,18 @@ import tempfile as _tempfile
 _REAL_HOME = os.path.expanduser("~")
 _SESSION_HOME = Path(_tempfile.mkdtemp(prefix="abstractgateway-tests-home-"))
 
+
+@pytest.fixture
+def short_startup_path():
+    """Keep ordinary Run-command fixtures independent of pytest's long case paths.
+
+    The separate over-limit tests add their own long paths. These tests use a
+    recording registry and never install a real login item.
+    """
+    base = (os.environ.get("TEMP") or _tempfile.gettempdir()) if os.name == "nt" else "/tmp"
+    with _tempfile.TemporaryDirectory(prefix="gw-win-", dir=base) as directory:
+        yield Path(directory)
+
 # Operator-exported path knobs that would steer a test at real data
 # (ABSTRACTGATEWAY_FLOWS_DIR, HF_HUB_CACHE, ABSTRACTCORE_JOBS_DIR, ...).
 _PATH_KNOB = _re.compile(
