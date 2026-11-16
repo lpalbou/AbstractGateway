@@ -583,8 +583,11 @@ def test_the_switch_of_a_menu_still_on_screen_works_after_a_rebuild() -> None:
 
     toggles: List[bool] = []
     view = v2.header_view(_snap(gateway_state="paused", paused=True))
-    # Pools so nothing autoreleased keeps the first target alive by accident
-    # (reading `.target()` outside a pool would make this pass without the fix).
+    # What breaks the open menu's switch is that nothing outside its view holds
+    # its target once the tray stops referencing that build; the second build
+    # stands for the rebuild that drops that reference. Pools so nothing
+    # autoreleased keeps the first target alive by accident (reading
+    # `.target()` outside a pool would make this pass without the fix).
     with objc.autorelease_pool():
         on_screen = build_header_view(view, logo_png=logo_png(), on_toggle=toggles.append)
     with objc.autorelease_pool():
