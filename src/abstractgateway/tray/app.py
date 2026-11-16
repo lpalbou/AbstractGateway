@@ -306,10 +306,8 @@ class TrayApp:
         # without it the machine's preference (prefs.json `menu_style`) decides.
         self._menu_style_flag = str(handshake.get("menu_style") or "").strip() or None
         # macOS draws the redesign's first row as a native view (logo · name ·
-        # subtitle · switch, header_mac.py); the objects it builds live here
-        # until the next menu rebuild (AppKit keeps only weak references).
+        # subtitle · switch, header_mac.py).
         self._native_header = sys.platform == "darwin" and _native_header_available()
-        self._header_refs: tuple = ()
         self._icon: Any = None
         self._lock = threading.RLock()
         self._last_menu_sig: Optional[tuple] = None
@@ -529,15 +527,10 @@ class TrayApp:
             from .header_mac import build_header_view
             from .logo import logo_png
 
-            built = build_header_view(view, logo_png=logo_png(), on_toggle=self.header_toggle)
+            return build_header_view(view, logo_png=logo_png(), on_toggle=self.header_toggle)
         except Exception:
             logger.debug("tray: header view not built", exc_info=True)
             return None
-        if built is None:
-            return None
-        nsview, keep = built
-        self._header_refs = (nsview,) + tuple(keep)
-        return nsview
 
     def header_toggle(self, on: bool) -> None:
         """The header switch: ON resumes, OFF pauses (the gateway-wide

@@ -20,11 +20,13 @@ no per-item view).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional
 
 from .menu_v2 import HeaderView
 
 _TARGET_CLASS = None
+# The switch owns its target under this key (see `build_header_view`).
+_TARGET_KEY = "abstractgateway.tray.header.switch-target"
 
 
 def _switch_target_class():
@@ -74,10 +76,13 @@ LOGO_PT = 36.0
 PAD_X = 14.0
 
 
-def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[[bool], None]) -> Optional[Tuple[Any, Tuple[Any, ...]]]:
-    """(NSView, keep-alive objects) for the header row, or None when AppKit
-    cannot build it. `on_toggle(True)` = the person switched it ON (resume),
-    `on_toggle(False)` = OFF (pause)."""
+def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[[bool], None]) -> Optional[Any]:
+    """The NSView for the header row, or None when AppKit cannot build it.
+    `on_toggle(True)` = the person switched it ON (resume), `on_toggle(False)`
+    = OFF (pause). The view keeps everything it needs alive by itself: the
+    menu item retains the view, the view its subviews, and the switch its
+    target (associated object), so a menu rebuilt while this one is still
+    open on screen leaves this one's switch working."""
     try:
         import AppKit  # type: ignore[import-not-found]
         import Foundation  # type: ignore[import-not-found]
@@ -86,7 +91,6 @@ def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[
         return None
     try:
         root = AppKit.NSView.alloc().initWithFrame_(((0.0, 0.0), (WIDTH, HEIGHT)))
-        keep: list = []
 
         # Logo
         image = AppKit.NSImage.alloc().initWithData_(Foundation.NSData(logo_png))
@@ -96,7 +100,6 @@ def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[
             iv.setImage_(image)
             iv.setImageScaling_(AppKit.NSImageScaleProportionallyUpOrDown)
             root.addSubview_(iv)
-            keep += [image, iv]
 
         # Switch (right), built first so the text knows its room.
         switch_w = 0.0
@@ -110,9 +113,12 @@ def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[
             sw.setEnabled_(bool(view.switch_enabled))
             sw.setTarget_(target)
             sw.setAction_("toggled:")
+            # NSControl holds its target weakly: without this the target dies
+            # with the Python reference, and a menu rebuilt while this one is
+            # open leaves the switch on screen wired to nothing.
+            objc.setAssociatedObject(sw, _TARGET_KEY, target, objc.OBJC_ASSOCIATION_RETAIN)
             sw.setToolTip_(view.switch_tooltip)
             root.addSubview_(sw)
-            keep += [target, sw]
             switch_w = size.width + 10.0
 
         # Title + subtitle
@@ -130,7 +136,6 @@ def build_header_view(view: HeaderView, *, logo_png: bytes, on_toggle: Callable[
         sub.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
         sub.setToolTip_(view.subtitle)
         root.addSubview_(sub)
-        keep += [title, sub]
-        return root, tuple(keep)
+        return root
     except Exception:
         return None
