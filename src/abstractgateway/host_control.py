@@ -184,6 +184,14 @@ def pause_snapshot() -> Dict[str, Any]:
         }
 
 
+def host_sse_frame() -> bytes:
+    """`event: host` with the pause state (`pause_snapshot()`), for a run's live
+    streams: they send it when they open while paused and whenever the state
+    changes, so a client shows "paused" instead of a run that seems to work.
+    No `id:` line: the stream's cursor never moves because of it."""
+    return b"event: host\ndata: " + json.dumps(pause_snapshot(), ensure_ascii=False).encode("utf-8") + b"\n\n"
+
+
 def _persist_pause_state() -> None:
     """Best-effort atomic write of the pause file (a missing file = not paused)."""
     global _pause_file_seen

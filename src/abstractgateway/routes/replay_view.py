@@ -23,6 +23,7 @@ from typing import Any, AsyncIterator, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
+from .. import host_control
 from ..replay_view import _Subscriber, followed, get_view_hub, poll, read_view, read_view_at, subscribe, unsubscribe
 from ..work_pools import off_loop
 
@@ -91,6 +92,8 @@ async def stream_run_view(
 ) -> StreamingResponse:
     """SSE: `event: view` (the whole view), then `event: delta` per fold (`id:` = cursor token),
     `: keep-alive` comments, and `event: done` once the run tree is terminal and drained.
+    `event: host` (the gateway-wide pause, `{paused, paused_at, paused_by, reason}`, no `id:`)
+    is sent when the stream opens while paused and on every change of the pause state.
 
     Reconnect with `Last-Event-ID` (or `?after=`): the same token sends nothing until the next
     change; an older token of this view sends one `delta` from there; anything else, `view`."""
@@ -128,9 +131,16 @@ async def stream_run_view(
             last_emit = loop.time()
             last_check = last_emit
             last_safety = last_emit
+            # Gateway-wide pause (`event: host`): sent when the stream opens
+            # while paused and on every change (an in-memory read per pass).
+            host_paused_sent = False
             while True:
                 if sub.dead or await request.is_disconnected():
                     return
+                if host_control.is_paused() != host_paused_sent:
+                    host_paused_sent = not host_paused_sent
+                    yield host_control.host_sse_frame()
+                    last_emit = loop.time()
                 sub.wake.clear()
                 sent = False
                 while not sub.queue.empty():  # frames folded by the pump or by any request

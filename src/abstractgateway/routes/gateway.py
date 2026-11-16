@@ -12177,6 +12177,11 @@ async def stream_ledger(
     of that run and of every run below it. A delta_end is sent after the
     call's durable record; `done` is sent only after every live frame.
 
+    GATEWAY PAUSE: `event: host` (`{paused, paused_at, paused_by, reason}`,
+    no `id:` line) is sent when the stream opens while the gateway is paused
+    and again whenever the pause state changes, so a client can say its run
+    waits for a resume instead of looking busy. Clients ignore unknown events.
+
     H7b loop discipline stands: every store read runs OFF the event loop;
     abandoned clients are detected and stop the generator; terminal runs
     get one final drain then an explicit `done` frame (never a hang).
@@ -12287,9 +12292,16 @@ async def stream_ledger(
             # covered without a sleep. Bounded on purpose: `_SETTLE_CHECKS`
             # loads per record batch, not a poll loop.
             settle_checks_left = 0
+            # Gateway-wide pause (`event: host`): sent when the stream opens
+            # while paused and on every change (an in-memory read per pass).
+            host_paused_sent = False
             while True:
                 if await request.is_disconnected():
                     return
+                if host_control.is_paused() != host_paused_sent:
+                    host_paused_sent = not host_paused_sent
+                    yield host_control.host_sse_frame()
+                    last_emit = loop.time()
                 emitted = False
                 progressed = False
                 # Live frames are taken BEFORE this pass reads the ledger. The
