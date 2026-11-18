@@ -1204,12 +1204,16 @@ With no auth configured, `serve`:
 Gateway data dir: /Users/you/Library/Application Support/AbstractGateway (os_default: ...)
 Gateway auth: user auth enabled automatically (bound to loopback 127.0.0.1, no auth posture in this gateway's environment): ...
 Gateway admin token file: .../auth/bootstrap-admin-token
-First run: open http://127.0.0.1:8080/console#claim=agclaim_...
-           (one-time link, valid 10 minutes, works from this machine only; ...)
+First run: this gateway is new. Run `abstractgateway claim --open` to choose the admin password in the console (http://127.0.0.1:8080/console).
 ```
 
-Open the `First run` link in a browser on the same machine. The console signs
-you in as the admin and opens the **first-run guide**.
+Run `abstractgateway claim --open` on the same machine. While the gateway is
+new, it opens **Set up your gateway** with the setup code already given: you
+choose the admin password, the console signs you in and opens the **first-run
+guide**. (Once the password is set, the same command opens a one-time sign-in
+link.) The AbstractFramework installers, `abstractgateway service install`, the
+tray's Open Console and the Windows desktop icon (`abstractgateway shortcut
+install`) all open the console this way.
 
 The admin token is printed just above the link, and kept in
 `<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
@@ -1238,9 +1242,10 @@ the sign-in form, and the onboarding never comes back for this data folder.
 console first could set it, so the form always asks for the six-word setup
 code, from any browser. (The gateway cannot tell a browser on its own machine
 from a proxy that relays strangers without saying so, such as a minimal nginx
-`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
-skip the form with the one-time link of section 3, which needs no code. Print
-the code on the gateway's machine:
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine does not type it:
+`abstractgateway claim --open` (what the installers run) opens the form with
+the code carried in the link (`/console#setup=...`), so only the password is
+asked. Print the code on the gateway's machine:
 
 ```bash
 abstractgateway claim --code
@@ -1256,8 +1261,7 @@ once the password is set; `abstractgateway claim --code` then says the gateway
 is already set up.
 
 **What closes the onboarding.** Setting the admin password here, or ANY admin
-sign-in (a one-time link from section 3, the admin token, a code sent by
-email), an admin setting the admin's password from the Accounts page, or an
+sign-in (the admin token, a code sent by email), an admin setting the admin's password from the Accounts page, or an
 admin creating another account. When
 it closes, unused one-time links are deleted. A data folder that already had
 accounts when the gateway was upgraded to 0.19.0 is never "fresh": it keeps
@@ -1587,6 +1591,21 @@ or turn **Start at login** off and on. This updates the next-login registration 
 restarting the running gateway. A path too long to represent produces an actionable error.
 Windows service integration remains experimental pending native login validation.
 
+### Windows desktop and Start-menu icon
+
+```powershell
+abstractgateway shortcut install   # AbstractGateway.lnk on the desktop and in the Start menu
+abstractgateway shortcut remove    # delete both (the gateway and its data are untouched)
+```
+
+For people who do not start the gateway at login. Double-clicking the icon starts the
+gateway when it is not running, the way the login item does (no console window, the log in
+`<data dir>\logs\gateway.log`, the tray icon, the Network setting's address), waits until it
+answers, then opens the console: **Set up your gateway** while it is new, a one-time sign-in
+link afterwards. If the gateway does not start, a message names its log. `--data-dir DIR`
+picks the gateway the icon starts (default: the same resolution as `serve`). No admin rights
+are needed. On macOS and Linux the command reports that it is for Windows.
+
 ---
 
 ## docs/configuration.md
@@ -1631,14 +1650,14 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[docs]`: MkDocs site tooling
 - `abstractgateway[dev]`: local dev/test deps
 
-Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.19.6` (cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore>=2.35.2` (bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
-- `abstractvoice>=0.20.0` (segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
-- `abstractagent>=0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
-- `AbstractMemory[lancedb]>=0.5.2` (resolved-diary replay metadata; the memory graph, `abstractmemory.graph`; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
-- `abstractskill>=0.3.11` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`, with the abstractcore skill beside abstractframework-gateway)
-- `abstractavatar>=0.2.0` (the avatar design catalog: an entity's identity names a design this catalog has and the
+AbstractFramework dependencies are exact pins (`==`) of the versions this release was validated with, in the base install and in every extra (see `pyproject.toml`); third-party dependencies keep floors. The notes say what each version brought:
+- `AbstractRuntime==0.19.7` (Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `abstractcore==2.36.0` (the recommended embeddings route and the NVIDIA text recommendation by total GPU memory; 2.35.2: bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `abstractvoice==0.21.1` (AbstractCore 2.36.0's own floor; 0.20.0: segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
+- `abstractagent==0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
+- `AbstractMemory[lancedb]==0.5.2` (resolved-diary replay metadata; the memory graph, `abstractmemory.graph`; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
+- `abstractskill==0.3.13` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`, with the abstractcore skill beside abstractframework-gateway)
+- `abstractavatar==0.2.0` (the avatar design catalog: an entity's identity names a design this catalog has and the
   Watch can draw, a retired design is drawn as its replacement; without it no identity is set or recorded. At each start the gateway writes the recorded default
   identity into every entity home that has none, once, one log line per home; a home closed for maintenance is
   skipped. See [entities.md](docs/entities.md))
@@ -3257,7 +3276,7 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
   loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
   LM Studio, llama.cpp server) keeps its own rule. The underlying idle-unload API needs
-  AbstractRuntime 0.18 or later; this Gateway requires 0.19.6 or later.
+  AbstractRuntime 0.18 or later; this Gateway requires 0.19.7 or later.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -3432,8 +3451,12 @@ Most-used:
   request red (root ADR 0050, rule 5: no wall-clock gate on the default path)
 - `abstractgateway network status|set|addresses|restart`: who can reach the
   gateway and the URLs to copy ([network exposure](#network-exposure-localhost--local-network--internet))
-- `abstractgateway claim [--open] [--port P | --url URL] [--json]`: one-time
-  console sign-in link ([first-run.md](docs/first-run.md))
+- `abstractgateway claim [--open] [--port P | --url URL] [--json]`: the console link for this machine:
+  **Set up your gateway** with the setup code given while the gateway is new (`kind: "setup"`), a one-time
+  sign-in link afterwards (`kind: "sign_in"`) ([first-run.md](docs/first-run.md))
+- `abstractgateway shortcut install|remove [--data-dir DIR]` (Windows): the AbstractGateway icon on the
+  desktop and in the Start menu, which starts the gateway when it is not running and opens its console
+  ([first-run.md](docs/first-run.md#windows-desktop-and-start-menu-icon))
 - `abstractgateway service install|uninstall|enable|disable|status [--port P] [--host H] [--pin-command-line] [--data-dir DIR] [--dry-run] [--json]`:
   start the gateway at login (LaunchAgent, systemd user unit or XDG autostart
   entry, Windows Run entry; `enable`/`disable` are the tray's switch;
@@ -8220,7 +8243,7 @@ result rather than making Flow authoring nodes unavailable.
 `/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.19.6 and AbstractMemory 0.5.2.
+(ADR 0001). Requires AbstractRuntime 0.19.7 and AbstractMemory 0.5.2.
 
 **Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:
@@ -11468,7 +11491,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.19.6 or later): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.19.7): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -12591,7 +12614,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.19.6 or later. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.19.7. A gateway installed against
   an older runtime does not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -14228,7 +14251,7 @@ existing deployments; use `abstractgateway` for new ones.
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.5.2`
+- `AbstractMemory[lancedb]==0.5.2`
 - `abstractagent`
 - FastAPI/Uvicorn
 
@@ -14295,7 +14318,7 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
-The Compose files default to Gateway 0.21.1 for both the image tag and PyPI build version.
+The Compose files default to Gateway 0.22.0 for both the image tag and PyPI build version.
 To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
 in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
 
@@ -14555,7 +14578,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.21.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.22.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -14594,6 +14617,13 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.22.0** ([CHANGELOG](CHANGELOG.md#0220---2026-11-18)): a new gateway asks for its admin
+password first on every OS (`claim`, `service install`, the tray and the desktop icon open "Set up your gateway"
+with the setup code already given); on Windows, `abstractgateway shortcut install` adds an AbstractGateway icon to
+the desktop and the Start menu, the model host starts reliably, and a model host that does not answer no longer
+blocks the gateway's status routes. AbstractFramework dependencies are now exact pins: Runtime 0.19.7, Core 2.36.0,
+Agent 0.6.1, Memory 0.5.2, Voice 0.21.1, Skill 0.3.13 and Avatar 0.2.0.
 
 **What's new in 0.21.1:** bounded Hugging Face summary searches and explicit repository
 details with a shared quota cooldown; compact, verified Windows login registration;
@@ -15252,7 +15282,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.19.6 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.19.7 (an exact pin), installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -15597,7 +15627,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.19.6"
+pip install "abstractruntime==0.19.7"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -15637,7 +15667,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.19.6 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.19.7 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -16241,6 +16271,40 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.22.0] - 2026-11-18
+
+### Added
+
+- **Windows: an AbstractGateway icon on the desktop and in the Start menu** (`abstractgateway shortcut
+  install|remove`). It starts the gateway when it is not running (log file, tray icon, the Network setting's
+  address) and opens the console.
+
+### Changed
+
+- **A new gateway asks for its admin password first, on every OS.** While the gateway is unclaimed, `claim` /
+  `claim-url` (which the installers run), `service install`, the tray's Open Console and the desktop icon open
+  `/console#setup=<setup code>`: "Set up your gateway" with the setup code already given, so only the password is
+  chosen. Once the password is set they open a one-time sign-in link, as before. `serve` prints the command instead
+  of a sign-in link for a new gateway. `claim --json` gains `kind` (`setup` | `sign_in`).
+- **A terminal app opened from the console starts in your home folder**, like a terminal you open yourself.
+- **AbstractFramework dependencies are exact pins** (`==`, in the base install and in every extra) of the
+  versions this release was validated with: AbstractCore 2.36.0, AbstractRuntime 0.19.7, AbstractAgent 0.6.1,
+  AbstractMemory 0.5.2, AbstractVoice 0.21.1, AbstractSkill 0.3.13 and abstractavatar 0.2.0. Third-party
+  dependencies keep their ranges. Installing another version of one of these packages beside the gateway now
+  conflicts with it; upgrade the gateway instead.
+
+### Fixed
+
+- **Windows: the model host starts reliably** (`parent_pipe.py`). The watcher of the parent's stdin pipe polls it
+  instead of blocking in a read, which on Windows prevented extension modules such as NumPy from loading.
+- **A model host that does not answer no longer blocks the gateway** (`host_status_cache.py`, `model_host.py`):
+  status probes give up after 1 s (memory) or 8 s (residency, session caches) and report that section as degraded,
+  and the memory probe has a 30 s deadline.
+- **The model host answers every request**, including one whose call raised an `OSError`; the gateway no longer
+  waits for an answer that never comes.
+- **Windows: "Open in Terminal" reports success when the terminal opened** (`apps_manager._open_terminal`).
+- The route dialog recognises a stored model that carries its engine prefix and saves it in the listed form.
 
 ## [0.21.1] - 2026-11-14
 

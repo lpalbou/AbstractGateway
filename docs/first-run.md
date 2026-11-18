@@ -24,12 +24,16 @@ With no auth configured, `serve`:
 Gateway data dir: /Users/you/Library/Application Support/AbstractGateway (os_default: ...)
 Gateway auth: user auth enabled automatically (bound to loopback 127.0.0.1, no auth posture in this gateway's environment): ...
 Gateway admin token file: .../auth/bootstrap-admin-token
-First run: open http://127.0.0.1:8080/console#claim=agclaim_...
-           (one-time link, valid 10 minutes, works from this machine only; ...)
+First run: this gateway is new. Run `abstractgateway claim --open` to choose the admin password in the console (http://127.0.0.1:8080/console).
 ```
 
-Open the `First run` link in a browser on the same machine. The console signs
-you in as the admin and opens the **first-run guide**.
+Run `abstractgateway claim --open` on the same machine. While the gateway is
+new, it opens **Set up your gateway** with the setup code already given: you
+choose the admin password, the console signs you in and opens the **first-run
+guide**. (Once the password is set, the same command opens a one-time sign-in
+link.) The AbstractFramework installers, `abstractgateway service install`, the
+tray's Open Console and the Windows desktop icon (`abstractgateway shortcut
+install`) all open the console this way.
 
 The admin token is printed just above the link, and kept in
 `<data dir>/auth/bootstrap-admin-token` (file mode `0600`). Start with
@@ -58,9 +62,10 @@ the sign-in form, and the onboarding never comes back for this data folder.
 console first could set it, so the form always asks for the six-word setup
 code, from any browser. (The gateway cannot tell a browser on its own machine
 from a proxy that relays strangers without saying so, such as a minimal nginx
-`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine can
-skip the form with the one-time link of section 3, which needs no code. Print
-the code on the gateway's machine:
+`proxy_pass` or `tailscale funnel --tcp`.) Someone at the gateway's machine does not type it:
+`abstractgateway claim --open` (what the installers run) opens the form with
+the code carried in the link (`/console#setup=...`), so only the password is
+asked. Print the code on the gateway's machine:
 
 ```bash
 abstractgateway claim --code
@@ -76,8 +81,7 @@ once the password is set; `abstractgateway claim --code` then says the gateway
 is already set up.
 
 **What closes the onboarding.** Setting the admin password here, or ANY admin
-sign-in (a one-time link from section 3, the admin token, a code sent by
-email), an admin setting the admin's password from the Accounts page, or an
+sign-in (the admin token, a code sent by email), an admin setting the admin's password from the Accounts page, or an
 admin creating another account. When
 it closes, unused one-time links are deleted. A data folder that already had
 accounts when the gateway was upgraded to 0.19.0 is never "fresh": it keeps
@@ -406,3 +410,18 @@ older registration says **needs repair** or **broken**, run `abstractgateway ser
 or turn **Start at login** off and on. This updates the next-login registration without
 restarting the running gateway. A path too long to represent produces an actionable error.
 Windows service integration remains experimental pending native login validation.
+
+### Windows desktop and Start-menu icon
+
+```powershell
+abstractgateway shortcut install   # AbstractGateway.lnk on the desktop and in the Start menu
+abstractgateway shortcut remove    # delete both (the gateway and its data are untouched)
+```
+
+For people who do not start the gateway at login. Double-clicking the icon starts the
+gateway when it is not running, the way the login item does (no console window, the log in
+`<data dir>\logs\gateway.log`, the tray icon, the Network setting's address), waits until it
+answers, then opens the console: **Set up your gateway** while it is new, a one-time sign-in
+link afterwards. If the gateway does not start, a message names its log. `--data-dir DIR`
+picks the gateway the icon starts (default: the same resolution as `serve`). No admin rights
+are needed. On macOS and Linux the command reports that it is for Windows.

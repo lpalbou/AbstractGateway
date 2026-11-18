@@ -27,6 +27,13 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.22.0** ([CHANGELOG](CHANGELOG.md#0220---2026-11-18)): a new gateway asks for its admin
+password first on every OS (`claim`, `service install`, the tray and the desktop icon open "Set up your gateway"
+with the setup code already given); on Windows, `abstractgateway shortcut install` adds an AbstractGateway icon to
+the desktop and the Start menu, the model host starts reliably, and a model host that does not answer no longer
+blocks the gateway's status routes. AbstractFramework dependencies are now exact pins: Runtime 0.19.7, Core 2.36.0,
+Agent 0.6.1, Memory 0.5.2, Voice 0.21.1, Skill 0.3.13 and Avatar 0.2.0.
+
 **What's new in 0.21.1:** bounded Hugging Face summary searches and explicit repository
 details with a shared quota cooldown; compact, verified Windows login registration;
 private-safe close-time question-resolution notices. Requires Runtime 0.19.6, Core 2.35.2

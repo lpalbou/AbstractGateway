@@ -599,6 +599,20 @@ if (scenario.name === "onboarding") {
   if (el("onboard-password").value) fail("the password stayed in the field");
   if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
 }
+if (scenario.name === "onboarding-link") {
+  // A link from the gateway's own machine carries the setup code: the person only chooses the password.
+  if (el("onboarding-form").hidden !== false) fail("onboarding form not shown for an unclaimed gateway");
+  if (el("onboard-code-field").hidden !== true) fail("the setup code is asked for although the link carries it");
+  if (!location.hash.includes("setup=")) fail("the code left the address before the gateway was claimed (a reload would ask for it)");
+  el("onboard-password").value = "lighthouse keeper 42";
+  el("onboard-password-confirm").value = "lighthouse keeper 42";
+  el("onboarding-form").onsubmit({ preventDefault() {} }); await settle();
+  const sent = JSON.parse(calls.filter((c) => c.path === "/api/gateway/session/onboarding" && c.method === "POST").pop().body);
+  if (sent.setup_code !== scenario.setupCode) fail("the link's setup code was not sent: " + JSON.stringify(sent.setup_code));
+  if (!String(document.body.className).includes("signed-in")) fail("onboarding did not sign in");
+  if (location.hash.includes("setup=")) fail("the setup code stayed in the address after the gateway was claimed");
+  if (hidden("first-run-backdrop")) fail("the setup guide did not open after onboarding");
+}
 const dmClick = async (boxId, dataset) => { el(boxId).onclick({ target: { closest: () => ({ dataset, disabled: false, textContent: "" }) } }); await settle(); };
 if (scenario.name === "default-models") {
   // 1069 Advanced mode: one row per capability with in -> out, now, AbstractCore's pick, actions.
@@ -805,6 +819,16 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
         f.write(harness)
         path = f.name
     return subprocess.run([node, path], capture_output=True, text=True, check=False, timeout=60)
+
+
+def test_a_setup_link_from_the_gateways_machine_asks_for_the_password_only() -> None:
+    onboarding = {"unclaimed": True, "setup_code_required": True, "account": "admin",
+                  "setup_code_reason": "This browser is not on the gateway's own machine.",
+                  "password_rule": "At least 10 characters.", "password_min_length": 10}
+    result = _run({"name": "onboarding-link", "hash": "#setup=moose-bicycle-honey-camel-ankle-agent", "completed": False, "coreStub": True,
+                   "onboarding": onboarding, "setupCode": "moose bicycle honey camel ankle agent"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
 
 
 @pytest.mark.parametrize("required", [True, False])

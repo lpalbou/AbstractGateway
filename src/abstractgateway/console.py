@@ -10136,6 +10136,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        throw e;
 	      }
 	      if (defaultModalMoved(row)) return;
+	      // A stored model may carry its engine in front (`diffusers/black-forest-labs/...` under
+	      // provider `diffusers`: the routed name an earlier console saved). It is the listed
+	      // model without that prefix: selected as such, and saved back in the listed form.
+	      const enginePrefix = `${String(provider).toLowerCase()}/`;
+	      if (selected && !models.includes(selected) && selected.toLowerCase().startsWith(enginePrefix) && models.includes(selected.slice(enginePrefix.length))) {
+	        selected = selected.slice(enginePrefix.length);
+	      }
 	      setSelectOptions($("modal-default-model"), models, {
 	        emptyLabel: models.length ? "Select model..." : catalog.emptyModels,
 	        disabled: !models.length,
@@ -16928,9 +16935,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // is not on the gateway's own machine), the six-word setup code. Submitting sets the password,
     // signs this browser in and opens the setup guide (the first-run wizard). Once claimed the
     // same address shows the sign-in form.
+    // A link from the gateway's own machine (`/console#setup=<the six words>`: the installer, the
+    // tray, the desktop shortcut) carries the setup code: it is filled in and its field stays
+    // hidden, so the person only chooses the password. The code stays in the address until the
+    // gateway is claimed (a reload keeps working); it is worth nothing afterwards.
     const onboarding = { state: null, busy: false };
+    function setupCodeFromHash() {
+      const m = /(?:^#|&)setup=([^&]+)/.exec(firstRunHash());
+      if (!m) return "";
+      try { return decodeURIComponent(m[1]).replace(/-/g, " ").trim(); } catch { return ""; }
+    }
     function showOnboarding(st) {
       const unclaimed = Boolean(st && st.unclaimed);
+      const linkedCode = setupCodeFromHash();
+      if (linkedCode && !unclaimed) stripClaimFromUrl("");
       onboarding.state = unclaimed ? st : null;
       $("onboarding-form").hidden = !unclaimed;
       $("login-form").hidden = unclaimed;
@@ -16941,7 +16959,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         $("onboard-account").textContent = String(st.account || "admin");
         if (!$("onboard-name").value) $("onboard-name").value = String(st.account || "admin");
         if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
-        $("onboard-code-field").hidden = !st.setup_code_required;
+        if (linkedCode) $("onboard-code").value = linkedCode;
+        $("onboard-code-field").hidden = !st.setup_code_required || Boolean(linkedCode);
         if (st.setup_code_required && st.setup_code_reason) {
           $("onboard-code-help").textContent = `${st.setup_code_reason} To see the six words, run abstractgateway claim --code on the gateway's machine.`;
         }
@@ -17003,7 +17022,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           signinShow("login-message", String(err.message || err));
         } else if (target) {
           signinFieldError(target[0], target[1], String(err.message || err));
-          if (d.field === "setup_code") $("onboard-code-field").hidden = false;
+          if (d.field === "setup_code") {  // a refused code from a link: ask for it, forget the link's
+            if (setupCodeFromHash()) stripClaimFromUrl("");
+            $("onboard-code-field").hidden = false;
+          }
         } else if (err && !err.status) {
           signinShow("login-message", signinUnreachableText());
         } else {

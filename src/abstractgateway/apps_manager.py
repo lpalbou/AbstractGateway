@@ -1402,17 +1402,32 @@ def _terminate(proc: subprocess.Popen, timeout_s: float) -> None:
 def _open_terminal(argv: Sequence[str]) -> None:
     """Start the terminal program detached (scrubbed environment: the new
     window must not inherit the gateway's token or keys). `open` and `start`
-    return at once; their exit code says whether the window opened."""
-    kwargs: Dict[str, Any] = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=_scrubbed_child_env(dict(os.environ)), close_fds=True)
-    if sys.platform.startswith("win"):
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    else:
-        kwargs["start_new_session"] = True
-    proc = subprocess.Popen(list(argv), **kwargs)
-    if argv and (Path(str(argv[0])).name in {"open", "cmd"}):
-        out, _ = proc.communicate(timeout=20)
-        if proc.returncode != 0:
-            raise LaunchFailed(f"{argv[0]} could not open a terminal (exit code {proc.returncode}).", details=(out or b"").decode("utf-8", "replace"))
+    return at once; their exit code says whether the window opened.
+
+    Their output goes to a file, never a pipe: on Windows the window `start` opens inherits
+    the handle and keeps it for as long as it stays open, so reading a pipe to its end
+    waited for the terminal app to quit (the console said "The terminal did not open ...
+    timed out after 20 seconds" under a terminal that had opened, and the one-use launcher
+    was deleted under it: "The batch file cannot be found").
+
+    The window opens in the person's home folder, as a terminal they open themselves does,
+    never in the gateway's own working directory: a terminal app takes the folder it starts
+    in as its workspace, and a gateway started from its data folder (the desktop icon, a
+    service) handed it that folder, which the gateway then refuses as a workspace
+    ("workspace_refused ... inside the gateway's data folder", AbstractCode's first message)."""
+    import tempfile
+
+    with tempfile.TemporaryFile() as output:
+        kwargs: Dict[str, Any] = dict(stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, env=_scrubbed_child_env(dict(os.environ)), close_fds=True, cwd=str(Path.home()))
+        if sys.platform.startswith("win"):
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        else:
+            kwargs["start_new_session"] = True
+        proc = subprocess.Popen(list(argv), **kwargs)
+        if argv and (Path(str(argv[0])).name in {"open", "cmd"}):
+            if proc.wait(timeout=20) != 0:
+                output.seek(0)
+                raise LaunchFailed(f"{argv[0]} could not open a terminal (exit code {proc.returncode}).", details=output.read().decode("utf-8", "replace"))
 
 
 def _pid_command(pid: int) -> Optional[str]:

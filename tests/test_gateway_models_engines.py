@@ -734,7 +734,9 @@ def test_claim_accepts_base_url_as_an_alias_of_url(tmp_path, monkeypatch, capsys
     assert int(info.value.code or 0) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["base_url"] == "http://127.0.0.1:18444" and payload["base_url_source"] == "flag"
-    assert payload["url"].startswith("http://127.0.0.1:18444/console#claim=")
+    # A new data folder is unclaimed: the link opens "Set up your gateway" (first_run.setup_url).
+    assert payload["kind"] == "setup"
+    assert payload["url"].startswith("http://127.0.0.1:18444/console#setup=")
 
 
 def test_service_install_with_host_and_port_starts_and_waits_by_default(tmp_path, monkeypatch, capsys) -> None:

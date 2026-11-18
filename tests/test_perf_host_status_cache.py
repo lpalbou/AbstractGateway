@@ -232,3 +232,31 @@ def test_host_runs_keeps_one_store_set_per_plane(tmp_path: Path, monkeypatch: py
         assert len(built) == 2, built  # once per plane, not once per plane per call
     finally:
         admin_runtimes.forget_stores()
+
+
+def test_a_probe_that_never_answers_costs_one_thread_not_one_per_poller() -> None:
+    # 2026-11-17 (Windows): the model host was stuck in an import, the memory probe never
+    # returned, and every poller waited for it without limit: all light-pool threads, then all
+    # request slots of the gateway. A poller now gives up after the cache's wait.
+    from abstractgateway.host_status_cache import ProbeBusy, TtlSingleFlight
+
+    cache = TtlSingleFlight(2.0, name="memory", wait_s=0.05)
+    started, release = threading.Event(), threading.Event()
+
+    def _stuck() -> str:
+        started.set()
+        release.wait(10)
+        return "late"
+
+    first = threading.Thread(target=lambda: cache.get("k", _stuck), daemon=True)
+    first.start()
+    assert started.wait(5)
+    try:
+        with pytest.raises(ProbeBusy, match="memory probe has not answered"):
+            cache.get("k", lambda: "never called")
+    finally:
+        release.set()
+        first.join(5)
+    # The stuck probe's answer is served once it arrives, and the key is usable again.
+    assert cache.get("k", lambda: "never called") == "late"
+    assert cache.computes == 1

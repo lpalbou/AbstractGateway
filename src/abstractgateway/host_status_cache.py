@@ -12,6 +12,13 @@ ONE caller computes while the others for the same key wait for that value (never
 probe in parallel). A computation that raises is not cached (the next call tries again). Every
 caller runs in a worker thread (the routes call these off the event loop); the waiting is a
 lock wait in that thread, never on the loop.
+
+The caches whose probe asks the model host bound that wait (`wait_s`): a probe that never
+answers must cost ONE worker thread, not one per poller. Unbounded, a model host stuck in an
+import held every thread of the light pool and then every request slot of the gateway
+(2026-11-17, Windows: all requests answered 429). A caller that waited `wait_s` raises
+`ProbeBusy`; the routes report it as that section's reason. The other probes end by themselves
+(a subprocess with a timeout, file reads) and keep the plain wait.
 """
 
 from __future__ import annotations
@@ -21,10 +28,15 @@ import time
 from typing import Any, Callable, Dict, Hashable, Optional, Tuple
 
 
+class ProbeBusy(RuntimeError):
+    """Another caller's probe for the same key has not answered within the wait."""
+
+
 class TtlSingleFlight:
-    def __init__(self, ttl_s: float, *, name: str = "") -> None:
+    def __init__(self, ttl_s: float, *, name: str = "", wait_s: Optional[float] = None) -> None:
         self.ttl_s = float(ttl_s)
         self.name = name
+        self.wait_s = wait_s  # None: wait for the running probe however long it takes
         self._lock = threading.Lock()
         self._entries: Dict[Hashable, Tuple[float, Any]] = {}
         self._flights: Dict[Hashable, threading.Lock] = {}
@@ -37,7 +49,10 @@ class TtlSingleFlight:
             return value
         with self._lock:
             flight = self._flights.setdefault(key, threading.Lock())
-        with flight:  # one computation per key; the others wait here, then read its value
+        # One computation per key; the others wait here (never longer than wait_s), then read its value.
+        if not flight.acquire(timeout=-1 if self.wait_s is None else self.wait_s):
+            raise ProbeBusy(f"the {self.name or 'host'} probe has not answered for {self.wait_s:.0f} s")
+        try:
             hit, value = self._fresh(key, ttl)
             if hit:
                 return value
@@ -50,6 +65,8 @@ class TtlSingleFlight:
                     # every time).
                     self._entries[key] = (time.monotonic(), value)
             return value
+        finally:
+            flight.release()
 
     def _fresh(self, key: Hashable, ttl: float) -> Tuple[bool, Any]:
         if ttl <= 0:
@@ -76,10 +93,16 @@ SESSION_CACHES_TTL_S = 4.0
 # changes on an operator action.
 INSTALL_BLOCK_TTL_S = 10.0
 
+# The waits of the probes that ask the model host. Memory is on the tray's fast lane (1 Hz, a
+# 2.5 s client timeout): its pollers must get the "busy" answer before they give up. A cold
+# residency walk legitimately takes seconds (a provider call each); /host/state pollers allow 20 s.
+MEMORY_WAIT_S = 1.0
+RESIDENCY_WAIT_S = 8.0
+
 gpu_cache = TtlSingleFlight(GPU_TTL_S, name="gpu")
-memory_cache = TtlSingleFlight(MEMORY_TTL_S, name="memory")
-residency_cache = TtlSingleFlight(RESIDENCY_TTL_S, name="residency")
-session_caches_cache = TtlSingleFlight(SESSION_CACHES_TTL_S, name="session_caches")
+memory_cache = TtlSingleFlight(MEMORY_TTL_S, name="memory", wait_s=MEMORY_WAIT_S)
+residency_cache = TtlSingleFlight(RESIDENCY_TTL_S, name="residency", wait_s=RESIDENCY_WAIT_S)
+session_caches_cache = TtlSingleFlight(SESSION_CACHES_TTL_S, name="session_caches", wait_s=RESIDENCY_WAIT_S)
 install_block_cache = TtlSingleFlight(INSTALL_BLOCK_TTL_S, name="install_block")
 
 
@@ -96,6 +119,7 @@ def clear_all() -> None:
 
 
 __all__ = [
+    "ProbeBusy",
     "TtlSingleFlight",
     "clear_all",
     "gpu_cache",

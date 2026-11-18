@@ -22,7 +22,8 @@ def _portable_host(monkeypatch):
     host = {
         "schema": "host_profile_v1", "os": "linux", "arch": "x86_64", "accelerator": "cuda",
         "gpu_name": "synthetic", "gpu_count": 1, "unified_memory": False, "ram_bytes": 64 * gib,
-        "vram_bytes": 24 * gib, "ceiling_bytes": 24 * gib, "ceiling_source": "cuda_total",
+        # 16 GiB: below AbstractCore 2.36's 22 GiB tier for the 27B text model (CUDA_TEXT_TIERS).
+        "vram_bytes": 16 * gib, "ceiling_bytes": 16 * gib, "ceiling_source": "cuda_total",
         "free_now_bytes": 22 * gib, "disk": {}, "notes": [],
     }
     monkeypatch.setattr(hp, "host_profile", lambda **_k: dict(host))

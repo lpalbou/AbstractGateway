@@ -27216,7 +27216,7 @@ class _GatewayApplyRecommendedDefaultsRequest(BaseModel):
 
     only: Optional[List[str]] = Field(
         default=None,
-        description="Limit to some recommendations, by AbstractCore's selector words (text, voice, stt, image, video; stt is speech input). Unset means every recommended route.",
+        description="Limit to some recommendations, by AbstractCore's selector words (text, voice, stt, image, video, embeddings; stt is speech input). Unset means every recommended route.",
     )
     force: bool = Field(default=False, description="Also replace routes configured differently.")
     dry_run: bool = Field(default=False, description="Report what would change and write nothing.")
@@ -30494,7 +30494,7 @@ def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Op
     """The memory snapshot runs `ioreg`+`sysctl` on Apple silicon (uncached
     upstream); several pollers (tray 1 Hz, console 5 s, Observer, activity window)
     share one probe per `host_status_cache.MEMORY_TTL_S`, single-flight."""
-    from ..host_status_cache import memory_cache
+    from ..host_status_cache import ProbeBusy, memory_cache
 
     try:
         facade, _err = _gateway_abstractcore_host_facade()
@@ -30503,7 +30503,10 @@ def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Op
     if facade is None:
         return _gateway_host_memory_snapshot()
     # Only a snapshot is kept (a failure is asked again on the next call).
-    return memory_cache.get(_host_facade_cache_key(facade), _gateway_host_memory_snapshot, cache_if=lambda v: v[0] is not None)
+    try:
+        return memory_cache.get(_host_facade_cache_key(facade), _gateway_host_memory_snapshot, cache_if=lambda v: v[0] is not None)
+    except ProbeBusy as e:
+        return None, str(e)
 
 
 def _host_live_metrics_payload() -> Dict[str, Any]:
@@ -30677,7 +30680,14 @@ def _host_state_payload() -> Dict[str, Any]:
     # The residency walk (a provider call each) and the session-cache enumeration: shared by
     # every /host/state poller for host_status_cache.RESIDENCY_TTL_S, single-flight; a load,
     # eject or pin through the gateway drops them (_gateway_model_residency_client_call).
-    from ..host_status_cache import residency_cache, session_caches_cache
+    from ..host_status_cache import ProbeBusy, residency_cache, session_caches_cache
+
+    def _shared(cache: Any, compute: Any) -> Any:
+        """The probe's answer, or its in-band failure when another poller's probe is stuck."""
+        try:
+            return cache.get(_key, compute, ttl_s=None if _key is not None else 0)
+        except ProbeBusy as e:
+            return {"ok": False, "error": str(e)}
 
     try:
         _facade, _ferr = _gateway_abstractcore_host_facade()
@@ -30686,7 +30696,7 @@ def _host_state_payload() -> Dict[str, Any]:
     _key = _host_facade_cache_key(_facade) if _facade is not None else None
     _list_loaded = lambda: _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded")  # noqa: E731
     residency = _normalize_gateway_model_residency_response(
-        residency_cache.get(_key, _list_loaded, ttl_s=None if _key is not None else 0),
+        _shared(residency_cache, _list_loaded),
         operation="list_loaded",
     )
     if residency.get("ok") is False or residency.get("supported") is False:
@@ -30698,7 +30708,7 @@ def _host_state_payload() -> Dict[str, Any]:
 
     session_caches: Optional[list[Any]] = None
     _list_caches = lambda: _gateway_session_cache_facade_call(method_name="list_session_prompt_caches", operation="list")  # noqa: E731
-    caches = session_caches_cache.get(_key, _list_caches, ttl_s=None if _key is not None else 0)
+    caches = _shared(session_caches_cache, _list_caches)
     # `ok: false` is a facade-level in-band failure (no raise) — degrade like
     # a missing method rather than answering with a silently empty list.
     if caches.get("available") is False or caches.get("ok") is False:

@@ -217,6 +217,12 @@ def rss_bytes(pid: int) -> Optional[int]:
 
 # ---- Errors --------------------------------------------------------------------------------------
 
+# Calls that only read the host's state answer within seconds or not at all: past the deadline the
+# caller gets ModelHostUnavailable instead of holding a gateway worker thread for as long as the
+# child is stuck. Inference and model loads have no deadline here (their own timeouts apply).
+PROBE_DEADLINES_S: Dict[str, float] = {"get_memory_snapshot": 30.0}
+
+
 class ModelHostUnavailable(RuntimeError):
     """The model host is not answering (starting, restarting, or stopped restarting)."""
 
@@ -849,7 +855,8 @@ class ModelHostClient:
             return result
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
-                         persistent=self._mh_persistent, what=_describe_target(self, name, kwargs)).run()
+                         persistent=self._mh_persistent, what=_describe_target(self, name, kwargs)
+                         ).run(timeout_s=PROBE_DEADLINES_S.get(name))
 
     def __setattr__(self, name: str, value: Any) -> None:
         """An attribute the host assigns on its client (bundle_host's `residency_owner_label`) is

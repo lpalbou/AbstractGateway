@@ -183,7 +183,7 @@ def test_cli_serve_user_auth_bootstraps_admin_without_legacy_token(
     # A loopback first launch shows both the admin token and the one-time
     # console link (`--no-print-token` hides the token, see below).
     assert f"Gateway admin token: {token}" in err
-    assert "First run: open http://127.0.0.1:9999/console#claim=agclaim_" in err
+    assert "First run: this gateway is new. Run `abstractgateway claim --open`" in err and "#claim=" not in err
 
 
 def _serve_stderr(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys, argv: list[str]) -> tuple[str, str]:
@@ -208,8 +208,8 @@ def _serve_stderr(tmp_path, monkeypatch: pytest.MonkeyPatch, capsys, argv: list[
 def test_cli_serve_prints_admin_token_by_default_on_loopback(tmp_path, monkeypatch, capsys) -> None:
     err, token = _serve_stderr(tmp_path, monkeypatch, capsys, ["--host", "127.0.0.1", "--port", "9999"])
     assert f"Gateway admin token: {token}" in err
-    # The one-time console link is printed as well; the two are complementary.
-    assert "First run: open http://127.0.0.1:9999/console#claim=agclaim_" in err
+    # A new gateway is pointed at its password page as well; the two are complementary.
+    assert "First run: this gateway is new. Run `abstractgateway claim --open`" in err and "#claim=" not in err
 
 
 @pytest.mark.basic

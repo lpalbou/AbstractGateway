@@ -137,7 +137,7 @@ def run_claim(args: argparse.Namespace) -> int:
     if getattr(args, "code", False):
         return _run_setup_code(args)
     from .config_cli import ensure_bootstrap_admin_user
-    from .first_run import claim_url, mint_claim
+    from .first_run import claim_url, mint_claim, setup_url
     from .host_paths import apply_data_dir_default
 
     _apply_data_dir_flag(getattr(args, "data_dir", None))
@@ -164,31 +164,36 @@ def run_claim(args: argparse.Namespace) -> int:
 
     admin = ensure_bootstrap_admin_user()
     user = admin.get("user") if isinstance(admin.get("user"), dict) else {}
-    minted = mint_claim(
-        data_dir=res.path,
-        tenant_id=str(user.get("tenant_id") or "default"),
-        user_id=str(user.get("user_id") or "admin"),
-        ttl_s=int(getattr(args, "ttl_s", 600) or 600),
-        created_by="cli",
-    )
-    url = claim_url(base["url"], minted["code"])
     payload = {
         "ok": True,
-        "url": url,
         "base_url": base["url"],
         "base_url_source": base["source"],
-        "expires_at": minted["expires_at"],
-        "ttl_s": minted["ttl_s"],
-        "user": f"{minted['tenant_id']}/{minted['user_id']}",
+        "user": f"{user.get('tenant_id') or 'default'}/{user.get('user_id') or 'admin'}",
         "data_dir": str(res.path),
         "data_dir_source": res.source,
         "gateway_running": running,
     }
+    # A new gateway: the link opens "Set up your gateway" (first_run.setup_url), not a sign-in.
+    url = setup_url(base["url"], res.path)
+    if url:
+        payload.update(url=url, kind="setup")
+        about = "This gateway is new: the link opens \"Set up your gateway\", where you choose the admin password (it works until then)."
+    else:
+        minted = mint_claim(
+            data_dir=res.path,
+            tenant_id=str(user.get("tenant_id") or "default"),
+            user_id=str(user.get("user_id") or "admin"),
+            ttl_s=int(getattr(args, "ttl_s", 600) or 600),
+            created_by="cli",
+        )
+        url = claim_url(base["url"], minted["code"])
+        payload.update(url=url, kind="sign_in", expires_at=minted["expires_at"], ttl_s=minted["ttl_s"])
+        about = f"One-time sign-in link for {payload['user']} (valid until {minted['expires_at']}, works once, from this machine only)."
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(url)
-        _stderr(f"One-time sign-in link for {payload['user']} (valid until {minted['expires_at']}, works once, from this machine only).")
+        _stderr(about)
         if not running:
             _stderr(
                 f"Note: no running gateway recorded for data dir {res.path}; the link assumes {base['url']}. "
@@ -467,13 +472,15 @@ def run_service(args: argparse.Namespace, *, platform: Optional[str] = None, hom
     claim: Optional[str] = None
     if healthy and not args.no_claim:
         from .config_cli import ensure_bootstrap_admin_user
-        from .first_run import claim_url, first_run_state, mint_claim
+        from .first_run import claim_url, first_run_state, mint_claim, setup_url
 
         if not first_run_state(data_dir).get("completed"):
             admin = ensure_bootstrap_admin_user()
             user = admin.get("user") if isinstance(admin.get("user"), dict) else {}
-            minted = mint_claim(data_dir=data_dir, tenant_id=str(user.get("tenant_id") or "default"), user_id=str(user.get("user_id") or "admin"))
-            claim = claim_url(plan.url, minted["code"])
+            claim = setup_url(plan.url, data_dir)
+            if not claim:
+                minted = mint_claim(data_dir=data_dir, tenant_id=str(user.get("tenant_id") or "default"), user_id=str(user.get("user_id") or "admin"))
+                claim = claim_url(plan.url, minted["code"])
     setup_code: Optional[str] = None
     if healthy is not False:
         try:
