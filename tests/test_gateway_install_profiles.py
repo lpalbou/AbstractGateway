@@ -24,14 +24,45 @@ def _pyproject() -> dict:
 
 
 def _floor(requirements: list, name: str) -> Version:
-    """The `>=` floor a requirement list gives `name` (it must name one)."""
+    """The lowest version a requirement list admits for `name`: its `==` pin or its `>=` floor (it must name one)."""
     for raw in requirements:
         req = Requirement(raw)
         if req.name.lower() == name.lower():
-            floors = [Version(spec.version) for spec in req.specifier if spec.operator == ">="]
-            assert floors, f"{raw!r} has no >= floor"
+            floors = [Version(spec.version) for spec in req.specifier if spec.operator in (">=", "==")]
+            assert floors, f"{raw!r} has no >= floor or == pin"
             return max(floors)
     raise AssertionError(f"{name} is not in {requirements!r}")
+
+
+# The AbstractFramework packages this release pins exactly (`==`): the versions it was validated with.
+PINS = {
+    "abstractruntime": "0.19.7",
+    "abstractcore": "2.36.0",
+    "abstractvoice": "0.21.1",
+    "abstractagent": "0.6.1",
+    "abstractmemory": "0.5.2",
+    "abstractskill": "0.3.13",
+    "abstractavatar": "0.2.0",
+}
+
+
+def test_every_abstractframework_dependency_is_an_exact_pin() -> None:
+    """Base dependencies and every extra: an `abstract*` requirement is `==<version>`, the same version
+    everywhere it appears (extras included); third-party requirements are not pinned this way."""
+    project = _pyproject()["project"]
+    lists = {"dependencies": project["dependencies"], **project["optional-dependencies"]}
+    seen = set()
+    for where, requirements in lists.items():
+        for raw in requirements:
+            req = Requirement(raw)
+            name = req.name.lower()
+            if not name.startswith("abstract"):
+                continue
+            specs = list(req.specifier)
+            assert len(specs) == 1 and specs[0].operator == "==", f"{where}: {raw!r} is not an exact pin"
+            assert PINS.get(name) == specs[0].version, f"{where}: {raw!r} differs from {PINS.get(name)}"
+            seen.add(name)
+    assert seen == set(PINS)
 
 
 def _sibling_pyproject(package_dir: str) -> dict:
@@ -46,12 +77,12 @@ def test_base_install_is_remote_light_server() -> None:
     deps = list(data["project"]["dependencies"])
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
-    assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.35.2" in deps
-    assert "abstractvoice>=0.20.0" in deps
-    assert "abstractagent>=0.6.1" in deps
-    assert "AbstractMemory[lancedb]>=0.5.2" in deps
-    assert "abstractskill>=0.3.11" in deps
+    assert f"AbstractRuntime=={ABSTRACTRUNTIME_FLOOR}" in deps
+    assert "abstractcore==2.36.0" in deps
+    assert "abstractvoice==0.21.1" in deps
+    assert "abstractagent==0.6.1" in deps
+    assert "AbstractMemory[lancedb]==0.5.2" in deps
+    assert "abstractskill==0.3.13" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
     assert "fastapi<1.0.0,>=0.136.0" in deps
@@ -85,9 +116,9 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     runtime_base = "\n".join(runtime_project["dependencies"])
     # Runtime depends on AbstractCore's light install (no extra) at a floor the
     # gateway's own core floor satisfies; it names none of core's deprecated extras.
-    core_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractcore>="))
+    core_floor = _floor(_pyproject()["project"]["dependencies"], "abstractcore")
     runtime_core_floor = _floor(runtime_project["dependencies"], "abstractcore")
-    assert runtime_core_floor is not None and runtime_core_floor <= Version(core_floor)
+    assert runtime_core_floor is not None and runtime_core_floor <= core_floor
     assert "abstractcore[" not in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
@@ -107,9 +138,9 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     # Floors, not exact strings: the sibling checkouts move ahead of this repo.
     # The voice floor must be at least the gateway's own (it imports
     # abstractvoice directly); vision and music keep their remote-light floors.
-    voice_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractvoice>="))
+    voice_floor = _floor(_pyproject()["project"]["dependencies"], "abstractvoice")
     assert _floor(core_base, "abstractvision") >= Version("0.3.29")
-    assert _floor(core_base, "abstractvoice") >= Version(voice_floor)
+    assert _floor(core_base, "abstractvoice") <= voice_floor  # the pin satisfies Core's own floor
     assert _floor(core_base, "abstractmusic") >= Version("0.1.15")
     assert "omnivoice" not in core_light
     assert "torch" not in core_light
@@ -150,7 +181,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.35.2" in embeddings
+    assert "abstractcore[embeddings]==2.36.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -159,18 +190,18 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert f"AbstractRuntime[apple]>={ABSTRACTRUNTIME_FLOOR}" in apple
-    assert "abstractagent[apple]>=0.6.1" in apple
+    assert f"AbstractRuntime[apple]=={ABSTRACTRUNTIME_FLOOR}" in apple
+    assert "abstractagent[apple]==0.6.1" in apple
     assert "abstractagent[all-apple]" not in apple
-    assert "AbstractMemory[all-apple]>=0.5.2" in apple
+    assert "AbstractMemory[all-apple]==0.5.2" in apple
     assert "abstractcore[" not in apple
     assert "abstractvision" not in apple
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert f"AbstractRuntime[gpu]>={ABSTRACTRUNTIME_FLOOR}" in gpu
-    assert "abstractagent[gpu]>=0.6.1" in gpu
-    assert "AbstractMemory[all-gpu]>=0.5.2" in gpu
+    assert f"AbstractRuntime[gpu]=={ABSTRACTRUNTIME_FLOOR}" in gpu
+    assert "abstractagent[gpu]==0.6.1" in gpu
+    assert "AbstractMemory[all-gpu]==0.5.2" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
     assert "abstractvoice" not in gpu

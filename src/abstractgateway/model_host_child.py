@@ -383,11 +383,15 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
             channel.send(("err", ModelHostRequestError(f"the model host could not read this request: {req[1]}"), None))
         else:
             channel.send(("err", ModelHostRemoteError(f"unknown model host request {op!r}"), None))
-    except (OSError, EOFError):
-        channel.closed.set()
     except BaseException as exc:  # noqa: BLE001 - every failure is the request's, never the process's
-        with contextlib.suppress(OSError, EOFError):
+        # The request's failure is answered, an OSError included: Core raises them too (a
+        # Windows image generation raised one, it was taken for a broken pipe here, nothing
+        # was answered and the gateway waited for ever). Only an answer that cannot be SENT
+        # says the connection is gone.
+        try:
             channel.send(_error(exc))
+        except (OSError, EOFError):
+            channel.closed.set()
     finally:
         _current_channel.reset(token)
         channel.events.clear()
@@ -451,9 +455,9 @@ def _warm_imports() -> None:
 
 def _watch_parent(stdin) -> None:
     """EOF on stdin: the gateway is gone (or stopping us). Exit without waiting for generations."""
-    with contextlib.suppress(Exception):
-        while stdin.read(1024):
-            pass
+    from .parent_pipe import wait_closed
+
+    wait_closed(stdin)
     os._exit(0)
 
 

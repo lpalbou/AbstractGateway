@@ -835,3 +835,39 @@ def test_console_terminal_action_sits_in_the_card_action_row() -> None:
     card = CONSOLE_UI_JS[CONSOLE_UI_JS.index("function appCardMarkup(card, withArt) {"):CONSOLE_UI_JS.index("function appViewMarkup()")]
     assert 'row += l.kind === "terminal" ? p.tui.button : p.launch + p.update;' in card
     assert "if (!leadDone) row += head.gear;" in card
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="`start` hands its output handle to the window it opens only on Windows")
+def test_opening_a_terminal_does_not_wait_for_the_terminal_app_to_quit() -> None:
+    """Windows, 2026-11-18: the console said "The terminal did not open ... timed out after 20
+    seconds" under a terminal that had opened, because the opener read a pipe the window kept."""
+    import time
+
+    from abstractgateway.apps_manager import _open_terminal
+
+    began = time.monotonic()
+    # A minimized window that stays open for about 8 seconds, as a terminal app would.
+    _open_terminal(["cmd", "/c", "start", "", "/min", "cmd", "/c", "ping -n 9 127.0.0.1 >nul"])
+    assert time.monotonic() - began < 5
+
+
+def test_the_terminal_opens_in_the_home_folder_not_in_the_gateway_s(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A terminal app takes the folder it starts in as its workspace. Opened from a gateway whose
+    working directory was its data folder, AbstractCode's first message was refused
+    ("workspace_refused ... inside the gateway's data folder")."""
+    import subprocess
+
+    from abstractgateway import apps_manager
+
+    seen: dict = {}
+
+    class Started:
+        returncode = 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: seen.update(kw) or Started())
+    monkeypatch.chdir(tmp_path)
+    apps_manager._open_terminal(["cmd", "/c", "start", "", "cmd", "/k", "x.cmd"])
+    assert Path(seen["cwd"]) == Path.home() != tmp_path

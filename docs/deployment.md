@@ -35,7 +35,7 @@ existing deployments; use `abstractgateway` for new ones.
 The default image installs the base `abstractgateway` package, which includes:
 
 - `AbstractRuntime`
-- `AbstractMemory[lancedb]>=0.5.2`
+- `AbstractMemory[lancedb]==0.5.2`
 - `abstractagent`
 - FastAPI/Uvicorn
 
@@ -102,7 +102,7 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
-The Compose files default to Gateway 0.21.1 for both the image tag and PyPI build version.
+The Compose files default to Gateway 0.22.0 for both the image tag and PyPI build version.
 To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
 in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
 
@@ -362,7 +362,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.21.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.22.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 

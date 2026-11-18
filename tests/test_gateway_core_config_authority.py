@@ -546,7 +546,8 @@ def test_the_gateway_applies_the_recommendation_to_the_store_it_edits(scoped_sto
     report = payload["applied_recommended"]
     assert report["ok"] is True
     stored = _stored_routes(scoped_store)
-    assert stored["input.text"]["model"] == "qwen/qwen3.5-9b"
+    # The pinned host has 24 GiB of GPU memory: the 27B (AbstractCore 2.36, `CUDA_TEXT_TIERS`).
+    assert stored["input.text"]["model"] == "qwen/qwen3.8-27b"
     assert stored["output.voice"]["provider"] == "supertonic"
     # Linux/CUDA host (pinned above): the image recommendation is Diffusers' FLUX.2 [klein] 4B
     # (MLX-Gen is the Apple silicon pick; framework backlog 0989), written like the others.
@@ -579,7 +580,7 @@ def test_the_gateway_keeps_a_route_the_operator_configured(scoped_store: Path) -
 
     # ... and `force` is the explicit overrule.
     core_config.apply_recommended_gateway_capability_defaults(only=["text"], force=True)
-    assert _stored_routes(scoped_store)["input.text"]["model"] == "qwen/qwen3.5-9b"
+    assert _stored_routes(scoped_store)["input.text"]["model"] == "qwen/qwen3.8-27b"
 
 
 def test_a_gateway_dry_run_writes_nothing(scoped_store: Path) -> None:

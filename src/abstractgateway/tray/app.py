@@ -425,13 +425,9 @@ class TrayApp:
     def _stdin_watch(self) -> None:
         """The parent keeps our stdin open for life; EOF means it is gone
         (SIGKILL and exec included) — the strongest liveness signal on every OS."""
-        try:
-            while not self._stopping:
-                chunk = sys.stdin.buffer.read(1) if hasattr(sys.stdin, "buffer") else sys.stdin.read(1)
-                if not chunk:
-                    break
-        except Exception:
-            pass
+        from ..parent_pipe import wait_closed
+
+        wait_closed(getattr(sys.stdin, "buffer", sys.stdin))
         if not self._stopping:
             logger.info("tray: parent closed the control pipe; exiting")
             self.stop()

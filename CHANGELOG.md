@@ -10,6 +10,40 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-18
+
+### Added
+
+- **Windows: an AbstractGateway icon on the desktop and in the Start menu** (`abstractgateway shortcut
+  install|remove`). It starts the gateway when it is not running (log file, tray icon, the Network setting's
+  address) and opens the console.
+
+### Changed
+
+- **A new gateway asks for its admin password first, on every OS.** While the gateway is unclaimed, `claim` /
+  `claim-url` (which the installers run), `service install`, the tray's Open Console and the desktop icon open
+  `/console#setup=<setup code>`: "Set up your gateway" with the setup code already given, so only the password is
+  chosen. Once the password is set they open a one-time sign-in link, as before. `serve` prints the command instead
+  of a sign-in link for a new gateway. `claim --json` gains `kind` (`setup` | `sign_in`).
+- **A terminal app opened from the console starts in your home folder**, like a terminal you open yourself.
+- **AbstractFramework dependencies are exact pins** (`==`, in the base install and in every extra) of the
+  versions this release was validated with: AbstractCore 2.36.0, AbstractRuntime 0.19.7, AbstractAgent 0.6.1,
+  AbstractMemory 0.5.2, AbstractVoice 0.21.1, AbstractSkill 0.3.13 and abstractavatar 0.2.0. Third-party
+  dependencies keep their ranges. Installing another version of one of these packages beside the gateway now
+  conflicts with it; upgrade the gateway instead.
+
+### Fixed
+
+- **Windows: the model host starts reliably** (`parent_pipe.py`). The watcher of the parent's stdin pipe polls it
+  instead of blocking in a read, which on Windows prevented extension modules such as NumPy from loading.
+- **A model host that does not answer no longer blocks the gateway** (`host_status_cache.py`, `model_host.py`):
+  status probes give up after 1 s (memory) or 8 s (residency, session caches) and report that section as degraded,
+  and the memory probe has a 30 s deadline.
+- **The model host answers every request**, including one whose call raised an `OSError`; the gateway no longer
+  waits for an answer that never comes.
+- **Windows: "Open in Terminal" reports success when the terminal opened** (`apps_manager._open_terminal`).
+- The route dialog recognises a stored model that carries its engine prefix and saves it in the listed form.
+
 ## [0.21.1] - 2026-11-14
 
 ### Changed
