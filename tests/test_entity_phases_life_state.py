@@ -199,6 +199,52 @@ def test_a_crashed_loop_is_idle_blocked_with_a_retry(loops):
                                    "action": "retry"}
 
 
+def test_an_unreadable_own_time_status_is_said_and_nothing_is_started_over_it(monkeypatch: pytest.MonkeyPatch):
+    """The Windows incident (2026-11-22): every read of the loop's status raised, the bar folded that
+    into "His own time is not running. Retry to start it.", and each Retry met the same error. A
+    status nobody can read is unknown, never "not running": the bar says why, offers no Retry (a
+    start over it could be a second loop on one home), and reconcile starts nothing."""
+    from abstractruntime.identity.life import write_entity_state, write_personal_grant
+
+    from abstractgateway import entity_loop, entity_phase
+    from abstractgateway.routes.entities import _registry as _entity_registry
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        home = _home_dir()
+        write_personal_grant(home, mode="until_revoked", granted_by="person:admin", fence=_LF.admit(home))
+        write_entity_state(home, "awake", reason="woken", fence=_LF.admit(home))
+
+        def unreadable(_home):
+            raise AttributeError("module 'os' has no attribute 'WNOHANG'")
+
+        spawned = []
+        monkeypatch.setattr(entity_loop, "loop_status", unreadable)
+        monkeypatch.setattr(entity_loop, "start_loop", lambda *a, **k: spawned.append((a, k)))
+        body = _ls(client)
+        assert body["phase"] == "idle"
+        assert body["blocked"] == {
+            "code": "own_time_status_unreadable",
+            "sentence": "His own-time status can't be read (AttributeError). Nothing was started or stopped.",
+            "action": None,
+        }
+        assert body["sentence"] == "Awake and reachable; his own-time status can't be read."
+        assert any("WNOHANG" in w for w in body.get("warnings") or []), "the detail is in the warnings"
+        assert _ls(client)["rev"] == body["rev"], "reading it again mints no new rev"
+        assert entity_phase.reconcile(_entity_registry(), "castor", "test")["reason"] == "loop_status_unreadable"
+        assert entity_phase.retry(_entity_registry(), "castor")  # the operator's Retry: still nothing is started
+        assert spawned == []
+        # Own time can still be taken back: no error, the grant is off, and the stop is enqueued for a loop that
+        # may be there. With own time off the bar still says the status cannot be read.
+        from abstractruntime.identity.life import read_personal_grant
+
+        off = client.put("/api/gateway/entities/Castor/life_state/toggles", json={"personal": False})
+        assert off.status_code == 200, off.text
+        assert read_personal_grant(home).get("mode") == "disabled"
+        assert (off.json().get("blocked") or {}).get("code") == "own_time_status_unreadable"
+        assert spawned == []
+
+
 def test_an_open_visit_is_the_visit_phase(monkeypatch: pytest.MonkeyPatch):
     from abstractgateway import entity_chat
 

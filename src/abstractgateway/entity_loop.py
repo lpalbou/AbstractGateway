@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["loop_status", "start_loop", "stop_loop"]
+__all__ = ["loop_status", "start_loop", "stop_loop", "stop_loop_if_running"]
 
 
 def loop_status(home_dir: Path) -> Dict[str, Any]:
@@ -177,6 +177,23 @@ def _capability_endpoint_profiles(home_dir: Path, *, provider: str, model: str) 
             continue
         out[capability] = {"spec": spec, "profile": resolved.private_resolution()}
     return out
+
+
+def stop_loop_if_running(home_dir: Path, *, reason: str = "", requested_by: str = "operator") -> None:
+    """Own time was taken back: a running loop is told to stop at its next boundary. A status that
+    cannot be read is not "not running": the stop command is enqueued anyway (a loop that is there
+    obeys it; the next start skips a stop addressed to a life that already ended)."""
+    try:
+        running = bool(loop_status(home_dir).get("running"))
+    except Exception as e:  # noqa: BLE001
+        from abstractruntime.identity.life import request_loop_stop
+
+        logger.warning("own time: the loop status of %s is unreadable (%s); the stop is enqueued anyway",
+                       Path(home_dir).name, type(e).__name__)
+        request_loop_stop(Path(home_dir), reason=reason, requested_by=requested_by)
+        return
+    if running:
+        stop_loop(home_dir, reason=reason, requested_by=requested_by)
 
 
 def stop_loop(home_dir: Path, *, reason: str = "", requested_by: str = "operator") -> Dict[str, Any]:

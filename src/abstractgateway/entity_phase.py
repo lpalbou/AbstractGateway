@@ -590,8 +590,14 @@ def gather(registry: Any, name: str, *, chat_host: Any = None, visit_host: Any =
     try:
         loop = loop_status(home_dir)
     except Exception as e:  # noqa: BLE001
-        loop = {"running": False, "phase": "stopped"}
-        warnings.append(f"#FALLBACK loop status unreadable: {e}")
+        # UNREADABLE IS NOT "NOT RUNNING" (as `_loop_target` rules for a Stop): the loop may be alive behind a status
+        # this process cannot read. `unreadable` carries why; nothing is started over it (`_reconcile_decide`) and
+        # the bar says so (`_blocked`) instead of offering a Retry.
+        # The fact names the KIND of error only: it reaches the versioned snapshot through the bar's sentence, and a
+        # message that changes per read (or carries a path) would mint a new rev at every read. The detail is the
+        # warning below (never versioned).
+        loop = {"running": False, "phase": "stopped", "unreadable": type(e).__name__}
+        warnings.append(f"#FALLBACK loop status unreadable: {type(e).__name__}: {e}")
     grant = read_personal_grant(home_dir)
     personal = personal_grant_refusal(grant) is None
     # Who took own time back, when it was taken back (runtime 17be7e3: kill_switch | operator; None otherwise).
@@ -895,14 +901,23 @@ def _posture(phase: str, state: Dict[str, Any], loop: Dict[str, Any], chat: Dict
 
 
 def _blocked(facts: Dict[str, Any], rec: Dict[str, Any], phase: str, toggles: Dict[str, bool]) -> Optional[Dict[str, Any]]:
-    if phase != "idle" or not toggles["personal"]:
+    if phase != "idle":
+        return None
+    loop = facts["loop"]
+    unreadable = str(loop.get("unreadable") or "").strip()
+    if unreadable and not facts["archived"]:
+        # Said whether or not own time is granted (a queued job waits behind it too). No Retry: a start over a
+        # status nobody can read could be a second loop on one home. Stop stays available.
+        return {"code": "own_time_status_unreadable",
+                "sentence": f"His own-time status can't be read ({unreadable}). Nothing was started or stopped.",
+                "action": None}
+    if not toggles["personal"]:
         return None
     if facts["archived"]:
         return {"code": "entity_archived", "sentence": "He is archived; restore him from the roster first.", "action": None}
     err = str(rec.get("start_error") or "").strip()
     if err:
         return {"code": "own_time_start_failed", "sentence": f"His own time could not start: {err}", "action": "retry"}
-    loop = facts["loop"]
     crashed = "process is gone" in str(loop.get("note") or "") or str(loop.get("stopped_by") or "") == "failures"
     if crashed:
         return {"code": "loop_crashed", "sentence": "His own time stopped unexpectedly. Retry to start it again.", "action": "retry"}
@@ -933,6 +948,8 @@ def _sentence(name: str, phase: str, visit: Any, work: Any, sleep: Any, loop: Di
         return "Asleep until you wake him."
     if phase == "idle" and bool(loop.get("running")):
         return OWN_TIME_WITHDRAWN_SENTENCE
+    if blocked and blocked.get("code") == "own_time_status_unreadable":
+        return "Awake and reachable; his own-time status can't be read."
     if blocked and blocked.get("code") in ("loop_crashed", "own_time_start_failed", "own_time_not_running"):
         return "Awake and reachable; his own time stopped unexpectedly." if blocked["code"] == "loop_crashed" else (
             "Awake and reachable; his own time is not running."
@@ -1103,7 +1120,8 @@ def publish(
         prev_was_interruption = prev_phase in ("visit", "sleep") or (prev_phase == "work" and prev_work_kind not in LOOP_JOB_KINDS)
         if own_kind:
             resume_changed = _note_resume_to(rec, own_kind)
-        elif new_phase == "idle" and prev_was_own_time:
+        elif new_phase == "idle" and prev_was_own_time and not facts["loop"].get("unreadable"):
+            # (A status that cannot be read is not own time ending: the phase to return to is kept.)
             resume_changed = _note_resume_to(rec, None)
         elif (new_phase == "idle" and prev_was_interruption and rec.get("resume_to")
               and cause in ("observed", "grant_expired")):
@@ -1614,31 +1632,14 @@ def _loop_target(home_dir: Path) -> Tuple[Optional[Dict[str, Any]], str]:
 
 
 def _pid_liveness(pid: int) -> str:
-    """"alive", "dead" (gone, or a zombie waiting to be reaped) or "unknown" (EPERM: it exists but
-    is not ours to probe; any other error) — never a guess (Codex review 2 #4)."""
-    import errno
-    import os
-    import subprocess
+    """"alive", "dead" (gone, or a zombie waiting to be reaped) or "unknown" (it exists but is not
+    ours to probe; no answer) — never a guess (Codex review 2 #4). The runtime's own probe, one
+    implementation for both packages: signal 0 + `ps` on POSIX, a process handle on Windows (where
+    `os.kill(pid, 0)` is a console control event and `os.WNOHANG` does not exist)."""
+    from abstractruntime.identity.life import _pid_state
 
-    try:
-        os.waitpid(pid, os.WNOHANG)  # reap it if it is our own child
-    except (ChildProcessError, OSError):
-        pass
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return "dead"
-    except PermissionError:
-        return "unknown"
-    except OSError as e:
-        return "dead" if e.errno == errno.ESRCH else "unknown"
-    try:
-        stat = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=5).stdout
-        if stat.strip().startswith("Z"):
-            return "dead"
-    except Exception:  # noqa: BLE001 - alive by kill(0); the zombie check is the refinement
-        pass
-    return "alive"
+    state = _pid_state(pid)
+    return "dead" if state == "gone" else state
 
 
 def _pid_alive_strict(pid: int) -> bool:
@@ -1797,7 +1798,7 @@ def set_toggles(
     ToggleRefused while stopped or archived."""
     from abstractruntime.identity.life import read_entity_state, write_personal_grant
 
-    from .entity_loop import loop_status, stop_loop
+    from .entity_loop import stop_loop_if_running
 
     if chat_host is None and visit_host is None:
         chat_host, visit_host = default_hosts()
@@ -1827,11 +1828,11 @@ def set_toggles(
     if changed["personal"] is not None:
         _marker(registry, manifest, "personal_granted" if personal else "personal_grant_revoked",
                 {"channel": "toggle", "by": actor, "mode": "until_revoked" if personal else "disabled"})
-        if not personal and bool(loop_status(home_dir).get("running")):
+        if not personal:
             # The turn in flight finishes; nothing after it runs (runtime: no look-back, no next tick)
             # and the loop exits at that boundary. The phase is idle from now (derive), never sleep:
             # reconcile repairs the gate's leftover sleep after exit.
-            stop_loop(home_dir, reason=f"personal turned off by {actor}", requested_by="operator")
+            stop_loop_if_running(home_dir, reason=f"personal turned off by {actor}", requested_by="operator")
     if changed["personal"] is not None and personal:
         # The operator's own act names own time as the phase to return to.
         set_resume_to(registry, slug, "personal")
@@ -1899,6 +1900,9 @@ def _reconcile_decide(registry: Any, name: str, slug: str, cause: str, *, chat_h
         word = str(state.get("state") or "awake")
         if word == "paused":
             return {"own_time": False, "pid": None, "reason": "stopped"}
+        if facts["loop"].get("unreadable"):
+            # Whether a loop runs is unknown: no state repair, no start (a second loop on one home is the harm).
+            return {"own_time": False, "pid": None, "reason": "loop_status_unreadable"}
         loop_alive = bool(facts["loop"].get("running"))
         # The 1178 repair: a sleep the old loop gate wrote when own time ended is not a sleep.
         if (
