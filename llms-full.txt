@@ -2703,7 +2703,7 @@ are user-level; every write is admin-only.
 | Endpoint | What it does |
 |---|---|
 | `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
-| `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
+| `POST /api/gateway/host/pause` / `resume` | Pause or resume the gateway process-wide (persisted in `<data_dir>/gateway_paused.json`). Pause is a kill switch: no workflow step, entity activity or model work starts until Resume (see [Pause](docs/tray.md#pause)). Body `{"reason": "..."}` optional. |
 | `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
 | `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`, `kind`: AbstractNote's own work only with `kind=notes` or `all`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
 | `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |
@@ -5099,18 +5099,36 @@ applies to both.
 row on Windows and Linux (unticked = paused) — is process-wide and **persists
 across restarts**: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
-instead (see *Conversations*). While the gateway is paused:
+instead (see *Conversations*).
 
-- no new workflow step starts — runs, schedules and bridge-started work are
-  accepted and wait;
-- a step already inside an LLM or tool call finishes first (the menu says
-  "Finishing N runs at the next step");
-- the console, the API and connected apps keep answering; cancelling a run
-  still works;
-- summoned entities' own-time loops are **not** affected (they are separate
-  processes with their own lifecycle controls);
+Pause is a **kill switch**: while the gateway is paused nothing moves forward,
+and everything continues from where it was when you resume.
+
+- **Automations and runs.** No new workflow step starts — runs and schedules
+  are accepted and wait. A model or tool call already in flight finishes first
+  (the menu says "Finishing N runs at the next step"); if that step asks for
+  another model call, the call waits for Resume instead of failing.
+- **Entities.** No visit, chat turn, summon, meet or speech is started (the
+  request answers `409` `gateway_paused`). The background sweeps start no
+  sleep, write no title, summary or brief, and wake nobody. An entity's
+  own-time loop (a separate process) freezes at its next boundary — after the
+  turn it is in — and continues the same day at Resume.
+- **Models.** No generation, embedding, speech, image or model load leaves the
+  gateway: not from the gateway API, not from `/v1/...` (`503`
+  `gateway_paused`), not from a background task. A model you unload stays
+  unloaded. **Keep loaded** and a new default model are recorded and applied
+  at Resume. Reading what is loaded and unloading it stay available.
+- **Bridges and mail.** Telegram, the Agora bridge, the mailbox and feed
+  watchers and push notifications do not poll or deliver; what arrived
+  meanwhile is handled at Resume.
+- The console, the API and connected apps keep answering (reading, settings,
+  Resume); cancelling a run and stopping an entity still work.
 - `GET /api/health` carries `"paused": true` while `status` stays
   `"healthy"` — a supervisor must never recycle a paused gateway.
+
+What a pause does not do: it does not cut a model call that is already
+running (stop the run, or unload the model, for that), and it does not unload
+anything by itself.
 
 Pause reaches inside a tick: AbstractRuntime's `Runtime.tick(step_gate=…)`
 consults the gateway's gate at every step boundary. Where the runtime does
@@ -5120,7 +5138,10 @@ not offer that gate, the pause takes effect at tick boundaries (up to
 
 In the split layout (`serve --no-runner` + `abstractgateway runner`) the
 pause is written to `<data_dir>/gateway_paused.json` and the runner process
-picks it up within about two seconds.
+picks it up within about two seconds. The same file is how an entity's
+own-time loop learns of the pause: the gateway names it to every process it
+starts (`ABSTRACTRUNTIME_HOST_PAUSE_FILE`), and the loop reads it at each
+boundary (about every five seconds while it waits).
 
 ## Restart and update
 
@@ -8749,7 +8770,15 @@ any authenticated principal; writes require an admin principal.
 ```
 
 - `POST /api/gateway/host/pause` (body `{"reason": "..."}` optional) and
-  `POST /api/gateway/host/resume` — both answer the payload above.
+  `POST /api/gateway/host/resume` — both answer the payload above. A paused
+  gateway is a kill switch (see [tray.md](docs/tray.md#pause)): no automation,
+  no entity activity and no model work until Resume. A request that would
+  start work answers `409` `{"detail": "...", "code": "gateway_paused"}`
+  (header `X-Gateway-Error-Code: gateway_paused`), and a `POST /v1/...`
+  answers `503` with the OpenAI error envelope and `code: "gateway_paused"`;
+  nothing was started, and the same request works after Resume. A run start
+  is still accepted and queued (`warnings` says so). Reads, settings,
+  unloading a model, cancelling a run and stopping an entity stay open.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.
@@ -9209,9 +9238,12 @@ unit, a desktop autostart entry, a Windows Run entry), asks before each change
 and shows the state read back from the gateway. Where nothing on the machine
 could start the gateway at login, it says why instead of offering the switch.
 
-**Workflows paused** (the Gateway card) is a switch for admins: on, no new
-workflow step starts and work already inside a call finishes; the console and
-the apps keep answering. A banner on every tab says so while it is on.
+**Workflows paused** (the Gateway card) is a switch for admins. On, the gateway
+is paused, which is a kill switch: no workflow step, entity activity or model
+work starts until you resume, and a call already running finishes. The console
+and the apps keep answering for reads, settings, unloading a model, cancelling a
+run and stopping an entity (see [Pause](docs/tray.md#pause)). A banner on every tab
+says so while it is on.
 
 **Last restart** (the Gateway card, admins) appears after the event-loop
 watchdog restarted the gateway: "Gateway restarted at <time> after a hang —

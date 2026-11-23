@@ -1091,7 +1091,7 @@ are user-level; every write is admin-only.
 | Endpoint | What it does |
 |---|---|
 | `GET /api/gateway/host/runner` | `paused`, `paused_at`, `paused_by`, `reason`, `inflight_ticks` (runs still finishing their current step), `scope` (`"workflow runner"`), `runner_in_process`, `step_gate_supported`, restart/shutdown `capabilities`. |
-| `POST /api/gateway/host/pause` / `resume` | Pause or resume execution process-wide (persisted in `<data_dir>/gateway_paused.json`). Body `{"reason": "..."}` optional. |
+| `POST /api/gateway/host/pause` / `resume` | Pause or resume the gateway process-wide (persisted in `<data_dir>/gateway_paused.json`). Pause is a kill switch: no workflow step, entity activity or model work starts until Resume (see [Pause](./tray.md#pause)). Body `{"reason": "..."}` optional. |
 | `GET /api/gateway/host/metrics/live` | GPU + memory + paused/in-flight in one call, cached 1 s server-side — the tray's fast lane. |
 | `GET /api/gateway/host/runs` | Recent runs across every data plane on this machine (`limit`, `window_hours`, `kind`: AbstractNote's own work only with `kind=notes` or `all`), newest first, with a readable `label` and the step count. Admin — it crosses tenants. Cached 5 s. Entity planes are skipped and named in `skipped_entity_planes`. |
 | `GET /api/gateway/host/tray` | Whether the tray helper runs (`pid`, `ready`), and the decision (`reason`, `hint`) when it does not. |

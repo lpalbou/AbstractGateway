@@ -446,6 +446,20 @@ async def _core_config_unreadable_503(request, exc):  # noqa: ANN001 - FastAPI h
     )
 
 
+# The gateway is paused (host_control: the kill switch) and a request asked for work: one handler
+# answers 409 `gateway_paused` on every route, whatever depth the refusal came from (a door check,
+# the model host proxy refusing a generation).
+from .host_control import GatewayPaused as _GatewayPaused  # noqa: E402
+
+
+@app.exception_handler(_GatewayPaused)
+async def _gateway_paused_409(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=409, content={"detail": str(exc), "code": _GatewayPaused.code},
+                        headers={"X-Gateway-Error-Code": _GatewayPaused.code})
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_cors_safe(request, exc):  # noqa: ANN001 - FastAPI handler signature
     import logging

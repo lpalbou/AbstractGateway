@@ -315,9 +315,24 @@ def _config_attrs(obj: Any, names: Any = CONFIG_ATTRS) -> Dict[str, Any]:
     return out
 
 
-def _build_client(kind: str, ctor: Dict[str, Any]) -> Any:
+_BUILD_LOCK = threading.Lock()
+
+
+def _build_client(kind: str, ctor: Dict[str, Any], *, warm: bool = True) -> Any:
     from abstractruntime.integrations.abstractcore import llm_client as lc
 
+    if kind == "multi" and not warm:
+        # The gateway is paused (its kill switch): the client is built without loading its default
+        # model, which is then built at the client's first call (the runtime's own deferred path).
+        # The switch is process-wide: unwarmed builds take turns; a warm build racing one of them
+        # builds its default at its first call instead, which is the same deferred path.
+        with _BUILD_LOCK:
+            before = lc.default_model_warmup()
+            lc.set_default_model_warmup(False)
+            try:
+                return lc.MultiLocalAbstractCoreLLMClient(**ctor)
+            finally:
+                lc.set_default_model_warmup(before)
     if kind == "multi":
         return lc.MultiLocalAbstractCoreLLMClient(**ctor)
     if kind == "local":
@@ -337,8 +352,9 @@ def _execute(channel: _Channel, req: Tuple[Any, ...]) -> None:
         if op == "ping":
             channel.send(("ok", {"pid": os.getpid(), "http": host.http.snapshot()}))
         elif op == "new":
-            _, cid, kind, ctor = req
-            client = _build_client(kind, ctor)
+            cid, kind, ctor = req[1], req[2], req[3]
+            options = req[4] if len(req) > 4 and isinstance(req[4], dict) else {}
+            client = _build_client(kind, ctor, warm=bool(options.get("warm", True)))
             with host.lock:
                 host.clients[cid] = client
             channel.send(("ok", {"attrs": _config_attrs(client)}))

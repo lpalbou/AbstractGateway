@@ -153,6 +153,12 @@ class EmailWorker:
             self._wake.clear()
             if self._stop.is_set():
                 break
+            # The gateway pause (its kill switch): no mailbox is read and no run notice is sent;
+            # mail waits where it is and is read at Resume.
+            from .. import host_control
+
+            if host_control.wait_while_paused(self._stop):
+                continue
             self.tick()
             self._wake.wait(self.tick_s)
 

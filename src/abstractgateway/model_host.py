@@ -22,7 +22,7 @@ pickles exchanged between two copies of the same installed code, never reachable
 
 Wire protocol (each message one pickle; parent -> child requests run one at a time per connection):
 
-    parent -> child   ("ping",) | ("new", client_id, kind, ctor_kwargs) | ("drop", client_id)
+    parent -> child   ("ping",) | ("new", client_id, kind, ctor_kwargs[, {"warm": False}]) | ("drop", client_id)
                       ("call", target, method, args, kwargs) | ("getattr", target, name)
                       ("set", event_id)                      the parent's Event was set (a Stop)
                       ("cbr", request_id, ok, value)         answer to a callback the child called
@@ -149,6 +149,10 @@ def start(data_dir: Path, *, memory_ceiling_bytes: Optional[int] = None, nice: i
 
     atexit.register(stop)
     sup.start()
+    # Resume (the gateway pause lifted): the loading setters recorded while paused are applied.
+    from . import host_control
+
+    host_control.add_resume_listener(sup.apply_deferred_setters)
     return sup
 
 
@@ -665,6 +669,8 @@ class _RemoteHandle:
         return value
 
     def _mh_call(self, name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        if is_model_work(name):
+            _pause_gate(f"{self._mh_type}.{name}")
         return _Exchange(self._mh_host, self, ("call", self._mh_target(), name, args, kwargs),
                          what={"method": f"{self._mh_type}.{name}"}).run()
 
@@ -678,6 +684,49 @@ class _RemoteHandle:
 CONFIG_ATTRS = ("_llm_kwargs", "_default_provider", "_default_model", "_provider", "_model",
                 "_core_config_file", "_bloc_root_dir", "_prompt_cache_export_root_dir",
                 "_capability_defaults", "_capability_defaults_explicit")
+
+
+# ---- The gateway pause (host_control: the kill switch) ---------------------------------------------
+# Paused, a client is still asked what it knows and told to let go; everything else is model work
+# (a generation, an embedding, a speech stream, a model load, a prompt cache) and goes through
+# `_pause_gate`. The list names what is ALLOWED, so a method added to the runtime later is model
+# work until someone says otherwise.
+_PAUSED_OK_PREFIXES = ("list_", "get_", "lookup_", "unload", "unlock_", "delete_", "prune_", "clear_",
+                       "residency", "set_")
+_PAUSED_OK_NAMES = frozenset({"default_prompt_cache_identity", "prompt_cache_clear", "voice_library"})
+# `get_provider_instance` builds a provider: a local engine loads its model there.
+_PAUSED_WORK_NAMES = frozenset({"get_provider_instance"})
+# Configuration that loads a model when the child applies it (the kept-loaded locks, a new default):
+# recorded while paused and applied at Resume (`ModelHostSupervisor.apply_deferred_setters`).
+_LOADING_SETTERS = frozenset({"set_model_residency_locks", "set_default_provider_model", "set_capability_defaults"})
+
+
+def is_model_work(name: str) -> bool:
+    """Whether the client method `name` is model work the gateway pause stops."""
+    name = str(name or "")
+    if name in _PAUSED_WORK_NAMES:
+        return True
+    return not (name in _PAUSED_OK_NAMES or name.startswith(_PAUSED_OK_PREFIXES))
+
+
+def _pause_gate(what: str) -> None:
+    """Before model work leaves this process: refused while the gateway is paused, or, on a thread
+    that may wait (`host_control.parks_while_paused`), held until Resume."""
+    from . import host_control
+
+    if not host_control.is_paused():
+        return
+    host_control.gate_model_work(what)
+    if host_control.is_paused():
+        # The wait ended because this process is stopping, not because someone resumed.
+        raise EffectInterrupted("the gateway is stopping while paused; the request is sent again once it is "
+                                "back and resumed")
+
+
+def _paused() -> bool:
+    from . import host_control
+
+    return host_control.is_paused()
 
 
 def _class_callables(kind: str) -> frozenset:
@@ -739,6 +788,8 @@ class ModelHostClient:
         self._mh_setters_lock = threading.Lock()
         self._mh_setters_version = 0
         self._mh_setters: Dict[str, Tuple[Tuple[Any, ...], Dict[str, Any]]] = {}
+        # Loading setters recorded while the gateway was paused, applied at Resume.
+        self._mh_deferred: set = set()
         self._mh_assigned: Dict[str, Any] = {}
         self._mh_persistent: Dict[str, Any] = {}
         self._mh_callable_names = _class_callables(kind)
@@ -788,17 +839,32 @@ class ModelHostClient:
                 self._mh_setters_version += 1
 
     # -- building in the child
+    def _mh_held_by_pause(self) -> bool:
+        """An embeddings client loads its model when the child builds it (AbstractCore's
+        EmbeddingManager). Paused, it is not built at all: its first use after Resume builds it."""
+        return self._mh_kind == "embeddings" and not self._mh_built() and _paused()
+
     def _mh_ensure(self) -> None:
         if self._mh_built():
             return
+        if self._mh_held_by_pause():
+            from . import host_control
+
+            raise host_control.GatewayPaused(host_control.paused_refusal(
+                f"loading the embedding model {self._mh_ctor.get('provider')}/{self._mh_ctor.get('model')}"))
         host = self._mh_host
         with self._mh_lock:
             host.await_requested_restart()  # build in the new child, not the one being replaced
             if self._mh_built():
                 return
             generation = host.generation
-            info = _Exchange(host, self, ("new", self._mh_id, self._mh_kind, self._mh_ctor),
-                             what={"method": "build", **_describe_target(self, "build")}).run()
+            # Paused (the kill switch): the child builds the client without loading its default
+            # model (built at its first call instead), and no loading setter is replayed.
+            paused = _paused()
+            build: Tuple[Any, ...] = ("new", self._mh_id, self._mh_kind, self._mh_ctor)
+            if paused:
+                build += ({"warm": False},)  # the fifth element only then: the usual message is unchanged
+            info = _Exchange(host, self, build, what={"method": "build", **_describe_target(self, "build")}).run()
             self._mh_refresh_config((info or {}).get("attrs") if isinstance(info, dict) else None)
             replayed = -1
             for _ in range(3):  # setters recorded while replaying are replayed too
@@ -808,6 +874,10 @@ class ModelHostClient:
                 if version == replayed:
                     break
                 for name, (args, kwargs) in items:
+                    if name in _LOADING_SETTERS and (paused or _paused()):
+                        with self._mh_setters_lock:
+                            self._mh_deferred.add(name)
+                        continue
                     try:
                         answer = _Exchange(host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                                            persistent=self._mh_persistent, persistent_callbacks=True,
@@ -833,13 +903,17 @@ class ModelHostClient:
 
     def _mh_call(self, name: str, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
         if name.startswith("set_"):
-            if not self._mh_built():
+            deferred = name in _LOADING_SETTERS and _paused()
+            if deferred or not self._mh_built():
                 # Not built yet (the warm thread is building it, or the host restarts): recorded,
                 # and the build applies and checks it. Never waits here (this may be the loop).
+                # Paused, a setter that loads a model is recorded the same way and applied at Resume.
                 with self._mh_setters_lock:
                     self._mh_setters.pop(name, None)
                     self._mh_setters[name] = (tuple(args), dict(kwargs))
                     self._mh_setters_version += 1
+                    if deferred:
+                        self._mh_deferred.add(name)
                 return None
             result = _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                                persistent=self._mh_persistent, persistent_callbacks=True,
@@ -848,15 +922,45 @@ class ModelHostClient:
                 self._mh_setters.pop(name, None)
                 self._mh_setters[name] = (tuple(args), dict(kwargs))
                 self._mh_setters_version += 1
+                self._mh_deferred.discard(name)
             with contextlib.suppress(ModelHostUnavailable, ModelHostCrashed):
                 self._mh_refresh_config(_Exchange(self._mh_host, self, ("getattrs", ("c", self._mh_id), CONFIG_ATTRS),
                                                   what={"method": "getattrs"}).run())
             self._mh_fold_identity()
             return result
+        if is_model_work(name):
+            _pause_gate(f"{self._mh_kind} client {name}")
+        if self._mh_held_by_pause() and name in ("residency", "unload"):
+            # Never built, so it holds nothing: said here, without building it (which would load it).
+            provider, model = str(self._mh_ctor.get("provider") or ""), str(self._mh_ctor.get("model") or "")
+            if name == "unload":
+                return {"ok": True, "unloaded": False, "provider": provider, "model": model,
+                        "reason": "not loaded: the gateway is paused"}
+            return {"task": "embedding", "provider": provider, "model": model, "loaded": False,
+                    "state": "not_loaded", "source": "abstractgateway.model_host (not built: the gateway is paused)"}
         self._mh_ensure()
         return _Exchange(self._mh_host, self, ("call", ("c", self._mh_id), name, args, kwargs),
                          persistent=self._mh_persistent, what=_describe_target(self, name, kwargs)
                          ).run(timeout_s=PROBE_DEADLINES_S.get(name))
+
+    def _mh_apply_deferred(self) -> None:
+        """At Resume: apply the loading setters recorded while the gateway was paused (the last call
+        per name), in the order they were made. A refusal is logged; nothing raises."""
+        with self._mh_setters_lock:
+            names = [n for n in self._mh_setters if n in self._mh_deferred]
+            calls = [(n, self._mh_setters[n]) for n in names]
+        for name, (args, kwargs) in calls:
+            if _paused():
+                return  # paused again: they stay recorded for the next Resume
+            with self._mh_setters_lock:
+                self._mh_deferred.discard(name)
+            if not self._mh_built():
+                continue  # the build replays every recorded setter itself
+            try:
+                _log_replayed_refusal(name, self._mh_call(name, args, kwargs))
+            except Exception as exc:  # noqa: BLE001 - reported; the configuration stays recorded
+                logger.error("model host: %s recorded while the gateway was paused could not be applied at "
+                             "Resume: %s", name, exc)
 
     def __setattr__(self, name: str, value: Any) -> None:
         """An attribute the host assigns on its client (bundle_host's `residency_owner_label`) is
@@ -1060,6 +1164,7 @@ class ModelHostSupervisor:
         self._inflight: Dict[int, Dict[str, Any]] = {}
         self._inflight_ids = itertools.count(1)
         self._clients: "weakref.WeakSet[ModelHostClient]" = weakref.WeakSet()
+        self._held_builds: List[Any] = []  # eager builds held by the gateway pause
         self._warm_queue: Deque[Any] = deque()
         self._threads: List[threading.Thread] = []
         self._wake = threading.Event()
@@ -1382,13 +1487,32 @@ class ModelHostSupervisor:
                         with contextlib.suppress(Exception):
                             _Exchange(self, None, ("drop", item), what={"method": "drop"}).run(timeout_s=10.0)
                     continue
+                if isinstance(item, tuple):  # ("resumed", ref): the gateway pause was lifted
+                    client = item[1]()
+                    if client is not None:
+                        client._mh_apply_deferred()
+                    continue
                 client = item() if isinstance(item, weakref.ref) else item
                 if client is None:
+                    continue
+                if client._mh_held_by_pause():
+                    self._held_builds.append(weakref.ref(client))  # built at Resume (`apply_deferred_setters`)
                     continue
                 try:
                     client._mh_ensure()
                 except Exception as exc:  # noqa: BLE001 - its first request reports the cause again
                     logger.warning("model host: building %r failed: %s", client, exc)
+
+    def apply_deferred_setters(self) -> None:
+        """The gateway pause was lifted (`host_control` resume listener): the loading setters each
+        client recorded while paused are applied now, on the warm thread (never the caller's)."""
+        for client in list(self._clients):
+            if client._mh_deferred:
+                self._warm_queue.append(("resumed", weakref.ref(client)))
+        # The embeddings clients whose build was held: built now, as at a start.
+        held, self._held_builds = self._held_builds, []
+        self._warm_queue.extend(held)
+        self._wake.set()
 
     def _drop_later(self, client_id: str) -> None:
         if not self._stopping:

@@ -153,6 +153,12 @@ def llm_assist(
     # output call). An explicit operator value is honored verbatim.
     max_tokens: Optional[int] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    from .. import host_control
+
+    if host_control.is_paused():
+        # A model call sent straight to an endpoint (not through the model host): the gateway
+        # pause stops it here.
+        return None, host_control.paused_refusal("the triage LLM assist")
     if not str(base_url or "").strip():
         return None, "LLM assist base_url is missing"
     if not str(model or "").strip():

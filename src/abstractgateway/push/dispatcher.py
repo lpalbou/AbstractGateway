@@ -310,8 +310,14 @@ class PushDispatcher:
         return devices, settings
 
     def _loop(self) -> None:
+        from .. import host_control
+
         while not self._stop.is_set():
             try:
+                # The gateway pause (its kill switch): nothing is pushed; the stream is read from
+                # the cursor at Resume.
+                if host_control.wait_while_paused(self._stop):
+                    continue
                 self.refresh_relay()
                 if self.relay is None or not self._devices(self.clock()):
                     self._park()

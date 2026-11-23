@@ -160,6 +160,26 @@ def test_without_an_embedder_what_has_no_vector_is_not_fragmentation_a_sleep_fix
     assert _fixable_share(None, can_embed=True) == 0.0
 
 
+def test_the_hours_clock_does_not_put_a_home_with_nothing_new_to_sleep():
+    """Incident 2026-11-19: an idle entity nobody visited was put to sleep by the 24 h clock alone. The
+    clock counts only when something formed since his last completed sleep; with nothing new, idle is
+    waiting, however long."""
+    from abstractgateway.entity_idle_sleep import sleep_due
+
+    with _client() as client:
+        assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+        assert client.put("/api/gateway/entities/castor/cognition-profile",
+                          json={"sleep": {"after_fragmented_share": 1.0}}).status_code == 200
+        now = datetime.now(timezone.utc)
+        # Never slept: what his birth formed is new, so his first sleep comes 24 h after it.
+        first = sleep_due(_registry(), "castor", now=now + timedelta(hours=25))
+        assert first is not None and first["threshold"] == "after_hours" and first["count"] >= 1
+        # He slept after everything he has formed: nothing new since, whatever the clock says.
+        _slept_at(now + timedelta(minutes=1))
+        assert sleep_due(_registry(), "castor", now=now + timedelta(hours=25)) is None
+        assert sleep_due(_registry(), "castor", now=now + timedelta(days=30)) is None
+
+
 def test_a_never_slept_home_is_seeded_from_its_own_history():
     """Without the seed every existing home reads "never slept" and sleeps at the first sweep."""
     from abstractgateway.entity_idle_sleep import sleep_due

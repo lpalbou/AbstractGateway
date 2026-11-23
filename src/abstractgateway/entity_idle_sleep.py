@@ -3,7 +3,8 @@ after 24 h or 500 events, a Mind setting, triggered by the gateway").
 
 Only an IDLE entity (no visit, no job queued or starting, no own time running, not stopped, not asleep)
 is put to sleep, and only by this sweep: once `sleep.after_hours` have passed since his last completed
-sleep, or `sleep.after_events` new memories have formed since it, or (operator 2026-11-10) more than
+sleep AND something formed since it (operator 2026-11-19: no new memory, no sleep; idle with nothing new
+is waiting, whatever the clock says), or `sleep.after_events` new memories have formed since it, or (operator 2026-11-10) more than
 `sleep.after_fragmented_share` of his memories are fragmented - not yet in a topic, no vector, a title or
 summary still being written (memory's `fragmented` read) - with something new since the last sleep (the
 cognition profile, AbstractRuntime `sleep_thresholds`). The sleep is his own (kind self) and runs its maintenance pass; when the pass is
@@ -141,7 +142,13 @@ def sleep_due(registry: Any, slug: str, *, now: Optional[datetime] = None) -> Op
     if count >= int(thresholds["after_events"]):
         return {"threshold": "after_events",
                 "reason": f"{int(thresholds['after_events'])} new memories since the last sleep", **receipt}
-    if since is not None and hours >= float(thresholds["after_hours"]):
+    # THE HOURS CLOCK COUNTS ONLY FOR A HOME THAT LIVED (operator 2026-11-19: "this should only happen IF there
+    # are some new memories"): `count` = the records formed since his last completed sleep (the night's own
+    # formations never count). With none, there is nothing to consolidate: an idle entity nobody visited and
+    # nobody gave time to is not put to sleep again every `after_hours`, each night embedding, dreaming and
+    # writing a brief over the same memories. His first sleep still comes `after_hours` after his birth: what
+    # his birth formed has never been consolidated.
+    if count >= 1 and since is not None and hours >= float(thresholds["after_hours"]):
         return {"threshold": "after_hours",
                 "reason": f"{int(thresholds['after_hours'])} h since the last sleep", **receipt}
     # THE THIRD TRIGGER (operator 2026-11-10): more than `sleep.after_fragmented_share` of his memories are
@@ -266,8 +273,11 @@ def _sleep(registry: Any, look: Dict[str, Any], hosts: Tuple[Any, Any]) -> Dict[
 def idle_sweep_one(registry: Any, slug: str) -> Optional[Dict[str, Any]]:
     """One idle home's turn: its threshold sleep (run to its end here), else the authoring drainer.
     None when the home is not idle."""
+    from . import host_control
     from .entity_phase import default_hosts
 
+    if host_control.is_paused():
+        return None  # the gateway is paused: no sleep is started and nothing is authored
     hosts = default_hosts()
     look = _look(registry, slug, hosts)
     if look is None:
@@ -283,10 +293,14 @@ def idle_sweep(registry: Any, slugs: Iterable[str]) -> List[Dict[str, Any]]:
     admission keeps its place; the next one is tried). Never raises: a broken home is a labelled row."""
     from .entity_phase import default_hosts
 
+    from . import host_control
+
     hosts = default_hosts()
     rows: List[Dict[str, Any]] = []
     due: List[Dict[str, Any]] = []
     for slug in slugs:
+        if host_control.is_paused():
+            return rows  # the gateway is paused: no sleep is started and nothing is authored
         try:
             look = _look(registry, slug, hosts)
             if look is None:
@@ -301,6 +315,8 @@ def idle_sweep(registry: Any, slugs: Iterable[str]) -> List[Dict[str, Any]]:
         if row is not None:
             rows.append(row)
     for look in sorted(due, key=lambda lk: (_waiting_since(registry, lk), lk["slug"])):
+        if host_control.is_paused():
+            break  # paused since the look: the due homes keep their place for the sweep after Resume
         try:
             row = _sleep(registry, look, hosts)
         except Exception as e:  # noqa: BLE001 - its turn is spent: a failing home never holds the others back

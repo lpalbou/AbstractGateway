@@ -68,6 +68,20 @@ router = APIRouter(
 )
 
 
+def refuse_while_gateway_paused(request: Request) -> None:
+    """Route dependency of every door that starts an entity's cognition (a visit, a chat turn, a
+    summon, a meet, speech, a re-embed). The gateway pause is a kill switch (host_control): the
+    request is refused before anything is written or sent to a model (`GatewayPaused`, 409
+    `gateway_paused`); the same request works after Resume. Closing a visit or a chat, stopping
+    an entity and every read stay open."""
+    from .. import host_control
+
+    host_control.refuse_if_paused(f"{request.method} {request.url.path}")
+
+
+_PAUSE_GATED = [Depends(refuse_while_gateway_paused)]
+
+
 def _registry() -> EntityRegistry:
     svc = get_gateway_service()
     registry = getattr(svc, "entity_registry", None)
@@ -2050,7 +2064,7 @@ class VisitCloseRequest(BaseModel):
     )
 
 
-@router.post("/{name}/visit/open")
+@router.post("/{name}/visit/open", dependencies=_PAUSE_GATED)
 def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
     """Open a DURABLE visit: one run in the entity's own runtime, stamped at
     creation (visit_id + participants + posture ride the stamp), ticked to
@@ -2084,7 +2098,7 @@ def open_visit(name: str, req: OpenVisitRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(e))
 
 
-@router.post("/{name}/visit/{run_id}/turn")
+@router.post("/{name}/visit/{run_id}/turn", dependencies=_PAUSE_GATED)
 def visit_turn(name: str, run_id: str, req: VisitTurnRequest) -> Dict[str, Any]:
     from ..entity_visits import VisitRefused
 
@@ -2183,7 +2197,7 @@ def visit_close(name: str, run_id: str, req: VisitCloseRequest) -> Dict[str, Any
     return out
 
 
-@router.post("/{name}/visit/{run_id}/tick")
+@router.post("/{name}/visit/{run_id}/tick", dependencies=_PAUSE_GATED)
 def visit_tick(name: str, run_id: str) -> Dict[str, Any]:
     """Drive-to-park (walkthrough step 5b: after a mid-turn kill the run is
     RUNNING-not-parked; this drives it to its next park/terminal without a
@@ -2283,7 +2297,7 @@ class MeetCloseRequest(BaseModel):
     reason: str = Field(default="", description="Why — reaches each leg's reflection")
 
 
-@router.post("/meets/open")
+@router.post("/meets/open", dependencies=_PAUSE_GATED)
 def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
     """Open a two-entity meet: both legs summoned under ONE visit_id, each
     in its own home runtime. The authenticated principal is the CONVENER —
@@ -2326,7 +2340,7 @@ def _require_meet_visible(meet_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"no meet {meet_id!r} (open one with two entity names)") from None
 
 
-@router.post("/meets/{meet_id}/relay")
+@router.post("/meets/{meet_id}/relay", dependencies=_PAUSE_GATED)
 def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
 
@@ -2430,7 +2444,7 @@ def get_entity_embedding_status(name: str) -> Dict[str, Any]:
     return out
 
 
-@router.post("/{name}/reembed")
+@router.post("/{name}/reembed", dependencies=_PAUSE_GATED)
 def reembed_entity(name: str, req: ReembedRequest) -> Dict[str, Any]:
     """The M1b repair verb (operator-gated, never routine): re-derive the
     home's vector index with the door's resolved embedder under the
@@ -3190,7 +3204,7 @@ class CloseChatRequest(BaseModel):
     reflect: bool = Field(default=True, description="Run the session-end reflection (feelings move there)")
 
 
-@router.post("/{name}/chat/open")
+@router.post("/{name}/chat/open", dependencies=_PAUSE_GATED)
 async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
     """Open a hosted chat session (the web chat's backend — a2a 0007, the
     maintainer's chat drawer). Hosts the SAME ChatSession the `entity chat`
@@ -3266,7 +3280,7 @@ def _provider_error_name(e: BaseException) -> Optional[str]:
     return None
 
 
-@router.post("/{name}/chat/{chat_id}/turn")
+@router.post("/{name}/chat/{chat_id}/turn", dependencies=_PAUSE_GATED)
 async def entity_chat_turn(name: str, chat_id: str, req: ChatTurnRequest) -> Dict[str, Any]:
     """One honest turn. The response's `tools_ran` is DRIVER-AUTHORED
     (the marker-imitation lesson: what actually executed is a data field,
@@ -3525,7 +3539,7 @@ def _declared_context_window(req: "SummonEntityRequest", input_data: Dict[str, A
     return min(declared) if declared else None
 
 
-@router.post("/{name}/summon")
+@router.post("/{name}/summon", dependencies=_PAUSE_GATED)
 def summon_entity(name: str, req: SummonEntityRequest):
     """Summon the entity into a work session (thin wrapper: identity comes
     from the authenticated principal here; `_summon_core` carries the whole
@@ -6418,7 +6432,7 @@ def _entity_tts_request(name: str, req: "GatewayVoiceTTSRequest") -> Tuple[Any, 
     return manifest, tts_req, scope, source, ref
 
 
-@router.post("/{name}/voice/tts")
+@router.post("/{name}/voice/tts", dependencies=_PAUSE_GATED)
 async def entity_voice_tts(name: str, req: "GatewayVoiceTTSRequest", response: Response) -> Dict[str, Any]:
     """Speak AS the entity — the entity-owned TTS lane (non-stream twin).
 
@@ -6440,7 +6454,7 @@ async def entity_voice_tts(name: str, req: "GatewayVoiceTTSRequest", response: R
     return out
 
 
-@router.post("/{name}/voice/tts/stream")
+@router.post("/{name}/voice/tts/stream", dependencies=_PAUSE_GATED)
 async def entity_voice_tts_stream(name: str, req: "GatewayVoiceTTSRequest", request: Request):
     """Streaming twin of the entity TTS lane — same resolution, same
     delegation; `X-Voice-Source` rides the response headers (the JSONL

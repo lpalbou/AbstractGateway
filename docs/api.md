@@ -3135,7 +3135,15 @@ any authenticated principal; writes require an admin principal.
 ```
 
 - `POST /api/gateway/host/pause` (body `{"reason": "..."}` optional) and
-  `POST /api/gateway/host/resume` — both answer the payload above.
+  `POST /api/gateway/host/resume` — both answer the payload above. A paused
+  gateway is a kill switch (see [tray.md](./tray.md#pause)): no automation,
+  no entity activity and no model work until Resume. A request that would
+  start work answers `409` `{"detail": "...", "code": "gateway_paused"}`
+  (header `X-Gateway-Error-Code: gateway_paused`), and a `POST /v1/...`
+  answers `503` with the OpenAI error envelope and `code: "gateway_paused"`;
+  nothing was started, and the same request works after Resume. A run start
+  is still accepted and queued (`warnings` says so). Reads, settings,
+  unloading a model, cancelling a run and stopping an entity stay open.
 - `GET /api/gateway/host/metrics/live` — `{gpu, memory, runner}` in one call
   (1 s caches); `gpu`/`memory` carry the same in-band `supported` shape as
   `/host/metrics/gpu` and `/host/metrics/memory`.

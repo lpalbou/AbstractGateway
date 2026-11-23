@@ -58,9 +58,12 @@ unit, a desktop autostart entry, a Windows Run entry), asks before each change
 and shows the state read back from the gateway. Where nothing on the machine
 could start the gateway at login, it says why instead of offering the switch.
 
-**Workflows paused** (the Gateway card) is a switch for admins: on, no new
-workflow step starts and work already inside a call finishes; the console and
-the apps keep answering. A banner on every tab says so while it is on.
+**Workflows paused** (the Gateway card) is a switch for admins. On, the gateway
+is paused, which is a kill switch: no workflow step, entity activity or model
+work starts until you resume, and a call already running finishes. The console
+and the apps keep answering for reads, settings, unloading a model, cancelling a
+run and stopping an entity (see [Pause](./tray.md#pause)). A banner on every tab
+says so while it is on.
 
 **Last restart** (the Gateway card, admins) appears after the event-loop
 watchdog restarted the gateway: "Gateway restarted at <time> after a hang —

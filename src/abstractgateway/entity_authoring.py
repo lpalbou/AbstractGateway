@@ -40,6 +40,12 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
 
     from .entity_phase import GenerationMoved, acting_under, admission_fence
 
+    from . import host_control
+
+    if host_control.is_paused():
+        # The gateway is paused (its kill switch): nothing is authored. The records stay pending,
+        # no attempt is spent, and the first sweep after Resume drains them.
+        return {"skipped": "gateway_paused"}
     home_dir = Path(registry.entities_dir) / slug
     try:
         # ADMITTED FIRST (Codex review 3 #4): the generation this drain runs at is read before anything it
@@ -87,8 +93,9 @@ def drain_after_close(registry: Any, slug: str) -> Dict[str, Any]:
                     diary_text=_diary_text,
                     out=lambda line: logger.info("authoring drain %s: %s", slug, line),
                     # A Stop since the admission: no further call; its writes are refused inside their
-                    # transactions by the home's own fence (the runtime's commit guard).
-                    should_stop=fence.moved,
+                    # transactions by the home's own fence (the runtime's commit guard). The gateway
+                    # paused since: no further call either; what is left stays pending.
+                    should_stop=lambda: bool(fence.moved() or host_control.is_paused()),
                 )
         finally:
             lease.release()

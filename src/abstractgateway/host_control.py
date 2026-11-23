@@ -15,6 +15,24 @@ in the split layout (`serve --no-runner` + `abstractgateway runner`): the
 runner process stats it every couple of seconds (`maybe_reload`) so a pause
 written by the API process takes effect there too.
 
+PAUSE IS A KILL SWITCH (operator ruling 2026-11-19: "when the gateway is paused, NOTHING moves
+forward. no automation, no entity, no computation, NOTHING ... that can be resumed later on").
+Paused, this process starts no work of its own and sends no model work anywhere:
+
+- the runner schedules no tick and starts no step (`step_gate`);
+- every background loop that starts work waits (`wait_while_paused` / `is_paused`): the entity
+  sweeps (repair, need-check, idle sleep, authoring), the queue sweeper, the bridges, the mail and
+  push workers, the backlog runner;
+- an entity's own-time loop (its own process) freezes at its next boundary: it reads the pause file
+  named by `PAUSE_FILE_ENV`, which `configure` exports for every child this process starts;
+- no model work leaves the process (`gate_model_work`, called by the model host proxy before a
+  generation, an embedding, a model load): a request is refused (`GatewayPaused`, HTTP 409), and a
+  thread that declared it may wait (`parks_while_paused`: a workflow step in flight, a pass a sweep
+  started) waits there and continues at resume, so nothing fails because of a pause.
+
+What stays: the HTTP surface, the console and the tray (reading, settings, Resume), unloading a
+model, cancelling a run. A model call already in flight when the pause lands finishes.
+
 Restart/shutdown: the serving CLI registers the uvicorn ``Server`` here; a
 request handler asks for a restart by setting a flag and ``should_exit`` — the
 graceful shutdown uvicorn already implements (lifespan → runner drain → entity
@@ -33,13 +51,20 @@ import subprocess
 import sys
 import threading
 import weakref
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
 PAUSE_FILE_NAME = "gateway_paused.json"
 PAUSE_RELOAD_INTERVAL_S = 2.0
+# The pause file's path, exported by `configure` for the child processes this gateway starts (an
+# entity's own-time loop reads it at its boundaries: AbstractRuntime `identity.life.host_pause`).
+PAUSE_FILE_ENV = "ABSTRACTRUNTIME_HOST_PAUSE_FILE"
+# How often a waiting thread looks again (a stop must end the wait; a split runner process learns
+# of a resume from the file).
+PAUSE_WAIT_POLL_S = 1.0
 # Tray/console-initiated restarts should feel like seconds, not minutes: open
 # SSE tails (console ledger streams) are reconnectable, so the graceful drain
 # for a REQUESTED bounce is bounded tighter than the operator's SIGTERM path.
@@ -48,6 +73,13 @@ REQUESTED_EXIT_GRACEFUL_S = 10
 
 class HostControlError(RuntimeError):
     """A control request the process cannot honour (reported as HTTP 409)."""
+
+
+class GatewayPaused(RuntimeError):
+    """Work refused because the gateway is paused (HTTP 409, code `gateway_paused`). Nothing was
+    started and nothing was sent to a model; the same request works after Resume."""
+
+    code = "gateway_paused"
 
 
 def _utc_now_iso() -> str:
@@ -67,6 +99,19 @@ _pause_data_dir: Optional[Path] = None
 _resume_listeners: "List[weakref.ref]" = []
 _pause_file_seen: Optional[tuple] = None  # (mtime_ns, size) or None = absent
 _pause_last_stat = 0.0
+# Set while NOT paused: what a waiting thread waits on (`wait_while_paused`).
+_resumed = threading.Event()
+_resumed.set()
+# Threads that wait at the model gate instead of being refused (`parks_while_paused`).
+_parking = threading.local()
+
+
+def _sync_resumed_event() -> None:
+    """Make `_resumed` say what `_paused` says (caller changed `_paused`)."""
+    if _paused:
+        _resumed.clear()
+    else:
+        _resumed.set()
 
 
 def pause_file_path(data_dir: Path) -> Path:
@@ -102,6 +147,7 @@ def _load_from_disk(path: Path) -> None:
     else:
         _paused = False
         _paused_at = _paused_by = _pause_reason = None
+    _sync_resumed_event()
 
 
 def configure(data_dir: Path) -> Dict[str, Any]:
@@ -118,6 +164,8 @@ def configure(data_dir: Path) -> Dict[str, Any]:
         _pause_data_dir = Path(data_dir)
         _load_from_disk(pause_file_path(_pause_data_dir))
         _pause_last_stat = _time.monotonic()
+        # Every child this process starts from now on can read the pause (own-time loops).
+        os.environ[PAUSE_FILE_ENV] = str(pause_file_path(_pause_data_dir))
         return pause_snapshot()
 
 
@@ -174,6 +222,67 @@ def step_gate() -> bool:
     return not _paused and not stop_begun()
 
 
+def paused_refusal(what: str = "") -> str:
+    """The sentence a refused request gets."""
+    subject = str(what or "").strip() or "this request"
+    return (f"The gateway is paused: {subject} was not started. Nothing runs while it is paused "
+            "(no automation, no entity, no model). Resume it from the system tray or "
+            "Console > Resources > Resume, then send this again.")
+
+
+def refuse_if_paused(what: str = "") -> None:
+    """Raise `GatewayPaused` when paused: the door check of a request that would start work."""
+    if _paused:
+        raise GatewayPaused(paused_refusal(what))
+
+
+def wait_while_paused(stop: Optional[threading.Event] = None, *, poll_s: float = PAUSE_WAIT_POLL_S) -> bool:
+    """Block while the gateway is paused: the first line of a background loop's iteration.
+
+    Returns True when it waited at all. Ends when the gateway resumes, when `stop` is set, or when
+    this process begins to stop (the caller's own loop condition then ends it)."""
+    waited = False
+    while _paused:
+        if (stop is not None and stop.is_set()) or stop_begun():
+            break
+        waited = True
+        maybe_reload()  # a process whose pause comes from the file (the split runner) sees the resume
+        _resumed.wait(max(0.05, float(poll_s)))
+    return waited
+
+
+@contextmanager
+def parks_while_paused() -> Iterator[None]:
+    """Within this block, on this thread, model work WAITS while paused instead of being refused
+    (`gate_model_work`): for work that was started before the pause and must continue after it,
+    whole (a workflow step in flight, a pass a background sweep started). Never around a request
+    handler: a request must be refused at once, not held open until someone resumes."""
+    depth = int(getattr(_parking, "depth", 0))
+    _parking.depth = depth + 1
+    try:
+        yield
+    finally:
+        _parking.depth = depth
+
+
+def parking_allowed() -> bool:
+    return int(getattr(_parking, "depth", 0)) > 0
+
+
+def gate_model_work(what: str = "") -> None:
+    """Called before model work leaves this process (a generation, an embedding, a model load).
+
+    Not paused: returns. Paused: a thread inside `parks_while_paused` waits here until Resume (or
+    until the process begins to stop, when the caller's own stop handling takes over); any other
+    caller is refused with `GatewayPaused`."""
+    if not _paused:
+        return
+    if not parking_allowed():
+        raise GatewayPaused(paused_refusal(what))
+    logger.info("gateway paused: %s waits for Resume", str(what or "model work"))
+    wait_while_paused()
+
+
 def pause_snapshot() -> Dict[str, Any]:
     with _state_lock:
         return {
@@ -214,6 +323,7 @@ def pause(*, by: str = "operator", reason: Optional[str] = None) -> Dict[str, An
             _paused_at = _utc_now_iso()
             _paused_by = str(by or "operator")
             _pause_reason = str(reason).strip() if isinstance(reason, str) and reason.strip() else None
+            _sync_resumed_event()
             _persist_pause_state()
             logger.warning("gateway execution PAUSED by %s%s", _paused_by, f" ({_pause_reason})" if _pause_reason else "")
         return pause_snapshot()
@@ -228,6 +338,7 @@ def resume(*, by: str = "operator") -> Dict[str, Any]:
         _paused_at = None
         _paused_by = None
         _pause_reason = None
+        _sync_resumed_event()
         _persist_pause_state()
         listeners = [ref() for ref in _resume_listeners]
     if was_paused:
@@ -584,6 +695,9 @@ def _reset_for_tests() -> None:
     with _state_lock:
         _paused = False
         _paused_at = _paused_by = _pause_reason = None
+        _sync_resumed_event()
+        _parking.depth = 0
+        os.environ.pop(PAUSE_FILE_ENV, None)
         _pause_data_dir = None
         _pause_file_seen = None
         _pause_last_stat = 0.0

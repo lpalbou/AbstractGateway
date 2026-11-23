@@ -3028,7 +3028,10 @@ class GatewayRunner:
                 # boundaries only (introspected once per Runtime class).
                 # A stop (this runner's own, or the process's) closes it too: no new step starts.
                 tick_kwargs["step_gate"] = self._step_gate
-            state = runtime.tick(**tick_kwargs)
+            # A pause landing while a step is in flight: the model work that step still asks for
+            # waits for Resume on this thread (never refused), so no run fails because of a pause.
+            with host_control.parks_while_paused():
+                state = runtime.tick(**tick_kwargs)
         except EffectInterrupted:
             # The gateway stopped on purpose (its own stop, a Restart, a model-host restart for an
             # update) while this run's effect was in flight: not a failure. The runtime recorded no
