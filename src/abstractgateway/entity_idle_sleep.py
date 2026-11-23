@@ -171,6 +171,8 @@ def _not_idle(facts: Dict[str, Any], snap: Dict[str, Any], rec: Dict[str, Any]) 
         return "archived"
     if snap["phase"] != "idle":
         return str(snap["phase"])
+    if (facts.get("loop") or {}).get("unreadable"):
+        return "own_time_status_unreadable"  # a loop may be alive behind it: never a sleep written over it
     if bool((facts.get("loop") or {}).get("running")):
         # Idle at once when own time is withdrawn, while the loop finishes its turn (operator 2026-11-10
         # 23:09): never a sleep written under a live loop; the sweep looks again once it has exited.

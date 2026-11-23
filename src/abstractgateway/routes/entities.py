@@ -7347,10 +7347,9 @@ def put_personal_grant(name: str, req: PutPersonalGrantRequest, response: Respon
             )
         _apply_personal_grant(registry, manifest, mode=req.mode, expires_at=req.expires_at)
     if str(req.mode or "") == "disabled":
-        from ..entity_loop import loop_status as _ls_g, stop_loop as _stop_g
+        from ..entity_loop import stop_loop_if_running as _stop_g
 
-        if bool(_ls_g(home_dir).get("running")):
-            _stop_g(home_dir, reason="personal turned off (personal-grant)", requested_by="operator")
+        _stop_g(home_dir, reason="personal turned off (personal-grant)", requested_by="operator")
     _on = str(req.mode or "") != "disabled"
     _ep.set_resume_to(registry, manifest.slug, "personal" if _on else None)
     _ep.reconcile(registry, name, "toggle", operator=_on)
