@@ -197,21 +197,21 @@ class EventFollower:
         self._thread.start()
 
     def stop(self) -> None:
+        """Never blocks. The follower thread closes its own response (`follow_once`)."""
         self._stop.set()
         resp = self._response
         if resp is not None:
-            # A read blocked in another thread is only released by shutting the socket down
-            # (closing the file object does not interrupt recv).
+            # A read blocked in another thread is released by shutting the socket down (POSIX;
+            # Windows leaves that recv pending until the server closes or the read times out, on
+            # a daemon thread). Never `resp.close()` from here: it waits for the buffered
+            # reader's lock, which the blocked read holds — on Windows the tray's Quit hung
+            # there until the gateway killed it, before the icon was removed.
             try:
                 import socket
 
                 sock = getattr(getattr(getattr(resp, "fp", None), "raw", None), "_sock", None)
                 if sock is not None:
                     sock.shutdown(socket.SHUT_RDWR)
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                resp.close()
             except Exception:  # noqa: BLE001
                 pass
 

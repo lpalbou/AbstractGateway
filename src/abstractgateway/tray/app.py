@@ -564,12 +564,16 @@ class TrayApp:
         if self._stopping:
             return
         self._stopping = True
-        self._events.stop()
+        # The icon first: `Icon.stop()` only posts a message, and the icon leaves the
+        # notification area only when THIS process removes it. Whatever comes after must not
+        # stand in its way: the gateway terminates a helper that is still there after 3 s, and
+        # a terminated process leaves a ghost icon (Windows).
         try:
             if self._icon is not None:
                 self._icon.stop()
         except Exception:
             pass
+        self._events.stop()
 
     def _watchdog(self) -> None:
         """Exit with the parent; never outlive the gateway that spawned us."""

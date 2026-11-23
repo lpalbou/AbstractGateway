@@ -413,6 +413,15 @@ def _signal_server_exit() -> None:
         server.should_exit = True
     except Exception as exc:  # noqa: BLE001
         raise HostControlError(f"could not signal the server to exit: {exc}") from exc
+    # A requested exit is a stop like a signal: live streams end now (shutdown_drain.py). Setting
+    # `should_exit` alone skipped this, so the tray's own event stream held every Quit and Restart
+    # for the whole requested drain ("Cancel 1 running task(s), timeout graceful shutdown exceeded").
+    try:
+        from . import shutdown_drain
+
+        shutdown_drain.begin("restart" if _restart_requested else "shutdown")
+    except Exception:  # noqa: BLE001 - the exit is requested either way
+        pass
 
 
 def _refuse_if_update_running() -> None:
@@ -587,3 +596,6 @@ def _reset_for_tests() -> None:
         _request_by = _request_reason = None
         _relaunch_argv = None
         _update_job_running = lambda: False  # noqa: E731
+    from . import shutdown_drain
+
+    shutdown_drain.reset()  # a requested exit began the drain (_signal_server_exit)
