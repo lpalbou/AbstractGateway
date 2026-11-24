@@ -143,6 +143,12 @@ def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
         ({"allowed_only": "none", "any_except_denied": "none"}, True, "unsandboxed", "Unsandboxed commands allowed (flag)"),
         ({"allowed_only": "linux-landlock", "any_except_denied": "none"}, False, "partial",
          "Commands sandboxed: Linux Landlock (Deny everything, allow listed workspaces); otherwise commands refused"),
+        ({"allowed_only": "linux-landlock", "any_except_denied": "none"}, True, "partial",
+         "Commands sandboxed: Linux Landlock (Deny everything, allow listed workspaces); otherwise unsandboxed commands allowed (flag)"),
+        ({"allowed_only": "none", "any_except_denied": "windows-restricted-token"}, False, "partial",
+         "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise commands refused"),
+        ({"allowed_only": "none", "any_except_denied": "windows-restricted-token"}, True, "partial",
+         "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise unsandboxed commands allowed (flag)"),
     ],
 )
 def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool, state: str, line: str) -> None:
@@ -160,6 +166,8 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     assert fields["sandboxed"] is (state in ("sandboxed", "partial"))
     if state == "sandboxed":
         assert fields["sandbox"] == "Sandboxed to this run's workspaces"
+    if state == "partial":  # the tool card names the posture this host sandboxes, and what happens otherwise
+        assert fields["sandbox"] == "Sandboxed to this run's workspaces " + line[line.index("("):]
     assert command_sandbox.tool_sandbox_fields("read_file") is None
 
 
@@ -236,6 +244,11 @@ def test_a_real_serve_audits_the_flag_at_boot(tmp_path: Path, flag: bool) -> Non
         "NO_COLOR": "1",
         "R12W2_CANARY_TOKEN": "must-not-reach-commands",
     }
+    if os.name == "nt":
+        # What a Windows process cannot start without, and the home folder under its Windows names.
+        env.update({k: os.environ[k] for k in ("SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "windir") if k in os.environ})
+        env.update({"USERPROFILE": str(home), "APPDATA": str(home / "AppData" / "Roaming"), "LOCALAPPDATA": str(home / "AppData" / "Local"),
+                    "TEMP": str(home / "tmp"), "TMP": str(home / "tmp")})
     argv = [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray"]
     if flag:
         argv.append("--unsandboxed-commands")

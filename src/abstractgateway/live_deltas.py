@@ -135,7 +135,9 @@ _role_lock = threading.Lock()
 # 0.19.6: cancellation-safe state publication and diary-resolution replay (a behaviour: version-gated below).
 # 0.19.7: Windows: atomic saves retried while another thread reads the file (the run store, commands, artifacts)
 #         and local image and video generation in the media child process (a behaviour: version-gated below).
-ABSTRACTRUNTIME_FLOOR = "0.19.7"
+# 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds and own time
+#         runs (behaviours: version-gated below).
+ABSTRACTRUNTIME_FLOOR = "0.20.0"
 
 
 def _installed_runtime_version() -> str:
@@ -1077,6 +1079,12 @@ def require_runtime_features(runtime: Any) -> None:
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
     if installed != "unknown" and _version_tuple(installed) < _version_tuple(ABSTRACTRUNTIME_FLOOR):
+        missing.append(
+            "own-time loops that freeze while the gateway is paused, and a read-only workspace default that holds "
+            "on Windows (AbstractRuntime 0.20.0; with an older release a paused gateway's entities keep working, "
+            "and on Windows file tools write under a read-only default)"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.19.7"):
         missing.append(
             "Windows file saves while the file is read elsewhere and Windows local media generation (AbstractRuntime "
             "0.19.7; older releases can fail a run with \"[WinError 5] Access is denied\")"

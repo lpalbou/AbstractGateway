@@ -27,6 +27,11 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
+a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
+pause is a kill switch: while the gateway is paused no model work, sweep, bridge poll or own-time loop moves
+forward; on Windows, Quit from the tray stops the gateway at once. Pins: Runtime 0.20.0 and Core 2.38.0.
+
 **What's new in 0.22.0** ([CHANGELOG](CHANGELOG.md#0220---2026-11-18)): a new gateway asks for its admin
 password first on every OS (`claim`, `service install`, the tray and the desktop icon open "Set up your gateway"
 with the setup code already given); on Windows, `abstractgateway shortcut install` adds an AbstractGateway icon to

@@ -172,6 +172,10 @@ state line, with an explanation in its tooltip:
 - **Commands sandboxed: macOS sandbox-exec** (or Linux bubblewrap): every
   command a run starts is confined by the operating system to that run's
   workspaces.
+- **Commands sandboxed: Windows restricted token (Allow everything, refuse
+  listed workspaces); otherwise commands refused**: the host sandboxes the
+  runs of one posture; a run set to the other has its commands refused (Linux
+  Landlock reads the same way, with the other posture).
 - **Commands refused: no sandbox on this host**.
 - **Unsandboxed commands allowed (flag)**: the gateway was started with
   `serve --unsandboxed-commands`.

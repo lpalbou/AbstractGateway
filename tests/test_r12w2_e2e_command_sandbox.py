@@ -3,8 +3,8 @@
 execute_command) and the OS sandbox refuses it; an allowed nested child of a refused parent is
 listed; `~/.ssh` is unreadable; the run ledger keeps the per-command sandbox evidence.
 
-macOS only for the positive sandbox assertions (sandbox-exec); elsewhere the test asserts the
-fail-closed answer (no sandbox on this host) instead of silently passing.
+macOS (sandbox-exec) and Windows (restricted token) for the positive sandbox assertions; elsewhere
+the test asserts the fail-closed answer (no sandbox on this host) instead of silently passing.
 """
 
 from __future__ import annotations
@@ -21,6 +21,15 @@ from fastapi.testclient import TestClient
 from automations_fixtures import HEADERS, gateway_env, wait_until
 
 pytestmark = pytest.mark.basic
+
+WINDOWS = sys.platform == "win32"
+# The hosts whose sandbox this test proves, with the kind their results must carry.
+KIND = {"darwin": "macos-sandbox-exec", "win32": "windows-restricted-token"}.get(sys.platform)
+
+
+def _in_json(path: Path) -> str:
+    """A path as it reads inside JSON text (Windows separators are escaped there)."""
+    return json.dumps(str(path))[1:-1]
 
 _X = {"id": "exec-in", "label": "", "type": "execution"}
 _XO = {"id": "exec-out", "label": "", "type": "execution"}
@@ -80,14 +89,25 @@ def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disk: dict):
 
     command_sandbox._reset_for_tests()
     monkeypatch.setenv("HOME", str(disk["home"]))
+    monkeypatch.setenv("USERPROFILE", str(disk["home"]))  # the home folder, as Windows names it
     gateway_env(monkeypatch, tmp_path, runner=True)
-    ref = _bundle(tmp_path / "bundles", {
-        "ls_refused": f"ls -la {disk['refused']}",
-        "cat_refused_cd": f"cd {disk['home']} && cat Desktop/secret-desktop.txt",
-        "ls_child": f"ls {disk['child']}",
-        "ls_parent": f"ls {disk['parent']}",
-        "cat_ssh": f"cat {disk['ssh']}/id_marker",
-    })
+    if WINDOWS:
+        commands = {
+            "ls_refused": f'dir "{disk["refused"]}"',
+            "cat_refused_cd": f'cd /d "{disk["home"]}" && type Desktop\\secret-desktop.txt',
+            "ls_child": f'dir /b "{disk["child"]}"',
+            "ls_parent": f'dir /b "{disk["parent"]}"',
+            "cat_ssh": f'type "{disk["ssh"]}\\id_marker"',
+        }
+    else:
+        commands = {
+            "ls_refused": f"ls -la {disk['refused']}",
+            "cat_refused_cd": f"cd {disk['home']} && cat Desktop/secret-desktop.txt",
+            "ls_child": f"ls {disk['child']}",
+            "ls_parent": f"ls {disk['parent']}",
+            "cat_ssh": f"cat {disk['ssh']}/id_marker",
+        }
+    ref = _bundle(tmp_path / "bundles", commands)
     from abstractgateway.app import app
 
     with TestClient(app) as c:
@@ -132,20 +152,19 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
         {"path": str(disk["refused"]), "mode": "deny"}, {"path": str(disk["parent"]), "mode": "deny"}, {"path": str(disk["child"]), "mode": "rw"}]})
     assert r.status_code == 200, r.text
     ws = {"posture": "any_except_denied", "default_mode": "rw", "folders": []}
-    darwin = sys.platform == "darwin"
 
     run_id, res = _run(live, "ls_refused", ws)
     text = json.dumps(res)
     assert "secret-desktop.txt" not in text, text
-    if darwin:
-        assert res.get("sandbox", {}).get("kind") == "macos-sandbox-exec" or '"macos-sandbox-exec"' in text, text
-        assert str(disk["refused"]) in json.dumps(res.get("sandbox", {}).get("refused") or text)
+    if KIND:
+        assert res.get("sandbox", {}).get("kind") == KIND or f'"{KIND}"' in text, text
+        assert _in_json(disk["refused"]) in text  # the result names the refused folder it enforced
     else:
         assert "not sandboxed" in text.lower() or "refused" in text.lower(), text
     # The ledger keeps the per-command sandbox evidence (the stamp and the result's `sandbox`).
     ledger = _ledger_text(run_id)
     assert "_sandbox" in ledger or '"sandbox"' in ledger, ledger[:2000]
-    assert str(disk["refused"]) in ledger
+    assert _in_json(disk["refused"]) in ledger or str(disk["refused"]) in ledger
 
     _rid, res = _run(live, "cat_refused_cd", ws)
     assert "desktop secret" not in json.dumps(res)
@@ -157,7 +176,7 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
     assert "parent-only.txt" not in json.dumps(res)
 
     _rid, res = _run(live, "ls_child", ws)
-    if darwin:
+    if KIND:
         assert "child-file.txt" in json.dumps(res), res  # positive control: the reopened child is listed
 
 
@@ -180,5 +199,8 @@ def test_the_in_process_door_too(live: TestClient, disk: dict) -> None:
     text = json.dumps(results, default=str)
     assert "secret-desktop.txt" not in text, text
     if sys.platform == "darwin":
-        assert "Operation not permitted" in text and "macos-sandbox-exec" in text, text
-    assert str(disk["refused"]) in _ledger_text(run_id)
+        assert "Operation not permitted" in text, text
+    if KIND:
+        assert KIND in text, text
+    ledger = _ledger_text(run_id)
+    assert _in_json(disk["refused"]) in ledger or str(disk["refused"]) in ledger

@@ -23,7 +23,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, pinned to 0.19.7): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.20.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -752,7 +752,7 @@ flowchart TB
   Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
-  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
+  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock, a Windows restricted token); the most specific workspace wins on every platform"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,

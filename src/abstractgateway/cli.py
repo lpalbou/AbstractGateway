@@ -1071,9 +1071,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         dest="unsandboxed_commands",
         help="Allow commands (execute_command, the shell, local helpers) to run WITHOUT an operating-system sandbox "
-        "on a host that has none (no macOS sandbox-exec, no Linux bubblewrap/Landlock). Off by default: there, "
-        "commands are refused. Where a sandbox exists, every command is confined to its run's workspaces whatever "
-        "this flag says. Audited at boot and shown on the console (Security). There is no environment variable.",
+        "where the host cannot sandbox them: a host that has none (no macOS sandbox-exec, no Linux "
+        "bubblewrap/Landlock), or a run whose workspace policy the host's sandbox cannot express (Linux Landlock "
+        "and Windows each express one posture). Off by default: there, commands are refused. Where the sandbox "
+        "applies, every command is confined to its run's workspaces whatever this flag says. Audited at boot and "
+        "shown on the console (Security). There is no environment variable.",
     )
     serve.add_argument(
         "--push-relay",
