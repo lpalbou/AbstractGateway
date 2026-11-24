@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1120,6 +1120,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-command-is-refused-or-a-program-fails-inside-the-command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command is refused, or a program fails inside the command sandbox
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#replies-arrive-only-at-the-end-no-live-text" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1851,6 +1862,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-command-is-refused-or-a-program-fails-inside-the-command-sandbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command is refused, or a program fails inside the command sandbox
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#replies-arrive-only-at-the-end-no-live-text" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2352,7 +2374,7 @@ or easy to guess, on a non-loopback bind or with public wildcard origins.</p>
 <p>The installed AbstractRuntime lacks live token deltas or the built-in tool
 deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"abstractruntime==0.19.7"</span><span class="w">   </span><span class="c1"># the version this gateway pins</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"abstractruntime==0.20.0"</span><span class="w">   </span><span class="c1"># the version this gateway pins</span>
 </code></pre></div>
 <h3 id="the-one-time-sign-in-link-does-not-work">The one-time sign-in link does not work<a class="headerlink" href="#the-one-time-sign-in-link-does-not-work" title="Permanent link">&para;</a></h3>
 <p><strong>Checks and fixes.</strong></p>
@@ -2417,7 +2439,7 @@ from the console's <strong>Accounts</strong> tab (<strong>Rotate</strong> on the
 <h3 id="the-gateway-does-not-start-an-abstractruntime-module-is-missing">The gateway does not start: an AbstractRuntime module is missing<a class="headerlink" href="#the-gateway-does-not-start-an-abstractruntime-module-is-missing" title="Permanent link">&para;</a></h3>
 <p><code>serve</code> or <code>runner</code> stops with <code>No module named 'abstractruntime.automation_queries'</code>
 (or <code>abstractruntime.automations</code>): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.19.7 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.20.0 or later in the gateway's Python, then start again. See
 <a href="../automations/#before-you-start">automations.md</a>.</p>
 <h3 id="the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75">The log shows <code>[FATAL] gateway watchdog</code> and the gateway restarted (exit code 75)<a class="headerlink" href="#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75" title="Permanent link">&para;</a></h3>
 <p>The event loop was blocked for longer than <code>serve --watchdog-seconds</code>
@@ -2579,6 +2601,33 @@ console (Workflows → <em>Default workflow per app</em>), or run
 to the built-in default. A 400 means the request itself is wrong: <code>interface</code>
 is missing, or <code>bundle_id</code>/<code>bundle_version</code> were sent with <code>@default</code>. See
 <a href="../configuration/#default-agent-workflow">configuration.md</a>.</p>
+<h3 id="a-command-is-refused-or-a-program-fails-inside-the-command-sandbox">A command is refused, or a program fails inside the command sandbox<a class="headerlink" href="#a-command-is-refused-or-a-program-fails-inside-the-command-sandbox" title="Permanent link">&para;</a></h3>
+<p>Every command an agent runs (<code>execute_command</code>, the local helpers) runs inside
+the host's <a href="../security/#command-sandbox">command sandbox</a>. The tool result
+says what happened, and the console shows the host's state under Accounts.</p>
+<ul>
+<li><strong>"Commands are not sandboxed on this gateway host, so they are refused:
+  …"</strong>: the host cannot sandbox this run, and the sentence gives the reason.
+  On Windows the sandbox covers runs set to "Allow everything, refuse listed
+  workspaces" with read &amp; write by default: choose that for the run (or the
+  account, or the gateway) in Workspaces, and mark the folders to protect
+  read-only or refused. On Linux, install bubblewrap. To run commands without
+  a sandbox instead, start the gateway with <code>--unsandboxed-commands</code>.</li>
+<li><strong>Exit code 126 and "sandbox: … the command did not run"</strong> (Windows): a rule
+  could not be written. The message names the folder: a refused or read-only
+  row points at a folder your account can read but whose permissions it cannot
+  change. Remove that row, or point it at a folder you own.</li>
+<li><strong><code>curl</code> or <code>Invoke-WebRequest</code> cannot open an HTTPS address</strong> (Windows):
+  Windows' built-in TLS is not available inside the sandbox. Use a program
+  with its own TLS (<code>python</code>, <code>node</code>, <code>git</code>), or the agent's <code>fetch_url</code> tool.</li>
+<li><strong>"cannot start the command" for <code>python</code>, <code>pwsh</code> or <code>winget</code></strong> (Windows):
+  the Store app aliases under <code>WindowsApps</code> do not start inside the sandbox.
+  Install the program normally, or call it by its full path.</li>
+<li><strong>"Access is denied" on a folder the run should reach</strong>: the folder, or one
+  that contains it, is refused for this run, or it is one of the built-in
+  refusals (the gateway's data folder, <code>.ssh</code>, cloud credential folders).
+  Workspaces in the console shows the run's effective rows.</li>
+</ul>
 <h3 id="replies-arrive-only-at-the-end-no-live-text">Replies arrive only at the end (no live text)<a class="headerlink" href="#replies-arrive-only-at-the-end-no-live-text" title="Permanent link">&para;</a></h3>
 <ul>
 <li>The run did not ask for streaming: send <code>input_data._runtime.stream: true</code>,

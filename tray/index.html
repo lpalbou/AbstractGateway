@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1897,19 +1897,35 @@ applies to both.</p>
 row on Windows and Linux (unticked = paused) — is process-wide and <strong>persists
 across restarts</strong>: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
-instead (see <em>Conversations</em>). While the gateway is paused:</p>
+instead (see <em>Conversations</em>).</p>
+<p>Pause is a <strong>kill switch</strong>: while the gateway is paused nothing moves forward,
+and everything continues from where it was when you resume.</p>
 <ul>
-<li>no new workflow step starts — runs, schedules and bridge-started work are
-  accepted and wait;</li>
-<li>a step already inside an LLM or tool call finishes first (the menu says
-  "Finishing N runs at the next step");</li>
-<li>the console, the API and connected apps keep answering; cancelling a run
-  still works;</li>
-<li>summoned entities' own-time loops are <strong>not</strong> affected (they are separate
-  processes with their own lifecycle controls);</li>
+<li><strong>Automations and runs.</strong> No new workflow step starts — runs and schedules
+  are accepted and wait. A model or tool call already in flight finishes first
+  (the menu says "Finishing N runs at the next step"); if that step asks for
+  another model call, the call waits for Resume instead of failing.</li>
+<li><strong>Entities.</strong> No visit, chat turn, summon, meet or speech is started (the
+  request answers <code>409</code> <code>gateway_paused</code>). The background sweeps start no
+  sleep, write no title, summary or brief, and wake nobody. An entity's
+  own-time loop (a separate process) freezes at its next boundary — after the
+  turn it is in — and continues the same day at Resume.</li>
+<li><strong>Models.</strong> No generation, embedding, speech, image or model load leaves the
+  gateway: not from the gateway API, not from <code>/v1/...</code> (<code>503</code>
+  <code>gateway_paused</code>), not from a background task. A model you unload stays
+  unloaded. <strong>Keep loaded</strong> and a new default model are recorded and applied
+  at Resume. Reading what is loaded and unloading it stay available.</li>
+<li><strong>Bridges and mail.</strong> Telegram, the Agora bridge, the mailbox and feed
+  watchers and push notifications do not poll or deliver; what arrived
+  meanwhile is handled at Resume.</li>
+<li>The console, the API and connected apps keep answering (reading, settings,
+  Resume); cancelling a run and stopping an entity still work.</li>
 <li><code>GET /api/health</code> carries <code>"paused": true</code> while <code>status</code> stays
   <code>"healthy"</code> — a supervisor must never recycle a paused gateway.</li>
 </ul>
+<p>What a pause does not do: it does not cut a model call that is already
+running (stop the run, or unload the model, for that), and it does not unload
+anything by itself.</p>
 <p>Pause reaches inside a tick: AbstractRuntime's <code>Runtime.tick(step_gate=…)</code>
 consults the gateway's gate at every step boundary. Where the runtime does
 not offer that gate, the pause takes effect at tick boundaries (up to
@@ -1917,7 +1933,10 @@ not offer that gate, the pause takes effect at tick boundaries (up to
 <code>step_gate_supported</code> and the menu says so.</p>
 <p>In the split layout (<code>serve --no-runner</code> + <code>abstractgateway runner</code>) the
 pause is written to <code>&lt;data_dir&gt;/gateway_paused.json</code> and the runner process
-picks it up within about two seconds.</p>
+picks it up within about two seconds. The same file is how an entity's
+own-time loop learns of the pause: the gateway names it to every process it
+starts (<code>ABSTRACTRUNTIME_HOST_PAUSE_FILE</code>), and the loop reads it at each
+boundary (about every five seconds while it waits).</p>
 <h2 id="restart-and-update">Restart and update<a class="headerlink" href="#restart-and-update" title="Permanent link">&para;</a></h2>
 <p><strong>Restart</strong> asks uvicorn for its normal graceful shutdown (runner drain,
 entity close), then relaunches the same command in the same environment

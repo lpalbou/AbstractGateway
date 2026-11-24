@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1042,6 +1042,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#on-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On Windows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#browser-probe" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1582,6 +1593,17 @@
   
     <nav class="md-nav" aria-label="Command sandbox">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-windows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On Windows
+      
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#browser-probe" class="md-nav__link">
@@ -2675,8 +2697,13 @@ interpreters are all confined by the kernel:</p>
 <li><strong>Linux</strong>: bubblewrap (<code>bwrap</code>) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.</li>
-<li><strong>Anything else</strong> (Windows, Linux without either): the command is
-  <strong>refused</strong> with one sentence and the run continues.</li>
+<li><strong>Windows</strong>: a restricted token and access-list entries, for runs set to
+  "Allow everything, refuse listed workspaces" with read &amp; write by default
+  (the default posture). See <a href="#on-windows">On Windows</a> for what it enforces
+  and its limits.</li>
+<li><strong>Anything else</strong> (Linux without either, a posture the host's sandbox cannot
+  express): the command is <strong>refused</strong> with one sentence that says why, and
+  the run continues.</li>
 </ul>
 <p>Every command starts from the gateway's <strong>scrubbed environment</strong>. This is the
 same scrub the gateway applies to the apps it starts: nothing named
@@ -2687,10 +2714,12 @@ per process at boot (<code>command_sandbox.configure_at_boot</code>, from
 <code>start_gateway_runner</code>; AbstractCore's <code>configure_host</code>). From then on a
 spawning tool call that does not carry a run's sandbox is refused.</p>
 <p><strong><code>abstractgateway serve --unsandboxed-commands</code></strong> (also on the split
-<code>abstractgateway runner</code>) re-enables commands on a host with <strong>no</strong> sandbox.
+<code>abstractgateway runner</code>) re-enables commands where the host cannot sandbox
+them: a host with <strong>no</strong> sandbox, or a run whose posture the host's sandbox
+cannot express (Linux Landlock and Windows each express one posture).
 They then run with the gateway's own file access, still with the scrubbed
 environment. The flag is off by default and has no environment variable. Where
-a sandbox exists it changes nothing. With <code>--reload</code> it is ignored (the app
+the sandbox applies it changes nothing. With <code>--reload</code> it is ignored (the app
 runs in uvicorn's reloader child). It is audited at boot as
 <code>command_sandbox_configured</code>
 <code>{actor: "system:serve"|"system:runner", source, kind, state, line, unsandboxed_commands_allowed, env_keys}</code>.</p>
@@ -2702,6 +2731,10 @@ under the Accounts head, with <code>sentence</code> as its tooltip, and the term
 console shows it on its Workspaces page:</p>
 <ul>
 <li><code>Commands sandboxed: macOS sandbox-exec</code> (or <code>Linux bubblewrap</code>)</li>
+<li><code>Commands sandboxed: Windows restricted token (Allow everything, refuse
+  listed workspaces); otherwise commands refused</code> (state <code>partial</code>: the host
+  sandboxes one posture; Linux Landlock reads the same way with "Deny
+  everything, allow listed workspaces")</li>
 <li><code>Commands refused: no sandbox on this host</code></li>
 <li><code>Unsandboxed commands allowed (flag)</code></li>
 </ul>
@@ -2712,14 +2745,82 @@ so the apps' tool cards can show the state.</p>
 paths it enforced (the hidden <code>_sandbox</code> argument, recorded with the tool call
 in the run ledger). The tool result carries <code>sandbox: {kind, label, posture,
 default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...],
-builtin_refused: &lt;count&gt;}</code> and the line <code>Sandbox: macOS sandbox-exec</code>, or
-<code>Sandbox: none — commands refused on this host</code>.</p>
+builtin_refused: &lt;count&gt;}</code> and the line <code>Sandbox: macOS sandbox-exec</code> (or
+<code>Sandbox: Windows restricted token</code>, <code>Sandbox: Linux bubblewrap</code>), or
+<code>Sandbox: none — commands refused on this host</code>. <code>kind</code> is one of
+<code>macos-sandbox-exec</code>, <code>linux-bwrap</code>, <code>linux-landlock</code>,
+<code>windows-restricted-token</code>, <code>unsandboxed</code>, <code>none</code>.</p>
 <p><strong>Nested workspaces</strong> follow the most-specific-row rule on every platform: an
 allowed workspace inside a refused folder is reachable (read &amp; write when it
 says so), the rest of the refused folder is not, and a refused folder inside
 the allowed one refuses its subtree again. On Linux, bubblewrap binds the
 allowed folder after masking its refused parent; Landlock grants the allowed
 folder alone.</p>
+<h3 id="on-windows">On Windows<a class="headerlink" href="#on-windows" title="Permanent link">&para;</a></h3>
+<p>The Windows sandbox starts each command with a <strong>restricted token</strong> and
+enforces the run's workspaces with entries in the folders' own access lists.
+It applies to runs set to <strong>"Allow everything, refuse listed workspaces" with
+read &amp; write by default</strong>, which is what a fresh gateway uses:</p>
+<ul>
+<li>A <strong>refused</strong> workspace, and every built-in refusal (the gateway's data
+  folder, <code>.ssh</code> and the other credential folders), is closed to the command
+  and to everything it starts: it cannot be listed, read, written, renamed or
+  deleted, whatever spelling of the path is used.</li>
+<li>A <strong>read-only</strong> workspace can be read and run from, never written.</li>
+<li>The run's <strong>own folder</strong> inside the gateway's data folder works normally;
+  the rest of the data folder, other sessions' folders included, stays closed.</li>
+<li>Everything else behaves as it does for you: the command reads and writes
+  what your account can.</li>
+<li>String commands run through <code>cmd.exe</code>, exactly as they do without the
+  sandbox, with the scrubbed environment and the run's private temp folder.</li>
+</ul>
+<p>A run set to <strong>"Deny everything, allow listed workspaces"</strong>, or to <strong>read-only
+by default</strong>, cannot be expressed by this sandbox: its commands are refused
+with that reason (the file tools still follow the run's workspaces). The state
+line says so: <code>Commands sandboxed: Windows restricted token (Allow everything,
+refuse listed workspaces); otherwise commands refused</code>.</p>
+<p>What to know:</p>
+<ul>
+<li><strong>The rules stay on the folders.</strong> The first command of a run writes one or
+  two entries on each refused or read-only folder, for identifiers that begin
+  with <code>S-1-9-</code> (Windows shows them as unknown accounts) and one for
+  <code>OWNER RIGHTS</code>. They are left in place, cost nothing afterwards, and mean
+  nothing to any other program: your own access is unchanged. For a read-only
+  workspace the entries are also inherited by its content, so the first use of
+  a large folder takes a moment. In the gateway's data folder the entries are
+  on the folder and on each thing directly inside it, and the folder keeps the
+  time of its last check in a named stream
+  (<code>&lt;folder&gt;:abstractcore-sandbox-&lt;id&gt;</code>).</li>
+<li><strong>A folder you cannot change the permissions of cannot be refused.</strong> If a
+  refused or read-only row points at a folder your account can read but does
+  not own (a system folder, for example), the command does not run and its
+  result says which folder; remove the row or point it at your own folder.</li>
+<li><strong>Windows' built-in TLS is not available inside the sandbox.</strong> <code>curl.exe</code>,
+  PowerShell's <code>Invoke-WebRequest</code> and .NET programs fail to open HTTPS
+  connections there. Programs that bring their own TLS work: Python, Node.js,
+  Git (with its OpenSSL backend), <code>pip</code>, <code>npm</code>. The agent's <code>fetch_url</code> tool
+  does not run as a command and is not affected. Programs installed as Store
+  app aliases (the <code>python</code>, <code>pwsh</code> and <code>winget</code> stubs under <code>WindowsApps</code>)
+  do not start inside the sandbox either; use a regular install.</li>
+<li><strong>It confines file access, not everything a determined program can do.</strong> The
+  command runs as you. It can ask another service of your Windows session to
+  act for it (the Task Scheduler, another of your processes), and it can
+  rename or remove a refused folder through a parent folder it may write; what
+  the refused folder held stays unreadable to it. Treat "Allow everything,
+  refuse listed workspaces" as protection against a command wandering into
+  folders it should not touch, on every platform.</li>
+<li><strong>Paths, not copies.</strong> A file that also exists under another name outside
+  the refused folder (a hard link made earlier) is reached through that name.
+  A refused path that does not exist is not refused when it appears later
+  during the same command (as with bubblewrap).</li>
+<li><strong>Content that arrives with its own permissions.</strong> What is created in the
+  gateway's data folder is closed before the next command starts, whatever
+  permissions it was made with. A file or folder <em>moved</em> there from elsewhere
+  on the same drive, or given permissions of its own by hand afterwards, keeps
+  them. In a read-only workspace, what is created normally inherits the rule;
+  a file created later with permissions of its own, moved in, or given
+  permissions by hand, keeps them and can be written.</li>
+</ul>
 <h3 id="browser-probe">Browser probe<a class="headerlink" href="#browser-probe" title="Permanent link">&para;</a></h3>
 <p><code>browser_probe</code> (the render check for a page an agent wrote) never opens a
 local page as <code>file://</code>. The page is served to the headless browser from a

@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1339,7 +1339,7 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
 <ul>
 <li><strong>AbstractGateway</strong> (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.</li>
-<li><strong>AbstractRuntime</strong> (required, pinned to 0.19.7): run model, tick loop, workflow registry, stores,
+<li><strong>AbstractRuntime</strong> (required, pinned to 0.20.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.</li>
@@ -2029,7 +2029,7 @@ and the account's credential folders:</p>
   Level --&gt; Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --&gt; Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --&gt; Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
-  Tools --&gt; Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
+  Tools --&gt; Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock, a Windows restricted token); the most specific workspace wins on every platform"]
 </code></pre></div>
 <p>The rules are whole-folder prefixes, never a listing of a folder's contents,
 so the model's prompt stays the same from turn to turn. An admin can turn the

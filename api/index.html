@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -4042,7 +4042,9 @@ allowed one.</p>
 "sandboxed"|"partial"|"unsandboxed"|"refused", kind, line, sentence,
 unsandboxed_commands_allowed, configured, flag}</code>. <code>line</code> is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and <code>sentence</code> is its
-tooltip; see <a href="../security/#command-sandbox">security.md</a>.</p>
+tooltip. <code>state</code> is <code>partial</code> on a host whose sandbox expresses one posture
+only (Windows, Linux Landlock): <code>line</code> names the posture it sandboxes and what
+happens to the other; see <a href="../security/#command-sandbox">security.md</a>.</p>
 <h3 id="account-the-accounts-default-subset">Account: the account's default subset<a class="headerlink" href="#account-the-accounts-default-subset" title="Permanent link">&para;</a></h3>
 <p><code>GET /api/gateway/workspace/policy/{account}</code> (<code>{account}</code> = <code>name</code>,
 <code>tenant:name</code>, an entity's slug, or <code>me</code>) → <code>{ok, policy: {account,
@@ -5893,7 +5895,7 @@ result rather than making Flow authoring nodes unavailable.</p>
 <p><code>/api/gateway/memory/*</code> serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (<code>abstractruntime.integrations.abstractmemory.memory_facade</code>); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.19.7 and AbstractMemory 0.5.2.</p>
+(ADR 0001). Requires AbstractRuntime 0.20.0 and AbstractMemory 0.5.2.</p>
 <p><strong>Plane and home.</strong> Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:</p>
 <ul>
@@ -6532,7 +6534,15 @@ any authenticated principal; writes require an admin principal.</p>
 </code></pre></div>
 <ul>
 <li><code>POST /api/gateway/host/pause</code> (body <code>{"reason": "..."}</code> optional) and
-  <code>POST /api/gateway/host/resume</code> — both answer the payload above.</li>
+  <code>POST /api/gateway/host/resume</code> — both answer the payload above. A paused
+  gateway is a kill switch (see <a href="../tray/#pause">tray.md</a>): no automation,
+  no entity activity and no model work until Resume. A request that would
+  start work answers <code>409</code> <code>{"detail": "...", "code": "gateway_paused"}</code>
+  (header <code>X-Gateway-Error-Code: gateway_paused</code>), and a <code>POST /v1/...</code>
+  answers <code>503</code> with the OpenAI error envelope and <code>code: "gateway_paused"</code>;
+  nothing was started, and the same request works after Resume. A run start
+  is still accepted and queued (<code>warnings</code> says so). Reads, settings,
+  unloading a model, cancelling a run and stopping an entity stay open.</li>
 <li><code>GET /api/gateway/host/metrics/live</code> — <code>{gpu, memory, runner}</code> in one call
   (1 s caches); <code>gpu</code>/<code>memory</code> carry the same in-band <code>supported</code> shape as
   <code>/host/metrics/gpu</code> and <code>/host/metrics/memory</code>.</li>

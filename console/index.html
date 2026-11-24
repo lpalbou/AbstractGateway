@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1470,9 +1470,12 @@ switch for admins: it names the mechanism (a LaunchAgent, a systemd user
 unit, a desktop autostart entry, a Windows Run entry), asks before each change
 and shows the state read back from the gateway. Where nothing on the machine
 could start the gateway at login, it says why instead of offering the switch.</p>
-<p><strong>Workflows paused</strong> (the Gateway card) is a switch for admins: on, no new
-workflow step starts and work already inside a call finishes; the console and
-the apps keep answering. A banner on every tab says so while it is on.</p>
+<p><strong>Workflows paused</strong> (the Gateway card) is a switch for admins. On, the gateway
+is paused, which is a kill switch: no workflow step, entity activity or model
+work starts until you resume, and a call already running finishes. The console
+and the apps keep answering for reads, settings, unloading a model, cancelling a
+run and stopping an entity (see <a href="../tray/#pause">Pause</a>). A banner on every tab
+says so while it is on.</p>
 <p><strong>Last restart</strong> (the Gateway card, admins) appears after the event-loop
 watchdog restarted the gateway: "Gateway restarted at <time> after a hang —
 <reason>", the reason naming the code the event loop was stuck in and the
@@ -1570,6 +1573,10 @@ state line, with an explanation in its tooltip:</p>
 <li><strong>Commands sandboxed: macOS sandbox-exec</strong> (or Linux bubblewrap): every
   command a run starts is confined by the operating system to that run's
   workspaces.</li>
+<li><strong>Commands sandboxed: Windows restricted token (Allow everything, refuse
+  listed workspaces); otherwise commands refused</strong>: the host sandboxes the
+  runs of one posture; a run set to the other has its commands refused (Linux
+  Landlock reads the same way, with the other posture).</li>
 <li><strong>Commands refused: no sandbox on this host</strong>.</li>
 <li><strong>Unsandboxed commands allowed (flag)</strong>: the gateway was started with
   <code>serve --unsandboxed-commands</code>.</li>
