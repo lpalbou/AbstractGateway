@@ -10,6 +10,88 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-24
+
+### Added
+
+- **Agents' commands run on Windows, inside a sandbox** (`command_sandbox.py`; AbstractCore 2.38.0,
+  AbstractRuntime 0.20.0). On Windows `execute_command` and the local helpers were refused ("Refused: no
+  command sandbox on this host"). They run inside AbstractCore's Windows sandbox for runs set to "Allow
+  everything, refuse listed workspaces" with read & write by default, the posture of a fresh gateway: refused
+  workspaces and the built-in refusals (the data folder, credential folders) are closed to the command, a
+  read-only workspace cannot be written, and the run's own folder works. The console, the terminal console and
+  the apps' tool cards show the host's state: `Commands sandboxed: Windows restricted token (Allow everything,
+  refuse listed workspaces); otherwise commands refused`. A run set to "Deny everything, allow listed
+  workspaces", or to a read-only default, has its commands refused with that reason, since the Windows sandbox
+  cannot express either. What it enforces and its limits: `docs/security.md`, "On Windows".
+
+### Changed
+
+- **Pause is a kill switch: while the gateway is paused, nothing moves forward** (`host_control.py`). Pause used
+  to stop the workflow runner only: a paused gateway still ran the entity sweeps (an idle sleep embedded memories
+  and wrote titles, summaries and briefs, which loaded the embedding model and the summaries model again after
+  they were unloaded), served generations on `/v1` and the gateway API, polled its bridges and mailboxes, and left
+  entities' own-time loops running. Now, while paused:
+  - no model work leaves the gateway: the model host proxy refuses every generation, embedding, speech stream,
+    prompt-cache operation and model load (`GatewayPaused`: `409` `gateway_paused`; `503` with the OpenAI error
+    envelope on `POST /v1/...`), and so do the two calls that go straight to an endpoint (the remote embeddings
+    route, the triage LLM assist). Reading what is loaded and unloading it stay available;
+  - the entity sweeps (repair, need-check, idle sleep, authoring), the queue sweeper, the Telegram and Agora
+    bridges, the mail and feed watchers, the push dispatcher and the backlog runner wait for Resume;
+  - a visit, chat turn, summon, meet, speech or re-embed is refused at its door before anything is written, and
+    so is a sleep with its maintenance pass;
+  - an entity's own-time loop freezes at its next boundary and continues the same day at Resume (it reads the
+    pause file the gateway names in `ABSTRACTRUNTIME_HOST_PAUSE_FILE`; needs the AbstractRuntime that has
+    `identity.life.host_pause`, and with an older one the loop is not started while paused);
+  - a client built in the model host loads no model (an embeddings client, whose build loads its model, is not
+    built until Resume), and **Keep loaded** and a new default model are recorded and applied at Resume.
+
+  Work that was in flight is not failed by a pause: a workflow step, or a pass a sweep started, waits at its
+  next model call and continues at Resume. A model call already running when the pause lands finishes.
+- **The command-sandbox state names the posture a host sandboxes, whichever it is** (`command_sandbox.state`,
+  `GET /api/gateway/workspace/policy`, `GET /api/gateway/discovery/tools`). The `partial` state described
+  Linux Landlock only. It reads the same way for any sandbox that expresses one posture: `Commands sandboxed:
+  <kind> (<posture>); otherwise commands refused` (or `otherwise unsandboxed commands allowed (flag)`), and the
+  tool rows say `Sandboxed to this run's workspaces (<posture>); otherwise …`. `--unsandboxed-commands` applies
+  wherever the host cannot sandbox a command.
+- **Dependency pins**: AbstractCore 2.38.0 (the Windows command sandbox; 2.37.0: streamed native tool calls
+  arrive once and complete), AbstractRuntime 0.20.0 (the read-only default on Windows, local helper commands
+  on Windows, host pause).
+
+### Fixed
+
+- **An idle entity with nothing new is no longer put to sleep every 24 hours** (`entity_idle_sleep.sleep_due`).
+  The hours threshold fired on the clock alone, so an entity nobody visited and nobody gave time to slept once a
+  day forever, each night embedding, dreaming and writing a brief over the same memories. The clock now counts
+  only when at least one memory formed since his last completed sleep (as the fragmented-share threshold already
+  required). His first sleep still comes `sleep.after_hours` after his birth, because what his birth formed has
+  never been consolidated.
+- **An own-time status that cannot be read is said, and nothing is started over it** (`entity_phase.py`,
+  `entity_idle_sleep.py`, `entity_loop.py`, `routes/entities.py`). When the read of an entity's `loop_status`
+  raised, the phase bar folded it into "His own time is not running. Retry to start it.", and each Retry met the
+  same error (on Windows every read raised: `module 'os' has no attribute 'WNOHANG'`, fixed in AbstractRuntime).
+  A status nobody can read is unknown, never "not running": the bar now answers `blocked.code
+  own_time_status_unreadable` ("His own-time status can't be read (<kind of error>). Nothing was started or
+  stopped.", no Retry; the detail is in `warnings`), reconcile and Retry start nothing over it, the idle sweep
+  writes no sleep over it, a remembered return to own time is kept, and turning own time off no longer answers
+  500: the grant is revoked and the stop is enqueued for a loop that may be there. Stop works as before.
+- **One liveness probe for an entity's loop** (`entity_phase._pid_liveness`): the gateway's own copy called
+  `os.waitpid(pid, os.WNOHANG)` and `os.kill(pid, 0)`, neither of which works on Windows. It now asks the
+  runtime's probe (`abstractruntime.identity.life._pid_state`; needs the AbstractRuntime release that carries
+  `utils.os_process` to work on Windows).
+- **Quit from the tray stops the gateway at once and removes its icon** (`host_control.py`, `tray/app.py`,
+  `tray/events.py`). Quit (and Restart) from the tray or the console set uvicorn's `should_exit` without
+  beginning the bounded stop of `shutdown_drain.py`, so the tray's own `/me/events/stream` held every
+  requested exit for the whole 10 s drain ("Cancel 1 running task(s), timeout graceful shutdown exceeded").
+  A requested exit now ends live streams the moment it is asked for, as a stop signal does. On Windows the
+  icon then stayed in the notification area as a ghost: the tray's `stop()` stopped its event follower
+  first, whose `resp.close()` waited for the lock the blocked stream read held (Windows does not wake that
+  read on `shutdown()`), so `Icon.stop()` was never reached and the gateway terminated the helper after 3 s
+  with its icon still registered. The tray now removes its icon first and the follower's `stop()` never
+  blocks. Measured on Windows 10 (a `serve`-shaped stub gateway with the real tray): Quit to icon removed
+  went from 13.2 s, with the helper killed and its icon left behind, to 0.3 s with the icon deleted and the
+  helper exiting 0.
+
 ## [0.22.0] - 2026-11-18
 
 ### Added

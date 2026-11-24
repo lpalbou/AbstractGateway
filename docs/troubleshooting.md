@@ -45,7 +45,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install "abstractruntime==0.19.7"   # the version this gateway pins
+pip install "abstractruntime==0.20.0"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -85,7 +85,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.19.7 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.20.0 or later in the gateway's Python, then start again. See
 [automations.md](./automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -268,6 +268,34 @@ console (Workflows → *Default workflow per app*), or run
 to the built-in default. A 400 means the request itself is wrong: `interface`
 is missing, or `bundle_id`/`bundle_version` were sent with `@default`. See
 [configuration.md](./configuration.md#default-agent-workflow).
+
+### A command is refused, or a program fails inside the command sandbox
+
+Every command an agent runs (`execute_command`, the local helpers) runs inside
+the host's [command sandbox](./security.md#command-sandbox). The tool result
+says what happened, and the console shows the host's state under Accounts.
+
+- **"Commands are not sandboxed on this gateway host, so they are refused:
+  …"**: the host cannot sandbox this run, and the sentence gives the reason.
+  On Windows the sandbox covers runs set to "Allow everything, refuse listed
+  workspaces" with read & write by default: choose that for the run (or the
+  account, or the gateway) in Workspaces, and mark the folders to protect
+  read-only or refused. On Linux, install bubblewrap. To run commands without
+  a sandbox instead, start the gateway with `--unsandboxed-commands`.
+- **Exit code 126 and "sandbox: … the command did not run"** (Windows): a rule
+  could not be written. The message names the folder: a refused or read-only
+  row points at a folder your account can read but whose permissions it cannot
+  change. Remove that row, or point it at a folder you own.
+- **`curl` or `Invoke-WebRequest` cannot open an HTTPS address** (Windows):
+  Windows' built-in TLS is not available inside the sandbox. Use a program
+  with its own TLS (`python`, `node`, `git`), or the agent's `fetch_url` tool.
+- **"cannot start the command" for `python`, `pwsh` or `winget`** (Windows):
+  the Store app aliases under `WindowsApps` do not start inside the sandbox.
+  Install the program normally, or call it by its full path.
+- **"Access is denied" on a folder the run should reach**: the folder, or one
+  that contains it, is refused for this run, or it is one of the built-in
+  refusals (the gateway's data folder, `.ssh`, cloud credential folders).
+  Workspaces in the console shows the run's effective rows.
 
 ### Replies arrive only at the end (no live text)
 

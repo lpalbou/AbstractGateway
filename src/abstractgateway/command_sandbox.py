@@ -12,7 +12,8 @@ environment variable (DESIGN R12.1, "R12 SANDBOX SPEC — FINAL"):
   function the gateway uses for the apps it starts (``apps_manager._scrubbed_child_env``: no token,
   secret, password or key, nothing named ABSTRACTGATEWAY_* / ABSTRACTCORE_*);
 - ``unsandboxed_commands_allowed``: off unless ``abstractgateway serve --unsandboxed-commands`` (or
-  the split ``runner`` started with the same flag). It only matters on a host with no sandbox; it
+  the split ``runner`` started with the same flag). It only matters where the host cannot sandbox a
+  command (no sandbox at all, or a run whose workspace policy the host's sandbox cannot express); it
   is audited at boot (``command_sandbox_configured``) and shown on the console as a state.
 
 ``configure_at_boot`` runs at the top of ``service.start_gateway_runner`` (the serve boot thread and
@@ -28,6 +29,19 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 FLAG = "--unsandboxed-commands"
+# The two workspace postures, as every surface names them.
+POSTURES = {
+    "allowed_only": "Deny everything, allow listed workspaces",
+    "any_except_denied": "Allow everything, refuse listed workspaces",
+}
+# A sandbox that expresses one posture only: what it leaves out, in one sentence.
+_PARTIAL_SENTENCES = {
+    "linux-landlock": "Landlock cannot express \"Allow everything, refuse listed workspaces\"; install bubblewrap to sandbox those runs too.",
+    "windows-restricted-token": (
+        "The Windows sandbox confines the commands of runs set to \"Allow everything, refuse listed workspaces\" with read & "
+        "write by default; it cannot express \"Deny everything, allow listed workspaces\" or a read-only default."
+    ),
+}
 
 _LOCK = threading.Lock()
 _flag: bool = False
@@ -121,14 +135,12 @@ def _state_locked() -> Dict[str, Any]:
         state, kind = "sandboxed", k_any
         line = f"Commands sandboxed: {KIND_LABELS[kind]}"
         sentence = "Every command a run starts is confined by the operating system to that run's workspaces."
-    elif k_allow != KIND_NONE:
-        # Landlock without bubblewrap: only the allow-list posture can be expressed.
-        state, kind = "partial", k_allow
-        if allowed:
-            line = f"Commands sandboxed: {KIND_LABELS[kind]} (Deny everything, allow listed workspaces); otherwise unsandboxed commands allowed (flag)"
-        else:
-            line = f"Commands sandboxed: {KIND_LABELS[kind]} (Deny everything, allow listed workspaces); otherwise commands refused"
-        sentence = "Landlock cannot express \"Allow everything, refuse listed workspaces\"; install bubblewrap to sandbox those runs too."
+    elif k_allow != KIND_NONE or k_any != KIND_NONE:
+        # One posture only: Landlock without bubblewrap expresses the allow-list, the Windows
+        # sandbox the refuse-list.
+        state, kind = "partial", (k_allow if k_allow != KIND_NONE else k_any)
+        line = f"Commands sandboxed: {KIND_LABELS[kind]} {_one_posture(k_allow != KIND_NONE, allowed)}"
+        sentence = _PARTIAL_SENTENCES.get(kind) or f"{KIND_LABELS[kind]} sandboxes the runs of one workspace posture only."
     elif allowed:
         state, kind = "unsandboxed", KIND_NONE
         line = "Unsandboxed commands allowed (flag)"
@@ -141,7 +153,7 @@ def _state_locked() -> Dict[str, Any]:
         line = "Commands refused: no sandbox on this host"
         sentence = (
             "Commands are refused because this host has no command sandbox (macOS sandbox-exec, Linux bubblewrap or "
-            "Landlock); restart the gateway with --unsandboxed-commands to allow them unsandboxed."
+            "Landlock, a Windows restricted token); restart the gateway with --unsandboxed-commands to allow them unsandboxed."
         )
     return {
         "state": state,
@@ -153,6 +165,12 @@ def _state_locked() -> Dict[str, Any]:
         "configured": bool(policy.get("configured")),
         "flag": FLAG,
     }
+
+
+def _one_posture(allow_list: bool, allowed: bool) -> str:
+    """"(<the posture this host sandboxes>); otherwise <what happens to the other runs>"."""
+    otherwise = "unsandboxed commands allowed (flag)" if allowed else "commands refused"
+    return f"({POSTURES['allowed_only' if allow_list else 'any_except_denied']}); otherwise {otherwise}"
 
 
 def state() -> Dict[str, Any]:
@@ -183,7 +201,8 @@ def tool_sandbox_fields(tool_name: str) -> Optional[Dict[str, Any]]:
     if st["state"] == "sandboxed":
         return {"sandboxed": True, "sandbox": SANDBOXED_SENTENCE}
     if st["state"] == "partial":
-        return {"sandboxed": True, "sandbox": f"{SANDBOXED_SENTENCE} (Deny everything, allow listed workspaces); {st['line'].split('; ', 1)[1]}"}
+        allow_list = st["kinds"]["allowed_only"] == st["kind"]
+        return {"sandboxed": True, "sandbox": f"{SANDBOXED_SENTENCE} {_one_posture(allow_list, st['unsandboxed_commands_allowed'])}"}
     if st["state"] == "unsandboxed":
         return {"sandboxed": False, "sandbox": "Not sandboxed: unsandboxed commands allowed (flag)"}
     return {"sandboxed": False, "sandbox": "Refused: no command sandbox on this host"}

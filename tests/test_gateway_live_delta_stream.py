@@ -700,7 +700,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 
     from abstractgateway import live_deltas as ld
 
-    assert ld.ABSTRACTRUNTIME_FLOOR == "0.19.7"
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.20.0"
     assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
@@ -713,7 +713,8 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     assert ld._version_tuple("0.19.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.5") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.6") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert not (ld._version_tuple("0.19.7") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert ld._version_tuple("0.19.7") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.20.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
@@ -734,6 +735,10 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
         ld.require_runtime_features(runtime)
     assert "cancellation publication" not in str(info.value)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.7")
+    with pytest.raises(ld.RuntimeTooOld, match="freeze while the gateway is paused") as info:
+        ld.require_runtime_features(runtime)
+    assert "Windows file saves" not in str(info.value)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.20.0")
     ld.require_runtime_features(runtime)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
     ld.require_runtime_features(runtime)
@@ -756,7 +761,7 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.5")
     with pytest.raises(ld.RuntimeTooOld, match="cancellation publication"):
         ld.require_runtime_features(runtime)
-    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.7")
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.20.0")
     ld.require_runtime_features(runtime)  # the API present and the version at the floor: accepted
     for module, name, words in (
         (abstractruntime, "DEFAULT_MAX_ITERATIONS", "abstractruntime.DEFAULT_MAX_ITERATIONS"),

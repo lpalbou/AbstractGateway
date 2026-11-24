@@ -52,7 +52,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.19.7. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.20.0. A gateway installed against
   an older runtime does not start ([troubleshooting.md](./troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:

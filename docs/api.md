@@ -889,7 +889,9 @@ The PUT answers like the GET. The GET also carries `command_sandbox` (round
 "sandboxed"|"partial"|"unsandboxed"|"refused", kind, line, sentence,
 unsandboxed_commands_allowed, configured, flag}`. `line` is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and `sentence` is its
-tooltip; see [security.md](./security.md#command-sandbox).
+tooltip. `state` is `partial` on a host whose sandbox expresses one posture
+only (Windows, Linux Landlock): `line` names the posture it sandboxes and what
+happens to the other; see [security.md](./security.md#command-sandbox).
 
 ### Account: the account's default subset
 
@@ -2629,7 +2631,7 @@ result rather than making Flow authoring nodes unavailable.
 `/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.19.7 and AbstractMemory 0.5.2.
+(ADR 0001). Requires AbstractRuntime 0.20.0 and AbstractMemory 0.5.2.
 
 **Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:

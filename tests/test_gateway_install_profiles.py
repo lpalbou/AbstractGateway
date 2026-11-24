@@ -36,8 +36,8 @@ def _floor(requirements: list, name: str) -> Version:
 
 # The AbstractFramework packages this release pins exactly (`==`): the versions it was validated with.
 PINS = {
-    "abstractruntime": "0.19.7",
-    "abstractcore": "2.36.0",
+    "abstractruntime": "0.20.0",
+    "abstractcore": "2.38.0",
     "abstractvoice": "0.21.1",
     "abstractagent": "0.6.1",
     "abstractmemory": "0.5.2",
@@ -78,7 +78,7 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime=={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore==2.36.0" in deps
+    assert "abstractcore==2.38.0" in deps
     assert "abstractvoice==0.21.1" in deps
     assert "abstractagent==0.6.1" in deps
     assert "AbstractMemory[lancedb]==0.5.2" in deps
@@ -181,7 +181,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]==2.36.0" in embeddings
+    assert "abstractcore[embeddings]==2.38.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
