@@ -5,6 +5,11 @@ listed; `~/.ssh` is unreadable; the run ledger keeps the per-command sandbox evi
 
 macOS (sandbox-exec) and Windows (restricted token) for the positive sandbox assertions; elsewhere
 the test asserts the fail-closed answer (no sandbox on this host) instead of silently passing.
+
+On Windows, the two other workspace shapes ("Deny everything, allow listed workspaces", and "Allow
+everything" with read-only by default) each have a scenario of their own, run when AbstractCore's
+Windows sandbox enforces them (``host_sandbox_kind("allowed_only")``, read through the runtime's
+facade) and skipped, naming the AbstractCore they need, before.
 """
 
 from __future__ import annotations
@@ -27,6 +32,19 @@ WINDOWS = sys.platform == "win32"
 KIND = {"darwin": "macos-sandbox-exec", "win32": "windows-restricted-token"}.get(sys.platform)
 
 
+def _windows_enforces_every_shape() -> bool:
+    if not WINDOWS:
+        return False
+    from abstractruntime.integrations.abstractcore.command_sandbox_host import host_sandbox_kind
+
+    return host_sandbox_kind("allowed_only") == KIND
+
+
+# The Windows sandbox of AbstractCore backlog 1341 enforces "Deny everything, allow listed workspaces"
+# and the read-only default together; abstractcore 2.38.0 enforces neither.
+WINDOWS_EVERY_SHAPE = _windows_enforces_every_shape()
+
+
 def _in_json(path: Path) -> str:
     """A path as it reads inside JSON text (Windows separators are escaped there)."""
     return json.dumps(str(path))[1:-1]
@@ -35,12 +53,15 @@ _X = {"id": "exec-in", "label": "", "type": "execution"}
 _XO = {"id": "exec-out", "label": "", "type": "execution"}
 
 
-def _cmd_flow(fid: str, command: str) -> dict:
+def _cmd_flow(fid: str, command) -> dict:
+    """One tool_calls node running ``command`` (a list: one execute_command call each, in order)."""
+    commands = command if isinstance(command, list) else [command]
+    calls = [{"name": "execute_command", "arguments": {"command": cmd}} for cmd in commands]
     return {"id": fid, "name": fid, "entryNode": "start", "nodes": [
         {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
         {"id": "tools", "type": "tool_calls", "data": {"nodeType": "tool_calls", "inputs": [_X, {"id": "tool_calls", "label": "tool_calls", "type": "array"}],
                                                        "outputs": [_XO, {"id": "results", "label": "results", "type": "array"}],
-                                                       "pinDefaults": {"tool_calls": [{"name": "execute_command", "arguments": {"command": command}}]}}},
+                                                       "pinDefaults": {"tool_calls": calls}}},
         {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X, {"id": "results", "label": "results", "type": "array"}]}},
     ], "edges": [
         {"source": "start", "sourceHandle": "exec-out", "target": "tools", "targetHandle": "exec-in"},
@@ -64,6 +85,23 @@ def _bundle(bundles: Path, flows: dict) -> str:
     return "r12w2-cmd@1.0.0"
 
 
+# The Windows scenario of the two other shapes: one run, one execute_command call per step.
+SHAPE_SCENARIO = [
+    ("ls_refused", 'dir "{refused}"'),
+    ("cat_refused_cd", 'cd /d "{home}" && type Desktop\\secret-desktop.txt'),
+    ("cat_ssh", 'type "{ssh}\\id_marker"'),
+    ("ls_parent", 'dir /b "{parent}"'),
+    ("write_refused", 'echo x> "{refused}\\new.txt"'),
+    ("ls_child", 'dir /b "{child}"'),
+    ("write_child", 'echo w> "{child}\\new.txt" && type "{child}\\new.txt"'),
+    ("read_ro", 'type "{docs}\\doc.txt"'),
+    ("write_ro", 'echo x> "{docs}\\doc.txt" & echo x> "{docs}\\new.txt"'),
+    ("read_outside", 'type "{outside}\\f.txt"'),
+    ("write_outside", 'echo w> "{outside}\\w.txt"'),
+    ("write_own", "echo mine> note.txt && type note.txt && echo TEMP=%TEMP%"),
+]
+
+
 @pytest.fixture()
 def disk(tmp_path: Path) -> dict:
     home = tmp_path / "userhome"
@@ -73,9 +111,13 @@ def disk(tmp_path: Path) -> dict:
         "parent": home / "work",
         "child": home / "work" / "project",
         "ssh": home / ".ssh",
+        "docs": home / "Documents",
+        "outside": home / "Music",
     }
     for p in d.values():
         p.mkdir(parents=True, exist_ok=True)
+    (d["docs"] / "doc.txt").write_text("docs ok")
+    (d["outside"] / "f.txt").write_text("outside ok")
     (d["refused"] / "secret-desktop.txt").write_text("desktop secret")
     (d["parent"] / "parent-only.txt").write_text("parent")
     (d["child"] / "child-file.txt").write_text("child")
@@ -98,6 +140,7 @@ def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disk: dict):
             "ls_child": f'dir /b "{disk["child"]}"',
             "ls_parent": f'dir /b "{disk["parent"]}"',
             "cat_ssh": f'type "{disk["ssh"]}\\id_marker"',
+            "shape_scenario": [template.format(**{k: str(v) for k, v in disk.items()}) for _name, template in SHAPE_SCENARIO],
         }
     else:
         commands = {
@@ -123,6 +166,11 @@ def _store():
 
 
 def _run(c: TestClient, flow: str, workspace: dict) -> tuple:
+    run_id, results = _run_all(c, flow, workspace)
+    return run_id, results[0]
+
+
+def _run_all(c: TestClient, flow: str, workspace: dict) -> tuple:
     r = c.post("/api/gateway/runs/start", headers=HEADERS, json={"bundle_id": c.bundle_ref, "flow_id": flow, "input_data": {}, "workspace": workspace})
     assert r.status_code == 200, r.text
     run_id = r.json()["run_id"]
@@ -136,7 +184,7 @@ def _run(c: TestClient, flow: str, workspace: dict) -> tuple:
     results = out.get("results") if "results" in out else (out.get("result") or {}).get("results")
     assert isinstance(results, list) and results, (run.status, run.error, out)
     print(f"[r12w2-e2e] {flow}: {json.dumps(results[0], default=str)[:900]}")
-    return run_id, results[0]
+    return run_id, results
 
 
 def _ledger_text(run_id: str) -> str:
@@ -178,6 +226,44 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
     _rid, res = _run(live, "ls_child", ws)
     if KIND:
         assert "child-file.txt" in json.dumps(res), res  # positive control: the reopened child is listed
+
+
+@pytest.mark.skipif(not WINDOWS, reason="the Windows scenario of the two other workspace shapes (macOS and Linux: AbstractCore's own tests)")
+@pytest.mark.skipif(
+    WINDOWS and not WINDOWS_EVERY_SHAPE,
+    reason='needs an AbstractCore whose Windows sandbox enforces "Deny everything, allow listed workspaces" and the '
+    "read-only default (the release after abstractcore 2.38.0, backlog 1341)",
+)
+@pytest.mark.parametrize("posture,default_mode", [("allowed_only", "rw"), ("any_except_denied", "ro")], ids=["allow-list", "any-ro"])
+def test_the_operators_scenario_in_the_other_shapes(live: TestClient, disk: dict, posture: str, default_mode: str) -> None:
+    # Refuse ~/Desktop and ~/work, reopen ~/work/project read & write, ~/Documents read-only;
+    # ~/Music is listed nowhere.
+    r = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"posture": posture, "default_mode": default_mode, "folders": [
+        {"path": str(disk["refused"]), "mode": "deny"}, {"path": str(disk["parent"]), "mode": "deny"},
+        {"path": str(disk["child"]), "mode": "rw"}, {"path": str(disk["docs"]), "mode": "ro"}]})  # fmt: skip
+    assert r.status_code == 200, r.text
+    _run_id, results = _run_all(live, "shape_scenario", {"posture": posture, "default_mode": default_mode, "folders": []})
+    assert len(results) == len(SHAPE_SCENARIO), results
+    by: dict = {}
+    for (name, _template), res in zip(SHAPE_SCENARIO, results):
+        out = res.get("output") if isinstance(res.get("output"), dict) else res
+        assert "return_code" in out, f"{name} never ran under {posture}/{default_mode}: {json.dumps(res, default=str)[:600]}"
+        assert (out.get("sandbox") or {}).get("kind") == KIND and out["sandbox"].get("posture") == posture, (name, out.get("sandbox"))
+        assert out["sandbox"].get("default_mode") == default_mode or posture == "allowed_only", (name, out.get("sandbox"))
+        by[name] = json.dumps(out, default=str)
+    # Refused rows and the built-in refusal: unreadable and unwritable.
+    assert "secret-desktop.txt" not in by["ls_refused"] and "desktop secret" not in by["cat_refused_cd"]
+    assert "ssh marker" not in by["cat_ssh"] and "parent-only.txt" not in by["ls_parent"]
+    assert not (disk["refused"] / "new.txt").exists()
+    # Positive controls: the reopened child is listed and written, the read-only row is read, the
+    # run's own folder is written and TEMP is its own .tmp.
+    assert "child-file.txt" in by["ls_child"] and (disk["child"] / "new.txt").exists()
+    assert "docs ok" in by["read_ro"] and "mine" in by["write_own"] and "\\\\.tmp" in by["write_own"], by["write_own"]
+    # Read-only row, and an unlisted folder: never written under these two shapes.
+    assert (disk["docs"] / "doc.txt").read_text() == "docs ok" and not (disk["docs"] / "new.txt").exists()
+    assert not (disk["outside"] / "w.txt").exists(), f"an unlisted folder was written under {posture}/{default_mode}"
+    # An unlisted folder of the user's home: readable under "Allow everything", hidden under the allow-list.
+    assert ("outside ok" in by["read_outside"]) is (posture == "any_except_denied"), by["read_outside"]
 
 
 def test_the_in_process_door_too(live: TestClient, disk: dict) -> None:

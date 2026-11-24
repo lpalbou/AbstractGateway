@@ -149,6 +149,11 @@ def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
          "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise commands refused"),
         ({"allowed_only": "none", "any_except_denied": "windows-restricted-token"}, True, "partial",
          "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise unsandboxed commands allowed (flag)"),
+        # A Windows sandbox that enforces both postures (AbstractCore backlog 1341): no "otherwise".
+        ({"allowed_only": "windows-restricted-token", "any_except_denied": "windows-restricted-token"}, False, "sandboxed",
+         "Commands sandboxed: Windows restricted token"),
+        ({"allowed_only": "windows-restricted-token", "any_except_denied": "windows-restricted-token"}, True, "sandboxed",
+         "Commands sandboxed: Windows restricted token"),
     ],
 )
 def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool, state: str, line: str) -> None:
@@ -166,6 +171,8 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     assert fields["sandboxed"] is (state in ("sandboxed", "partial"))
     if state == "sandboxed":
         assert fields["sandbox"] == "Sandboxed to this run's workspaces"
+        assert st["kind"] == kinds["any_except_denied"]
+        assert st["sentence"] == "Every command a run starts is confined by the operating system to that run's workspaces."
     if state == "partial":  # the tool card names the posture this host sandboxes, and what happens otherwise
         assert fields["sandbox"] == "Sandboxed to this run's workspaces " + line[line.index("("):]
     assert command_sandbox.tool_sandbox_fields("read_file") is None
