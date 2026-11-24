@@ -91,6 +91,7 @@ SHAPE_SCENARIO = [
     ("cat_refused_cd", 'cd /d "{home}" && type Desktop\\secret-desktop.txt'),
     ("cat_ssh", 'type "{ssh}\\id_marker"'),
     ("ls_parent", 'dir /b "{parent}"'),
+    ("cat_parent", 'type "{parent}\\parent-only.txt"'),
     ("write_refused", 'echo x> "{refused}\\new.txt"'),
     ("ls_child", 'dir /b "{child}"'),
     ("write_child", 'echo w> "{child}\\new.txt" && type "{child}\\new.txt"'),
@@ -119,10 +120,43 @@ def disk(tmp_path: Path) -> dict:
     (d["docs"] / "doc.txt").write_text("docs ok")
     (d["outside"] / "f.txt").write_text("outside ok")
     (d["refused"] / "secret-desktop.txt").write_text("desktop secret")
-    (d["parent"] / "parent-only.txt").write_text("parent")
+    (d["parent"] / "parent-only.txt").write_text("parent-only marker")
     (d["child"] / "child-file.txt").write_text("child")
     (d["ssh"] / "id_marker").write_text("ssh marker")
     return {k: Path(os.path.realpath(str(v))) for k, v in d.items()}
+
+
+@pytest.fixture(autouse=True)
+def _machine_is_the_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disk: dict):
+    """No rule, integrity label or state file of these tests may land outside tmp_path.
+    AbstractCore's Windows sandbox reads three views of the real machine (the user data roots
+    refused under "Deny everything", the folders Windows already labels Low, its own state
+    folder): each is replaced by a folder of the test tree, and every rule set is checked
+    before the launcher runs (the commands run in this process: TestClient, runner thread)."""
+    if not WINDOWS:
+        return
+    import abstractcore.tools.sandbox as core_sandbox
+
+    root = Path(os.path.realpath(str(tmp_path)))
+    if hasattr(core_sandbox, "_windows_user_data_roots"):
+        monkeypatch.setattr(core_sandbox, "_windows_user_data_roots", lambda *a, **k: (str(disk["home"]),))
+    if hasattr(core_sandbox, "_windows_low_places"):
+        (disk["home"] / "AppData" / "LocalLow").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(core_sandbox, "_windows_low_places", lambda *a, **k: (str(disk["home"] / "AppData" / "LocalLow"),))
+    if hasattr(core_sandbox, "_windows_state_folder"):
+        monkeypatch.setattr(core_sandbox, "_windows_state_folder", lambda *a, **k: str(root / "machine" / "state"))
+    real_rules = core_sandbox.windows_rules
+
+    def inside(p: str) -> bool:
+        return os.path.normcase(os.path.realpath(p)).startswith(os.path.normcase(str(root)).rstrip(os.sep) + os.sep)
+
+    def confined(spec):
+        rules = real_rules(spec)
+        outside = [r for r in rules for p in r[1:] if not inside(p)]
+        assert not outside, f"SAFETY: a sandbox rule outside the test tree, nothing was launched: {outside}"
+        return rules
+
+    monkeypatch.setattr(core_sandbox, "windows_rules", confined)
 
 
 @pytest.fixture()
@@ -238,11 +272,13 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
 def test_the_operators_scenario_in_the_other_shapes(live: TestClient, disk: dict, posture: str, default_mode: str) -> None:
     # Refuse ~/Desktop and ~/work, reopen ~/work/project read & write, ~/Documents read-only;
     # ~/Music is listed nowhere.
-    r = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"posture": posture, "default_mode": default_mode, "folders": [
-        {"path": str(disk["refused"]), "mode": "deny"}, {"path": str(disk["parent"]), "mode": "deny"},
-        {"path": str(disk["child"]), "mode": "rw"}, {"path": str(disk["docs"]), "mode": "ro"}]})  # fmt: skip
+    folders = [{"path": str(disk["refused"]), "mode": "deny"}, {"path": str(disk["parent"]), "mode": "deny"},
+               {"path": str(disk["child"]), "mode": "rw"}, {"path": str(disk["docs"]), "mode": "ro"}]  # fmt: skip
+    r = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"posture": posture, "default_mode": default_mode, "folders": folders})
     assert r.status_code == 200, r.text
-    _run_id, results = _run_all(live, "shape_scenario", {"posture": posture, "default_mode": default_mode, "folders": []})
+    # The run's one-off workspace picks the same rows (an empty one-off under "Deny everything"
+    # reaches no row at all, and under a read-only default makes no row writable).
+    _run_id, results = _run_all(live, "shape_scenario", {"posture": posture, "default_mode": default_mode, "folders": folders})
     assert len(results) == len(SHAPE_SCENARIO), results
     by: dict = {}
     for (name, _template), res in zip(SHAPE_SCENARIO, results):
@@ -252,12 +288,18 @@ def test_the_operators_scenario_in_the_other_shapes(live: TestClient, disk: dict
         assert out["sandbox"].get("default_mode") == default_mode or posture == "allowed_only", (name, out.get("sandbox"))
         by[name] = json.dumps(out, default=str)
     # Refused rows and the built-in refusal: unreadable and unwritable.
-    assert "secret-desktop.txt" not in by["ls_refused"] and "desktop secret" not in by["cat_refused_cd"]
-    assert "ssh marker" not in by["cat_ssh"] and "parent-only.txt" not in by["ls_parent"]
+    evidence = json.dumps((json.loads(by["ls_child"]).get("sandbox") or {}), default=str)
+    assert "secret-desktop.txt" not in by["ls_refused"] and "desktop secret" not in by["cat_refused_cd"], evidence
+    assert "ssh marker" not in by["cat_ssh"], f"{by['cat_ssh'][:800]}\n{evidence}"
+    # ~/work holds the reopened child: under these two shapes the NAMES directly inside it are
+    # listed (AbstractCore's accepted limit: the folders on the way to a row list their names,
+    # git needs it), its content never.
+    assert "parent-only.txt" in by["ls_parent"], f"the names on the way to a row are no longer listed: {by['ls_parent'][:800]}"
+    assert "parent-only marker" not in by["cat_parent"], f"{by['cat_parent'][:800]}\n{evidence}"
     assert not (disk["refused"] / "new.txt").exists()
     # Positive controls: the reopened child is listed and written, the read-only row is read, the
     # run's own folder is written and TEMP is its own .tmp.
-    assert "child-file.txt" in by["ls_child"] and (disk["child"] / "new.txt").exists()
+    assert "child-file.txt" in by["ls_child"] and (disk["child"] / "new.txt").exists(), f"{by['ls_child'][:800]}\n{evidence}"
     assert "docs ok" in by["read_ro"] and "mine" in by["write_own"] and "\\\\.tmp" in by["write_own"], by["write_own"]
     # Read-only row, and an unlisted folder: never written under these two shapes.
     assert (disk["docs"] / "doc.txt").read_text() == "docs ok" and not (disk["docs"] / "new.txt").exists()
