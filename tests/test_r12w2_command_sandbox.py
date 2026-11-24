@@ -162,6 +162,7 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     from abstractgateway import command_sandbox
 
     monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": kinds[posture])
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: {}, raising=False)  # this host's own drives aside
     command_sandbox.set_unsandboxed_commands(flag, source="serve")
     command_sandbox.configure_at_boot()
     st = command_sandbox.state()
@@ -176,6 +177,30 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     if state == "partial":  # the tool card names the posture this host sandboxes, and what happens otherwise
         assert fields["sandbox"] == "Sandboxed to this run's workspaces " + line[line.index("("):]
     assert command_sandbox.tool_sandbox_fields("read_file") is None
+
+
+@pytest.mark.parametrize("both", [True, False], ids=["sandboxed", "partial"])
+def test_the_windows_sentence_names_the_drives_it_cannot_protect(monkeypatch: pytest.MonkeyPatch, both: bool) -> None:
+    """Every client renders `sentence`: on Windows it names, in one plain clause, each drive the
+    sandbox cannot protect (AbstractCore's sentence for it, through the runtime facade)."""
+    import abstractruntime.integrations.abstractcore.command_sandbox_host as sb
+
+    from abstractgateway import command_sandbox
+
+    kinds = {"allowed_only": "windows-restricted-token" if both else "none", "any_except_denied": "windows-restricted-token"}
+    monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": kinds[posture])
+    drives = {"E:\\": "drive E: is a network share: commands can read and change it as you can",
+              "D:\\": "drive D: has no permissions (exFAT): commands can read and change it"}  # fmt: skip
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: drives, raising=False)
+    st = command_sandbox.state()
+    assert st["sentence"].endswith(" Not protected: " + drives["D:\\"] + "; " + drives["E:\\"] + "."), st["sentence"]
+    assert st["line"] == ("Commands sandboxed: Windows restricted token" if both else st["line"])
+    # None, or another kind of sandbox: no clause.
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: {}, raising=False)
+    assert "Not protected" not in command_sandbox.state()["sentence"]
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: drives, raising=False)
+    monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": "macos-sandbox-exec")
+    assert "Not protected" not in command_sandbox.state()["sentence"]
 
 
 def test_the_process_tools_are_the_runtimes_own_list() -> None:

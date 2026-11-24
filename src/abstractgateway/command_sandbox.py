@@ -155,6 +155,8 @@ def _state_locked() -> Dict[str, Any]:
             "Commands are refused because this host has no command sandbox (macOS sandbox-exec, Linux bubblewrap or "
             "Landlock, a Windows restricted token); restart the gateway with --unsandboxed-commands to allow them unsandboxed."
         )
+    if kind == "windows-restricted-token":
+        sentence += _unprotected_clause()
     return {
         "state": state,
         "kind": kind,
@@ -165,6 +167,23 @@ def _state_locked() -> Dict[str, Any]:
         "configured": bool(policy.get("configured")),
         "flag": FLAG,
     }
+
+
+def _unprotected_clause() -> str:
+    """" Not protected: <each drive's sentence>." for the drives the Windows sandbox cannot protect
+    (no permissions, as exFAT, or a network share), from AbstractCore through the runtime facade;
+    "" when there are none or the runtime/Core in use does not report them."""
+    try:
+        from abstractruntime.integrations.abstractcore.command_sandbox_host import host_unprotected_volumes
+    except ImportError:
+        return ""
+    try:
+        drives = host_unprotected_volumes()
+    except Exception:  # noqa: BLE001 - a probe failure never breaks the state surfaces
+        return ""
+    if not drives:
+        return ""
+    return " Not protected: " + "; ".join(why for _drive, why in sorted(drives.items())) + "."
 
 
 def _one_posture(allow_list: bool, allowed: bool) -> str:

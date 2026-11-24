@@ -1,3 +1,11 @@
+### Added
+
+- **The command-sandbox state names the drives Windows cannot protect** (`command_sandbox.py`). On a
+  Windows host, the `sentence` of `command_sandbox` (shown as the console's tooltip and by every client) ends
+  with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
+  without permissions or network share AbstractCore reports (through the runtime facade's
+  `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+
 ### Changed
 
 - **The command-sandbox tests know a Windows host that sandboxes both postures**

@@ -145,6 +145,24 @@ def _machine_is_the_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disk: 
         monkeypatch.setattr(core_sandbox, "_windows_low_places", lambda *a, **k: (str(disk["home"] / "AppData" / "LocalLow"),))
     if hasattr(core_sandbox, "_windows_state_folder"):
         monkeypatch.setattr(core_sandbox, "_windows_state_folder", lambda *a, **k: str(root / "machine" / "state"))
+    if hasattr(core_sandbox, "windows_unprotected_volumes"):
+        monkeypatch.setattr(core_sandbox, "windows_unprotected_volumes", lambda *a, **k: {})
+    real_policy = core_sandbox.windows_policy
+
+    def checked_policy(rules, *args, **kwargs):
+        # What the launcher is handed: rules, folders to label, the state folder (its lock).
+        import base64
+        import zlib
+
+        text = real_policy(rules, *args, **kwargs)
+        policy = json.loads(zlib.decompress(base64.urlsafe_b64decode(text)))
+        paths = [p for r in policy.get("rules", []) for p in r[1:]] + list(policy.get("label") or [])
+        paths += ([policy["state"]] if policy.get("state") else []) + list((policy.get("unprotected") or {}).keys())
+        outside = [p for p in paths if not inside(p)]
+        assert not outside, f"SAFETY: the launcher's policy names places outside the test tree, nothing was launched: {outside}"
+        return text
+
+    monkeypatch.setattr(core_sandbox, "windows_policy", checked_policy)
     real_rules = core_sandbox.windows_rules
 
     def inside(p: str) -> bool:
@@ -173,6 +191,7 @@ def live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, disk: dict):
             "cat_refused_cd": f'cd /d "{disk["home"]}" && type Desktop\\secret-desktop.txt',
             "ls_child": f'dir /b "{disk["child"]}"',
             "ls_parent": f'dir /b "{disk["parent"]}"',
+            "cat_parent": f'type "{disk["parent"]}\\parent-only.txt"',
             "cat_ssh": f'type "{disk["ssh"]}\\id_marker"',
             "shape_scenario": [template.format(**{k: str(v) for k, v in disk.items()}) for _name, template in SHAPE_SCENARIO],
         }
@@ -255,7 +274,14 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
     assert "ssh marker" not in json.dumps(res)
 
     _rid, res = _run(live, "ls_parent", ws)
-    assert "parent-only.txt" not in json.dumps(res)
+    if WINDOWS_EVERY_SHAPE:
+        # ~/work holds the reopened child: its NAMES are listed (AbstractCore's accepted limit on
+        # Windows, git needs it), its content never.
+        assert "parent-only.txt" in json.dumps(res), res
+        _rid, res = _run(live, "cat_parent", ws)
+        assert "parent-only marker" not in json.dumps(res), res
+    else:
+        assert "parent-only.txt" not in json.dumps(res)
 
     _rid, res = _run(live, "ls_child", ws)
     if KIND:
