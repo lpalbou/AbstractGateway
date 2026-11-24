@@ -1793,7 +1793,7 @@ Most-used:
     restarts it; see [deployment.md](./deployment.md).
   - `--unsandboxed-commands` (off by default): where the host cannot sandbox a command (no macOS
     `sandbox-exec`, no Linux bubblewrap/Landlock, or a run whose posture the host's sandbox cannot
-    express: Linux Landlock and Windows each express one), let it run unsandboxed instead of
+    express: Linux Landlock expresses one), let it run unsandboxed instead of
     refusing it. It is audited at boot and shown on the console. The split `abstractgateway runner`
     takes the same flag. See [security.md](./security.md#command-sandbox).
   - `--push-relay <URL|off>`: the push forwarder this gateway sends Apple push requests to for the

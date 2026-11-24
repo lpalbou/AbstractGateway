@@ -277,15 +277,32 @@ says what happened, and the console shows the host's state under Accounts.
 
 - **"Commands are not sandboxed on this gateway host, so they are refused:
   …"**: the host cannot sandbox this run, and the sentence gives the reason.
-  On Windows the sandbox covers runs set to "Allow everything, refuse listed
-  workspaces" with read & write by default: choose that for the run (or the
-  account, or the gateway) in Workspaces, and mark the folders to protect
-  read-only or refused. On Linux, install bubblewrap. To run commands without
-  a sandbox instead, start the gateway with `--unsandboxed-commands`.
-- **Exit code 126 and "sandbox: … the command did not run"** (Windows): a rule
-  could not be written. The message names the folder: a refused or read-only
-  row points at a folder your account can read but whose permissions it cannot
-  change. Remove that row, or point it at a folder you own.
+  On Linux, install bubblewrap (Landlock alone covers "Deny everything, allow
+  listed workspaces" only). On Windows and macOS every workspace shape is
+  sandboxed. To run commands without a sandbox instead, start the gateway
+  with `--unsandboxed-commands`.
+- **Exit code 126 and "sandbox: … the command did not run"** (Windows): the
+  sandbox could not set up a rule, and the line names the path. Most often a
+  refused or read-only row points at a folder your account can read but whose
+  permissions it cannot change (remove that row, or point it at a folder you
+  own), or at a FAT/exFAT drive or a network share, which cannot carry rules
+  (remove the row, or convert the drive to NTFS). The other cases (a folder
+  with permissions of its own, the sandbox's lock) are in
+  [security.md](./security.md#when-a-command-does-not-run).
+- **Git Bash or another MSYS2 program stops as it starts** (Windows, "Deny
+  everything" or read-only by default; this includes `bash`, `sh`, Git's own
+  `ssh-keygen`, git hooks, `!` aliases and `git clone` of a local folder): a
+  Git Bash window or another MSYS2 program is running in your Windows session,
+  and the sandboxed one cannot share its objects. Close it, use `git`, `cmd`,
+  PowerShell or Python directly, or set the run to read & write by default.
+- **`ssh-keygen` writes the private key, then fails on the public one**
+  (Windows' own `ssh-keygen`, every setting): a known limit of the sandbox.
+  The key it leaves behind is yours to read and delete; make keys outside
+  agents' commands.
+- **The command-sandbox tooltip or a command's result says "not protected:
+  drive D: …"** (Windows): that drive has no permissions (FAT, exFAT) or is a
+  network share; commands read and change it as you can. Convert it to NTFS
+  to protect it.
 - **`curl` or `Invoke-WebRequest` cannot open an HTTPS address** (Windows):
   Windows' built-in TLS is not available inside the sandbox. Use a program
   with its own TLS (`python`, `node`, `git`), or the agent's `fetch_url` tool.

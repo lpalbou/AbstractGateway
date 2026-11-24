@@ -1073,7 +1073,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Allow commands (execute_command, the shell, local helpers) to run WITHOUT an operating-system sandbox "
         "where the host cannot sandbox them: a host that has none (no macOS sandbox-exec, no Linux "
         "bubblewrap/Landlock), or a run whose workspace policy the host's sandbox cannot express (Linux Landlock "
-        "and Windows each express one posture). Off by default: there, commands are refused. Where the sandbox "
+        "expresses one posture). Off by default: there, commands are refused. Where the sandbox "
         "applies, every command is confined to its run's workspaces whatever this flag says. Audited at boot and "
         "shown on the console (Security). There is no environment variable.",
     )

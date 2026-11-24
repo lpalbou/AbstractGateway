@@ -890,8 +890,9 @@ The PUT answers like the GET. The GET also carries `command_sandbox` (round
 unsandboxed_commands_allowed, configured, flag}`. `line` is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and `sentence` is its
 tooltip. `state` is `partial` on a host whose sandbox expresses one posture
-only (Windows, Linux Landlock): `line` names the posture it sandboxes and what
-happens to the other; see [security.md](./security.md#command-sandbox).
+only (Linux Landlock without bubblewrap): `line` names the posture it
+sandboxes and what happens to the other; see
+[security.md](./security.md#command-sandbox).
 
 ### Account: the account's default subset
 
