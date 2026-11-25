@@ -10,6 +10,52 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-25
+
+### Added
+
+- **The command-sandbox state names the drives Windows cannot protect** (`command_sandbox.py`). On a
+  Windows host, the `sentence` of `command_sandbox` (shown as the console's tooltip and by every client) ends
+  with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
+  without permissions or network share AbstractCore reports (through the runtime facade's
+  `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+
+### Changed
+
+- **What you see on Windows.** The command-sandbox line (console, under Accounts; the terminal console's
+  Workspaces page; `GET /api/gateway/workspace/policy` and `/discovery/tools`) reads `Commands sandboxed: Windows
+  restricted token`, state `sandboxed` instead of `partial`, and the tool cards of `execute_command` and the other
+  process tools read "Sandboxed to this run's workspaces" with no "otherwise commands refused". Runs set to
+  "Deny everything, allow listed workspaces" or to read-only by default now run their commands, confined, instead
+  of refusing them. A drive without permissions (FAT, exFAT) or a network share is named in the line's tooltip and
+  in each command's result.
+- **Pins:** AbstractCore 2.39.0 (the Windows command sandbox for every workspace setting, and the drives it cannot
+  protect), AbstractRuntime 0.21.0 (`command_sandbox_host.host_unprotected_volumes`), in the base install and every
+  extra. `ABSTRACTRUNTIME_FLOOR` is 0.21.0: on an older runtime the gateway refuses to start and says the
+  command-sandbox state would not name unprotected drives.
+- **On Windows, commands are sandboxed under every workspace shape** (`docs/security.md`, `docs/console.md`,
+  `docs/api.md`, `docs/troubleshooting.md`, `docs/configuration.md`, `serve --help`). With AbstractCore 2.39.0
+  the console's state line reads `Commands sandboxed: Windows restricted token` (state `sandboxed`, no longer
+  `partial`) and the commands of runs set to "Deny everything, allow listed workspaces" or to read-only by default
+  run confined instead of being refused. "On Windows" in `docs/security.md` says what each setting lets a command
+  read and write, its limits (drives without permissions and network shares, what stays readable under "Deny
+  everything", names on the way to a workspace, the two-runs-one-folder guarantee and its two narrow exceptions,
+  content with permissions of its own, Git Bash, Windows' own `ssh-keygen`, Windows' TLS, the places Windows
+  marks Low), what the
+  sandbox leaves on your folders, and each message of a command that does not run with what to do; `partial` is
+  now only Linux Landlock without bubblewrap.
+- **The command-sandbox tests know a Windows host that sandboxes both postures**
+  (`tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_e2e_command_sandbox.py`). The state test reads
+  `Commands sandboxed: Windows restricted token` (state `sandboxed`, tool card "Sandboxed to this run's
+  workspaces") when AbstractCore reports a Windows sandbox for both postures. The end-to-end test has a scenario
+  of its own for "Deny everything, allow listed workspaces" and for "Allow everything" with read-only by default
+  on Windows (one run through `POST /runs/start` and the real tool path: refused rows, `.ssh` and an unlisted
+  folder unwritable, the reopened child, a read-only row and the run's own folder with its `TEMP` as positive
+  controls, unlisted user data hidden under the allow-list and readable otherwise). It runs when AbstractCore's
+  Windows sandbox enforces those shapes (`host_sandbox_kind("allowed_only")`, abstractcore 2.39.0) and skips,
+  naming that version, before. AbstractCore's views of the real machine (user data roots, Low places, its state
+  folder, the drive probe) are replaced by test folders and the launcher's policy is checked before each launch.
+
 ## [0.23.0] - 2026-11-24
 
 ### Added

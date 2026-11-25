@@ -292,7 +292,7 @@ def test_the_operators_scenario(live: TestClient, disk: dict) -> None:
 @pytest.mark.skipif(
     WINDOWS and not WINDOWS_EVERY_SHAPE,
     reason='needs an AbstractCore whose Windows sandbox enforces "Deny everything, allow listed workspaces" and the '
-    "read-only default (the release after abstractcore 2.38.0, backlog 1341)",
+    "read-only default (abstractcore 2.39.0 or newer; 2.38.0 enforces neither)",
 )
 @pytest.mark.parametrize("posture,default_mode", [("allowed_only", "rw"), ("any_except_denied", "ro")], ids=["allow-list", "any-ro"])
 def test_the_operators_scenario_in_the_other_shapes(live: TestClient, disk: dict, posture: str, default_mode: str) -> None:
