@@ -257,7 +257,7 @@ def run_update(
     have = f"{self_update.FRAMEWORK_NAME} {installed}" if installed else f"{self_update.FRAMEWORK_NAME} (release not recorded) · gateway {inst.version}"
     print(f"Installed: {have}", flush=True)
     print("Checking the newest release...", file=sys.stderr, flush=True)
-    rel = fetch_release() if fetch_release else self_update._fetch_framework_release(windows=inst.windows)
+    rel = fetch_release() if fetch_release else (self_update._fetch_framework_release(windows=True) if inst.windows else self_update._fetch_framework_release())
     if rel.get("ok") and inst.windows and not rel.get("windows_installer_bytes"):
         # (An injected release without the Windows script: fetch it from the same commit.)
         ps_url = f"{self_update.FRAMEWORK_RAW}/{rel['commit']}/{self_update.INSTALLER_SCRIPT_PATH_WINDOWS}"

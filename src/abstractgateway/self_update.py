@@ -694,7 +694,7 @@ def check_for_update(
     current = inst.version or installed_version()
     out: Dict[str, Any] = {"current": current, "checked_at": _utc_now_iso()}
     if inst.kind == "installer":
-        rel = fetch_release() if fetch_release else _fetch_framework_release(windows=inst.windows)
+        rel = fetch_release() if fetch_release else (_fetch_framework_release(windows=True) if inst.windows else _fetch_framework_release())
         out.update({"source": "framework-release", "offline": bool(rel.get("offline"))})
         if rel.get("ok") and inst.windows and not rel.get("windows_installer_bytes"):
             rel = {"ok": False, "offline": False, "error": "the AbstractFramework Windows installer (scripts/install.ps1) was not downloaded"}
