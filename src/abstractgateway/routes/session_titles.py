@@ -1,16 +1,22 @@
 """`PUT /api/gateway/sessions/{session_id}/title`: rename a conversation.
 
 Body `{"title": "..."}`. The title is stored by `session_titles.py` in the caller's
-plane, one line of at most 120 characters (longer titles are cut); an empty or blank
-title, `null` or no `title` clears it, and clients show the automatic name (the
-opening message) again. `GET /runs` rows of a titled session carry `session_title`.
+plane, one line of at most 120 characters (longer titles are cut; input beyond
+4,096 characters is ignored); a title with no visible character, `null` or no `title` clears
+it, and clients show the automatic name (the opening message) again. `GET /runs`
+rows of a titled session carry `session_title`.
 
 Who: the session's owner or an admin, exactly as archive (routes/session_archive.py):
 the caller's plane must hold a run of the session, else 404 `session_not_found`.
 
-Answers `{session_id, title, changed}`; storing the stored title again is
-`changed: false`. Every change is audited (`session.titled` in
-`<data_dir>/audit_log.jsonl`, with `action: set|cleared`, never the title text).
+Answers `{session_id, title, changed}` (plus `store_reset`, the name a damaged
+titles file was set aside as, when this rename started a fresh one); storing the
+stored title again is `changed: false`. Every change is audited AFTER it is saved
+(`session.titled` in `<data_dir>/audit_log.jsonl`, with `action: set|cleared`,
+never the title text, and `store_reset`). 500 `session_titles_unreadable` (the
+file is not a titles store this gateway can read; it is left untouched) or
+`session_titles_unwritable` (it could not be saved; it was left as it was); 503
+`session_titles_busy` (another writer held it past the lock deadline).
 """
 
 from __future__ import annotations
@@ -24,9 +30,16 @@ from .session_archive import _audit, _note, session_exists
 
 router = APIRouter(prefix="/gateway", tags=["sessions"])
 
+# Declared for OpenAPI only: a pydantic model would replace the route's 422 `invalid_request` envelope with FastAPI's error list.
+_BODY_SCHEMA = {
+    "type": "object",
+    "properties": {"title": {"type": ["string", "null"], "description": "The new name; empty, blank, null or absent clears it."}},
+    "example": {"title": "Snake game"},
+}
 
-def _set(svc: Any, session_id: str, title: Optional[str], actor: str) -> Dict[str, Any]:
-    from ..session_titles import SessionTitlesUnreadable, set_session_title
+
+def _set(svc: Any, session_id: str, title: Optional[str], actor: str) -> Any:
+    from ..session_titles import SessionTitlesBusy, SessionTitlesUnreadable, SessionTitlesUnwritable, set_session_title
 
     if not session_exists(svc.host.run_store, session_id):
         raise HTTPException(status_code=404, detail={"reason_code": "session_not_found", "message": f"Session {session_id} does not exist."})
@@ -34,21 +47,27 @@ def _set(svc: Any, session_id: str, title: Optional[str], actor: str) -> Dict[st
         return set_session_title(svc.config.data_dir, session_id, title, by=actor)
     except SessionTitlesUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_titles_unreadable", "message": str(exc)}) from None
+    except SessionTitlesBusy as exc:
+        raise HTTPException(status_code=503, detail={"reason_code": "session_titles_busy", "message": str(exc)}) from None
+    except SessionTitlesUnwritable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_titles_unwritable", "message": str(exc)}) from None
 
 
 @router.put(
     "/sessions/{session_id}/title",
     summary="Rename a session (owner or admin)",
     description=(
-        "Body `{\"title\": \"...\"}`. Stores the conversation's name: line breaks and other control characters become "
-        "spaces, whitespace runs one space, trimmed, and cut at 120 characters. An empty title, `null` or no `title` "
-        "clears it (clients show the opening message again). Answers `{session_id, title, changed}` (`changed: false` "
-        "when the stored title was already that). 404 `session_not_found` when the caller's plane has no run of that "
-        "session; 422 `invalid_request` when the body is not an object or `title` is neither a string nor null. "
-        "Audited (`session.titled`)."
+        "Body `{\"title\": \"...\"}`. Stores the conversation's name: input beyond 4,096 characters is ignored; "
+        "format characters (Unicode Cf) are removed except the joiners and direction marks; line breaks and other "
+        "control characters become spaces, whitespace runs one space, trimmed, and cut at 120 characters. A title with "
+        "no visible character, `null` or no `title` clears it (clients show the opening message again). Answers "
+        "`{session_id, title, changed}` (`changed: false` when the stored title was already that), plus `store_reset` "
+        "when a damaged titles file was set aside. 404 `session_not_found` when the caller's plane has no run of that "
+        "session; 422 `invalid_request` when the body is not an object or `title` is neither a string nor null; 500 "
+        "`session_titles_unreadable` / `session_titles_unwritable`; 503 `session_titles_busy`. Audited (`session.titled`)."
     ),
 )
-async def put_session_title(request: Request, session_id: str, body: Any = Body(None)) -> Dict[str, Any]:
+async def put_session_title(request: Request, session_id: str, body: Any = Body(None, json_schema_extra=_BODY_SCHEMA)) -> Dict[str, Any]:
     from ..service import get_gateway_service
     from .gateway import _principal_from_request
 
@@ -66,5 +85,6 @@ async def put_session_title(request: Request, session_id: str, body: Any = Body(
     svc = get_gateway_service()
     out = await off_loop("heavy", _set, svc, sid, title, actor)
     if out["changed"]:
-        _audit("session.titled", session_id=sid, actor=actor, changed=True, action="set" if out["title"] else "cleared")
+        extra = {"store_reset": out["store_reset"]} if out.get("store_reset") else {}
+        _audit("session.titled", session_id=sid, actor=actor, changed=True, action="set" if out["title"] else "cleared", **extra)
     return out

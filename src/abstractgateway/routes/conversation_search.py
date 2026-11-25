@@ -13,7 +13,8 @@ them). One item per session:
 its best turn, a snippet around the match with the match positions, where it matched.
 A conversation's stored title (session_titles.py) is searched too: sessions whose title matches
 come first (`matched_in: "title"` when only the title matched), and an item of a titled session
-carries `session_title`.
+carries `session_title`. An unreadable titles file never fails the search: no title hits, and
+the answer carries `session_titles_error` (as `GET /runs` does).
 
 The index catches up on each call within a time budget; `indexing.complete: false` says older
 conversations are still being read (a first search on a large plane), never a silent partial list.
@@ -25,7 +26,7 @@ from ..work_pools import off_loop
 import asyncio
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -51,23 +52,18 @@ def _index_for(svc: Any) -> Any:
         return idx
 
 
-def _title_matches(title: str, q: str) -> bool:
-    """Every word of `q` is in the title, folded like the index (case and accents ignored;
-    a word of one or two letters must be whole, a longer one may be a substring)."""
-    from abstractruntime.conversation_search import _whole_word, _words, normalize
+def _holds(folded_title: str, words: List[str]) -> bool:
+    """Every word is in the (folded) title, as the index matches: a word of one or two letters
+    must be whole, a longer one may be a substring."""
+    from abstractruntime.conversation_search import _whole_word
 
-    words = _words(q)
-    text = normalize(title)
-    return bool(words) and all(_whole_word(text, w) if len(w) < 3 else w in text for w in words)
+    return all(_whole_word(folded_title, w) if len(w) < 3 else w in folded_title for w in words)
 
 
-def _title_hit(svc: Any, session_id: str, title: str, q: str, kinds: set) -> Optional[Dict[str, Any]]:
-    """A session found by its title alone: its newest turn, the title as the snippet. None when
-    the session has no turn of a searched kind."""
-    from abstractruntime.conversation_search import _first_line, _snippet, _words
+def _title_hit(svc: Any, session_id: str, title: str, words: List[str], session_kind: Optional[str]) -> Optional[Dict[str, Any]]:
+    """A session found by its title alone: its newest turn, the title as the snippet."""
+    from abstractruntime.conversation_search import _first_line, _snippet
     from abstractruntime.history_bundle import _best_effort_session_turns
-
-    from ..service import run_summary
 
     rows = _best_effort_session_turns(run_store=svc.host.run_store, ledger_store=getattr(svc.host, "ledger_store", None),
                                       artifact_store=None, session_id=session_id, limit=1,
@@ -75,15 +71,57 @@ def _title_hit(svc: Any, session_id: str, title: str, q: str, kinds: set) -> Opt
     if not rows:
         return None
     turn = rows[-1]
-    run = svc.host.run_store.load(str(turn.get("run_id") or ""))
-    session_kind = run_summary(run).get("session_kind") if run is not None else None
-    if (session_kind or "chat") not in kinds:
-        return None
-    snippet, highlights = _snippet(title, _words(q))
+    snippet, highlights = _snippet(title, words)
     return {"session_id": session_id, "run_id": turn.get("run_id"), "prompt": _first_line(str(turn.get("prompt") or "")),
             "snippet": snippet, "matched_in": "title", "highlights": [list(h) for h in highlights], "score": 0.0,
             "created_at": turn.get("created_at"), "updated_at": turn.get("updated_at"), "session_kind": session_kind,
             "fuzzy": False, "artifact": None}
+
+
+def _title_hits(svc: Any, idx: Any, folded: List[Tuple[str, str]], titles: Dict[str, str], q: str, *, only: Optional[set],
+                exclude: set, kinds: set, found: Dict[str, Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """The sessions whose stored title holds every word of `q`, most recent activity first, at most
+    `limit`: their own best turn when the index found one, else a title hit. The titles are folded
+    once per revision of the file (`folded`); result rows are built only for the sessions returned."""
+    from abstractruntime.conversation_search import _words
+
+    words = _words(q)
+    if not words:
+        return []
+    matched = {sid for sid, text in folded if (only is None or sid in only) and sid not in exclude and _holds(text, words)}
+    if not matched:
+        return []
+    picked: List[Tuple[str, Optional[str]]] = []
+    seen: set = set()
+    rs = svc.host.run_store
+    lister = getattr(rs, "list_run_index", None)
+    if callable(lister) and len(matched) <= 4 * limit:
+        # Few matches: each session's newest turn from the run index (by session id), newest first.
+        rows = []
+        for sid in matched:
+            newest = lister(session_id=sid, root_only=True, limit=1)
+            if newest:
+                rows.append(newest[0])
+        rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    else:
+        rows = idx._root_rows()  # every turn root of the plane, newest first (what the index syncs from)
+    for row in rows:
+        sid = str(row.get("session_id") or "") or str(row.get("run_id") or "")
+        if sid in seen or sid not in matched:
+            continue
+        seen.add(sid)
+        session_kind = row.get("session_kind")
+        if (session_kind or "chat") not in kinds:
+            continue
+        picked.append((sid, session_kind))
+        if len(picked) >= limit:
+            break
+    hits = []
+    for sid, session_kind in picked:
+        hit = found.get(sid) or _title_hit(svc, sid, titles[sid], words, session_kind)
+        if hit is not None:
+            hits.append(hit)
+    return hits
 
 
 @router.get(
@@ -110,7 +148,7 @@ async def search_sessions(
     from ..service import get_gateway_service
     from ..session_archive import SessionArchiveUnreadable, archived_sessions
     from ..session_kinds import SessionKindsUnreadable, session_kinds
-    from ..session_titles import SessionTitlesUnreadable, session_titles
+    from ..session_titles import SessionTitlesUnreadable, folded_titles, titles_for_listing
     from .gateway import _parse_session_kind_filter
 
     want_kind = str(kind or "conversation").strip().lower()
@@ -123,11 +161,21 @@ async def search_sessions(
     try:
         # The listing's purpose marks, migrations included (a search may come before any listing).
         await run_session_kind_migrations(svc)
-        archived_map = archived_sessions(svc.config.data_dir)
-        kinds_map = session_kinds(svc.config.data_dir)
-        titles_map = session_titles(svc.config.data_dir)
-    except (SessionArchiveUnreadable, SessionKindsUnreadable, SessionTitlesUnreadable) as exc:
+        archived_map, kinds_map = await off_loop("light", lambda: (archived_sessions(svc.config.data_dir), session_kinds(svc.config.data_dir)))
+    except (SessionArchiveUnreadable, SessionKindsUnreadable) as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_state_unreadable", "message": str(exc)}) from None
+
+    def _read_titles() -> Any:
+        # An unreadable titles file never fails the search: no title hits, and `session_titles_error`.
+        titles, error = titles_for_listing(svc.config.data_dir)
+        if error is not None:
+            return titles, [], error
+        try:
+            return titles, folded_titles(svc.config.data_dir), None
+        except SessionTitlesUnreadable:  # broke in between: the next call reports it
+            return titles, [], None
+
+    titles_map, folded, titles_error = await off_loop("light", _read_titles)
 
     idx = _index_for(svc)
     report = await off_loop("heavy", idx.sync, budget_s=SYNC_BUDGET_S)
@@ -145,16 +193,10 @@ async def search_sessions(
     searched = set(idx.kinds) if kinds is None else set(kinds) & set(idx.kinds)
     hits = await off_loop("heavy", idx.search, q, limit=limit, sessions=only, exclude=exclude, session_kinds=searched)
     # The name a person gave a conversation is searched too (same folding as the index), and
-    # those sessions come first: their own best turn when the index found one, else a title hit.
-    titled = [sid for sid, title in titles_map.items()
-              if (only is None or sid in only) and sid not in exclude and _title_matches(title, q)]
+    # those sessions come first (off the event loop: a title hit reads the session's turn).
     found = {h.session_id: h.as_dict() for h in hits}
-    by_title = []
-    for sid in titled:
-        hit = found.get(sid) or await off_loop("heavy", _title_hit, svc, sid, titles_map[sid], q, searched)
-        if hit is not None:
-            by_title.append(hit)
-    by_title.sort(key=lambda h: h.get("updated_at") or "", reverse=True)
+    by_title = await off_loop("heavy", _title_hits, svc, idx, folded, titles_map, q, only=only, exclude=exclude,
+                              kinds=searched, found=found, limit=limit)
     first = {h["session_id"] for h in by_title}
     ordered = by_title + [h for sid, h in found.items() if sid not in first]
     items = []
@@ -163,7 +205,7 @@ async def search_sessions(
         if h["session_id"] in titles_map:
             item["session_title"] = titles_map[h["session_id"]]
         items.append(item)
-    return {
+    out: Dict[str, Any] = {
         "query": q,
         "items": items,
         "count": len(items),
@@ -172,3 +214,6 @@ async def search_sessions(
         "indexing": {"complete": report.complete, "pending_sessions": report.pending_sessions, "turns": report.total_turns,
                      "errors": len(report.errors)},
     }
+    if titles_error is not None:
+        out["session_titles_error"] = dict(titles_error)
+    return out

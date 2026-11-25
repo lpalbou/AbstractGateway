@@ -9571,12 +9571,16 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     if session_kind_req and session_kind_req != "conversation":
         # Marked BEFORE the run starts, so the conversation lists never show it (docs, notes,
         # a process such as a phone or watch probe, an automation session).
-        from ..session_kinds import SessionKindsUnreadable, mark_session_kind
+        from ..session_kinds import SessionKindsBusy, SessionKindsUnreadable, SessionKindsUnwritable, mark_session_kind
 
         try:
-            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
+            await off_loop("light", mark_session_kind, svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
         except SessionKindsUnreadable as exc:
             raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
+        except SessionKindsBusy as exc:
+            raise HTTPException(status_code=503, detail={"reason_code": "session_kinds_busy", "message": str(exc)}) from None
+        except SessionKindsUnwritable as exc:
+            raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unwritable", "message": str(exc)}) from None
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
@@ -10140,7 +10144,10 @@ async def purge_draft_runs(req: PurgeDraftRunsRequest) -> Dict[str, Any]:
     """
 
     try:
-        return purge_ephemeral_draft_runs(
+        # Off the event loop: it deletes run trees and saves the per-session stores.
+        return await off_loop(
+            "heavy",
+            purge_ephemeral_draft_runs,
             get_gateway_service(),
             DraftRunPurgeOptions(
                 dry_run=bool(req.dry_run),
@@ -10351,7 +10358,7 @@ async def run_session_kind_migrations(svc: Any) -> None:
     `GET /runs` and `GET /sessions/search` run it first. Raises SessionKindsUnreadable."""
     from ..session_kinds import pending_migrations, run_pending_migrations
 
-    if not pending_migrations(svc.config.data_dir):
+    if not await off_loop("light", pending_migrations, svc.config.data_dir):
         return
     rs = svc.host.run_store
 
@@ -10411,7 +10418,9 @@ async def list_runs(
     """List recent runs (summary only; never returns full run.vars).
 
     A row of a session its owner renamed (`PUT /sessions/{session_id}/title`) carries
-    `session_title`; rows of untitled sessions have no such key."""
+    `session_title`; rows of untitled sessions have no such key. When the titles file cannot be
+    read the page is served without titles and carries `session_titles_error`
+    `{reason_code, message}`."""
     # Unknown query params are REFUSED, not ignored (flow c5253 P1-2): a
     # filter typo used to return the whole global store while LOOKING
     # filtered — their adversary got burned live by exactly that. Naming the
@@ -10446,24 +10455,29 @@ async def list_runs(
     # readable through an explicit session_id. An unreadable archive is a 500,
     # never "nothing archived".
     from ..session_archive import SessionArchiveUnreadable, archived_sessions as _archived_sessions
+    # Session titles (session_titles.py, this caller's plane): every row of a titled
+    # session carries `session_title`. An unreadable titles file never fails the list:
+    # it is served without titles and says why (`session_titles_error`).
+    from ..session_titles import titles_for_listing as _titles_for_listing
+
+    def _read_session_marks() -> Any:
+        # Both stores read OFF the event loop (a cold read parses the whole file).
+        return _archived_sessions(svc.config.data_dir), _titles_for_listing(svc.config.data_dir)
 
     try:
-        archived_map = _archived_sessions(svc.config.data_dir)
+        archived_map, (titles_map, titles_error) = await off_loop("light", _read_session_marks)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
-    # Session titles (session_titles.py, this caller's plane): every row of a titled
-    # session carries `session_title`. An unreadable file is a 500, never "no titles".
-    from ..session_titles import SessionTitlesUnreadable, session_titles as _session_titles
-
-    try:
-        titles_map = _session_titles(svc.config.data_dir)
-    except SessionTitlesUnreadable as exc:
-        raise HTTPException(status_code=500, detail={"reason_code": "session_titles_unreadable", "message": str(exc)}) from None
 
     def _attach_title(summary: Dict[str, Any]) -> None:
         title = titles_map.get(str(summary.get("session_id") or ""))
         if title is not None:
             summary["session_title"] = title
+
+    def _page(out: Dict[str, Any]) -> Dict[str, Any]:
+        if titles_error is not None:
+            out["session_titles_error"] = dict(titles_error)
+        return out
 
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
@@ -10493,13 +10507,13 @@ async def list_runs(
     want_all = "all" in want_kinds
     want_kind = ",".join(sorted(want_kinds))  # the depth-memory key below
     try:
-        kinds_map = _session_kinds(svc.config.data_dir)
+        kinds_map = await off_loop("light", _session_kinds, svc.config.data_dir)
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
     if archive_filter and bool(archived_only) and not archived_map:
         # NOTHING ARCHIVED: the answer is known before any scan, after the
         # filters are validated (an unknown `kind` is still a 400).
-        return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
+        return _page({"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0})
 
     def _kind_of(summary: Dict[str, Any]) -> str:
         # The mark, else the row's own workflow and attribution (an AbstractNote automation's
@@ -10573,7 +10587,7 @@ async def list_runs(
             child_items = child_items[int(offset): int(offset) + int(limit)]
             # Same envelope as the normal listing ("items") so consumers never
             # branch on which filter produced the page.
-            return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
+            return _page({"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more})
 
         return await off_loop("heavy", _children_page)
 
@@ -10886,6 +10900,7 @@ async def list_runs(
         session_totals = _session_totals_for_page(rs, items, kinds)
         if session_totals is not None:
             out_page["session_totals"] = session_totals
+        _page(out_page)
         if scan_truncated:
             out_page["warnings"] = [
                 "#TRUNCATION the run scan hit its cost cap — deeper matches may exist beyond this page"

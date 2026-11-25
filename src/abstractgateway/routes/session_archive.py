@@ -75,7 +75,7 @@ def session_exists(run_store: Any, session_id: str) -> bool:
 
 
 def _act(svc: Any, session_id: str, actor: str, archive: bool) -> Dict[str, Any]:
-    from ..session_archive import SessionArchiveUnreadable, archive_session, unarchive_session
+    from ..session_archive import SessionArchiveBusy, SessionArchiveUnreadable, SessionArchiveUnwritable, archive_session, unarchive_session
 
     if not session_exists(svc.host.run_store, session_id):
         raise HTTPException(status_code=404, detail={"reason_code": "session_not_found", "message": f"Session {session_id} does not exist."})
@@ -91,6 +91,10 @@ def _act(svc: Any, session_id: str, actor: str, archive: bool) -> Dict[str, Any]
         return unarchive_session(svc.config.data_dir, session_id, by=actor)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
+    except SessionArchiveBusy as exc:
+        raise HTTPException(status_code=503, detail={"reason_code": "session_archive_busy", "message": str(exc)}) from None
+    except SessionArchiveUnwritable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unwritable", "message": str(exc)}) from None
 
 
 async def _route(request: Request, session_id: str, archive: bool) -> Dict[str, Any]:

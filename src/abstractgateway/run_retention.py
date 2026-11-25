@@ -330,6 +330,8 @@ def purge_run_tree(
             if _delete_owned_workspace(ws):
                 workspaces_deleted += 1
 
+    title_dropped = _drop_title_of_emptied_session(svc, loaded.get(str(root_run_id)))
+
     gc_report = None
     if delete_artifacts and artifact_store is not None:
         gc = getattr(artifact_store, "gc", None)
@@ -351,7 +353,37 @@ def purge_run_tree(
             "workspaces": workspaces_deleted,
         },
         "artifact_gc": gc_report,
+        "session_title_dropped": title_dropped,
     }
+
+
+def _drop_title_of_emptied_session(svc: Any, root: Any) -> bool:
+    """The purged run was its session's last: drop the session's stored title (session_titles.py)
+    and its archive mark (session_archive.py), so a later conversation reusing the id neither
+    inherits the name nor is born archived. Returns whether a title was dropped. Never fails the purge."""
+    import logging
+
+    sid = str(getattr(root, "session_id", "") or "").strip()
+    if not sid:
+        return False
+    from .routes.session_archive import session_exists
+    from .session_archive import forget_archived_session
+    from .session_titles import drop_session_title
+
+    try:
+        if session_exists(svc.host.run_store, sid):
+            return False
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        forget_archived_session(svc.config.data_dir, sid)
+    except Exception as exc:  # noqa: BLE001 - the purge itself succeeded
+        logging.getLogger(__name__).warning("draft purge: the archive mark of emptied session %s was not dropped: %s", sid, exc)
+    try:
+        return drop_session_title(svc.config.data_dir, sid)
+    except Exception as exc:  # noqa: BLE001 - the purge itself succeeded
+        logging.getLogger(__name__).warning("draft purge: the title of emptied session %s was not dropped: %s", sid, exc)
+        return False
 
 
 def collect_run_tree(run_store: Any, root_run_id: str, *, limit: int = 2000) -> list[str]:
