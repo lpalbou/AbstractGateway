@@ -235,6 +235,10 @@ app.include_router(model_download_delete_router, prefix="/api")
 from .routes.session_archive import router as session_archive_router  # noqa: E402
 
 app.include_router(session_archive_router, prefix="/api")
+# Rename a session (conversation): routes/session_titles.py, /gateway/sessions/{id}/title.
+from .routes.session_titles import router as session_titles_router  # noqa: E402
+
+app.include_router(session_titles_router, prefix="/api")
 # @entity from any chat window (a visit turn recorded as a turn of the session): routes/session_mentions.py.
 from .routes.session_mentions import router as session_mentions_router  # noqa: E402
 

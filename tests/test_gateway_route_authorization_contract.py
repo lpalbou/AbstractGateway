@@ -405,6 +405,8 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # (test_session_archive.py pins it) --------------------------------------
     ("POST", "/api/gateway/sessions/{session_id}/archive"),
     ("POST", "/api/gateway/sessions/{session_id}/unarchive"),
+    # session title (rename): the same plane rule as archive (test_session_titles.py pins it).
+    ("PUT", "/api/gateway/sessions/{session_id}/title"),
     # @entity mentions (entity_mentions.py): the session turn is written in the CALLER's plane, the
     # entity is gated in-handler by require_entity_visible (a member mentions only the entities they
     # created; hidden = 404), and the visit turn runs as the signed-in person (test_gateway_entity_mentions.py).

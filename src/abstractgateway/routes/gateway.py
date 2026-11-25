@@ -10408,7 +10408,10 @@ async def list_runs(
     kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats), `notes` (AbstractNote's captures and background processing) or `all`. Every row carries `kind`."),
     archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
-    """List recent runs (summary only; never returns full run.vars)."""
+    """List recent runs (summary only; never returns full run.vars).
+
+    A row of a session its owner renamed (`PUT /sessions/{session_id}/title`) carries
+    `session_title`; rows of untitled sessions have no such key."""
     # Unknown query params are REFUSED, not ignored (flow c5253 P1-2): a
     # filter typo used to return the whole global store while LOOKING
     # filtered — their adversary got burned live by exactly that. Naming the
@@ -10448,6 +10451,20 @@ async def list_runs(
         archived_map = _archived_sessions(svc.config.data_dir)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
+    # Session titles (session_titles.py, this caller's plane): every row of a titled
+    # session carries `session_title`. An unreadable file is a 500, never "no titles".
+    from ..session_titles import SessionTitlesUnreadable, session_titles as _session_titles
+
+    try:
+        titles_map = _session_titles(svc.config.data_dir)
+    except SessionTitlesUnreadable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_titles_unreadable", "message": str(exc)}) from None
+
+    def _attach_title(summary: Dict[str, Any]) -> None:
+        title = titles_map.get(str(summary.get("session_id") or ""))
+        if title is not None:
+            summary["session_title"] = title
+
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
     )
@@ -10548,6 +10565,7 @@ async def list_runs(
                 if not _matches_query(summary):
                     continue
                 summary["kind"] = _kind_of(summary)
+                _attach_title(summary)
                 child_items.append(summary)
                 if len(child_items) >= _child_want:
                     break
@@ -10846,6 +10864,7 @@ async def list_runs(
 
         for item in items:
             item["kind"] = _kind_of(item)
+            _attach_title(item)
             rec = archived_map.get(str(item.get("session_id") or ""))
             if rec is not None:
                 item["archived"] = True
@@ -20290,6 +20309,9 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
     from ..session_tool_policy import capability as _session_tool_policy_capability
 
     caps["session_tool_policy"] = _session_tool_policy_capability()
+    # A person can rename a conversation (PUT /sessions/{id}/title; `session_title` on /runs rows).
+    # Clients offer "Rename" only when this is true; an older gateway has no such key.
+    caps["session_titles"] = True
 
     caps["contracts"] = _build_client_capability_contracts(caps)
 

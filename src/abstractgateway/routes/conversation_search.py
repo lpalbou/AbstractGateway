@@ -11,6 +11,9 @@ itself: the session kinds asked for (`chat,discussion`, the kinds indexed), conv
 than Docs assistant chats (`kind`), archived sessions left out unless `archived=true` (then only
 them). One item per session:
 its best turn, a snippet around the match with the match positions, where it matched.
+A conversation's stored title (session_titles.py) is searched too: sessions whose title matches
+come first (`matched_in: "title"` when only the title matched), and an item of a titled session
+carries `session_title`.
 
 The index catches up on each call within a time budget; `indexing.complete: false` says older
 conversations are still being read (a first search on a large plane), never a silent partial list.
@@ -48,6 +51,41 @@ def _index_for(svc: Any) -> Any:
         return idx
 
 
+def _title_matches(title: str, q: str) -> bool:
+    """Every word of `q` is in the title, folded like the index (case and accents ignored;
+    a word of one or two letters must be whole, a longer one may be a substring)."""
+    from abstractruntime.conversation_search import _whole_word, _words, normalize
+
+    words = _words(q)
+    text = normalize(title)
+    return bool(words) and all(_whole_word(text, w) if len(w) < 3 else w in text for w in words)
+
+
+def _title_hit(svc: Any, session_id: str, title: str, q: str, kinds: set) -> Optional[Dict[str, Any]]:
+    """A session found by its title alone: its newest turn, the title as the snippet. None when
+    the session has no turn of a searched kind."""
+    from abstractruntime.conversation_search import _first_line, _snippet, _words
+    from abstractruntime.history_bundle import _best_effort_session_turns
+
+    from ..service import run_summary
+
+    rows = _best_effort_session_turns(run_store=svc.host.run_store, ledger_store=getattr(svc.host, "ledger_store", None),
+                                      artifact_store=None, session_id=session_id, limit=1,
+                                      include_stats=False, include_artifacts=False)
+    if not rows:
+        return None
+    turn = rows[-1]
+    run = svc.host.run_store.load(str(turn.get("run_id") or ""))
+    session_kind = run_summary(run).get("session_kind") if run is not None else None
+    if (session_kind or "chat") not in kinds:
+        return None
+    snippet, highlights = _snippet(title, _words(q))
+    return {"session_id": session_id, "run_id": turn.get("run_id"), "prompt": _first_line(str(turn.get("prompt") or "")),
+            "snippet": snippet, "matched_in": "title", "highlights": [list(h) for h in highlights], "score": 0.0,
+            "created_at": turn.get("created_at"), "updated_at": turn.get("updated_at"), "session_kind": session_kind,
+            "fuzzy": False, "artifact": None}
+
+
 @router.get(
     "/sessions/search",
     summary="Search my conversations by keywords",
@@ -56,7 +94,9 @@ def _index_for(svc: Any) -> Any:
         "Words and substrings, case and accents ignored; a fuzzy pass finds a word with a typo. Filtered like "
         "`GET /runs?root_only=true` (session kinds, conversations, archived left out unless `archived=true`). One item "
         "per session: `{session_id, run_id, prompt, snippet, highlights, matched_in, score, created_at, updated_at, "
-        "session_kind, archived, fuzzy}`. `indexing.complete: false` while older conversations are still being indexed."
+        "session_kind, archived, fuzzy}`, plus `session_title` for a renamed conversation. The stored title is searched "
+        "too: those sessions come first (`matched_in: \"title\"`, the title as the snippet, when only the title matched). "
+        "`indexing.complete: false` while older conversations are still being indexed."
     ),
 )
 async def search_sessions(
@@ -70,6 +110,7 @@ async def search_sessions(
     from ..service import get_gateway_service
     from ..session_archive import SessionArchiveUnreadable, archived_sessions
     from ..session_kinds import SessionKindsUnreadable, session_kinds
+    from ..session_titles import SessionTitlesUnreadable, session_titles
     from .gateway import _parse_session_kind_filter
 
     want_kind = str(kind or "conversation").strip().lower()
@@ -84,7 +125,8 @@ async def search_sessions(
         await run_session_kind_migrations(svc)
         archived_map = archived_sessions(svc.config.data_dir)
         kinds_map = session_kinds(svc.config.data_dir)
-    except (SessionArchiveUnreadable, SessionKindsUnreadable) as exc:
+        titles_map = session_titles(svc.config.data_dir)
+    except (SessionArchiveUnreadable, SessionKindsUnreadable, SessionTitlesUnreadable) as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_state_unreadable", "message": str(exc)}) from None
 
     idx = _index_for(svc)
@@ -102,7 +144,25 @@ async def search_sessions(
         only = wanted if only is None else only & wanted
     searched = set(idx.kinds) if kinds is None else set(kinds) & set(idx.kinds)
     hits = await off_loop("heavy", idx.search, q, limit=limit, sessions=only, exclude=exclude, session_kinds=searched)
-    items = [{**h.as_dict(), "archived": h.session_id in archived_ids} for h in hits]
+    # The name a person gave a conversation is searched too (same folding as the index), and
+    # those sessions come first: their own best turn when the index found one, else a title hit.
+    titled = [sid for sid, title in titles_map.items()
+              if (only is None or sid in only) and sid not in exclude and _title_matches(title, q)]
+    found = {h.session_id: h.as_dict() for h in hits}
+    by_title = []
+    for sid in titled:
+        hit = found.get(sid) or await off_loop("heavy", _title_hit, svc, sid, titles_map[sid], q, searched)
+        if hit is not None:
+            by_title.append(hit)
+    by_title.sort(key=lambda h: h.get("updated_at") or "", reverse=True)
+    first = {h["session_id"] for h in by_title}
+    ordered = by_title + [h for sid, h in found.items() if sid not in first]
+    items = []
+    for h in ordered[:limit]:
+        item = {**h, "archived": h["session_id"] in archived_ids}
+        if h["session_id"] in titles_map:
+            item["session_title"] = titles_map[h["session_id"]]
+        items.append(item)
     return {
         "query": q,
         "items": items,

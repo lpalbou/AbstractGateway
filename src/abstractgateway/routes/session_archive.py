@@ -29,8 +29,8 @@ from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunSto
 router = APIRouter(prefix="/gateway", tags=["sessions"])
 
 
-def _audit(event: str, *, session_id: str, actor: str, changed: bool) -> Optional[Dict[str, Any]]:
-    """Append one typed session event to the gateway audit log. Never raises."""
+def _audit(event: str, *, session_id: str, actor: str, changed: bool, **fields: Any) -> Optional[Dict[str, Any]]:
+    """Append one typed session event to the gateway audit log (`fields` add to the line). Never raises."""
     try:
         from ..security.gateway_security import _AUDIT_LOCK, _audit_data_dir_from_env, _audit_log_enabled
 
@@ -42,6 +42,7 @@ def _audit(event: str, *, session_id: str, actor: str, changed: bool) -> Optiona
             "session_id": session_id,
             "actor": actor or None,
             "changed": bool(changed),
+            **fields,
         }
         line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
         with _AUDIT_LOCK:
