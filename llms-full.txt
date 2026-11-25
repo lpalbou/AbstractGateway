@@ -14642,7 +14642,7 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
-The Compose files default to Gateway 0.24.0 for both the image tag and PyPI build version.
+The Compose files default to Gateway 0.24.1 for both the image tag and PyPI build version.
 To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
 in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
 
@@ -14902,7 +14902,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.24.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.24.1-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -14941,6 +14941,10 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.24.1** ([CHANGELOG](CHANGELOG.md#0241---2026-11-25)): on Windows, Update works from the tray, the
+web console, the terminal console and `abstractgateway update`: the AbstractFramework installer runs in its own PowerShell window,
+stops the gateway, updates everything and starts it again, and the gateway that comes back says how it went.
 
 **What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
 the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
@@ -16652,6 +16656,31 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.24.1] - 2026-11-25
+
+### Fixed
+
+- **Update works on Windows from the tray, the web console, the terminal console and `abstractgateway
+  update`** (`self_update.py`). Check for Updates answered "AbstractFramework X is available, but not from
+  here" and sent the person to a PowerShell line, because Windows keeps a running program's files locked and
+  the installer must stop the gateway first. Update now hands off: the checked `scripts/install.ps1` (from the
+  same commit as the release manifest, its sha256 shown in the confirmation and required to start) and a small
+  runner are written to `<data dir>\update\`, and a short-lived launcher opens the runner in its own
+  PowerShell window and exits, so the installer runs outside the gateway's process tree (the installer ends
+  that tree). The installer stops the gateway, updates everything and starts it again with start at login as
+  it was (`-NoOpen -NoModifyPath -DataDir <data dir>`). `windows-update.json` records the hand-off and the
+  runner writes the installer's exit code next to it, so the gateway that comes back reports the outcome: the
+  job is `completed` (with what moved), `failed` (the exit code and the log folder, or no report within 45
+  minutes while the installer no longer holds its lock), or `running` while the installer finishes; the tray
+  follows it and says once how it went. A failure is reported by the gateway that started the update too (the
+  installer can fail before it stops the gateway), and the next check offers the update again. The runner
+  checks the confirmed sha256 of `install.ps1` again right before it runs it, ignores Ctrl+C, always records
+  the result, and starts the gateway again (`serve`) if a failed installer had stopped it; the update folder is
+  restricted to the account. A second update is refused while one runs, and a window that could not be opened
+  leaves no record. The update window stays open when the installer fails, with the path of its log. While
+  the installer runs the job is `running` with `job.handoff` set (every client already follows a running job);
+  the new job state is `completed`.
 
 ## [0.24.0] - 2026-11-25
 
