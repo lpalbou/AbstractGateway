@@ -27,6 +27,10 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.24.1** ([CHANGELOG](CHANGELOG.md#0241---2026-11-25)): on Windows, Update works from the tray, the
+web console, the terminal console and `abstractgateway update`: the AbstractFramework installer runs in its own PowerShell window,
+stops the gateway, updates everything and starts it again, and the gateway that comes back says how it went.
+
 **What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
 the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
 too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
