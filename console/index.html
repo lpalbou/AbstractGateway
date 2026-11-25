@@ -1570,13 +1570,13 @@ workspaces accounts may choose from, and the most each one allows
 <p>Below that row, everyone signed in sees the host's <strong>command sandbox</strong> as a
 state line, with an explanation in its tooltip:</p>
 <ul>
-<li><strong>Commands sandboxed: macOS sandbox-exec</strong> (or Linux bubblewrap): every
-  command a run starts is confined by the operating system to that run's
-  workspaces.</li>
-<li><strong>Commands sandboxed: Windows restricted token (Allow everything, refuse
-  listed workspaces); otherwise commands refused</strong>: the host sandboxes the
-  runs of one posture; a run set to the other has its commands refused (Linux
-  Landlock reads the same way, with the other posture).</li>
+<li><strong>Commands sandboxed: macOS sandbox-exec</strong> (or Linux bubblewrap, Windows
+  restricted token): every command a run starts is confined by the operating
+  system to that run's workspaces.</li>
+<li><strong>Commands sandboxed: Linux Landlock (Deny everything, allow listed
+  workspaces); otherwise commands refused</strong>: the host sandboxes the runs of
+  one posture (Landlock without bubblewrap); a run set to the other has its
+  commands refused.</li>
 <li><strong>Commands refused: no sandbox on this host</strong>.</li>
 <li><strong>Unsandboxed commands allowed (flag)</strong>: the gateway was started with
   <code>serve --unsandboxed-commands</code>.</li>

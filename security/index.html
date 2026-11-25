@@ -1050,6 +1050,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="On Windows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-sandbox-leaves-on-your-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the sandbox leaves on your folders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-a-command-does-not-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When a command does not run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1602,6 +1641,45 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="On Windows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-sandbox-leaves-on-your-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the sandbox leaves on your folders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-a-command-does-not-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When a command does not run
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -2697,9 +2775,8 @@ interpreters are all confined by the kernel:</p>
 <li><strong>Linux</strong>: bubblewrap (<code>bwrap</code>) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.</li>
-<li><strong>Windows</strong>: a restricted token and access-list entries, for runs set to
-  "Allow everything, refuse listed workspaces" with read &amp; write by default
-  (the default posture). See <a href="#on-windows">On Windows</a> for what it enforces
+<li><strong>Windows</strong>: a restricted token and access-list entries, for both postures
+  and both default modes. See <a href="#on-windows">On Windows</a> for what it enforces
   and its limits.</li>
 <li><strong>Anything else</strong> (Linux without either, a posture the host's sandbox cannot
   express): the command is <strong>refused</strong> with one sentence that says why, and
@@ -2716,7 +2793,7 @@ spawning tool call that does not carry a run's sandbox is refused.</p>
 <p><strong><code>abstractgateway serve --unsandboxed-commands</code></strong> (also on the split
 <code>abstractgateway runner</code>) re-enables commands where the host cannot sandbox
 them: a host with <strong>no</strong> sandbox, or a run whose posture the host's sandbox
-cannot express (Linux Landlock and Windows each express one posture).
+cannot express (Linux Landlock expresses one posture).
 They then run with the gateway's own file access, still with the scrubbed
 environment. The flag is off by default and has no environment variable. Where
 the sandbox applies it changes nothing. With <code>--reload</code> it is ignored (the app
@@ -2730,11 +2807,11 @@ unsandboxed_commands_allowed, configured, flag}</code>. The console shows <code>
 under the Accounts head, with <code>sentence</code> as its tooltip, and the terminal
 console shows it on its Workspaces page:</p>
 <ul>
-<li><code>Commands sandboxed: macOS sandbox-exec</code> (or <code>Linux bubblewrap</code>)</li>
-<li><code>Commands sandboxed: Windows restricted token (Allow everything, refuse
-  listed workspaces); otherwise commands refused</code> (state <code>partial</code>: the host
-  sandboxes one posture; Linux Landlock reads the same way with "Deny
-  everything, allow listed workspaces")</li>
+<li><code>Commands sandboxed: macOS sandbox-exec</code> (or <code>Linux bubblewrap</code>, <code>Windows
+  restricted token</code>)</li>
+<li><code>Commands sandboxed: Linux Landlock (Deny everything, allow listed
+  workspaces); otherwise commands refused</code> (state <code>partial</code>: the host
+  sandboxes one posture, here Landlock without bubblewrap)</li>
 <li><code>Commands refused: no sandbox on this host</code></li>
 <li><code>Unsandboxed commands allowed (flag)</code></li>
 </ul>
@@ -2758,68 +2835,175 @@ allowed folder after masking its refused parent; Landlock grants the allowed
 folder alone.</p>
 <h3 id="on-windows">On Windows<a class="headerlink" href="#on-windows" title="Permanent link">&para;</a></h3>
 <p>The Windows sandbox starts each command with a <strong>restricted token</strong> and
-enforces the run's workspaces with entries in the folders' own access lists.
-It applies to runs set to <strong>"Allow everything, refuse listed workspaces" with
-read &amp; write by default</strong>, which is what a fresh gateway uses:</p>
+enforces the run's workspaces with entries in the folders' own permissions
+and, under the two stricter settings, an integrity level. It applies to every
+workspace setting.</p>
+<p>In every setting:</p>
 <ul>
 <li>A <strong>refused</strong> workspace, and every built-in refusal (the gateway's data
   folder, <code>.ssh</code> and the other credential folders), is closed to the command
-  and to everything it starts: it cannot be listed, read, written, renamed or
+  and to everything it starts: its content cannot be read, written, renamed or
   deleted, whatever spelling of the path is used.</li>
 <li>A <strong>read-only</strong> workspace can be read and run from, never written.</li>
-<li>The run's <strong>own folder</strong> inside the gateway's data folder works normally;
-  the rest of the data folder, other sessions' folders included, stays closed.</li>
-<li>Everything else behaves as it does for you: the command reads and writes
-  what your account can.</li>
+<li>A <strong>read &amp; write</strong> workspace, the run's <strong>own folder</strong> inside the gateway's
+  data folder and its temp folder work normally, the permissions of what is
+  inside them included (<code>git</code>, installers and Python set permissions on what
+  they make; Windows' own <code>ssh-keygen</code> is the exception, see below). The rest
+  of the data folder, other sessions' folders included, stays closed.</li>
+<li>Nested workspaces follow the most-specific-row rule: a read &amp; write
+  workspace inside a read-only or refused one is writable, a read-only or
+  refused one inside a read &amp; write one is not. A folder you create later
+  inside a refused folder can be made a workspace at any time.</li>
 <li>String commands run through <code>cmd.exe</code>, exactly as they do without the
-  sandbox, with the scrubbed environment and the run's private temp folder.</li>
+  sandbox, with the scrubbed environment and the run's private temp folder
+  as <code>TEMP</code> and <code>TMP</code>.</li>
 </ul>
-<p>A run set to <strong>"Deny everything, allow listed workspaces"</strong>, or to <strong>read-only
-by default</strong>, cannot be expressed by this sandbox: its commands are refused
-with that reason (the file tools still follow the run's workspaces). The state
-line says so: <code>Commands sandboxed: Windows restricted token (Allow everything,
-refuse listed workspaces); otherwise commands refused</code>.</p>
-<p>What to know:</p>
+<p>What each setting does with the rest of the machine:</p>
 <ul>
-<li><strong>The rules stay on the folders.</strong> The first command of a run writes one or
-  two entries on each refused or read-only folder, for identifiers that begin
-  with <code>S-1-9-</code> (Windows shows them as unknown accounts) and one for
-  <code>OWNER RIGHTS</code>. They are left in place, cost nothing afterwards, and mean
-  nothing to any other program: your own access is unchanged. For a read-only
-  workspace the entries are also inherited by its content, so the first use of
-  a large folder takes a moment. In the gateway's data folder the entries are
-  on the folder and on each thing directly inside it, and the folder keeps the
-  time of its last check in a named stream
-  (<code>&lt;folder&gt;:abstractcore-sandbox-&lt;id&gt;</code>).</li>
-<li><strong>A folder you cannot change the permissions of cannot be refused.</strong> If a
-  refused or read-only row points at a folder your account can read but does
-  not own (a system folder, for example), the command does not run and its
-  result says which folder; remove the row or point it at your own folder.</li>
+<li><strong>"Allow everything, refuse listed workspaces", read &amp; write by default</strong>
+  (what a fresh gateway uses): the command reads and writes what your account
+  can.</li>
+<li><strong>"Allow everything, refuse listed workspaces", read-only by default</strong>: the
+  command reads what your account can, and writes nothing outside the read &amp;
+  write workspaces, the run's own folder and its temp folder: not your other
+  folders, not your own temp folder, not the registry.</li>
+<li><strong>"Deny everything, allow listed workspaces"</strong>: your user profile, and the
+  folders you own at the root of your drives (or the drive itself when it is
+  yours), cannot be read outside the listed workspaces. Windows' folders,
+  installed programs and the gateway's own Python stay readable, because
+  commands need them. Nothing is written outside the read &amp; write workspaces,
+  the run's own folder and its temp folder.</li>
+</ul>
+<p><strong>Two runs, one folder.</strong> When one run lists a folder read &amp; write and another
+run may only read it (it lists the folder read-only, or not at all under a
+read-only default), the second run's commands cannot write that folder:
+before, while or after the first run's commands, even a command that was
+already running when the folder became read &amp; write, and even if the first
+run's command was killed. Two exceptions, each for about one pair of folders
+in 256 (the second run has a read &amp; write workspace of its own that the
+sandbox happens to group with that folder): a command of the second run that
+was already running when the folder first became read &amp; write can write it
+until it ends; and if the sandbox's list of marked folders was lost, the
+second run can write such a folder marked before the loss until a run lists it
+read &amp; write again. The guard protects against mistakes, not against a command
+that sets out to share: a command that may write a workspace can open what is
+inside it to other runs' commands (by giving it permissions of its own, as
+Python's <code>tempfile.mkdtemp</code> does with its folders; most programs do not), and
+they can then write it. It cannot open anything another run may not read: that
+run's refused folders stop it, and no command of another run can change them.</p>
+<h4 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h4>
+<ul>
+<li><strong>Drives without permissions are not protected.</strong> A drive formatted FAT or
+  exFAT (many USB sticks and SD cards) and a network share cannot carry the
+  sandbox's rules: commands read and change them as you can. Each command's
+  result names such drives (<code>Sandbox: Windows restricted token (not protected:
+  drive D: has no permissions (exFAT): …)</code>), and so does the console's tooltip
+  on the command-sandbox line. A refused or read-only workspace on such a drive
+  cannot be enforced, so a command of that run does not run (see below); a
+  read &amp; write workspace there works. To protect the drive, convert it to NTFS
+  (<code>convert D: /fs:ntfs</code>).</li>
+<li><strong>Under "Deny everything", what you cannot change stays readable</strong>: files at
+  the root of a drive that is not yours, <code>C:\Users\Public</code> (unless your account
+  is an administrator that may change <code>C:\Users</code>: then <code>C:\Users</code> is refused,
+  <code>Public</code> with it), <code>ProgramData</code>, folders an installer made at the root of a
+  drive, removable and network drives, and the registry.</li>
+<li><strong>Names on the way to a workspace are visible.</strong> In a refused folder that
+  holds a workspace (the gateway's data folder around a run's own folder, your
+  profile under "Deny everything"), and in each folder on the way down to that
+  workspace, a command can list the names, sizes and dates of what is directly
+  inside, never read it. Git needs this to start.</li>
+<li><strong>Two runs, one folder</strong> has the two narrow exceptions described above.</li>
+<li><strong>Content with permissions of its own.</strong> A file or folder moved into a
+  refused folder or a read-only workspace from elsewhere on the same drive,
+  given permissions of its own by hand after the sandbox set up its rules, or
+  created later with permissions of its own inside a read-only workspace,
+  keeps those permissions.</li>
+<li><strong>Git Bash under the two stricter settings</strong> ("Deny everything", and a
+  read-only default). Git Bash and other MSYS2 or Cygwin programs (<code>bash</code>,
+  <code>sh</code>, Git's own <code>ssh-keygen</code>, and what git runs through its shell: <code>git
+  clone</code> of a local folder or a <code>file://</code> address, hooks, <code>!</code> aliases) stop as
+  they start when a Git Bash window or another MSYS2 program is already
+  running in your Windows session; when none is, they start. <code>cmd</code>,
+  PowerShell, Python (<code>venv</code>, <code>pip install</code>) and Node.js work, and so does
+  <code>git</code> itself (<code>init</code>, <code>add</code>, <code>commit</code>, <code>status</code>, <code>diff</code>, <code>log</code>, <code>branch</code>,
+  <code>checkout</code>, and https through its own TLS); a commit is made even where its
+  hook cannot run. Under the same two settings, a junction or hard link can
+  only point at something the command may write.</li>
+<li><strong>Windows' own <code>ssh-keygen</code></strong> (<code>C:\Windows\System32\OpenSSH\ssh-keygen.exe</code>)
+  writes the private key and then fails on the public one, under every
+  setting. The key it leaves behind stays yours: your own programs read and
+  delete it.</li>
 <li><strong>Windows' built-in TLS is not available inside the sandbox.</strong> <code>curl.exe</code>,
   PowerShell's <code>Invoke-WebRequest</code> and .NET programs fail to open HTTPS
-  connections there. Programs that bring their own TLS work: Python, Node.js,
-  Git (with its OpenSSL backend), <code>pip</code>, <code>npm</code>. The agent's <code>fetch_url</code> tool
-  does not run as a command and is not affected. Programs installed as Store
-  app aliases (the <code>python</code>, <code>pwsh</code> and <code>winget</code> stubs under <code>WindowsApps</code>)
-  do not start inside the sandbox either; use a regular install.</li>
+  connections. Programs that bring their own TLS work: Python, Node.js, Git
+  (with its OpenSSL backend), <code>pip</code>, <code>npm</code>. The agent's <code>fetch_url</code> tool does
+  not run as a command and is not affected. Programs installed as Store app
+  aliases (the <code>python</code>, <code>pwsh</code> and <code>winget</code> stubs under <code>WindowsApps</code>) do not
+  start inside the sandbox; use a regular install.</li>
+<li><strong>Places Windows marks Low stay writable</strong> under the two stricter settings:
+  <code>HKCU\Software\AppDataLow</code>, <code>AppData\Local\Packages\*\AC</code>,
+  <code>AppData\Local\Publishers</code> and a few browser cache keys. <code>AppData\LocalLow</code>
+  and <code>Favorites</code> are not writable under a read-only default, and are part of
+  the refused profile under "Deny everything".</li>
 <li><strong>It confines file access, not everything a determined program can do.</strong> The
   command runs as you. It can ask another service of your Windows session to
-  act for it (the Task Scheduler, another of your processes), and it can
-  rename or remove a refused folder through a parent folder it may write; what
-  the refused folder held stays unreadable to it. Treat "Allow everything,
-  refuse listed workspaces" as protection against a command wandering into
-  folders it should not touch, on every platform.</li>
-<li><strong>Paths, not copies.</strong> A file that also exists under another name outside
-  the refused folder (a hard link made earlier) is reached through that name.
-  A refused path that does not exist is not refused when it appears later
+  act for it (the Task Scheduler, another of your processes). Treat the
+  sandbox as protection against a command wandering into folders it should not
+  touch, on every platform.</li>
+<li><strong>Paths, not copies.</strong> A file that also exists under another name outside a
+  refused folder (a hard link made earlier) is reached through that name. A
+  refused path that does not exist is not refused when it appears later
   during the same command (as with bubblewrap).</li>
-<li><strong>Content that arrives with its own permissions.</strong> What is created in the
-  gateway's data folder is closed before the next command starts, whatever
-  permissions it was made with. A file or folder <em>moved</em> there from elsewhere
-  on the same drive, or given permissions of its own by hand afterwards, keeps
-  them. In a read-only workspace, what is created normally inherits the rule;
-  a file created later with permissions of its own, moved in, or given
-  permissions by hand, keeps them and can be written.</li>
+</ul>
+<h4 id="what-the-sandbox-leaves-on-your-folders">What the sandbox leaves on your folders<a class="headerlink" href="#what-the-sandbox-leaves-on-your-folders" title="Permanent link">&para;</a></h4>
+<p>Nothing here reduces your own access, or that of any other program: you can
+still read, write, delete and change the permissions of everything.</p>
+<ul>
+<li><strong>Permission entries on each refused or read-only folder and on its parent
+  folder</strong> (the parent's entry stops the command from deleting or renaming the
+  refused folder). They name identifiers that begin with <code>S-1-9-</code> (Windows
+  shows them as unknown accounts), plus one for <code>OWNER RIGHTS</code>, and they stay
+  in place: they mean nothing to anything but the sandbox's commands. In a
+  refused folder that holds a workspace, the entries are on the folder and on
+  each thing directly inside it, and the folder keeps the time of its last
+  check in a named stream (<code>&lt;folder&gt;:abstractcore-sandbox-&lt;id&gt;</code>). For a large
+  read-only folder, the first command takes a moment.</li>
+<li><strong>A mark on each read &amp; write workspace</strong> (and on the run's own folder)
+  under the two stricter settings: an integrity level, inherited by its
+  content, that lets the sandbox's commands write there. Other programs write
+  there as before.</li>
+<li><strong>The sandbox's own folder</strong>, <code>%LOCALAPPDATA%\AbstractCore\command-sandbox</code>:
+  the lock that lets one command at a time set up its rules, and the list of
+  the folders that carry a mark. No command can open it.</li>
+</ul>
+<h4 id="when-a-command-does-not-run">When a command does not run<a class="headerlink" href="#when-a-command-does-not-run" title="Permanent link">&para;</a></h4>
+<p>The run continues in every case; the command's result says why.</p>
+<ul>
+<li><strong>"Commands are not sandboxed on this gateway host, so they are refused:
+  …"</strong>: the sandbox cannot be applied, for the reason given (for example, a
+  run with more workspace rows than a Windows command line can carry).
+  Remove rows, or start the gateway with <code>--unsandboxed-commands</code> to run
+  commands without a sandbox.</li>
+<li><strong>Exit code 126 and a line "sandbox: … the command did not run"</strong>, naming a
+  path:</li>
+<li><em>a refusal cannot be written</em>: a refused or read-only workspace, or
+    something inside a refused folder that holds a workspace, is a folder
+    your account can read but whose permissions it cannot change (a system
+    folder, or something an administrator's installer made, as found in
+    <code>AppData\Local\Temp</code> and at the root of some drives). Remove the row, put
+    the workspace somewhere else, or refuse the whole folder.</li>
+<li><em>the path is on a drive the sandbox cannot protect</em>: a refused or
+    read-only workspace on a FAT/exFAT drive or a network share. Remove that
+    row, or convert the drive to NTFS.</li>
+<li><em>the folder has permissions of its own</em>: a folder directly inside a
+    refused folder carries its own permissions instead of inherited ones, so
+    it cannot become a workspace. Let it inherit: <code>icacls &lt;path&gt; /reset</code>.</li>
+<li><em>the lock is held</em>: another command has been setting up its rules for
+    more than 10 minutes (a first use of a very large folder). The line names
+    the process holding it: wait, or end that process.</li>
+<li><strong>"cannot start the command"</strong>: the program could not be started inside the
+  sandbox (a Store app alias, for example). Install the program normally or
+  call it by its full path.</li>
 </ul>
 <h3 id="browser-probe">Browser probe<a class="headerlink" href="#browser-probe" title="Permanent link">&para;</a></h3>
 <p><code>browser_probe</code> (the render check for a page an agent wrote) never opens a

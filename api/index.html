@@ -1117,6 +1117,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#rename-a-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename a session
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#search-conversations" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2458,6 +2469,17 @@
     <span class="md-ellipsis">
       
         Archived sessions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rename-a-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rename a session
       
     </span>
   </a>
@@ -4043,8 +4065,9 @@ allowed one.</p>
 unsandboxed_commands_allowed, configured, flag}</code>. <code>line</code> is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and <code>sentence</code> is its
 tooltip. <code>state</code> is <code>partial</code> on a host whose sandbox expresses one posture
-only (Windows, Linux Landlock): <code>line</code> names the posture it sandboxes and what
-happens to the other; see <a href="../security/#command-sandbox">security.md</a>.</p>
+only (Linux Landlock without bubblewrap): <code>line</code> names the posture it
+sandboxes and what happens to the other; see
+<a href="../security/#command-sandbox">security.md</a>.</p>
 <h3 id="account-the-accounts-default-subset">Account: the account's default subset<a class="headerlink" href="#account-the-accounts-default-subset" title="Permanent link">&para;</a></h3>
 <p><code>GET /api/gateway/workspace/policy/{account}</code> (<code>{account}</code> = <code>name</code>,
 <code>tenant:name</code>, an entity's slug, or <code>me</code>) → <code>{ok, policy: {account,
@@ -4525,11 +4548,111 @@ history (every archive and unarchive) are kept in the plane's
 <code>session_archive.json</code>; each call writes a <code>session.archived</code> /
 <code>session.unarchived</code> audit event. Automations are archived with the
 <code>automation.archive</code> command and brought back with <code>automation.unarchive</code>.</p>
+<h3 id="rename-a-session">Rename a session<a class="headerlink" href="#rename-a-session" title="Permanent link">&para;</a></h3>
+<p>A conversation has no name of its own until a person gives it one: clients show
+its opening message. <code>PUT /api/gateway/sessions/{session_id}/title</code> with
+<code>{"title": "Snake game"}</code> stores a name that every client reading
+<code>GET /api/gateway/runs</code> shows instead. Nothing else about the session changes.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PUT /api/gateway/sessions/{session_id}/title</code></td>
+<td><code>{session_id, title, changed}</code>: <code>title</code> is the stored title or <code>null</code>; storing the stored title again answers <code>changed: false</code>; <code>store_reset</code> is added when this rename replaced a damaged titles file (below)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/runs</code></td>
+<td>every row of a titled session carries <code>session_title</code> (turn listings, <code>session_id</code>, <code>archived_only</code> and children listings alike); rows of an untitled session have no such key</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/sessions/search</code></td>
+<td>also matches the stored title, and items of a titled session carry <code>session_title</code> (see below)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/discovery/capabilities</code></td>
+<td><code>capabilities.session_titles: true</code> on a gateway that can rename; an older gateway has no such key, and a client offers no rename</td>
+</tr>
+</tbody>
+</table>
+<p>The title is one line, in this order:</p>
+<ol>
+<li>only the first 4,096 characters of <code>title</code> are read (the rest is ignored);</li>
+<li>every format character (Unicode category Cf: bidirectional controls,
+   zero-width and other invisible characters, tag characters) is removed,
+   except the ones scripts and emoji need: the joiners U+200C/U+200D, the
+   direction marks U+200E, U+200F and U+061C, the visible number signs of
+   Arabic, Syriac and Kaithi (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891,
+   U+08E2, U+110BD, U+110CD), and tag characters only inside an emoji tag
+   sequence (U+1F3F4 followed by tags ending with U+E007F, as in the flags of
+   England, Scotland and Wales);</li>
+<li>line breaks and other control characters (C0, DEL, C1) become spaces;</li>
+<li>runs of whitespace become one space, and the result is trimmed;</li>
+<li>longer titles are cut at 120 characters (Unicode characters, never inside
+   one; any script and emoji are kept).</li>
+</ol>
+<p>A title with no visible character, <code>"title": null</code> or no <code>title</code> clears the
+stored title, and clients show the opening message again. Not visible: marks
+(accents on nothing), separators and spaces, the joiners and direction marks
+kept in step 2, variation selectors, and the letters that render blank (the
+Hangul fillers and the Braille blank). A body
+that is not a JSON object, or a <code>title</code> that is neither a string nor <code>null</code>,
+answers <code>422 {"detail": {"reason_code": "invalid_request"}}</code>. The gateway's
+request body limit (<code>ABSTRACTGATEWAY_MAX_BODY_BYTES</code>, 10 MiB by default)
+applies as to every route.</p>
+<p>The session's owner or an admin may rename it, exactly as for archive: a session
+of another account, or an unknown one, answers
+<code>404 {"detail": {"reason_code": "session_not_found"}}</code>. An archived session
+keeps its title (shown in the archived listing) and can still be renamed. When
+a draft-test purge (<code>POST /runs/purge_drafts</code>) removes a session's last run,
+its title and its archive mark are removed too, so a later conversation
+reusing the id neither inherits the name nor starts archived. Titles live in the plane's <code>session_titles.json</code>
+(<code>{"schema": "gateway_session_titles_v1", "sessions": {id: {title, set_at,
+set_by}}}</code>, <code>set_by.kind: "person"</code> for this route) and survive a restart.
+Each change writes a <code>session.titled</code> audit event, after it is saved, with
+<code>action: "set"</code> or <code>"cleared"</code> (the title text is not written to the audit log).</p>
+<p><strong>When the titles file cannot be used.</strong> Messages name the file relative to
+the plane's folder, never its absolute path.</p>
+<ul>
+<li>A listing never fails because of it: <code>GET /runs</code> (every variant) and the
+  search answer as usual, without titles, and carry
+  <code>"session_titles_error": {"reason_code": "session_titles_unreadable",
+  "message": "&lt;one sentence&gt;"}</code> at the top level (beside <code>session_totals</code>). The
+  key is absent when the file is fine. Clients should say that names are
+  missing, not that there are none.</li>
+<li>A damaged file (UTF-8 text that is not JSON: truncated, empty, cut while
+  being written) is repaired by the next rename: it is kept aside as
+  <code>session_titles.damaged-&lt;UTC&gt;.json</code> in the same folder, a new file is started
+  with the new title, and the rename answers 200 with
+  <code>"store_reset": "&lt;that file name&gt;"</code> added to its body; its audit event
+  carries the same key.</li>
+<li>A file this gateway cannot read as its own is never changed: a valid JSON
+  file that is not a <code>gateway_session_titles_v1</code> document (a newer schema,
+  another program's file) or a file saved in another encoding (UTF-16,
+  "ANSI"). A rename answers
+  <code>500 {"detail": {"reason_code": "session_titles_unreadable"}}</code>.</li>
+<li>A file saved with a UTF-8 byte-order mark (Notepad) reads normally; titles
+  edited by hand are normalised on read like stored ones.</li>
+<li>A rename that cannot be saved (the folder refuses new files, another program
+  keeps the file open past a short retry) answers
+  <code>500 {"detail": {"reason_code": "session_titles_unwritable"}}</code> at once; the
+  file is left as it was and nothing is audited. The archive answers
+  <code>session_archive_unwritable</code> in the same case.</li>
+<li>A rename that waits more than 5 seconds for another writer (another request,
+  another gateway process on the same data folder) answers
+  <code>503 {"detail": {"reason_code": "session_titles_busy"}}</code>: try again. The
+  archive answers <code>session_archive_busy</code>, a run start that marks a session's
+  kind <code>session_kinds_busy</code>.</li>
+</ul>
 <h3 id="search-conversations">Search conversations<a class="headerlink" href="#search-conversations" title="Permanent link">&para;</a></h3>
 <p><code>GET /api/gateway/sessions/search?q=&lt;words&gt;</code> finds the caller's conversations
-by keyword: what was asked, what was answered, and the artifacts of each turn
-(generated images, recordings, videos and music by their generation prompt,
-attachments by their file name). Words and parts of words match, case and
+by keyword: the conversation's stored title, what was asked, what was answered,
+and the artifacts of each turn (generated images, recordings, videos and music
+by their generation prompt, attachments by their file name). Words and parts of words match, case and
 accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
 outputs and intermediate thinking are not indexed.</p>
 <table>
@@ -4567,7 +4690,14 @@ session, best first: <code>{session_id, run_id, prompt, snippet, highlights,
 matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
 artifact}</code>; <code>run_id</code> is the turn that matched best, <code>snippet</code> is the text
 around the first match with <code>highlights</code> as <code>[start, length]</code> pairs, and
-<code>matched_in</code> says where it matched (<code>question</code>, <code>answer</code> or <code>artifact</code>). When
+<code>matched_in</code> says where it matched (<code>question</code>, <code>answer</code>, <code>artifact</code> or
+<code>title</code>). Sessions whose stored title holds every word come first, most
+recent activity first, under the same filters (archived, <code>kind</code>,
+<code>session_kind</code>) and within <code>limit</code>; when only the title matched, the item is
+the session's newest turn with <code>matched_in: "title"</code> and the title as its
+<code>snippet</code>. An item of a renamed session carries <code>session_title</code>. When the
+titles file cannot be read the search answers without title matches and
+carries <code>session_titles_error</code> (see <a href="#rename-a-session">Rename a session</a>). When
 an artifact matched, <code>artifact</code> is <code>{artifact_id, run_id, kind, content_type,
 name, prompt}</code> and its bytes are at
 <code>GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content</code>.
@@ -5895,7 +6025,7 @@ result rather than making Flow authoring nodes unavailable.</p>
 <p><code>/api/gateway/memory/*</code> serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (<code>abstractruntime.integrations.abstractmemory.memory_facade</code>); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.20.0 and AbstractMemory 0.5.2.</p>
+(ADR 0001). Requires AbstractRuntime 0.21.0 and AbstractMemory 0.5.2.</p>
 <p><strong>Plane and home.</strong> Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:</p>
 <ul>
