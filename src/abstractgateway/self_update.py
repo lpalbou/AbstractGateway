@@ -1286,7 +1286,10 @@ def _windows_runner_script(*, handoff_id: str, command: List[str], result_file: 
     verify_lines: List[str] = []
     if installer_sha256 and script_path:
         verify_lines = [
-            f"    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath {_ps_literal(script_path)}).Hash.ToLowerInvariant()",
+            # .NET, not Get-FileHash: a Windows PowerShell started from PowerShell 7 can inherit a
+            # module path where Get-FileHash fails to load.
+            f"    $sha = [System.Security.Cryptography.SHA256]::Create()",
+            f"    $hash = (($sha.ComputeHash([System.IO.File]::ReadAllBytes({_ps_literal(script_path)})) | ForEach-Object {{ $_.ToString('x2') }}) -join '')",
             f"    if ($hash -ne {_ps_literal(installer_sha256.lower())}) {{",
             "        Write-Host 'The installer file changed after it was checked: nothing was run. Check for updates again.' -ForegroundColor Red",
             "        $code = 3",
@@ -1392,7 +1395,12 @@ def _windows_handoff_env() -> Optional[Dict[str, str]]:
     try:
         from . import host_control
 
-        return host_control.relaunch_env()[0]
+        env = dict(host_control.relaunch_env()[0])
+        # A gateway started from PowerShell 7 carries its module path; Windows PowerShell 5.1
+        # (the update window, the installer) then loads PowerShell 7 modules and fails. Without
+        # it, powershell.exe builds its own default.
+        env.pop("PSModulePath", None)
+        return env
     except Exception:
         return None
 

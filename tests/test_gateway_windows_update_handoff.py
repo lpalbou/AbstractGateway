@@ -188,7 +188,7 @@ def test_update_writes_the_checked_script_and_its_runner_records_the_hand_off_an
     assert self_update._job_thread is None and self_update.job_running() is True
     # The runner checks the confirmed sha256 again right before running the script, records the
     # result whatever happens (finally), ignores Ctrl+C, and starts the gateway again after a failure.
-    assert f"-ne '{PS1_SHA}'" in text and "Get-FileHash" in text
+    assert f"-ne '{PS1_SHA}'" in text and "SHA256]::Create()" in text
     assert "} finally {" in text and "TreatControlCAsInput" in text
     assert "/api/health" in text and "Start-Process -FilePath" in text
     view = self_update.update_view(_win(data), None, self_update.job_status(data_dir=str(data)), False)
@@ -433,7 +433,8 @@ def test_the_runner_refuses_an_installer_changed_after_the_check(tmp_path: Path)
             handoff_id=f"h{expect_code}", command=["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(fake)],
             result_file=result, log_dir=tmp_path, before="a", after="b", close_after_s=0, start_delay_s=0, installer_sha256=sha,
         ).encode("utf-8-sig"))
-        self_update._default_windows_launcher(runner, window_style="Hidden")
+        # As the gateway launches it (its environment: no PowerShell 7 module path).
+        self_update._default_windows_launcher(runner, window_style="Hidden", env=self_update._windows_handoff_env())
         deadline = time.time() + 90
         while not result.exists() and time.time() < deadline:
             time.sleep(0.5)
