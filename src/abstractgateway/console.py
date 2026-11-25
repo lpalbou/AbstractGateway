@@ -13032,7 +13032,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        renderGatewayUpdate(started); _gwMsg("");
 	        // Windows: the installer runs in its own window and restarts the gateway itself; follow it
 	        // back (up to 45 minutes) and reload once the gateway that comes back reports the outcome.
-	        if (started.job?.state === "handed_off") { state.updateReconnectUntil = Date.now() + 2700000; _gwMsg(started.job.message ? started.job.message + "." : "The update runs in its own window."); }
+	        if (started.job?.handoff) { state.updateReconnectUntil = Date.now() + 2700000; _gwMsg(started.job.message ? started.job.message + "." : "The update runs in its own window."); }
 	        _pollGatewayUpdate();
 	      }
 	      catch (e) {

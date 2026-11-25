@@ -11,8 +11,12 @@
   it was (`-NoOpen -NoModifyPath -DataDir <data dir>`). `windows-update.json` records the hand-off and the
   runner writes the installer's exit code next to it, so the gateway that comes back reports the outcome: the
   job is `completed` (with what moved), `failed` (the exit code and the log folder, or no report within 45
-  minutes), or `running` while the installer finishes; the tray says once how it went. A second update is
-  refused while one runs, and a window that could not be opened leaves no record. The update window stays
-  open when the installer fails, with the path of its log. The job's new states are `handed_off` (in the
-  gateway that started it) and `completed`; `GET /host/update` reports both, with the hand-off under
-  `job.handoff`.
+  minutes while the installer no longer holds its lock), or `running` while the installer finishes; the tray
+  follows it and says once how it went. A failure is reported by the gateway that started the update too (the
+  installer can fail before it stops the gateway), and the next check offers the update again. The runner
+  checks the confirmed sha256 of `install.ps1` again right before it runs it, ignores Ctrl+C, always records
+  the result, and starts the gateway again (`serve`) if a failed installer had stopped it; the update folder is
+  restricted to the account. A second update is refused while one runs, and a window that could not be opened
+  leaves no record. The update window stays open when the installer fails, with the path of its log. While
+  the installer runs the job is `running` with `job.handoff` set (every client already follows a running job);
+  the new job state is `completed`.

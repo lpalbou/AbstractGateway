@@ -150,3 +150,34 @@ def test_a_refused_start_does_not_leave_the_tray_stuck_on_the_old_offer(tray) ->
     answers.append(False)
     app.check_or_apply_update()
     assert checks == [1, 1], "the second click checks again"
+
+
+def test_windows_update_hands_off_says_so_and_reports_the_outcome_once(tray, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: the start answers a running job with a `handoff` (the installer runs in its own
+    window and stops this gateway): the tray says so and does not poll a gateway about to stop.
+    The tray that comes back follows the recorded hand-off and says once how it went."""
+    app, shown, confirms, answers = tray
+    handoff = {"id": "h1", "log_dir": "C:/d/logs"}
+    running = {"state": "running", "handoff": handoff, "message": "AbstractFramework 0.6.2 is being installed in its own window: AbstractGateway stops, updates and starts again by itself in a few minutes"}
+    app.client = _Client(_overview("available", action=ACTION), [_overview("running", job=running)])
+    answers.append(True)
+    app.check_or_apply_update()
+    assert app.client.started == [SHA] and app._update_phase == "updating"
+    assert shown[-1][0] == "Updating in its own window" and "AbstractFramework 0.6.2 is being installed" in shown[-1][1]
+
+    # The tray that comes back: running (the installer still finishes), then completed.
+    notices: List[Tuple[str, str]] = []
+    monkeypatch.setattr(app, "_notify", lambda title, body: notices.append((title, body)))
+    monkeypatch.setattr(tray_app.os, "name", "nt")
+    done = {"state": "completed", "handoff": handoff, "message": "AbstractFramework 0.6.2 is installed and running (AbstractFramework 0.6.1 -> 0.6.2)"}
+    app.client = _Client({}, [_overview("running", job=running), _overview("up_to_date", job=done)])
+    app._report_windows_update(wait_s=30.0)
+    assert notices == [("Update installed", done["message"])]
+    app.client = _Client({}, [_overview("up_to_date", job=done)])
+    app._report_windows_update(wait_s=30.0)
+    assert len(notices) == 1, "said once per hand-off"
+    # A failed one is said as a warning.
+    failed = {"state": "failed", "handoff": {"id": "h2"}, "error": "the AbstractFramework installer exited with code 1"}
+    app.client = _Client({}, [_overview("failed", job=failed)])
+    app._report_windows_update(wait_s=30.0)
+    assert shown[-1][0] == "The update didn't finish" and "exited with code 1" in shown[-1][1]

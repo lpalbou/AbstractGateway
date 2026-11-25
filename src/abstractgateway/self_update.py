@@ -799,7 +799,7 @@ _restart_pending = False
 
 @dataclass
 class _Job:
-    state: str = "idle"  # idle | running | handed_off | completed | succeeded | succeeded_no_change | failed
+    state: str = "idle"  # idle | running | completed | succeeded | succeeded_no_change | failed
     proc: Any = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
@@ -857,16 +857,34 @@ def job_status(*, data_dir: Optional[str] = None) -> Dict[str, Any]:
     it, so its outcome belongs to the gateway that came back."""
     with _job_lock:
         current = _job.as_dict()
-    if current["state"] == "idle" and data_dir:
-        recorded = windows_handoff_job(Path(data_dir))
-        if recorded is not None:
+    ddir = data_dir or ((current.get("handoff") or {}).get("data_dir"))
+    if ddir and (current["state"] == "idle" or current.get("handoff")):
+        # A gateway that ran no job reports the last recorded hand-off; the gateway that
+        # started one reports its outcome once the installer wrote it (the installer failed
+        # before it stopped this gateway: a lock, the network, a closed window).
+        recorded = windows_handoff_job(Path(ddir))
+        if recorded is not None and (current["state"] == "idle" or (recorded.get("handoff") or {}).get("id") == (current.get("handoff") or {}).get("id")):
             return recorded
     return current
 
 
+def _job_running_locked() -> bool:
+    """`_job` runs (call with _job_lock held). A Windows hand-off runs until its installer
+    reported (the result file) or its record says it no longer runs."""
+    if _job.state != "running":
+        return False
+    if not _job.handoff:
+        return True
+    ddir = _job.handoff.get("data_dir")
+    if not ddir:
+        return True
+    recorded = windows_handoff_job(Path(str(ddir)))
+    return recorded is None or recorded.get("state") == "running" or (recorded.get("handoff") or {}).get("id") != _job.handoff.get("id")
+
+
 def job_running() -> bool:
     with _job_lock:
-        return _job.state == "running"
+        return _job_running_locked()
 
 
 def restart_pending() -> bool:
@@ -1042,7 +1060,9 @@ def start_update(
         raise UpdateJobBusy("an update is being started")
     try:
         with _job_lock:
-            if _job.state in ("running", "handed_off"):
+            # (A Windows hand-off whose installer already reported is no longer running:
+            # job_running() reads its result.)
+            if _job.state == "running" and _job_running_locked():
                 raise UpdateJobBusy("an update is already running")
         return _start_update_locked(info=info, runner=runner, installer_sha256=installer_sha256, fetch_release=fetch_release, snapshot=snapshot, auto_restart=auto_restart)
     finally:
@@ -1238,7 +1258,8 @@ def _ps_literal(value: str) -> str:
 
 def _windows_runner_script(*, handoff_id: str, command: List[str], result_file: Path, log_dir: Path,
                            before: str, after: str, close_after_s: int = 15, start_delay_s: int = 3,
-                           health_url: Optional[str] = None, recover: Optional[List[str]] = None) -> str:
+                           health_url: Optional[str] = None, recover: Optional[List[str]] = None,
+                           installer_sha256: Optional[str] = None) -> str:
     """The runner the update window executes. Written as UTF-8 WITH a byte-order mark (see
     _start_windows_handoff): Windows PowerShell 5.1 reads a script without one in the system
     code page, which would garble a data dir whose path is not ASCII (an account named José)."""
@@ -1251,13 +1272,25 @@ def _windows_runner_script(*, handoff_id: str, command: List[str], result_file: 
     if health_url and recover:
         health = health_url.rstrip("/") + "/api/health"
         recover_lines = [
-            "    $up = $false",
-            f"    try {{ $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri {_ps_literal(health)}; $up = $true }} catch {{ }}",
-            "    if (-not $up) {",
-            "        Write-Host 'AbstractGateway is not running: starting it again as it was.' -ForegroundColor Yellow",
-            f"        try {{ Start-Process -FilePath {_ps_literal(recover[0])} -ArgumentList {_ps_literal(subprocess.list2cmdline(recover[1:]))} -WindowStyle Hidden }}"
+            "        $up = $false",
+            f"        try {{ $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri {_ps_literal(health)}; $up = $true }} catch {{ }}",
+            "        if (-not $up) {",
+            "            Write-Host 'AbstractGateway is not running: starting it again as it was.' -ForegroundColor Yellow",
+            f"            try {{ Start-Process -FilePath {_ps_literal(recover[0])} -ArgumentList {_ps_literal(subprocess.list2cmdline(recover[1:]))} -WindowStyle Hidden }}"
             " catch { Write-Host ('Could not start it: ' + $_.Exception.Message) -ForegroundColor Red }",
-            "    }",
+            "        }",
+        ]
+    # The script that runs is the one whose sha256 the admin confirmed (checked again here,
+    # just before it runs: the file sat on disk since the gateway wrote it).
+    script_path = args[args.index("-File") + 1] if "-File" in args else None
+    verify_lines: List[str] = []
+    if installer_sha256 and script_path:
+        verify_lines = [
+            f"    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath {_ps_literal(script_path)}).Hash.ToLowerInvariant()",
+            f"    if ($hash -ne {_ps_literal(installer_sha256.lower())}) {{",
+            "        Write-Host 'The installer file changed after it was checked: nothing was run. Check for updates again.' -ForegroundColor Red",
+            "        $code = 3",
+            "    } else {",
         ]
     return "\r\n".join([
         "# Written by AbstractGateway: runs the AbstractFramework installer for an update requested",
@@ -1271,33 +1304,41 @@ def _windows_runner_script(*, handoff_id: str, command: List[str], result_file: 
         "Write-Host 'AbstractGateway stops, is updated, and starts again by itself. Leave this window open; it closes when the update is done.'",
         "Write-Host ''",
         # Give the gateway time to answer the request that started this window.
+        # Ctrl+C would stop the installer half way and skip the result: it is ignored here (the
+        # window can still be closed; the gateway then reports that it did not hear back).
+        "try { [Console]::TreatControlCAsInput = $true } catch { }",
         f"Start-Sleep -Seconds {int(start_delay_s)}",
         "$code = 1",
         "try {",
+        *verify_lines,
         f"    & {_ps_literal(exe)} @({arg_list})",
         "    $code = [int]$LASTEXITCODE",
+        *(["    }"] if verify_lines else []),
         "} catch {",
         "    Write-Host ('The installer could not be started: ' + $_.Exception.Message) -ForegroundColor Red",
         "    $code = 1",
-        "}",
-        "$result = [ordered]@{",
-        f"    id = {_ps_literal(handoff_id)}",
-        "    exit_code = $code",
-        "    finished_at = [DateTime]::UtcNow.ToString('o')",
-        "}",
-        "try {",
-        "    $json = $result | ConvertTo-Json -Compress",
-        "    [System.IO.File]::WriteAllText($resultFile + '.tmp', $json, (New-Object System.Text.UTF8Encoding $false))",
-        "    Move-Item -LiteralPath ($resultFile + '.tmp') -Destination $resultFile -Force",
-        "} catch {",
-        "    Write-Host ('Could not record the result: ' + $_.Exception.Message) -ForegroundColor Yellow",
+        "} finally {",
+        "    $result = [ordered]@{",
+        f"        id = {_ps_literal(handoff_id)}",
+        "        exit_code = $code",
+        "        finished_at = [DateTime]::UtcNow.ToString('o')",
+        "    }",
+        "    try {",
+        "        $json = $result | ConvertTo-Json -Compress",
+        "        [System.IO.File]::WriteAllText($resultFile + '.tmp', $json, (New-Object System.Text.UTF8Encoding $false))",
+        "        Move-Item -LiteralPath ($resultFile + '.tmp') -Destination $resultFile -Force",
+        "    } catch {",
+        "        Write-Host ('Could not record the result: ' + $_.Exception.Message) -ForegroundColor Yellow",
+        "    }",
+        "    if ($code -ne 0) {",
+        *recover_lines,
+        "    }",
         "}",
         "Write-Host ''",
         "if ($code -eq 0) {",
         f"    Write-Host {_ps_literal(f'Done: {after} is installed and AbstractGateway is running again. This window closes in {int(close_after_s)} seconds.')} -ForegroundColor Green",
         f"    Start-Sleep -Seconds {int(close_after_s)}",
         "} else {",
-        *recover_lines,
         "    Write-Host ('The update did not finish (installer exit code ' + $code + '). Its log is the newest install-*.log in ' + $logDir) -ForegroundColor Red",
         "    Write-Host 'AbstractGateway shows this in its tray and console once it runs again.'",
         "    try { Read-Host 'Press Enter to close this window' | Out-Null } catch { Start-Sleep -Seconds 600 }",
@@ -1357,15 +1398,43 @@ def _windows_handoff_env() -> Optional[Dict[str, str]]:
 
 
 def _windows_recovery(data_dir: Path) -> Tuple[Optional[str], Optional[List[str]]]:
-    """(the gateway's local address, the command that starts it again as its Restart does): a
-    failed installer that had already stopped the gateway must not leave it stopped."""
+    """(the gateway's local address, the command that starts it again): a failed installer that
+    had already stopped the gateway must not leave it stopped. In the gateway, its own Restart
+    command (the arguments it was started with, so a login start keeps its tray); elsewhere
+    (`abstractgateway update`, whose own arguments are not a gateway's), `serve` on this data
+    dir and the port the gateway last served."""
     try:
         from . import host_control
-        from .first_run import local_gateway
+        from .first_run import local_gateway, read_serve_record
 
-        return str(local_gateway(Path(data_dir))["url"]), list(host_control.build_relaunch_command())
+        url = str(local_gateway(Path(data_dir))["url"])
+        command = list(host_control.build_relaunch_command())
+        if "serve" not in command[1:]:
+            command = [host_control._relaunch_python(), "-m", "abstractgateway", "serve", "--data-dir", str(data_dir)]
+            rec = read_serve_record(Path(data_dir)) or {}
+            if rec.get("port"):
+                command += ["--port", str(rec["port"])]
+        return url, command
     except Exception:
         return None, None
+
+
+def _protect_update_dir(folder: Path) -> None:
+    """Windows: the update folder becomes this account's alone (and SYSTEM's), so no other
+    local user can replace the scripts between writing and running (a data dir under C:\
+    inherits write access for every authenticated user). Best effort: the runner still checks
+    the installer's sha256 before it runs it."""
+    if os.name != "nt":
+        return
+    try:
+        out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=15, check=False)
+        sid = (out.stdout or "").strip().split(",")[-1].strip().strip('"')
+        if not sid.startswith("S-1-"):
+            return
+        subprocess.run(["icacls", str(folder), "/inheritance:r", "/grant:r", f"*{sid}:(OI)(CI)F", "/grant:r", "*S-1-5-18:(OI)(CI)F"],
+                       capture_output=True, text=True, timeout=30, check=False)
+    except Exception:  # noqa: BLE001
+        logger.warning("update: could not restrict %s to this account", folder, exc_info=True)
 
 
 def _handoff_dir(data_dir: Path) -> Path:
@@ -1399,8 +1468,8 @@ def _parse_iso(text: Any) -> Optional[float]:
 
 def _start_windows_handoff(inst: InstallInfo, *, installer_sha256: Optional[str], fetch_release: Any, launcher: Any = None) -> Dict[str, Any]:
     """Windows: write the checked install.ps1 and its runner, record the hand-off, open the
-    update window. The in-process job becomes `handed_off` (not `running`: nothing here waits
-    for it; the installer stops this gateway)."""
+    update window. The in-process job is `running` with `handoff` set (every client already
+    follows a running job); nothing here waits for it: the installer stops this gateway."""
     global _job
     import uuid
 
@@ -1408,8 +1477,11 @@ def _start_windows_handoff(inst: InstallInfo, *, installer_sha256: Optional[str]
     in_progress = windows_handoff_job(ddir)
     if in_progress is not None and in_progress.get("state") == "running":
         raise UpdateJobBusy("an update is already running in its own window")
-    command, installer_meta, packages = _prepare_installer_run(inst, installer_sha256=installer_sha256, fetch_release=None)
     folder = _handoff_dir(ddir)
+    folder.mkdir(parents=True, exist_ok=True)
+    if launcher is None:
+        _protect_update_dir(folder)
+    command, installer_meta, packages = _prepare_installer_run(inst, installer_sha256=installer_sha256, fetch_release=None)
     handoff_id = uuid.uuid4().hex[:12]
     result_file = folder / f"windows-update-{handoff_id}.result.json"
     log_dir = ddir / "logs"
@@ -1425,7 +1497,8 @@ def _start_windows_handoff(inst: InstallInfo, *, installer_sha256: Optional[str]
     health_url, recover = _windows_recovery(ddir)
     runner.write_bytes(_windows_runner_script(handoff_id=handoff_id, command=command, result_file=result_file,
                                               log_dir=log_dir, before=before, after=after,
-                                              health_url=health_url, recover=recover).encode("utf-8-sig"))
+                                              health_url=health_url, recover=recover,
+                                              installer_sha256=(installer_meta or {}).get("sha256")).encode("utf-8-sig"))
     started = _utc_now_iso()
     record = {
         "id": handoff_id,
@@ -1456,18 +1529,51 @@ def _start_windows_handoff(inst: InstallInfo, *, installer_sha256: Optional[str]
         raise UpdateNotPossible(f"the update window could not be opened ({type(exc).__name__}: {exc})") from exc
     with _job_lock:
         _job = _Job(
-            state="handed_off",
+            state="running",
             started_at=started,
             command=list(command),
             version_before=inst.version,
             installer=installer_meta,
             framework_before=inst.framework_version,
-            handoff={"id": handoff_id, "log_dir": str(log_dir), "result_file": str(result_file)},
+            handoff={"id": handoff_id, "log_dir": str(log_dir), "result_file": str(result_file), "data_dir": str(ddir)},
             message=(f"{after} is being installed in its own window: AbstractGateway stops, updates and starts "
                      "again by itself in a few minutes"),
         )
         _job.log.append(f"[gateway] the installer runs in its own PowerShell window: {' '.join(command)}")
         return _job.as_dict()
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return False
+            code = ctypes.c_ulong()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        except Exception:
+            return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+
+
+def _installer_lock_held(data_dir: Path) -> bool:
+    """The installer holds `<data dir>/update/install.lock/pid` while it runs (Lock-Install): a
+    slow install (a GPU profile's downloads) is still running after the hand-off time limit."""
+    try:
+        text = (Path(data_dir) / "update" / "install.lock" / "pid").read_text(encoding="utf-8-sig").strip()
+        return _pid_alive(int(re.sub(r"[^0-9]", "", text) or "0"))
+    except (OSError, ValueError):
+        return False
 
 
 def windows_handoff_job(data_dir: Path, *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
@@ -1494,11 +1600,11 @@ def windows_handoff_job(data_dir: Path, *, now: Optional[float] = None) -> Optio
         version_before=record.get("gateway_before"),
         installer=record.get("installer") if isinstance(record.get("installer"), dict) else None,
         framework_before=record.get("framework_before"),
-        handoff={"id": record["id"], "log_dir": record.get("log_dir"), "result_file": str(result_path)},
+        handoff={"id": record["id"], "log_dir": record.get("log_dir"), "result_file": str(result_path), "data_dir": str(data_dir)},
     )
     log_dir = str(record.get("log_dir") or Path(data_dir) / "logs")
     if result is None:
-        if clock - started < WINDOWS_HANDOFF_TIMEOUT_S:
+        if clock - started < WINDOWS_HANDOFF_TIMEOUT_S or _installer_lock_held(Path(data_dir)):
             job.state = "running"
             job.message = "the AbstractFramework installer is running in its own window"
             job.log.append("[gateway] the installer runs in its own PowerShell window")
@@ -1608,7 +1714,12 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
     state = str(job.get("state") or "idle")
     action: Optional[Dict[str, Any]] = None
     hint = ""
-    if state in ("running", "handed_off") and inst.windows and installer:
+    note = ""
+    if state == "failed" and job.get("handoff") and chk.get("update_available"):
+        # The last Windows update did not finish, and a check offers it again: offer it, say so.
+        note = f" (the last update didn't finish: {job.get('error') or 'see the log'})"
+        state = "idle"
+    if state == "running" and job.get("handoff"):
         # Windows: the installer runs in its own window, stops this gateway and starts it again.
         status = "running"
         line = f"{base} · installing in its own window: {APP_GATEWAY} stops, updates and starts again by itself (a few minutes)"
@@ -1641,7 +1752,7 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
         line = f"{base} · couldn't check for updates ({chk.get('error')})"
     elif chk.get("update_available"):
         status = "available" if inst.upgradable else "not_possible"
-        line = f"{base} · {offer} available"
+        line = f"{base} · {offer} available{note}"
     else:
         status = "up_to_date"
         line = f"{base} · up to date"
@@ -1669,7 +1780,8 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
                 f"runs: {source}, as: {command}. It opens in its own PowerShell window and asks nothing. Windows keeps "
                 f"a running program's files locked, so it stops {APP_GATEWAY} (running workflows pause and resume "
                 f"afterwards), updates everything, and starts it again with start at login as it is; this takes a few "
-                f"minutes, and the tray icon and the console are away meanwhile."
+                f"minutes, and the tray icon and the console are away meanwhile. Close the terminal console "
+                f"(abstractgateway-console) first if it is open: the installer replaces it."
             )
             action = {
                 "label": f"Update to {FRAMEWORK_NAME} {rel['version']}",

@@ -170,7 +170,8 @@ def test_update_writes_the_checked_script_and_its_runner_records_the_hand_off_an
     _state(data)
     launched: List[Path] = []
     job = _start(data, launched, auto_restart=True)  # the installer restarts the gateway itself
-    assert job["state"] == "handed_off" and "own window" in job["message"]
+    # "running" with the hand-off named: every client (the Rust terminal console too) follows a running job.
+    assert job["state"] == "running" and job["handoff"]["id"] and "own window" in job["message"]
     assert len(launched) == 1
     runner = launched[0]
     scripts = list((data / "update").glob("install-*.ps1"))
@@ -183,8 +184,13 @@ def test_update_writes_the_checked_script_and_its_runner_records_the_hand_off_an
     record = json.loads((data / "update" / self_update.WINDOWS_HANDOFF_FILE).read_text(encoding="utf-8"))
     assert record["id"] in runner.name and record["framework_before"] == "0.14.4" and record["target"] == "0.14.5"
     assert record["result_file"] in text and record["installer"]["sha256"] == PS1_SHA
-    # Nothing waits on it here: no job thread, and the job is not "running" (restarts are not blocked).
-    assert self_update._job_thread is None and self_update.job_running() is False
+    # Nothing waits on it here (no job thread); it runs until the installer reports.
+    assert self_update._job_thread is None and self_update.job_running() is True
+    # The runner checks the confirmed sha256 again right before running the script, records the
+    # result whatever happens (finally), ignores Ctrl+C, and starts the gateway again after a failure.
+    assert f"-ne '{PS1_SHA}'" in text and "Get-FileHash" in text
+    assert "} finally {" in text and "TreatControlCAsInput" in text
+    assert "/api/health" in text and "Start-Process -FilePath" in text
     view = self_update.update_view(_win(data), None, self_update.job_status(data_dir=str(data)), False)
     assert view["status"] == "running" and "in its own window" in view["line"]
 
@@ -344,4 +350,95 @@ def test_the_runner_runs_the_installer_outside_this_process_and_records_its_exit
     # The failed runner waits for Enter in its hidden window: end it.
     subprocess.run(["powershell.exe", "-NoProfile", "-Command",
                     f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{runner.name}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                   capture_output=True, timeout=60)
+
+
+# ------------------------------------------------------------------ adversarial review fixes
+
+
+def test_a_hand_off_that_failed_while_the_gateway_still_ran_reports_failed_and_allows_a_retry(tmp_path: Path, hermetic: None) -> None:
+    """The installer can fail before it stops the gateway (its lock, the network, a closed
+    window): the gateway that started it must report the failure, not "running" forever."""
+    data = tmp_path / "data"
+    _state(data)
+    launched: List[Path] = []
+    job = _start(data, launched)
+    record = json.loads((data / "update" / self_update.WINDOWS_HANDOFF_FILE).read_text(encoding="utf-8"))
+    _result(record, 1)
+    status = self_update.job_status()
+    assert status["state"] == "failed" and status["handoff"]["id"] == job["handoff"]["id"]
+    assert self_update.job_running() is False
+    # The next check offers the update again, with a word about the failure, and it can start.
+    inst = _win(data)
+    check = self_update.check_for_update(force=True, info=inst, fetch_release=_release)
+    view = self_update.update_view(inst, check, status, False)
+    assert view["status"] == "available" and view["action"] and "didn't finish" in view["line"]
+    again = self_update.start_update(info=inst, installer_sha256=PS1_SHA, runner=lambda runner: launched.append(Path(runner)))
+    assert again["state"] == "running" and again["handoff"]["id"] != job["handoff"]["id"] and len(launched) == 2
+
+
+def test_recovery_starts_serve_even_from_the_update_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import host_control
+
+    data = tmp_path / "data"
+    run_dir = data / "run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "gateway-serve.json").write_text(json.dumps({"url": "http://127.0.0.1:18099", "port": 18099, "pid": 1}), encoding="utf-8")
+    # `abstractgateway update --yes`: its own arguments are not a gateway's.
+    monkeypatch.setattr(host_control, "build_relaunch_command", lambda: ["C:/py/python.exe", "-m", "abstractgateway", "update", "--yes"])
+    url, command = self_update._windows_recovery(data)
+    assert command[1:5] == ["-m", "abstractgateway", "serve", "--data-dir"] and command[5] == str(data)
+    assert command[-2:] == ["--port", "18099"] and "update" not in command
+    # In the gateway: its own Restart command (a login start keeps its tray).
+    monkeypatch.setattr(host_control, "build_relaunch_command", lambda: ["C:/py/python.exe", "-m", "abstractgateway", "serve", "--tray"])
+    assert self_update._windows_recovery(data)[1] == ["C:/py/python.exe", "-m", "abstractgateway", "serve", "--tray"]
+
+
+def test_a_slow_install_holding_its_lock_is_still_running_after_the_time_limit(tmp_path: Path, hermetic: None) -> None:
+    data = tmp_path / "data"
+    _state(data)
+    _record(data, started_ago=self_update.WINDOWS_HANDOFF_TIMEOUT_S + 600)
+    lock = data / "update" / "install.lock"
+    lock.mkdir(parents=True)
+    (lock / "pid").write_text(str(os.getpid()), encoding="utf-8")  # a live process holds it
+    assert self_update.job_status(data_dir=str(data))["state"] == "running"
+    (lock / "pid").write_text("999999", encoding="utf-8")  # no such process: a stale lock
+    assert self_update.job_status(data_dir=str(data))["state"] == "failed"
+
+
+def test_an_installer_checked_for_another_system_is_never_run(tmp_path: Path, hermetic: None) -> None:
+    data = tmp_path / "data"
+    _state(data)
+    posix = self_update.detect_install(executable="/py", prefix=UV_TOOL_PREFIX, env={}, data_dir=data, platform="linux")
+    self_update.check_for_update(force=True, info=posix, fetch_release=_release)  # downloaded install.sh
+    with pytest.raises(self_update.UpdateNotPossible, match="another system"):
+        self_update.start_update(info=_win(data), installer_sha256=hashlib.sha256(SH).hexdigest(), runner=lambda r: None)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows PowerShell")
+def test_the_runner_refuses_an_installer_changed_after_the_check(tmp_path: Path) -> None:
+    """The sha256 the admin confirmed is checked again by the runner, on the file it runs."""
+    folder = tmp_path / "upd"
+    folder.mkdir()
+    ran = folder / "ran.txt"
+    fake = folder / "install.ps1"
+    fake.write_text(f"Set-Content -LiteralPath '{ran}' -Value ran\r\nexit 0\r\n", encoding="ascii")
+    good = hashlib.sha256(fake.read_bytes()).hexdigest()
+    for sha, expect_code, expect_ran in ((good, 0, True), ("0" * 64, 3, False)):
+        if ran.exists():
+            ran.unlink()
+        result = folder / f"r-{expect_code}.json"
+        runner = folder / f"runner-{expect_code}.ps1"
+        runner.write_bytes(self_update._windows_runner_script(
+            handoff_id=f"h{expect_code}", command=["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(fake)],
+            result_file=result, log_dir=tmp_path, before="a", after="b", close_after_s=0, start_delay_s=0, installer_sha256=sha,
+        ).encode("utf-8-sig"))
+        self_update._default_windows_launcher(runner, window_style="Hidden")
+        deadline = time.time() + 90
+        while not result.exists() and time.time() < deadline:
+            time.sleep(0.5)
+        assert json.loads(result.read_text(encoding="utf-8-sig"))["exit_code"] == expect_code
+        assert ran.exists() is expect_ran
+    subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*runner-3.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
                    capture_output=True, timeout=60)
