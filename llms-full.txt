@@ -7229,12 +7229,46 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Rename a session
+
+A conversation has no name of its own until a person gives it one: clients show
+its opening message. `PUT /api/gateway/sessions/{session_id}/title` with
+`{"title": "Snake game"}` stores a name that every client reading
+`GET /api/gateway/runs` shows instead. Nothing else about the session changes.
+
+| Route | Answer |
+|---|---|
+| `PUT /api/gateway/sessions/{session_id}/title` | `{session_id, title, changed}`: `title` is the stored title or `null`; storing the stored title again answers `changed: false` |
+| `GET /api/gateway/runs` | every row of a titled session carries `session_title` (turn listings, `session_id`, `archived_only` and children listings alike); rows of an untitled session have no such key |
+| `GET /api/gateway/sessions/search` | also matches the stored title, and items of a titled session carry `session_title` (see below) |
+| `GET /api/gateway/discovery/capabilities` | `capabilities.session_titles: true` on a gateway that can rename; an older gateway has no such key, and a client offers no rename |
+
+The title is one line: line breaks and other control characters become spaces,
+runs of whitespace become one space, and the result is trimmed. Longer titles
+are cut at 120 characters (Unicode characters, never inside one; any script and
+emoji are kept). An empty or blank title, `"title": null` or no `title` clears
+the stored title, and clients show the opening message again. A body that is
+not a JSON object, or a `title` that is neither a string nor `null`, answers
+`422 {"detail": {"reason_code": "invalid_request"}}`.
+
+The session's owner or an admin may rename it, exactly as for archive: a session
+of another account, or an unknown one, answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. An archived session
+keeps its title (shown in the archived listing) and can still be renamed.
+Titles live in the plane's `session_titles.json`
+(`{"schema": "gateway_session_titles_v1", "sessions": {id: {title, set_at,
+set_by}}}`, `set_by.kind: "person"` for this route) and survive a restart; a
+file that cannot be read answers `500 {"detail": {"reason_code":
+"session_titles_unreadable"}}` on the route and on `GET /runs`, never a list
+without titles. Each change writes a `session.titled` audit event with
+`action: "set"` or `"cleared"` (the title text is not written to the audit log).
+
 ### Search conversations
 
 `GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
-by keyword: what was asked, what was answered, and the artifacts of each turn
-(generated images, recordings, videos and music by their generation prompt,
-attachments by their file name). Words and parts of words match, case and
+by keyword: the conversation's stored title, what was asked, what was answered,
+and the artifacts of each turn (generated images, recordings, videos and music
+by their generation prompt, attachments by their file name). Words and parts of words match, case and
 accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
 outputs and intermediate thinking are not indexed.
 
@@ -7251,7 +7285,11 @@ session, best first: `{session_id, run_id, prompt, snippet, highlights,
 matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
 artifact}`; `run_id` is the turn that matched best, `snippet` is the text
 around the first match with `highlights` as `[start, length]` pairs, and
-`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+`matched_in` says where it matched (`question`, `answer`, `artifact` or
+`title`). Sessions whose stored title holds every word come first; when only
+the title matched, the item is the session's newest turn with
+`matched_in: "title"` and the title as its `snippet`. An item of a renamed
+session carries `session_title`. When
 an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
 name, prompt}` and its bytes are at
 `GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
@@ -11985,8 +12023,9 @@ browser on this computer from one elsewhere on the network
   and the runner closes any streamed-speech wait an older process left
   behind.
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
-  `model_download_delete.py`): archive and unarchive a conversation (history
-  kept), and delete a downloaded model's files with the engine's own
+  `session_titles.py`, `model_download_delete.py`): archive and unarchive a
+  conversation (history kept), rename it (a stored title served on `GET /runs`
+  rows as `session_title`), and delete a downloaded model's files with the engine's own
   mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
@@ -14851,7 +14890,9 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 **What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
 the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
 too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
-restricted token" and names any drive the sandbox cannot protect. Pins: Runtime 0.21.0 and Core 2.39.0.
+restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
+(`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
 
 **What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
 a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
@@ -16566,6 +16607,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
   without permissions or network share AbstractCore reports (through the runtime facade's
   `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+- **Rename a conversation**: `PUT /api/gateway/sessions/{session_id}/title` with `{"title": "..."}` (the
+  session's owner or an admin; one line, cut at 120 characters; an empty title or `null` clears it and the
+  opening message names the conversation again; audited as `session.titled`). Every `GET /api/gateway/runs`
+  row of a renamed session carries `session_title`, the archived listing and the keyword search included (the
+  search also finds a conversation by its title), and the title survives a restart.
+  `GET /api/gateway/discovery/capabilities` says `capabilities.session_titles: true` so a client offers
+  "Rename" only on a gateway that can store it.
 
 ### Changed
 

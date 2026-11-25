@@ -1403,12 +1403,46 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Rename a session
+
+A conversation has no name of its own until a person gives it one: clients show
+its opening message. `PUT /api/gateway/sessions/{session_id}/title` with
+`{"title": "Snake game"}` stores a name that every client reading
+`GET /api/gateway/runs` shows instead. Nothing else about the session changes.
+
+| Route | Answer |
+|---|---|
+| `PUT /api/gateway/sessions/{session_id}/title` | `{session_id, title, changed}`: `title` is the stored title or `null`; storing the stored title again answers `changed: false` |
+| `GET /api/gateway/runs` | every row of a titled session carries `session_title` (turn listings, `session_id`, `archived_only` and children listings alike); rows of an untitled session have no such key |
+| `GET /api/gateway/sessions/search` | also matches the stored title, and items of a titled session carry `session_title` (see below) |
+| `GET /api/gateway/discovery/capabilities` | `capabilities.session_titles: true` on a gateway that can rename; an older gateway has no such key, and a client offers no rename |
+
+The title is one line: line breaks and other control characters become spaces,
+runs of whitespace become one space, and the result is trimmed. Longer titles
+are cut at 120 characters (Unicode characters, never inside one; any script and
+emoji are kept). An empty or blank title, `"title": null` or no `title` clears
+the stored title, and clients show the opening message again. A body that is
+not a JSON object, or a `title` that is neither a string nor `null`, answers
+`422 {"detail": {"reason_code": "invalid_request"}}`.
+
+The session's owner or an admin may rename it, exactly as for archive: a session
+of another account, or an unknown one, answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. An archived session
+keeps its title (shown in the archived listing) and can still be renamed.
+Titles live in the plane's `session_titles.json`
+(`{"schema": "gateway_session_titles_v1", "sessions": {id: {title, set_at,
+set_by}}}`, `set_by.kind: "person"` for this route) and survive a restart; a
+file that cannot be read answers `500 {"detail": {"reason_code":
+"session_titles_unreadable"}}` on the route and on `GET /runs`, never a list
+without titles. Each change writes a `session.titled` audit event with
+`action: "set"` or `"cleared"` (the title text is not written to the audit log).
+
 ### Search conversations
 
 `GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
-by keyword: what was asked, what was answered, and the artifacts of each turn
-(generated images, recordings, videos and music by their generation prompt,
-attachments by their file name). Words and parts of words match, case and
+by keyword: the conversation's stored title, what was asked, what was answered,
+and the artifacts of each turn (generated images, recordings, videos and music
+by their generation prompt, attachments by their file name). Words and parts of words match, case and
 accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
 outputs and intermediate thinking are not indexed.
 
@@ -1425,7 +1459,11 @@ session, best first: `{session_id, run_id, prompt, snippet, highlights,
 matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
 artifact}`; `run_id` is the turn that matched best, `snippet` is the text
 around the first match with `highlights` as `[start, length]` pairs, and
-`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+`matched_in` says where it matched (`question`, `answer`, `artifact` or
+`title`). Sessions whose stored title holds every word come first; when only
+the title matched, the item is the session's newest turn with
+`matched_in: "title"` and the title as its `snippet`. An item of a renamed
+session carries `session_title`. When
 an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
 name, prompt}` and its bytes are at
 `GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.

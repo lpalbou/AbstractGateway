@@ -30,7 +30,9 @@ Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 **What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
 the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
 too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
-restricted token" and names any drive the sandbox cannot protect. Pins: Runtime 0.21.0 and Core 2.39.0.
+restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
+(`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
 
 **What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
 a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));

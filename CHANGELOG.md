@@ -19,6 +19,13 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
   without permissions or network share AbstractCore reports (through the runtime facade's
   `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+- **Rename a conversation**: `PUT /api/gateway/sessions/{session_id}/title` with `{"title": "..."}` (the
+  session's owner or an admin; one line, cut at 120 characters; an empty title or `null` clears it and the
+  opening message names the conversation again; audited as `session.titled`). Every `GET /api/gateway/runs`
+  row of a renamed session carries `session_title`, the archived listing and the keyword search included (the
+  search also finds a conversation by its title), and the title survives a restart.
+  `GET /api/gateway/discovery/capabilities` says `capabilities.session_titles: true` so a client offers
+  "Rename" only on a gateway that can store it.
 
 ### Changed
 
