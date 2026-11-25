@@ -5,7 +5,8 @@ installer the one-line install runs, never a uv command of its own. Pins:
 
 - `detect_install` classifies a uv tool whose data dir holds the installer's
   `bootstrap.env` as `installer`; its update never runs `uv tool upgrade` (a no-op on the
-  installer's `==<pin>`). Windows shows the PowerShell line instead (running files are locked).
+  installer's `==<pin>`). Windows hands the checked install.ps1 to its own PowerShell window
+  (running files are locked): tests/test_gateway_windows_update_handoff.py.
 - The check compares AbstractFramework RELEASES (bootstrap.env vs the framework repo's
   install manifest), never PyPI's newest gateway; an install that recorded no release
   compares its gateway with the release's gateway pin.
@@ -119,10 +120,13 @@ def test_an_installer_install_is_updated_by_the_installer_never_by_uv(tmp_path: 
     # Linux: the same path.
     assert self_update.detect_install(executable="/py", prefix=UV_TOOL_PREFIX, env={}, data_dir=data, platform="linux").kind == "installer"
 
-    # Windows: the installer must stop the gateway before files change, so it is shown, not run.
+    # Windows: Update hands the checked install.ps1 to its own PowerShell window (the installer
+    # stops the gateway before files change and starts it again).
     win = self_update.detect_install(executable="/py", prefix=UV_TOOL_PREFIX, env={}, data_dir=data, platform="win32")
-    assert win.kind == "installer" and win.upgradable is False and win.command is None
-    assert win.display_command == self_update.INSTALLER_ONE_LINER_WINDOWS and "locked" in str(win.reason)
+    assert win.kind == "installer" and win.upgradable is True and win.command is None and win.windows is True
+    assert win.reason is None
+    assert win.display_command == " ".join(self_update.windows_installer_command(Path("install.ps1"), str(data)))
+    assert win.as_dict()["windows"] is True
 
 
 def test_the_running_gateways_data_dir_decides_and_uv_tool_upgrade_never_runs(tmp_path: Path, hermetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -572,14 +576,14 @@ def test_a_runner_failure_stops_the_command_before_the_job_leaves_running(monkey
         os.killpg(seen["proc"].pid, 0)
 
 
-def test_the_windows_hint_never_says_update_runs_it(tmp_path: Path, hermetic: None) -> None:
+def test_the_windows_hint_says_update_runs_the_installer_in_its_own_window(tmp_path: Path, hermetic: None) -> None:
     data = tmp_path / "data"
     _state(data)
     win = self_update.detect_install(executable="/py", prefix=UV_TOOL_PREFIX, env={}, data_dir=data, platform="win32")
     for check, job in ((None, {"state": "idle"}), ({"update_available": False, "latest": "0.7.1", "checked_at": "t", "release": None, "offline": False, "error": None}, {"state": "idle"})):
         view = self_update.update_view(win, check, job, False)
-        assert "Update runs" not in view["hint"], view["hint"]
-        assert self_update.INSTALLER_ONE_LINER_WINDOWS in view["hint"]
+        assert "own PowerShell window" in view["hint"], view["hint"]
+        assert "irm" not in view["hint"], "the hint no longer sends the person to a PowerShell line"
 
 
 def test_a_leftover_temp_script_older_than_an_hour_is_removed_when_idle(tmp_path: Path) -> None:

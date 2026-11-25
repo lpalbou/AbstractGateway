@@ -220,22 +220,12 @@ def _confirm(prompt: str) -> bool:
 
 def run_installer(command: List[str], *, platform: str = sys.platform, run: Any = None) -> int:
     """Run the installer in the foreground, its output on this terminal; its exit code.
-
-    Windows: the running `abstractgateway` (this process) holds the files the installer
-    replaces, so the PowerShell installer starts in a new window and this command exits at
-    once (0) so the installer finds nothing locked."""
-    if platform.startswith("win"):
-        flags = int(getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
-        (run or subprocess.Popen)(command, creationflags=flags, close_fds=True)
-        return EXIT_OK
+    (Windows does not come here: the update hands off to its own window, see run_update.)"""
     return int((run or subprocess.call)(command))
 
 
-def windows_installer_command(script: Path, data_dir: str) -> List[str]:
-    return [
-        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
-        "-NoOpen", "-NoModifyPath", "-DataDir", str(data_dir),
-    ]
+# The command a Windows update runs, kept here for callers of the 0.24 name.
+windows_installer_command = self_update.windows_installer_command
 
 
 def run_update(
@@ -255,6 +245,10 @@ def run_update(
     _apply_data_dir_flag(getattr(args, "data_dir", None))
     data_dir = apply_data_dir_default().path
     inst = (detect or self_update.detect_install)(data_dir=data_dir, platform=platform)
+    if inst.kind == "installer" and platform.startswith("win") and not inst.windows:
+        import dataclasses
+
+        inst = dataclasses.replace(inst, windows=True)
     if inst.kind != "installer":
         print(refusal_text(inst), file=sys.stderr)
         return EXIT_REFUSED
@@ -263,7 +257,16 @@ def run_update(
     have = f"{self_update.FRAMEWORK_NAME} {installed}" if installed else f"{self_update.FRAMEWORK_NAME} (release not recorded) · gateway {inst.version}"
     print(f"Installed: {have}", flush=True)
     print("Checking the newest release...", file=sys.stderr, flush=True)
-    rel = (fetch_release or self_update._fetch_framework_release)()
+    rel = fetch_release() if fetch_release else self_update._fetch_framework_release(windows=inst.windows)
+    if rel.get("ok") and inst.windows and not rel.get("windows_installer_bytes"):
+        # (An injected release without the Windows script: fetch it from the same commit.)
+        ps_url = f"{self_update.FRAMEWORK_RAW}/{rel['commit']}/{self_update.INSTALLER_SCRIPT_PATH_WINDOWS}"
+        try:
+            ps_bytes = (http_get or self_update._http_get)(ps_url, "text/plain", self_update.CHECK_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Could not download the installer ({ps_url}: {type(exc).__name__}: {exc})", file=sys.stderr)
+            return EXIT_ERROR
+        rel = dict(rel, windows_installer_url=ps_url, windows_installer_bytes=ps_bytes)
     if not rel.get("ok"):
         print(f"Could not check for a newer release: {rel.get('error') or 'unknown error'}", file=sys.stderr)
         return EXIT_ERROR
@@ -312,21 +315,20 @@ def run_update(
     console_url = str(local_gateway(Path(str(inst.data_dir)))["url"]).rstrip("/") + "/console"
     ddir = Path(str(inst.data_dir))
     update_dir = ddir / "update"
-    if platform.startswith("win"):
-        ps_url = f"{self_update.FRAMEWORK_RAW}/{rel['commit']}/{self_update.INSTALLER_SCRIPT_PATH_WINDOWS}"
+    if inst.windows:
+        # The same hand-off as the tray and the consoles: the checked install.ps1 runs in its own
+        # PowerShell window, outside this process's tree, so this command (and the gateway, whose
+        # files are locked while they run) can be stopped by the installer.
+        sha = str(check["release"]["installer"]["sha256"])
         try:
-            ps_bytes = (http_get or self_update._http_get)(ps_url, "text/plain", self_update.CHECK_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001
-            print(f"Could not download the installer ({ps_url}: {type(exc).__name__}: {exc})", file=sys.stderr)
+            self_update.start_update(info=inst, installer_sha256=sha, runner=run)
+        except (self_update.UpdateNotPossible, self_update.UpdateJobBusy) as exc:
+            print(f"The update did not start: {exc}", file=sys.stderr)
             return EXIT_ERROR
-        import hashlib
-
-        script = _write_windows_installer(update_dir, ps_bytes, hashlib.sha256(ps_bytes).hexdigest())
-        command = windows_installer_command(script, str(ddir))
-        print("Running the AbstractFramework installer in a new PowerShell window; this command exits now so the")
-        print("installer can replace the gateway's files. It stops the gateway, updates everything and starts it again.")
+        print("The AbstractFramework installer runs in its own PowerShell window. It stops the gateway (Windows locks")
+        print("the files of a running program), updates everything and starts it again; this takes a few minutes.")
         print(f"Afterwards, the console is at {console_url}")
-        return run_installer(command, platform=platform, run=run)
+        return EXIT_OK
 
     sha = str(check["release"]["installer"]["sha256"])  # the script the check hashed: the one that runs
     script = self_update._write_installer_script(update_dir, bytes(rel["installer_bytes"]), sha)
@@ -342,8 +344,3 @@ def run_update(
     return code
 
 
-def _write_windows_installer(folder: Path, data: bytes, sha256: str) -> Path:
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / f"install-{sha256[:12]}.ps1"
-    path.write_bytes(data)
-    return path

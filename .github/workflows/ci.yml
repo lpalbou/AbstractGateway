@@ -35,7 +35,7 @@ jobs:
           files="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
           echo "$files" | grep -qE '^(console-tui/|\.github/workflows/ci\.yml$)' && echo "tui=true" >> "$GITHUB_OUTPUT" || echo "tui=false" >> "$GITHUB_OUTPUT"
           echo "$files" | grep -qE '^(docker/|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "docker=true" >> "$GITHUB_OUTPUT" || echo "docker=false" >> "$GITHUB_OUTPUT"
-          echo "$files" | grep -qE '^(src/abstractgateway/(model_host|model_host_child|split_mode|cli|os_service|autostart|firstrun_cli|command_sandbox|run_workspace_guard)\.py$|tests/(test_model_host_portable|model_host_fakes|test_gateway_os_service|test_gateway_autostart|test_gateway_start_at_login|test_r12w2_command_sandbox|test_r12w2_e2e_command_sandbox|conftest)\.py$|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "windows=true" >> "$GITHUB_OUTPUT" || echo "windows=false" >> "$GITHUB_OUTPUT"
+          echo "$files" | grep -qE '^(src/abstractgateway/(model_host|model_host_child|split_mode|cli|os_service|autostart|firstrun_cli|command_sandbox|run_workspace_guard|self_update|update_cli)\.py$|tests/(test_gateway_windows_update_handoff|test_model_host_portable|model_host_fakes|test_gateway_os_service|test_gateway_autostart|test_gateway_start_at_login|test_r12w2_command_sandbox|test_r12w2_e2e_command_sandbox|conftest)\.py$|pyproject\.toml$|\.github/workflows/ci\.yml$)' && echo "windows=true" >> "$GITHUB_OUTPUT" || echo "windows=false" >> "$GITHUB_OUTPUT"
 
   test:
     # Pull requests: ONE Python (3.12), the suite split in 4 parallel shards (whole test files,
@@ -126,6 +126,8 @@ jobs:
         run: python -m pytest -p no:cacheprovider tests/test_gateway_os_service.py tests/test_gateway_autostart.py tests/test_gateway_start_at_login.py -k "windows or win32 or no_start_keeps_registration"
       - name: Command sandbox on Windows
         run: python -m pytest -p no:cacheprovider tests/test_r12w2_command_sandbox.py tests/test_r12w2_e2e_command_sandbox.py
+      - name: Update hand-off on Windows (the real runner and launcher, a stand-in installer)
+        run: python -m pytest -p no:cacheprovider tests/test_gateway_windows_update_handoff.py
 
   build:
     runs-on: ubuntu-latest

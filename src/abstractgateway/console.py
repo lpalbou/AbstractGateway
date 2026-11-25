@@ -13027,7 +13027,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!ok) return;
 	      const body = action.installer_sha256 ? { installer_sha256: action.installer_sha256 } : {};
           if (options.autoRestart) { body.auto_restart = true; state.updateReconnectUntil = Date.now() + 2400000; }
-	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) })); _gwMsg(""); _pollGatewayUpdate(); }
+	      try {
+	        const started = await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) });
+	        renderGatewayUpdate(started); _gwMsg("");
+	        // Windows: the installer runs in its own window and restarts the gateway itself; follow it
+	        // back (up to 45 minutes) and reload once the gateway that comes back reports the outcome.
+	        if (started.job?.state === "handed_off") { state.updateReconnectUntil = Date.now() + 2700000; _gwMsg(started.job.message ? started.job.message + "." : "The update runs in its own window."); }
+	        _pollGatewayUpdate();
+	      }
 	      catch (e) {
 	        // Refused (the installer changed, one already runs, check again first): the offer
 	        // is stale, so drop it like the tray does; the next step is a new check.
@@ -13045,7 +13052,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        try {
             const upd = await api("/api/gateway/host/update");
             renderGatewayUpdate(upd);
-            if (state.updateReconnectUntil && upd.job?.state === "idle") { state.updateReconnectUntil = 0; window.location.reload(); return; }
+            if (state.updateReconnectUntil && (upd.job?.state === "idle" || upd.job?.state === "completed")) { state.updateReconnectUntil = 0; window.location.reload(); return; }
             if (upd.job?.state === "failed" || upd.job?.state === "succeeded_no_change" || upd.job?.restart_error) state.updateReconnectUntil = 0;
             if (upd.job?.restart_error) _gwMsg("Update installed, but automatic restart failed: " + upd.job.restart_error, "error");
             if (upd.job?.state === "running" || state.updateReconnectUntil > Date.now()) _pollGatewayUpdate();
