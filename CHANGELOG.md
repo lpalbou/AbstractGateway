@@ -25,7 +25,14 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   row of a renamed session carries `session_title`, the archived listing and the keyword search included (the
   search also finds a conversation by its title), and the title survives a restart.
   `GET /api/gateway/discovery/capabilities` says `capabilities.session_titles: true` so a client offers
-  "Rename" only on a gateway that can store it.
+  "Rename" only on a gateway that can store it. Format characters that hide text or imitate another title
+  (bidirectional controls, zero-width and other invisible characters) are removed, a title with no visible
+  character clears, and only the first 4,096 characters of a title are read. A titles file that cannot be read
+  never takes the conversation list down: `GET /runs` and the search answer without titles and carry
+  `session_titles_error`; a damaged file is kept aside as `session_titles.damaged-<UTC>.json` by the next
+  rename, which starts a new one and says so (`store_reset`); a file in another encoding or schema is never
+  touched. A rename that cannot be saved answers 500 `session_titles_unwritable`, one that waits too long for
+  another writer 503 `session_titles_busy`.
 
 ### Changed
 
@@ -62,6 +69,20 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
   Windows sandbox enforces those shapes (`host_sandbox_kind("allowed_only")`, abstractcore 2.39.0) and skips,
   naming that version, before. AbstractCore's views of the real machine (user data roots, Low places, its state
   folder, the drive probe) are replaced by test folders and the launcher's policy is checked before each launch.
+
+### Fixed
+
+- **Archiving a conversation, or the first conversation list of an account, no longer hangs the whole gateway
+  when the account's data folder refuses new files** (a read-only folder, Windows Controlled Folder Access, an
+  access-list deny). Archiving answers 500 `session_archive_unwritable` at once; the list is served and its
+  one-time session-kind migrations are tried again by the next list (`POST /runs/start` answers 500
+  `session_kinds_unwritable` when a session's kind cannot be saved); every other request keeps being served. The
+  archive and session-kind files are read and written off the event loop, and a write that waits more than 5
+  seconds for another writer answers 503 (`session_archive_busy`, `session_kinds_busy`) instead of holding a
+  worker. A draft-test purge that removes a session's last run also drops its archive mark. A save refused for a moment
+  because another program holds the file open (antivirus, indexer, backup) is retried briefly, two gateway
+  processes on one data folder no longer lose each other's changes, temp files left by a crash are removed by
+  the next save, and error messages no longer show the data folder's absolute path.
 
 ## [0.23.0] - 2026-11-24
 

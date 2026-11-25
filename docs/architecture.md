@@ -289,7 +289,8 @@ browser on this computer from one elsewhere on the network
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
   `session_titles.py`, `model_download_delete.py`): archive and unarchive a
   conversation (history kept), rename it (a stored title served on `GET /runs`
-  rows as `session_title`), and delete a downloaded model's files with the engine's own
+  rows as `session_title`); these per-plane JSON files and `session_kinds.json`
+  are written through `json_store.py` (one temp file, bounded retries, a cross-process lock), and delete a downloaded model's files with the engine's own
   mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
