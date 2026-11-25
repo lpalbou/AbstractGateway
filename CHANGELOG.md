@@ -75,7 +75,7 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 - **Archiving a conversation, or the first conversation list of an account, no longer hangs the whole gateway
   when the account's data folder refuses new files** (a read-only folder, Windows Controlled Folder Access, an
   access-list deny). Archiving answers 500 `session_archive_unwritable` at once; the list is served and its
-  one-time session-kind migrations are tried again by the next list (`POST /runs/start` answers 500
+  one-time session-kind migrations are tried again a minute later (`POST /runs/start` answers 500
   `session_kinds_unwritable` when a session's kind cannot be saved); every other request keeps being served. The
   archive and session-kind files are read and written off the event loop, and a write that waits more than 5
   seconds for another writer answers 503 (`session_archive_busy`, `session_kinds_busy`) instead of holding a

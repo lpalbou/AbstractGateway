@@ -263,14 +263,24 @@ def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: 
 
 
 _MIGRATION_SCAN_LOCK = threading.Lock()
+# A plane whose folder refused the migrations' save is not tried again for MIGRATION_RETRY_S
+# (every listing would pay the whole-index scan and the failed save): plane -> when it failed.
+MIGRATION_RETRY_S = 60.0
+_MIGRATION_FAILED: Dict[str, float] = {}
 
 
 def run_pending_migrations(data_dir: Any, list_root_rows: Any) -> Dict[str, int]:
     """Run the pending migrations once: `list_root_rows()` (a whole-index scan) is called only
     when one is pending, and concurrent callers (every listing after an upgrade) wait for the
     first scan instead of repeating it. Blocking: call it off the event loop. A plane whose
-    folder refuses the save keeps its marks as they are (the listing goes on; the migration is
-    tried again by the next listing)."""
+    folder refuses the save keeps its marks as they are (the listing goes on); the migration is
+    tried again after MIGRATION_RETRY_S, and the failure is logged once until it succeeds."""
+    import time
+
+    key = str(_STORE.path(data_dir))
+    failed_at = _MIGRATION_FAILED.get(key)
+    if failed_at is not None and time.monotonic() - failed_at < MIGRATION_RETRY_S:
+        return {}
     if not pending_migrations(data_dir):
         return {}
     with _MIGRATION_SCAN_LOCK:
@@ -278,10 +288,14 @@ def run_pending_migrations(data_dir: Any, list_root_rows: Any) -> Dict[str, int]
         if not pending:
             return {}
         try:
-            return migrate_sessions(data_dir, list_root_rows(), pending)
+            out = migrate_sessions(data_dir, list_root_rows(), pending)
         except SessionKindsUnwritable as exc:
-            _log.warning("session kinds: the one-time migrations could not be saved (%s); tried again next time", exc)
+            if key not in _MIGRATION_FAILED:
+                _log.warning("session kinds: the one-time migrations could not be saved (%s); tried again every %.0f s", exc, MIGRATION_RETRY_S)
+            _MIGRATION_FAILED[key] = time.monotonic()
             return {}
+        _MIGRATION_FAILED.pop(key, None)
+        return out
 
 
 def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:

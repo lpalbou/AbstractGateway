@@ -521,24 +521,39 @@ def test_a_folder_that_refuses_new_files_is_an_immediate_error_not_a_hang(client
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows access lists (icacls)")
-def test_the_first_listing_on_a_folder_that_refuses_new_files_answers(client: TestClient) -> None:
+def test_the_first_listing_on_a_folder_that_refuses_new_files_answers(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression (round 2): the first listing of a plane runs the one-time session-kind migrations,
     whose save (session_kinds.py, then tempfile.mkstemp) retried a refused create up to TMP_MAX times
-    while holding the migration lock: every later listing waited on it. It now uses json_store.py."""
+    while holding the migration lock: every later listing waited on it. It now uses json_store.py,
+    a refused lock-file create fails at once, and a failed migration is not retried for a minute."""
+    from abstractgateway import session_kinds
+
     data_dir: Path = client.data_dir  # type: ignore[attr-defined]
     save_runs(chat_run(session_id="s1"))
+    attempts: list = []
+    real = session_kinds.migrate_sessions
+    monkeypatch.setattr(session_kinds, "migrate_sessions", lambda *a, **k: (attempts.append(1), real(*a, **k))[1])
     user = os.environ["USERNAME"]
     _icacls(data_dir, "/deny", f"{user}:(WD,AD)")
     try:
-        for _ in range(2):
+        for n in range(3):
+            t0 = time.monotonic()
             r = _call_with_deadline(lambda: client.get("/api/gateway/runs?root_only=true&include_ledger_len=false", headers=HEADERS))
             assert r.status_code == 200 and [i["session_id"] for i in r.json()["items"]] == ["s1"], r.text
+            if n:
+                assert time.monotonic() - t0 < 0.5, "a later listing pays no retry"
+        rename_t0 = time.monotonic()
+        r = _call_with_deadline(lambda: _put(client, "s1", {"title": "Refused"}))
+        assert r.status_code == 500 and r.json()["detail"]["reason_code"] == "session_titles_unwritable", r.text
+        assert time.monotonic() - rename_t0 < 0.5, "a refused lock-file create fails at once"
+        assert len(attempts) == 1, attempts  # not retried within the minute
         # The search answers too (its own index file may be refused: an answer, never a hang).
         _call_with_deadline(lambda: client.get("/api/gateway/sessions/search?q=x", headers=HEADERS))
     finally:
         _icacls(data_dir, "/remove:d", user)
     assert not list(data_dir.glob("session_kinds.json.*.tmp"))
-    # Lifted: the next listing runs (and saves) the migrations.
+    # Lifted, and the retry delay over: the next listing runs (and saves) the migrations.
+    monkeypatch.setattr(session_kinds, "MIGRATION_RETRY_S", 0.0)
     assert _roots(client)["items"][0]["session_id"] == "s1"
     assert (data_dir / "session_kinds.json").exists()
 
@@ -666,6 +681,17 @@ def test_hiding_characters_are_removed_joiners_and_marks_kept_and_input_is_bound
     for raw in others:
         assert _title(client, "s1", {"title": raw})["title"] == "ab", repr(raw)
     assert _title(client, "s1", {"title": "ا؜1"})["title"] == "ا؜1"
+    # Visible format characters are kept: the Arabic end-of-ayah and number signs.
+    ayah = "سورة ۝١٢ ؀٣"
+    assert _title(client, "s1", {"title": ayah})["title"] == ayah
+    assert _title(client, "s1", {"title": "۝"})["title"] == "۝"  # visible on its own
+    # Emoji tag sequences are kept whole: the flags of England, Scotland and Wales.
+    tags = lambda s: "".join(chr(0xE0000 + ord(ch)) for ch in s)  # noqa: E731
+    flags = " ".join("\U0001F3F4" + tags(code) + "\U000E007F" for code in ("gbeng", "gbsct", "gbwls"))
+    assert _title(client, "s1", {"title": f"Rugby {flags}"})["title"] == f"Rugby {flags}"
+    # A tag run anywhere else (after a letter, or a flag run without its cancel tag) is removed.
+    assert _title(client, "s1", {"title": "Plan" + tags("hidden") + "\U000E007F"})["title"] == "Plan"
+    assert _title(client, "s1", {"title": "\U0001F3F4" + tags("gbeng") + " x"})["title"] == "\U0001F3F4 x"
     # A title with no visible character clears: marks, separators, kept joiners and marks, variation
     # selectors and the letters that render blank (Hangul fillers, Braille blank) show nothing.
     _title(client, "s1", {"title": "Visible"})
@@ -710,6 +736,11 @@ def test_search_filters_apply_to_title_hits(client: TestClient) -> None:
     # Default: archived out; newest activity first; limit applies after the title hits.
     assert [i["session_id"] for i in _search(client, "budget")["items"]] == ["s-c", "s-b", "s-a"]
     assert [i["session_id"] for i in _search(client, "budget", "&limit=2")["items"]] == ["s-c", "s-b"]
+    # The limit applies to title hits and content hits together.
+    _title(client, "s-a", {"title": "Opening budget"})
+    both = [i["session_id"] for i in _search(client, "opening", "&limit=2")["items"]]
+    assert len(both) == 2 and both[0] == "s-a", both
+    _title(client, "s-a", {"title": "Budget s-a"})
     # archived=true: only archived sessions' title hits.
     assert [i["session_id"] for i in _search(client, "budget", "&archived=true")["items"]] == ["s-arch"]
     # The session-kind filter applies to title hits (these are chats).

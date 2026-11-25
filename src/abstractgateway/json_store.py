@@ -100,8 +100,13 @@ class _InterProcessLock:
         self.fd: Optional[int] = None
 
     def __enter__(self) -> "_InterProcessLock":
+        def open_lock_file() -> int:
+            return os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600)
+
         try:
-            self.fd = _retrying(lambda: os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600), until=self.deadline)
+            # An existing lock file another program holds for a moment (a scanner) is retried; a refused
+            # CREATE (a folder that refuses new files) fails at once.
+            self.fd = _retrying(open_lock_file, until=self.deadline) if self.path.exists() else open_lock_file()
         except OSError as exc:
             raise StoreUnwritable(f"{self.label} cannot be changed: its lock file cannot be opened ({_why(exc)})") from None
         while True:

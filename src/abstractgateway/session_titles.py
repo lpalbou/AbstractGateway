@@ -41,9 +41,13 @@ REVALIDATE_S = 1.0
 
 # Format characters (Unicode category Cf) hide text or make a title imitate another one in a list
 # shown as plain text (bidirectional controls, zero-width space, word joiner, BOM, soft hyphen, tag
-# characters, invisible operators, interlinear annotation): all are removed, except these, which
-# scripts and emoji need: the joiners U+200C/U+200D and the direction marks U+200E, U+200F, U+061C.
-_KEPT_FORMAT = frozenset({0x200C, 0x200D, 0x200E, 0x200F, 0x061C})
+# characters, invisible operators, interlinear annotation): all are removed, except the ones scripts
+# and emoji need: the joiners U+200C/U+200D, the direction marks U+200E, U+200F, U+061C, the
+# visible number signs of Arabic, Syriac and Kaithi (_VISIBLE_FORMAT), and the tag characters of an
+# emoji tag sequence (U+1F3F4 followed by tags ending with U+E007F: the flags of England, Scotland, Wales).
+_VISIBLE_FORMAT = frozenset({*range(0x0600, 0x0606), 0x06DD, 0x070F, 0x0890, 0x0891, 0x08E2, 0x110BD, 0x110CD})
+_KEPT_FORMAT = frozenset({0x200C, 0x200D, 0x200E, 0x200F, 0x061C}) | _VISIBLE_FORMAT
+_BLACK_FLAG, _TAG_FIRST, _TAG_LAST, _CANCEL_TAG = "\U0001F3F4", 0xE0020, 0xE007F, "\U000E007F"
 # Letters that render as blank (Hangul fillers, Braille blank).
 _BLANK_LETTERS = frozenset({0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800})
 
@@ -66,6 +70,8 @@ def _visible(c: str) -> bool:
     """A character that shows something: not a mark, separator, control or format character, a kept
     joiner or direction mark, a variation selector, or a letter that renders blank."""
     o = ord(c)
+    if o in _VISIBLE_FORMAT:
+        return True
     if o in _BLANK_LETTERS or 0xFE00 <= o <= 0xFE0F or 0xE0100 <= o <= 0xE01EF:
         return False
     return unicodedata.category(c)[0] not in "MZC"
@@ -73,7 +79,7 @@ def _visible(c: str) -> bool:
 
 def normalize_title(raw: Optional[str]) -> Optional[str]:
     """One line, at most MAX_CHARS characters. The input is first cut to MAX_INPUT_CHARS; format
-    characters (Cf) other than `_KEPT_FORMAT` are removed; control characters (line breaks, tabs,
+    characters (Cf) other than `_KEPT_FORMAT` and emoji tag sequences are removed; control characters (line breaks, tabs,
     C0, DEL, C1) and unpaired surrogates become spaces; runs of whitespace become one space; the
     result is trimmed and cut on a character boundary. None when no visible character is left
     (`_visible`): the title is cleared."""
@@ -84,15 +90,30 @@ def normalize_title(raw: Optional[str]) -> Optional[str]:
         # format character and every space but U+0020). Keeps a load of many titles cheap.
         text = raw
     else:
-        out = []
-        for c in raw[:MAX_INPUT_CHARS]:
+        out: List[str] = []
+        s = raw[:MAX_INPUT_CHARS]
+        i, n = 0, len(s)
+        while i < n:
+            c = s[i]
             o = ord(c)
+            if _TAG_FIRST <= o <= _TAG_LAST:
+                # A run of tag characters: kept whole only as an emoji tag sequence (after U+1F3F4,
+                # ending with the cancel tag), removed anywhere else.
+                j = i
+                while j < n and _TAG_FIRST <= ord(s[j]) <= _TAG_LAST:
+                    j += 1
+                run = s[i:j]
+                if out and out[-1] == _BLACK_FLAG and run.endswith(_CANCEL_TAG) and len(run) > 1:
+                    out.append(run)
+                i = j
+                continue
             if o < 0x20 or 0x7F <= o < 0xA0 or 0xD800 <= o < 0xE000:
                 out.append(" ")
             elif o not in _KEPT_FORMAT and unicodedata.category(c) == "Cf":
-                continue
+                pass
             else:
                 out.append(c)
+            i += 1
         text = " ".join("".join(out).split())
         text = text[:MAX_CHARS].rstrip()
     return text if any(_visible(c) for c in text) else None

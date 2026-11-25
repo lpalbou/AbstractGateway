@@ -1422,8 +1422,12 @@ The title is one line, in this order:
 1. only the first 4,096 characters of `title` are read (the rest is ignored);
 2. every format character (Unicode category Cf: bidirectional controls,
    zero-width and other invisible characters, tag characters) is removed,
-   except the ones scripts and emoji need: the joiners U+200C/U+200D and the
-   direction marks U+200E, U+200F and U+061C;
+   except the ones scripts and emoji need: the joiners U+200C/U+200D, the
+   direction marks U+200E, U+200F and U+061C, the visible number signs of
+   Arabic, Syriac and Kaithi (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891,
+   U+08E2, U+110BD, U+110CD), and tag characters only inside an emoji tag
+   sequence (U+1F3F4 followed by tags ending with U+E007F, as in the flags of
+   England, Scotland and Wales);
 3. line breaks and other control characters (C0, DEL, C1) become spaces;
 4. runs of whitespace become one space, and the result is trimmed;
 5. longer titles are cut at 120 characters (Unicode characters, never inside
