@@ -4,7 +4,7 @@ description: Operate AbstractGateway through its CLI and authenticated HTTP APIs
 license: MIT
 compatibility: Python 3.10+. A reachable Gateway and Gateway user credentials are required for run APIs. Local inference needs the matching Apple or GPU install profile and explicitly downloaded models.
 metadata:
-  package-version: "0.23.0"
+  package-version: "0.24.0"
 ---
 
 # AbstractGateway
@@ -20,11 +20,11 @@ Gateway workflow runs.
 
 ## Install and verify
 
-This skill covers AbstractGateway 0.23.0. Install the published Python package:
+This skill covers AbstractGateway 0.24.0. Install the published Python package:
 
 ```bash
-python -m pip install "abstractgateway==0.23.0"
-# For local engines: "abstractgateway[apple]==0.23.0" or "abstractgateway[gpu]==0.23.0"
+python -m pip install "abstractgateway==0.24.0"
+# For local engines: "abstractgateway[apple]==0.24.0" or "abstractgateway[gpu]==0.24.0"
 ```
 
 For package development from a matching source checkout, use `python -m pip install -e .`.
@@ -39,7 +39,7 @@ try:
     from abstractgateway.routes.core_endpoint import EndpointChange
     from abstractgateway.routes.gateway import StartRunRequest
 except (ImportError, PackageNotFoundError) as exc:
-    raise SystemExit(f"Install AbstractGateway 0.23.0 or newer: {exc}") from None
+    raise SystemExit(f"Install AbstractGateway 0.24.0 or newer: {exc}") from None
 if "direct_enabled" not in EndpointChange.model_fields:
     raise SystemExit("This Gateway lacks the direct HTTP control; use its matching docs/skill.")
 if "conversation" not in StartRunRequest.model_fields:

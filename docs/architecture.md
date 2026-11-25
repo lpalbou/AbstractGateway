@@ -23,7 +23,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, pinned to 0.20.0): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.21.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -287,8 +287,10 @@ browser on this computer from one elsewhere on the network
   and the runner closes any streamed-speech wait an older process left
   behind.
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
-  `model_download_delete.py`): archive and unarchive a conversation (history
-  kept), and delete a downloaded model's files with the engine's own
+  `session_titles.py`, `model_download_delete.py`): archive and unarchive a
+  conversation (history kept), rename it (a stored title served on `GET /runs`
+  rows as `session_title`); these per-plane JSON files and `session_kinds.json`
+  are written through `json_store.py` (one temp file, bounded retries, a cross-process lock), and delete a downloaded model's files with the engine's own
   mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine

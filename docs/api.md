@@ -890,8 +890,9 @@ The PUT answers like the GET. The GET also carries `command_sandbox` (round
 unsandboxed_commands_allowed, configured, flag}`. `line` is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and `sentence` is its
 tooltip. `state` is `partial` on a host whose sandbox expresses one posture
-only (Windows, Linux Landlock): `line` names the posture it sandboxes and what
-happens to the other; see [security.md](./security.md#command-sandbox).
+only (Linux Landlock without bubblewrap): `line` names the posture it
+sandboxes and what happens to the other; see
+[security.md](./security.md#command-sandbox).
 
 ### Account: the account's default subset
 
@@ -1402,12 +1403,97 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Rename a session
+
+A conversation has no name of its own until a person gives it one: clients show
+its opening message. `PUT /api/gateway/sessions/{session_id}/title` with
+`{"title": "Snake game"}` stores a name that every client reading
+`GET /api/gateway/runs` shows instead. Nothing else about the session changes.
+
+| Route | Answer |
+|---|---|
+| `PUT /api/gateway/sessions/{session_id}/title` | `{session_id, title, changed}`: `title` is the stored title or `null`; storing the stored title again answers `changed: false`; `store_reset` is added when this rename replaced a damaged titles file (below) |
+| `GET /api/gateway/runs` | every row of a titled session carries `session_title` (turn listings, `session_id`, `archived_only` and children listings alike); rows of an untitled session have no such key |
+| `GET /api/gateway/sessions/search` | also matches the stored title, and items of a titled session carry `session_title` (see below) |
+| `GET /api/gateway/discovery/capabilities` | `capabilities.session_titles: true` on a gateway that can rename; an older gateway has no such key, and a client offers no rename |
+
+The title is one line, in this order:
+
+1. only the first 4,096 characters of `title` are read (the rest is ignored);
+2. every format character (Unicode category Cf: bidirectional controls,
+   zero-width and other invisible characters, tag characters) is removed,
+   except the ones scripts and emoji need: the joiners U+200C/U+200D, the
+   direction marks U+200E, U+200F and U+061C, the visible number signs of
+   Arabic, Syriac and Kaithi (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891,
+   U+08E2, U+110BD, U+110CD), and tag characters only inside an emoji tag
+   sequence (U+1F3F4 followed by tags ending with U+E007F, as in the flags of
+   England, Scotland and Wales);
+3. line breaks and other control characters (C0, DEL, C1) become spaces;
+4. runs of whitespace become one space, and the result is trimmed;
+5. longer titles are cut at 120 characters (Unicode characters, never inside
+   one; any script and emoji are kept).
+
+A title with no visible character, `"title": null` or no `title` clears the
+stored title, and clients show the opening message again. Not visible: marks
+(accents on nothing), separators and spaces, the joiners and direction marks
+kept in step 2, variation selectors, and the letters that render blank (the
+Hangul fillers and the Braille blank). A body
+that is not a JSON object, or a `title` that is neither a string nor `null`,
+answers `422 {"detail": {"reason_code": "invalid_request"}}`. The gateway's
+request body limit (`ABSTRACTGATEWAY_MAX_BODY_BYTES`, 10 MiB by default)
+applies as to every route.
+
+The session's owner or an admin may rename it, exactly as for archive: a session
+of another account, or an unknown one, answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. An archived session
+keeps its title (shown in the archived listing) and can still be renamed. When
+a draft-test purge (`POST /runs/purge_drafts`) removes a session's last run,
+its title and its archive mark are removed too, so a later conversation
+reusing the id neither inherits the name nor starts archived. Titles live in the plane's `session_titles.json`
+(`{"schema": "gateway_session_titles_v1", "sessions": {id: {title, set_at,
+set_by}}}`, `set_by.kind: "person"` for this route) and survive a restart.
+Each change writes a `session.titled` audit event, after it is saved, with
+`action: "set"` or `"cleared"` (the title text is not written to the audit log).
+
+**When the titles file cannot be used.** Messages name the file relative to
+the plane's folder, never its absolute path.
+
+- A listing never fails because of it: `GET /runs` (every variant) and the
+  search answer as usual, without titles, and carry
+  `"session_titles_error": {"reason_code": "session_titles_unreadable",
+  "message": "<one sentence>"}` at the top level (beside `session_totals`). The
+  key is absent when the file is fine. Clients should say that names are
+  missing, not that there are none.
+- A damaged file (UTF-8 text that is not JSON: truncated, empty, cut while
+  being written) is repaired by the next rename: it is kept aside as
+  `session_titles.damaged-<UTC>.json` in the same folder, a new file is started
+  with the new title, and the rename answers 200 with
+  `"store_reset": "<that file name>"` added to its body; its audit event
+  carries the same key.
+- A file this gateway cannot read as its own is never changed: a valid JSON
+  file that is not a `gateway_session_titles_v1` document (a newer schema,
+  another program's file) or a file saved in another encoding (UTF-16,
+  "ANSI"). A rename answers
+  `500 {"detail": {"reason_code": "session_titles_unreadable"}}`.
+- A file saved with a UTF-8 byte-order mark (Notepad) reads normally; titles
+  edited by hand are normalised on read like stored ones.
+- A rename that cannot be saved (the folder refuses new files, another program
+  keeps the file open past a short retry) answers
+  `500 {"detail": {"reason_code": "session_titles_unwritable"}}` at once; the
+  file is left as it was and nothing is audited. The archive answers
+  `session_archive_unwritable` in the same case.
+- A rename that waits more than 5 seconds for another writer (another request,
+  another gateway process on the same data folder) answers
+  `503 {"detail": {"reason_code": "session_titles_busy"}}`: try again. The
+  archive answers `session_archive_busy`, a run start that marks a session's
+  kind `session_kinds_busy`.
+
 ### Search conversations
 
 `GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
-by keyword: what was asked, what was answered, and the artifacts of each turn
-(generated images, recordings, videos and music by their generation prompt,
-attachments by their file name). Words and parts of words match, case and
+by keyword: the conversation's stored title, what was asked, what was answered,
+and the artifacts of each turn (generated images, recordings, videos and music
+by their generation prompt, attachments by their file name). Words and parts of words match, case and
 accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
 outputs and intermediate thinking are not indexed.
 
@@ -1424,7 +1510,14 @@ session, best first: `{session_id, run_id, prompt, snippet, highlights,
 matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
 artifact}`; `run_id` is the turn that matched best, `snippet` is the text
 around the first match with `highlights` as `[start, length]` pairs, and
-`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+`matched_in` says where it matched (`question`, `answer`, `artifact` or
+`title`). Sessions whose stored title holds every word come first, most
+recent activity first, under the same filters (archived, `kind`,
+`session_kind`) and within `limit`; when only the title matched, the item is
+the session's newest turn with `matched_in: "title"` and the title as its
+`snippet`. An item of a renamed session carries `session_title`. When the
+titles file cannot be read the search answers without title matches and
+carries `session_titles_error` (see [Rename a session](#rename-a-session)). When
 an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
 name, prompt}` and its bytes are at
 `GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
@@ -2631,7 +2724,7 @@ result rather than making Flow authoring nodes unavailable.
 `/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.20.0 and AbstractMemory 0.5.2.
+(ADR 0001). Requires AbstractRuntime 0.21.0 and AbstractMemory 0.5.2.
 
 **Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:

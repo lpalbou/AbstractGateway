@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.23.0"
+version = "0.24.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -72,7 +72,9 @@ dependencies = [
   # 0.20.0: an own-time loop freezes while its host is paused (the pause kill switch); Windows: own time
   # runs, a read-only default holds ("/" is everything on every platform), local helper commands keep
   # their paths.
-  "AbstractRuntime==0.20.0",
+  # 0.21.0: the command-sandbox facade names the drives the Windows sandbox cannot protect
+  # (`command_sandbox_host.host_unprotected_volumes`, read by command_sandbox.py).
+  "AbstractRuntime==0.21.0",
   # Pinned, no extras (Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -111,7 +113,9 @@ dependencies = [
   # recommendation by total GPU memory, and image/video routes stored as `<engine>/<repo>` read as downloaded.
   # 2.37.0: streamed native tool calls arrive once and complete.
   # 2.38.0: the Windows command sandbox (`windows-restricted-token`): agents' commands run on Windows.
-  "abstractcore==2.38.0",
+  # 2.39.0: the Windows command sandbox for every workspace setting ("Deny everything, allow listed
+  # workspaces" and a read-only default) and `windows_unprotected_volumes`.
+  "abstractcore==2.39.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -186,7 +190,7 @@ dependencies = [
 
 embeddings = [
   # 2.36.0: pinned like the base dependency above.
-  "abstractcore[embeddings]==2.38.0",
+  "abstractcore[embeddings]==2.39.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -213,7 +217,7 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]==0.20.0",
+  "AbstractRuntime[apple]==0.21.0",
   "abstractagent[apple]==0.6.1",
   "AbstractMemory[all-apple]==0.5.2",
 ]
@@ -221,7 +225,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]==0.20.0",
+  "AbstractRuntime[gpu]==0.21.0",
   "abstractagent[gpu]==0.6.1",
   "AbstractMemory[all-gpu]==0.5.2",
 ]

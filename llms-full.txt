@@ -946,9 +946,8 @@ interpreters are all confined by the kernel:
 - **Linux**: bubblewrap (`bwrap`) when installed; Landlock (kernel 5.13 or
   later) for "Deny everything, allow listed workspaces" when bubblewrap is
   missing.
-- **Windows**: a restricted token and access-list entries, for runs set to
-  "Allow everything, refuse listed workspaces" with read & write by default
-  (the default posture). See [On Windows](#on-windows) for what it enforces
+- **Windows**: a restricted token and access-list entries, for both postures
+  and both default modes. See [On Windows](#on-windows) for what it enforces
   and its limits.
 - **Anything else** (Linux without either, a posture the host's sandbox cannot
   express): the command is **refused** with one sentence that says why, and
@@ -966,7 +965,7 @@ spawning tool call that does not carry a run's sandbox is refused.
 **`abstractgateway serve --unsandboxed-commands`** (also on the split
 `abstractgateway runner`) re-enables commands where the host cannot sandbox
 them: a host with **no** sandbox, or a run whose posture the host's sandbox
-cannot express (Linux Landlock and Windows each express one posture).
+cannot express (Linux Landlock expresses one posture).
 They then run with the gateway's own file access, still with the scrubbed
 environment. The flag is off by default and has no environment variable. Where
 the sandbox applies it changes nothing. With `--reload` it is ignored (the app
@@ -981,11 +980,11 @@ unsandboxed_commands_allowed, configured, flag}`. The console shows `line`
 under the Accounts head, with `sentence` as its tooltip, and the terminal
 console shows it on its Workspaces page:
 
-- `Commands sandboxed: macOS sandbox-exec` (or `Linux bubblewrap`)
-- `Commands sandboxed: Windows restricted token (Allow everything, refuse
-  listed workspaces); otherwise commands refused` (state `partial`: the host
-  sandboxes one posture; Linux Landlock reads the same way with "Deny
-  everything, allow listed workspaces")
+- `Commands sandboxed: macOS sandbox-exec` (or `Linux bubblewrap`, `Windows
+  restricted token`)
+- `Commands sandboxed: Linux Landlock (Deny everything, allow listed
+  workspaces); otherwise commands refused` (state `partial`: the host
+  sandboxes one posture, here Landlock without bubblewrap)
 - `Commands refused: no sandbox on this host`
 - `Unsandboxed commands allowed (flag)`
 
@@ -1013,69 +1012,179 @@ folder alone.
 ### On Windows
 
 The Windows sandbox starts each command with a **restricted token** and
-enforces the run's workspaces with entries in the folders' own access lists.
-It applies to runs set to **"Allow everything, refuse listed workspaces" with
-read & write by default**, which is what a fresh gateway uses:
+enforces the run's workspaces with entries in the folders' own permissions
+and, under the two stricter settings, an integrity level. It applies to every
+workspace setting.
+
+In every setting:
 
 - A **refused** workspace, and every built-in refusal (the gateway's data
   folder, `.ssh` and the other credential folders), is closed to the command
-  and to everything it starts: it cannot be listed, read, written, renamed or
+  and to everything it starts: its content cannot be read, written, renamed or
   deleted, whatever spelling of the path is used.
 - A **read-only** workspace can be read and run from, never written.
-- The run's **own folder** inside the gateway's data folder works normally;
-  the rest of the data folder, other sessions' folders included, stays closed.
-- Everything else behaves as it does for you: the command reads and writes
-  what your account can.
+- A **read & write** workspace, the run's **own folder** inside the gateway's
+  data folder and its temp folder work normally, the permissions of what is
+  inside them included (`git`, installers and Python set permissions on what
+  they make; Windows' own `ssh-keygen` is the exception, see below). The rest
+  of the data folder, other sessions' folders included, stays closed.
+- Nested workspaces follow the most-specific-row rule: a read & write
+  workspace inside a read-only or refused one is writable, a read-only or
+  refused one inside a read & write one is not. A folder you create later
+  inside a refused folder can be made a workspace at any time.
 - String commands run through `cmd.exe`, exactly as they do without the
-  sandbox, with the scrubbed environment and the run's private temp folder.
+  sandbox, with the scrubbed environment and the run's private temp folder
+  as `TEMP` and `TMP`.
 
-A run set to **"Deny everything, allow listed workspaces"**, or to **read-only
-by default**, cannot be expressed by this sandbox: its commands are refused
-with that reason (the file tools still follow the run's workspaces). The state
-line says so: `Commands sandboxed: Windows restricted token (Allow everything,
-refuse listed workspaces); otherwise commands refused`.
+What each setting does with the rest of the machine:
 
-What to know:
+- **"Allow everything, refuse listed workspaces", read & write by default**
+  (what a fresh gateway uses): the command reads and writes what your account
+  can.
+- **"Allow everything, refuse listed workspaces", read-only by default**: the
+  command reads what your account can, and writes nothing outside the read &
+  write workspaces, the run's own folder and its temp folder: not your other
+  folders, not your own temp folder, not the registry.
+- **"Deny everything, allow listed workspaces"**: your user profile, and the
+  folders you own at the root of your drives (or the drive itself when it is
+  yours), cannot be read outside the listed workspaces. Windows' folders,
+  installed programs and the gateway's own Python stay readable, because
+  commands need them. Nothing is written outside the read & write workspaces,
+  the run's own folder and its temp folder.
 
-- **The rules stay on the folders.** The first command of a run writes one or
-  two entries on each refused or read-only folder, for identifiers that begin
-  with `S-1-9-` (Windows shows them as unknown accounts) and one for
-  `OWNER RIGHTS`. They are left in place, cost nothing afterwards, and mean
-  nothing to any other program: your own access is unchanged. For a read-only
-  workspace the entries are also inherited by its content, so the first use of
-  a large folder takes a moment. In the gateway's data folder the entries are
-  on the folder and on each thing directly inside it, and the folder keeps the
-  time of its last check in a named stream
-  (`<folder>:abstractcore-sandbox-<id>`).
-- **A folder you cannot change the permissions of cannot be refused.** If a
-  refused or read-only row points at a folder your account can read but does
-  not own (a system folder, for example), the command does not run and its
-  result says which folder; remove the row or point it at your own folder.
+**Two runs, one folder.** When one run lists a folder read & write and another
+run may only read it (it lists the folder read-only, or not at all under a
+read-only default), the second run's commands cannot write that folder:
+before, while or after the first run's commands, even a command that was
+already running when the folder became read & write, and even if the first
+run's command was killed. Two exceptions, each for about one pair of folders
+in 256 (the second run has a read & write workspace of its own that the
+sandbox happens to group with that folder): a command of the second run that
+was already running when the folder first became read & write can write it
+until it ends; and if the sandbox's list of marked folders was lost, the
+second run can write such a folder marked before the loss until a run lists it
+read & write again. The guard protects against mistakes, not against a command
+that sets out to share: a command that may write a workspace can open what is
+inside it to other runs' commands (by giving it permissions of its own, as
+Python's `tempfile.mkdtemp` does with its folders; most programs do not), and
+they can then write it. It cannot open anything another run may not read: that
+run's refused folders stop it, and no command of another run can change them.
+
+#### Limits
+
+- **Drives without permissions are not protected.** A drive formatted FAT or
+  exFAT (many USB sticks and SD cards) and a network share cannot carry the
+  sandbox's rules: commands read and change them as you can. Each command's
+  result names such drives (`Sandbox: Windows restricted token (not protected:
+  drive D: has no permissions (exFAT): …)`), and so does the console's tooltip
+  on the command-sandbox line. A refused or read-only workspace on such a drive
+  cannot be enforced, so a command of that run does not run (see below); a
+  read & write workspace there works. To protect the drive, convert it to NTFS
+  (`convert D: /fs:ntfs`).
+- **Under "Deny everything", what you cannot change stays readable**: files at
+  the root of a drive that is not yours, `C:\Users\Public` (unless your account
+  is an administrator that may change `C:\Users`: then `C:\Users` is refused,
+  `Public` with it), `ProgramData`, folders an installer made at the root of a
+  drive, removable and network drives, and the registry.
+- **Names on the way to a workspace are visible.** In a refused folder that
+  holds a workspace (the gateway's data folder around a run's own folder, your
+  profile under "Deny everything"), and in each folder on the way down to that
+  workspace, a command can list the names, sizes and dates of what is directly
+  inside, never read it. Git needs this to start.
+- **Two runs, one folder** has the two narrow exceptions described above.
+- **Content with permissions of its own.** A file or folder moved into a
+  refused folder or a read-only workspace from elsewhere on the same drive,
+  given permissions of its own by hand after the sandbox set up its rules, or
+  created later with permissions of its own inside a read-only workspace,
+  keeps those permissions.
+- **Git Bash under the two stricter settings** ("Deny everything", and a
+  read-only default). Git Bash and other MSYS2 or Cygwin programs (`bash`,
+  `sh`, Git's own `ssh-keygen`, and what git runs through its shell: `git
+  clone` of a local folder or a `file://` address, hooks, `!` aliases) stop as
+  they start when a Git Bash window or another MSYS2 program is already
+  running in your Windows session; when none is, they start. `cmd`,
+  PowerShell, Python (`venv`, `pip install`) and Node.js work, and so does
+  `git` itself (`init`, `add`, `commit`, `status`, `diff`, `log`, `branch`,
+  `checkout`, and https through its own TLS); a commit is made even where its
+  hook cannot run. Under the same two settings, a junction or hard link can
+  only point at something the command may write.
+- **Windows' own `ssh-keygen`** (`C:\Windows\System32\OpenSSH\ssh-keygen.exe`)
+  writes the private key and then fails on the public one, under every
+  setting. The key it leaves behind stays yours: your own programs read and
+  delete it.
 - **Windows' built-in TLS is not available inside the sandbox.** `curl.exe`,
   PowerShell's `Invoke-WebRequest` and .NET programs fail to open HTTPS
-  connections there. Programs that bring their own TLS work: Python, Node.js,
-  Git (with its OpenSSL backend), `pip`, `npm`. The agent's `fetch_url` tool
-  does not run as a command and is not affected. Programs installed as Store
-  app aliases (the `python`, `pwsh` and `winget` stubs under `WindowsApps`)
-  do not start inside the sandbox either; use a regular install.
+  connections. Programs that bring their own TLS work: Python, Node.js, Git
+  (with its OpenSSL backend), `pip`, `npm`. The agent's `fetch_url` tool does
+  not run as a command and is not affected. Programs installed as Store app
+  aliases (the `python`, `pwsh` and `winget` stubs under `WindowsApps`) do not
+  start inside the sandbox; use a regular install.
+- **Places Windows marks Low stay writable** under the two stricter settings:
+  `HKCU\Software\AppDataLow`, `AppData\Local\Packages\*\AC`,
+  `AppData\Local\Publishers` and a few browser cache keys. `AppData\LocalLow`
+  and `Favorites` are not writable under a read-only default, and are part of
+  the refused profile under "Deny everything".
 - **It confines file access, not everything a determined program can do.** The
   command runs as you. It can ask another service of your Windows session to
-  act for it (the Task Scheduler, another of your processes), and it can
-  rename or remove a refused folder through a parent folder it may write; what
-  the refused folder held stays unreadable to it. Treat "Allow everything,
-  refuse listed workspaces" as protection against a command wandering into
-  folders it should not touch, on every platform.
-- **Paths, not copies.** A file that also exists under another name outside
-  the refused folder (a hard link made earlier) is reached through that name.
-  A refused path that does not exist is not refused when it appears later
+  act for it (the Task Scheduler, another of your processes). Treat the
+  sandbox as protection against a command wandering into folders it should not
+  touch, on every platform.
+- **Paths, not copies.** A file that also exists under another name outside a
+  refused folder (a hard link made earlier) is reached through that name. A
+  refused path that does not exist is not refused when it appears later
   during the same command (as with bubblewrap).
-- **Content that arrives with its own permissions.** What is created in the
-  gateway's data folder is closed before the next command starts, whatever
-  permissions it was made with. A file or folder *moved* there from elsewhere
-  on the same drive, or given permissions of its own by hand afterwards, keeps
-  them. In a read-only workspace, what is created normally inherits the rule;
-  a file created later with permissions of its own, moved in, or given
-  permissions by hand, keeps them and can be written.
+
+#### What the sandbox leaves on your folders
+
+Nothing here reduces your own access, or that of any other program: you can
+still read, write, delete and change the permissions of everything.
+
+- **Permission entries on each refused or read-only folder and on its parent
+  folder** (the parent's entry stops the command from deleting or renaming the
+  refused folder). They name identifiers that begin with `S-1-9-` (Windows
+  shows them as unknown accounts), plus one for `OWNER RIGHTS`, and they stay
+  in place: they mean nothing to anything but the sandbox's commands. In a
+  refused folder that holds a workspace, the entries are on the folder and on
+  each thing directly inside it, and the folder keeps the time of its last
+  check in a named stream (`<folder>:abstractcore-sandbox-<id>`). For a large
+  read-only folder, the first command takes a moment.
+- **A mark on each read & write workspace** (and on the run's own folder)
+  under the two stricter settings: an integrity level, inherited by its
+  content, that lets the sandbox's commands write there. Other programs write
+  there as before.
+- **The sandbox's own folder**, `%LOCALAPPDATA%\AbstractCore\command-sandbox`:
+  the lock that lets one command at a time set up its rules, and the list of
+  the folders that carry a mark. No command can open it.
+
+#### When a command does not run
+
+The run continues in every case; the command's result says why.
+
+- **"Commands are not sandboxed on this gateway host, so they are refused:
+  …"**: the sandbox cannot be applied, for the reason given (for example, a
+  run with more workspace rows than a Windows command line can carry).
+  Remove rows, or start the gateway with `--unsandboxed-commands` to run
+  commands without a sandbox.
+- **Exit code 126 and a line "sandbox: … the command did not run"**, naming a
+  path:
+  - *a refusal cannot be written*: a refused or read-only workspace, or
+    something inside a refused folder that holds a workspace, is a folder
+    your account can read but whose permissions it cannot change (a system
+    folder, or something an administrator's installer made, as found in
+    `AppData\Local\Temp` and at the root of some drives). Remove the row, put
+    the workspace somewhere else, or refuse the whole folder.
+  - *the path is on a drive the sandbox cannot protect*: a refused or
+    read-only workspace on a FAT/exFAT drive or a network share. Remove that
+    row, or convert the drive to NTFS.
+  - *the folder has permissions of its own*: a folder directly inside a
+    refused folder carries its own permissions instead of inherited ones, so
+    it cannot become a workspace. Let it inherit: `icacls <path> /reset`.
+  - *the lock is held*: another command has been setting up its rules for
+    more than 10 minutes (a first use of a very large folder). The line names
+    the process holding it: wait, or end that process.
+- **"cannot start the command"**: the program could not be started inside the
+  sandbox (a Store app alias, for example). Install the program normally or
+  call it by its full path.
 
 ### Browser probe
 
@@ -1732,9 +1841,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 AbstractFramework dependencies are exact pins (`==`) of the versions this release was validated with, in the base install and in every extra (see `pyproject.toml`); third-party dependencies keep floors. The notes say what each version brought:
-- `AbstractRuntime==0.20.0` (an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
-- `abstractcore==2.38.0` (the Windows command sandbox: agents' commands run on Windows; 2.37.0: streamed native tool calls arrive once and complete; 2.36.0: the recommended embeddings route and the NVIDIA text recommendation by total GPU memory; 2.35.2: bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
-- `abstractvoice==0.21.1` (AbstractCore 2.38.0's own floor; 0.20.0: segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
+- `AbstractRuntime==0.21.0` (the command-sandbox facade names the drives the Windows sandbox cannot protect; 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `abstractcore==2.39.0` (the Windows command sandbox for every workspace setting, and the drives it cannot protect; 2.38.0: the Windows command sandbox: agents' commands run on Windows; 2.37.0: streamed native tool calls arrive once and complete; 2.36.0: the recommended embeddings route and the NVIDIA text recommendation by total GPU memory; 2.35.2: bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
+- `abstractvoice==0.21.1` (AbstractCore 2.39.0's own floor; 0.20.0: segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent==0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
 - `AbstractMemory[lancedb]==0.5.2` (resolved-diary replay metadata; the memory graph, `abstractmemory.graph`; the task queue every entity home opens with, so a title or summary that could not be authored at once is pending until the sleep's repair authors it; the fragmented-memory counts the idle sleep reads; the communities behind an entity's topics)
 - `abstractskill==0.3.13` (the curated skill shelf the gateway seeds into `<data dir>/skills/registry`, with the abstractcore skill beside abstractframework-gateway)
@@ -3357,7 +3466,7 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
   loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
   LM Studio, llama.cpp server) keeps its own rule. The underlying idle-unload API needs
-  AbstractRuntime 0.18 or later; this Gateway requires 0.20.0 or later.
+  AbstractRuntime 0.18 or later; this Gateway requires 0.21.0 or later.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -3486,7 +3595,7 @@ Most-used:
     restarts it; see [deployment.md](docs/deployment.md).
   - `--unsandboxed-commands` (off by default): where the host cannot sandbox a command (no macOS
     `sandbox-exec`, no Linux bubblewrap/Landlock, or a run whose posture the host's sandbox cannot
-    express: Linux Landlock and Windows each express one), let it run unsandboxed instead of
+    express: Linux Landlock expresses one), let it run unsandboxed instead of
     refusing it. It is audited at boot and shown on the console. The split `abstractgateway runner`
     takes the same flag. See [security.md](docs/security.md#command-sandbox).
   - `--push-relay <URL|off>`: the push forwarder this gateway sends Apple push requests to for the
@@ -6607,8 +6716,9 @@ The PUT answers like the GET. The GET also carries `command_sandbox` (round
 unsandboxed_commands_allowed, configured, flag}`. `line` is shown verbatim
 (for example "Commands sandboxed: macOS sandbox-exec") and `sentence` is its
 tooltip. `state` is `partial` on a host whose sandbox expresses one posture
-only (Windows, Linux Landlock): `line` names the posture it sandboxes and what
-happens to the other; see [security.md](docs/security.md#command-sandbox).
+only (Linux Landlock without bubblewrap): `line` names the posture it
+sandboxes and what happens to the other; see
+[security.md](docs/security.md#command-sandbox).
 
 ### Account: the account's default subset
 
@@ -7119,12 +7229,97 @@ history (every archive and unarchive) are kept in the plane's
 `session.unarchived` audit event. Automations are archived with the
 `automation.archive` command and brought back with `automation.unarchive`.
 
+### Rename a session
+
+A conversation has no name of its own until a person gives it one: clients show
+its opening message. `PUT /api/gateway/sessions/{session_id}/title` with
+`{"title": "Snake game"}` stores a name that every client reading
+`GET /api/gateway/runs` shows instead. Nothing else about the session changes.
+
+| Route | Answer |
+|---|---|
+| `PUT /api/gateway/sessions/{session_id}/title` | `{session_id, title, changed}`: `title` is the stored title or `null`; storing the stored title again answers `changed: false`; `store_reset` is added when this rename replaced a damaged titles file (below) |
+| `GET /api/gateway/runs` | every row of a titled session carries `session_title` (turn listings, `session_id`, `archived_only` and children listings alike); rows of an untitled session have no such key |
+| `GET /api/gateway/sessions/search` | also matches the stored title, and items of a titled session carry `session_title` (see below) |
+| `GET /api/gateway/discovery/capabilities` | `capabilities.session_titles: true` on a gateway that can rename; an older gateway has no such key, and a client offers no rename |
+
+The title is one line, in this order:
+
+1. only the first 4,096 characters of `title` are read (the rest is ignored);
+2. every format character (Unicode category Cf: bidirectional controls,
+   zero-width and other invisible characters, tag characters) is removed,
+   except the ones scripts and emoji need: the joiners U+200C/U+200D, the
+   direction marks U+200E, U+200F and U+061C, the visible number signs of
+   Arabic, Syriac and Kaithi (U+0600–U+0605, U+06DD, U+070F, U+0890, U+0891,
+   U+08E2, U+110BD, U+110CD), and tag characters only inside an emoji tag
+   sequence (U+1F3F4 followed by tags ending with U+E007F, as in the flags of
+   England, Scotland and Wales);
+3. line breaks and other control characters (C0, DEL, C1) become spaces;
+4. runs of whitespace become one space, and the result is trimmed;
+5. longer titles are cut at 120 characters (Unicode characters, never inside
+   one; any script and emoji are kept).
+
+A title with no visible character, `"title": null` or no `title` clears the
+stored title, and clients show the opening message again. Not visible: marks
+(accents on nothing), separators and spaces, the joiners and direction marks
+kept in step 2, variation selectors, and the letters that render blank (the
+Hangul fillers and the Braille blank). A body
+that is not a JSON object, or a `title` that is neither a string nor `null`,
+answers `422 {"detail": {"reason_code": "invalid_request"}}`. The gateway's
+request body limit (`ABSTRACTGATEWAY_MAX_BODY_BYTES`, 10 MiB by default)
+applies as to every route.
+
+The session's owner or an admin may rename it, exactly as for archive: a session
+of another account, or an unknown one, answers
+`404 {"detail": {"reason_code": "session_not_found"}}`. An archived session
+keeps its title (shown in the archived listing) and can still be renamed. When
+a draft-test purge (`POST /runs/purge_drafts`) removes a session's last run,
+its title and its archive mark are removed too, so a later conversation
+reusing the id neither inherits the name nor starts archived. Titles live in the plane's `session_titles.json`
+(`{"schema": "gateway_session_titles_v1", "sessions": {id: {title, set_at,
+set_by}}}`, `set_by.kind: "person"` for this route) and survive a restart.
+Each change writes a `session.titled` audit event, after it is saved, with
+`action: "set"` or `"cleared"` (the title text is not written to the audit log).
+
+**When the titles file cannot be used.** Messages name the file relative to
+the plane's folder, never its absolute path.
+
+- A listing never fails because of it: `GET /runs` (every variant) and the
+  search answer as usual, without titles, and carry
+  `"session_titles_error": {"reason_code": "session_titles_unreadable",
+  "message": "<one sentence>"}` at the top level (beside `session_totals`). The
+  key is absent when the file is fine. Clients should say that names are
+  missing, not that there are none.
+- A damaged file (UTF-8 text that is not JSON: truncated, empty, cut while
+  being written) is repaired by the next rename: it is kept aside as
+  `session_titles.damaged-<UTC>.json` in the same folder, a new file is started
+  with the new title, and the rename answers 200 with
+  `"store_reset": "<that file name>"` added to its body; its audit event
+  carries the same key.
+- A file this gateway cannot read as its own is never changed: a valid JSON
+  file that is not a `gateway_session_titles_v1` document (a newer schema,
+  another program's file) or a file saved in another encoding (UTF-16,
+  "ANSI"). A rename answers
+  `500 {"detail": {"reason_code": "session_titles_unreadable"}}`.
+- A file saved with a UTF-8 byte-order mark (Notepad) reads normally; titles
+  edited by hand are normalised on read like stored ones.
+- A rename that cannot be saved (the folder refuses new files, another program
+  keeps the file open past a short retry) answers
+  `500 {"detail": {"reason_code": "session_titles_unwritable"}}` at once; the
+  file is left as it was and nothing is audited. The archive answers
+  `session_archive_unwritable` in the same case.
+- A rename that waits more than 5 seconds for another writer (another request,
+  another gateway process on the same data folder) answers
+  `503 {"detail": {"reason_code": "session_titles_busy"}}`: try again. The
+  archive answers `session_archive_busy`, a run start that marks a session's
+  kind `session_kinds_busy`.
+
 ### Search conversations
 
 `GET /api/gateway/sessions/search?q=<words>` finds the caller's conversations
-by keyword: what was asked, what was answered, and the artifacts of each turn
-(generated images, recordings, videos and music by their generation prompt,
-attachments by their file name). Words and parts of words match, case and
+by keyword: the conversation's stored title, what was asked, what was answered,
+and the artifacts of each turn (generated images, recordings, videos and music
+by their generation prompt, attachments by their file name). Words and parts of words match, case and
 accents are ignored, and a fuzzy pass forgives a typo. Tool usage, tool
 outputs and intermediate thinking are not indexed.
 
@@ -7141,7 +7336,14 @@ session, best first: `{session_id, run_id, prompt, snippet, highlights,
 matched_in, score, created_at, updated_at, session_kind, archived, fuzzy,
 artifact}`; `run_id` is the turn that matched best, `snippet` is the text
 around the first match with `highlights` as `[start, length]` pairs, and
-`matched_in` says where it matched (`question`, `answer` or `artifact`). When
+`matched_in` says where it matched (`question`, `answer`, `artifact` or
+`title`). Sessions whose stored title holds every word come first, most
+recent activity first, under the same filters (archived, `kind`,
+`session_kind`) and within `limit`; when only the title matched, the item is
+the session's newest turn with `matched_in: "title"` and the title as its
+`snippet`. An item of a renamed session carries `session_title`. When the
+titles file cannot be read the search answers without title matches and
+carries `session_titles_error` (see [Rename a session](#rename-a-session)). When
 an artifact matched, `artifact` is `{artifact_id, run_id, kind, content_type,
 name, prompt}` and its bytes are at
 `GET /api/gateway/runs/{artifact.run_id}/artifacts/{artifact_id}/content`.
@@ -8348,7 +8550,7 @@ result rather than making Flow authoring nodes unavailable.
 `/api/gateway/memory/*` serves the plane's memory graph (AbstractMemory ADR 0003: revisions, history,
 ledger provenance) through AbstractRuntime's memory facade
 (`abstractruntime.integrations.abstractmemory.memory_facade`); the gateway never imports AbstractMemory
-(ADR 0001). Requires AbstractRuntime 0.20.0 and AbstractMemory 0.5.2.
+(ADR 0001). Requires AbstractRuntime 0.21.0 and AbstractMemory 0.5.2.
 
 **Plane and home.** Every route reads the caller's plane (its service's data folder). The graph lives in
 the plane's memory HOME, one SQLite file:
@@ -9433,13 +9635,13 @@ workspaces accounts may choose from, and the most each one allows
 Below that row, everyone signed in sees the host's **command sandbox** as a
 state line, with an explanation in its tooltip:
 
-- **Commands sandboxed: macOS sandbox-exec** (or Linux bubblewrap): every
-  command a run starts is confined by the operating system to that run's
-  workspaces.
-- **Commands sandboxed: Windows restricted token (Allow everything, refuse
-  listed workspaces); otherwise commands refused**: the host sandboxes the
-  runs of one posture; a run set to the other has its commands refused (Linux
-  Landlock reads the same way, with the other posture).
+- **Commands sandboxed: macOS sandbox-exec** (or Linux bubblewrap, Windows
+  restricted token): every command a run starts is confined by the operating
+  system to that run's workspaces.
+- **Commands sandboxed: Linux Landlock (Deny everything, allow listed
+  workspaces); otherwise commands refused**: the host sandboxes the runs of
+  one posture (Landlock without bubblewrap); a run set to the other has its
+  commands refused.
 - **Commands refused: no sandbox on this host**.
 - **Unsandboxed commands allowed (flag)**: the gateway was started with
   `serve --unsandboxed-commands`.
@@ -11611,7 +11813,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, pinned to 0.20.0): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.21.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -11875,8 +12077,10 @@ browser on this computer from one elsewhere on the network
   and the runner closes any streamed-speech wait an older process left
   behind.
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
-  `model_download_delete.py`): archive and unarchive a conversation (history
-  kept), and delete a downloaded model's files with the engine's own
+  `session_titles.py`, `model_download_delete.py`): archive and unarchive a
+  conversation (history kept), rename it (a stored title served on `GET /runs`
+  rows as `session_title`); these per-plane JSON files and `session_kinds.json`
+  are written through `json_store.py` (one temp file, bounded retries, a cross-process lock), and delete a downloaded model's files with the engine's own
   mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
@@ -12734,7 +12938,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.20.0. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.21.0. A gateway installed against
   an older runtime does not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -14438,7 +14642,7 @@ docker compose --env-file docker/abstractgateway-server/.env \
   -f docker/abstractgateway-server/compose.yml up -d
 ```
 
-The Compose files default to Gateway 0.23.0 for both the image tag and PyPI build version.
+The Compose files default to Gateway 0.24.0 for both the image tag and PyPI build version.
 To pin another release, set both `ABSTRACTGATEWAY_IMAGE_TAG` and `ABSTRACTGATEWAY_VERSION`
 in the env file; for the experimental NVIDIA overlay also set `ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG`.
 
@@ -14698,7 +14902,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.23.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.24.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -14737,6 +14941,13 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
+
+**What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
+the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
+too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
+restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
+(`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
 
 **What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
 a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
@@ -15407,7 +15618,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.20.0 (an exact pin), installed with the gateway; the gateway
+- AbstractRuntime 0.21.0 (an exact pin), installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -15752,7 +15963,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install "abstractruntime==0.20.0"   # the version this gateway pins
+pip install "abstractruntime==0.21.0"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -15792,7 +16003,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.20.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.21.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -15984,15 +16195,32 @@ says what happened, and the console shows the host's state under Accounts.
 
 - **"Commands are not sandboxed on this gateway host, so they are refused:
   …"**: the host cannot sandbox this run, and the sentence gives the reason.
-  On Windows the sandbox covers runs set to "Allow everything, refuse listed
-  workspaces" with read & write by default: choose that for the run (or the
-  account, or the gateway) in Workspaces, and mark the folders to protect
-  read-only or refused. On Linux, install bubblewrap. To run commands without
-  a sandbox instead, start the gateway with `--unsandboxed-commands`.
-- **Exit code 126 and "sandbox: … the command did not run"** (Windows): a rule
-  could not be written. The message names the folder: a refused or read-only
-  row points at a folder your account can read but whose permissions it cannot
-  change. Remove that row, or point it at a folder you own.
+  On Linux, install bubblewrap (Landlock alone covers "Deny everything, allow
+  listed workspaces" only). On Windows and macOS every workspace shape is
+  sandboxed. To run commands without a sandbox instead, start the gateway
+  with `--unsandboxed-commands`.
+- **Exit code 126 and "sandbox: … the command did not run"** (Windows): the
+  sandbox could not set up a rule, and the line names the path. Most often a
+  refused or read-only row points at a folder your account can read but whose
+  permissions it cannot change (remove that row, or point it at a folder you
+  own), or at a FAT/exFAT drive or a network share, which cannot carry rules
+  (remove the row, or convert the drive to NTFS). The other cases (a folder
+  with permissions of its own, the sandbox's lock) are in
+  [security.md](docs/security.md#when-a-command-does-not-run).
+- **Git Bash or another MSYS2 program stops as it starts** (Windows, "Deny
+  everything" or read-only by default; this includes `bash`, `sh`, Git's own
+  `ssh-keygen`, git hooks, `!` aliases and `git clone` of a local folder): a
+  Git Bash window or another MSYS2 program is running in your Windows session,
+  and the sandboxed one cannot share its objects. Close it, use `git`, `cmd`,
+  PowerShell or Python directly, or set the run to read & write by default.
+- **`ssh-keygen` writes the private key, then fails on the public one**
+  (Windows' own `ssh-keygen`, every setting): a known limit of the sandbox.
+  The key it leaves behind is yours to read and delete; make keys outside
+  agents' commands.
+- **The command-sandbox tooltip or a command's result says "not protected:
+  drive D: …"** (Windows): that drive has no permissions (FAT, exFAT) or is a
+  network share; commands read and change it as you can. Convert it to NTFS
+  to protect it.
 - **`curl` or `Invoke-WebRequest` cannot open an HTTPS address** (Windows):
   Windows' built-in TLS is not available inside the sandbox. Use a program
   with its own TLS (`python`, `node`, `git`), or the agent's `fetch_url` tool.
@@ -16424,6 +16652,80 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 `python scripts/changelog.py assemble X.Y.Z` writes them here at release.
 
 ## [Unreleased]
+
+## [0.24.0] - 2026-11-25
+
+### Added
+
+- **The command-sandbox state names the drives Windows cannot protect** (`command_sandbox.py`). On a
+  Windows host, the `sentence` of `command_sandbox` (shown as the console's tooltip and by every client) ends
+  with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
+  without permissions or network share AbstractCore reports (through the runtime facade's
+  `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+- **Rename a conversation**: `PUT /api/gateway/sessions/{session_id}/title` with `{"title": "..."}` (the
+  session's owner or an admin; one line, cut at 120 characters; an empty title or `null` clears it and the
+  opening message names the conversation again; audited as `session.titled`). Every `GET /api/gateway/runs`
+  row of a renamed session carries `session_title`, the archived listing and the keyword search included (the
+  search also finds a conversation by its title), and the title survives a restart.
+  `GET /api/gateway/discovery/capabilities` says `capabilities.session_titles: true` so a client offers
+  "Rename" only on a gateway that can store it. Format characters that hide text or imitate another title
+  (bidirectional controls, zero-width and other invisible characters) are removed, a title with no visible
+  character clears, and only the first 4,096 characters of a title are read. A titles file that cannot be read
+  never takes the conversation list down: `GET /runs` and the search answer without titles and carry
+  `session_titles_error`; a damaged file is kept aside as `session_titles.damaged-<UTC>.json` by the next
+  rename, which starts a new one and says so (`store_reset`); a file in another encoding or schema is never
+  touched. A rename that cannot be saved answers 500 `session_titles_unwritable`, one that waits too long for
+  another writer 503 `session_titles_busy`.
+
+### Changed
+
+- **What you see on Windows.** The command-sandbox line (console, under Accounts; the terminal console's
+  Workspaces page; `GET /api/gateway/workspace/policy` and `/discovery/tools`) reads `Commands sandboxed: Windows
+  restricted token`, state `sandboxed` instead of `partial`, and the tool cards of `execute_command` and the other
+  process tools read "Sandboxed to this run's workspaces" with no "otherwise commands refused". Runs set to
+  "Deny everything, allow listed workspaces" or to read-only by default now run their commands, confined, instead
+  of refusing them. A drive without permissions (FAT, exFAT) or a network share is named in the line's tooltip and
+  in each command's result.
+- **Pins:** AbstractCore 2.39.0 (the Windows command sandbox for every workspace setting, and the drives it cannot
+  protect), AbstractRuntime 0.21.0 (`command_sandbox_host.host_unprotected_volumes`), in the base install and every
+  extra. `ABSTRACTRUNTIME_FLOOR` is 0.21.0: on an older runtime the gateway refuses to start and says the
+  command-sandbox state would not name unprotected drives.
+- **On Windows, commands are sandboxed under every workspace shape** (`docs/security.md`, `docs/console.md`,
+  `docs/api.md`, `docs/troubleshooting.md`, `docs/configuration.md`, `serve --help`). With AbstractCore 2.39.0
+  the console's state line reads `Commands sandboxed: Windows restricted token` (state `sandboxed`, no longer
+  `partial`) and the commands of runs set to "Deny everything, allow listed workspaces" or to read-only by default
+  run confined instead of being refused. "On Windows" in `docs/security.md` says what each setting lets a command
+  read and write, its limits (drives without permissions and network shares, what stays readable under "Deny
+  everything", names on the way to a workspace, the two-runs-one-folder guarantee and its two narrow exceptions,
+  content with permissions of its own, Git Bash, Windows' own `ssh-keygen`, Windows' TLS, the places Windows
+  marks Low), what the
+  sandbox leaves on your folders, and each message of a command that does not run with what to do; `partial` is
+  now only Linux Landlock without bubblewrap.
+- **The command-sandbox tests know a Windows host that sandboxes both postures**
+  (`tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_e2e_command_sandbox.py`). The state test reads
+  `Commands sandboxed: Windows restricted token` (state `sandboxed`, tool card "Sandboxed to this run's
+  workspaces") when AbstractCore reports a Windows sandbox for both postures. The end-to-end test has a scenario
+  of its own for "Deny everything, allow listed workspaces" and for "Allow everything" with read-only by default
+  on Windows (one run through `POST /runs/start` and the real tool path: refused rows, `.ssh` and an unlisted
+  folder unwritable, the reopened child, a read-only row and the run's own folder with its `TEMP` as positive
+  controls, unlisted user data hidden under the allow-list and readable otherwise). It runs when AbstractCore's
+  Windows sandbox enforces those shapes (`host_sandbox_kind("allowed_only")`, abstractcore 2.39.0) and skips,
+  naming that version, before. AbstractCore's views of the real machine (user data roots, Low places, its state
+  folder, the drive probe) are replaced by test folders and the launcher's policy is checked before each launch.
+
+### Fixed
+
+- **Archiving a conversation, or the first conversation list of an account, no longer hangs the whole gateway
+  when the account's data folder refuses new files** (a read-only folder, Windows Controlled Folder Access, an
+  access-list deny). Archiving answers 500 `session_archive_unwritable` at once; the list is served and its
+  one-time session-kind migrations are tried again a minute later (`POST /runs/start` answers 500
+  `session_kinds_unwritable` when a session's kind cannot be saved); every other request keeps being served. The
+  archive and session-kind files are read and written off the event loop, and a write that waits more than 5
+  seconds for another writer answers 503 (`session_archive_busy`, `session_kinds_busy`) instead of holding a
+  worker. A draft-test purge that removes a session's last run also drops its archive mark. A save refused for a moment
+  because another program holds the file open (antivirus, indexer, backup) is retried briefly, two gateway
+  processes on one data folder no longer lose each other's changes, temp files left by a crash are removed by
+  the next save, and error messages no longer show the data folder's absolute path.
 
 ## [0.23.0] - 2026-11-24
 

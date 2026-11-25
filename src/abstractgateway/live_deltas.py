@@ -137,7 +137,9 @@ _role_lock = threading.Lock()
 #         and local image and video generation in the media child process (a behaviour: version-gated below).
 # 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds and own time
 #         runs (behaviours: version-gated below).
-ABSTRACTRUNTIME_FLOOR = "0.20.0"
+# 0.21.0: `command_sandbox_host.host_unprotected_volumes` (the drives the Windows command sandbox cannot
+#         protect, named in the command-sandbox state: version-gated below, as command_sandbox.py degrades).
+ABSTRACTRUNTIME_FLOOR = "0.21.0"
 
 
 def _installed_runtime_version() -> str:
@@ -1079,6 +1081,12 @@ def require_runtime_features(runtime: Any) -> None:
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
     if installed != "unknown" and _version_tuple(installed) < _version_tuple(ABSTRACTRUNTIME_FLOOR):
+        missing.append(
+            "the drives the Windows command sandbox cannot protect, named in the command-sandbox state "
+            "(AbstractRuntime 0.21.0; with an older release the console never names a drive without "
+            "permissions or a network share)"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.20.0"):
         missing.append(
             "own-time loops that freeze while the gateway is paused, and a read-only workspace default that holds "
             "on Windows (AbstractRuntime 0.20.0; with an older release a paused gateway's entities keep working, "
