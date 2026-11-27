@@ -397,6 +397,7 @@ class TrayApp:
         threading.Thread(target=self._watchdog, name="tray-watchdog", daemon=True).start()
         threading.Thread(target=self._stdin_watch, name="tray-stdin", daemon=True).start()
         threading.Thread(target=self._extras_loop, name="tray-extras", daemon=True).start()
+        threading.Thread(target=self._report_windows_update, name="tray-update-outcome", daemon=True).start()
         self._install_signals()
 
         def _setup(icon: Any) -> None:
@@ -423,13 +424,9 @@ class TrayApp:
     def _stdin_watch(self) -> None:
         """The parent keeps our stdin open for life; EOF means it is gone
         (SIGKILL and exec included) — the strongest liveness signal on every OS."""
-        try:
-            while not self._stopping:
-                chunk = sys.stdin.buffer.read(1) if hasattr(sys.stdin, "buffer") else sys.stdin.read(1)
-                if not chunk:
-                    break
-        except Exception:
-            pass
+        from ..parent_pipe import wait_closed
+
+        wait_closed(getattr(sys.stdin, "buffer", sys.stdin))
         if not self._stopping:
             logger.info("tray: parent closed the control pipe; exiting")
             self.stop()
@@ -561,12 +558,16 @@ class TrayApp:
         if self._stopping:
             return
         self._stopping = True
-        self._events.stop()
+        # The icon first: `Icon.stop()` only posts a message, and the icon leaves the
+        # notification area only when THIS process removes it. Whatever comes after must not
+        # stand in its way: the gateway terminates a helper that is still there after 3 s, and
+        # a terminated process leaves a ghost icon (Windows).
         try:
             if self._icon is not None:
                 self._icon.stop()
         except Exception:
             pass
+        self._events.stop()
 
     def _watchdog(self) -> None:
         """Exit with the parent; never outlive the gateway that spawned us."""
@@ -1944,6 +1945,10 @@ class TrayApp:
             self._update_phase = "updating"
             self._force_menu_rebuild()
             self._info("An update is being installed", line)
+            job = r.data.get("job") if isinstance(r.data.get("job"), dict) else {}
+            if job.get("handoff"):
+                # Windows: follow the installer's window to its end and say how it went.
+                self._bg(lambda: self._report_windows_update(wait_s=3000.0), "tray-update-outcome")
             return
         if status == "installed":
             self._update_phase = "installed"
@@ -1978,6 +1983,12 @@ class TrayApp:
 
         def _do() -> None:
             r = self.client.start_update(installer_sha256=action.get("installer_sha256"))
+            if r.ok and isinstance(r.data, dict) and isinstance(r.data.get("job"), dict) and r.data["job"].get("handoff"):
+                # Windows: the installer runs in its own window and stops this gateway (and this
+                # icon); nothing to poll here.
+                self.sampler.set_override(None)
+                self._settle_update("handed_off", r.data["job"], r.data.get("update") or {})
+                return
             if not r.ok:
                 # The offer is stale (the installer changed, a job runs, check again first):
                 # drop it, so the next click checks again instead of re-offering it.
@@ -2006,7 +2017,18 @@ class TrayApp:
 
     def _settle_update(self, state: str, job: Dict[str, Any], view: Dict[str, Any]) -> None:
         """Report the finished job honestly: installed (offer the restart), already up to
-        date (nothing to restart), or failed with the job's own reason."""
+        date (nothing to restart), handed off (Windows: the installer runs in its own window
+        and restarts the gateway), or failed with the job's own reason."""
+        if state == "handed_off":
+            self._update_phase = "updating"
+            self._force_menu_rebuild()
+            what = str(job.get("message") or f"{self._update_latest or 'The update'} is being installed in its own window")
+            self._info(
+                "Updating in its own window",
+                f"{what[:1].upper()}{what[1:]}. This icon and the console are away until {APP_NAME} is back; "
+                "it tells you here how the update went.",
+            )
+            return
         if state == "succeeded":
             self._update_phase = "installed"
             self._force_menu_rebuild()
@@ -2033,6 +2055,39 @@ class TrayApp:
         if tail:
             body += "\n\nLast lines of the log:\n" + "\n".join(tail)
         self._info("The update didn't finish", body, style="warning")
+
+    def _report_windows_update(self, wait_s: float = 3000.0) -> None:
+        """Windows: the installer an Update handed off stopped the gateway and this icon, and
+        started them again before it finished (the console sign-in and the apps come after).
+        Follow the recorded hand-off until it ends (up to `wait_s`) and say once how it went."""
+        if os.name != "nt":
+            return
+        deadline = time.monotonic() + wait_s
+        job: Dict[str, Any] = {}
+        while not self._stopping and time.monotonic() < deadline:
+            st = self.client.update_state()
+            if st.ok and isinstance(st.data, dict):
+                job = st.data.get("job") if isinstance(st.data.get("job"), dict) else {}
+                if not job.get("handoff") or str(job.get("state") or "") != "running":
+                    break
+                self._update_phase = "updating"
+            time.sleep(UPDATE_POLL_SECONDS if job.get("handoff") else 5.0)
+        if self._update_phase == "updating":
+            self._update_phase = "idle"
+            self._force_menu_rebuild()
+        handoff = job.get("handoff") if isinstance(job.get("handoff"), dict) else {}
+        key = str(handoff.get("id") or "")
+        state = str(job.get("state") or "")
+        if not key or state not in ("completed", "failed") or self.prefs.data.get("update_notice_id") == key:
+            return
+        self.prefs.data["update_notice_id"] = key
+        self.prefs.save()
+        if state == "completed":
+            self._notify("Update installed", str(job.get("message") or f"{APP_NAME} is up to date and running again."))
+            return
+        self._update_phase = "failed"
+        self._force_menu_rebuild()
+        self._info("The update didn't finish", f"{APP_NAME} {self.version} is running. {job.get('error') or ''}".strip(), style="warning")
 
     # ------------------------------------------------------ activity window
 

@@ -115,8 +115,12 @@ class RemoteCoreEmbeddingsClient:
     def embed_texts(self, texts: Sequence[str]) -> Any:
         from abstractruntime.integrations.abstractcore.embeddings_client import EmbeddingsResult
 
+        from . import host_control
         from .core_config import core_server_url
 
+        # Model work sent straight to a remote AbstractCore server (not through the model host):
+        # the gateway pause stops it here.
+        host_control.gate_model_work("embeddings (remote AbstractCore route)")
         payload: Dict[str, Any] = {
             "model": f"{self._route.provider}/{self._route.model}",
             "input": [str(text or "") for text in texts],

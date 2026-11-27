@@ -242,8 +242,13 @@ def ensure_queue_sweeper(entities_dir: Path, *, context: Any = None) -> None:
 
 
 def _sweep_forever() -> None:
+    from . import host_control
+
     while True:
         time.sleep(QUEUE_SWEEP_PERIOD_S)
+        # The gateway pause (its kill switch): no entry is reaped and no job is admitted; the
+        # queues are read again at Resume, as they stand.
+        host_control.wait_while_paused()
         fn = _sweep_executor
         if fn is None:
             continue

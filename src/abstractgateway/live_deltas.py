@@ -72,7 +72,7 @@ FILE_TAIL_POLL_S = 0.03
 _process_role = ROLE_COMBINED
 _role_lock = threading.Lock()
 
-# The AbstractRuntime release this gateway needs (pyproject `AbstractRuntime>=`
+# The AbstractRuntime release this gateway needs (pyproject pins `AbstractRuntime==`
 # says the same; tests/test_gateway_live_delta_stream.py keeps the two equal).
 # It carries: live token deltas with `parent_run_id` (set_live_delta_sink),
 # the S-2 parity gate, and the host's built-in tool deny
@@ -132,7 +132,14 @@ _role_lock = threading.Lock()
 # 0.19.3: own time withdrawn = the turn in flight finishes whole, then nothing runs (no tick look-back, no
 #         authoring drain, no day look-back, no next tick): entity_phase's "Own time withdrawn: he finishes what he
 #         is doing, then goes idle." is only true with it (a behaviour, not an API: version-gated below).
-ABSTRACTRUNTIME_FLOOR = "0.19.6"
+# 0.19.6: cancellation-safe state publication and diary-resolution replay (a behaviour: version-gated below).
+# 0.19.7: Windows: atomic saves retried while another thread reads the file (the run store, commands, artifacts)
+#         and local image and video generation in the media child process (a behaviour: version-gated below).
+# 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds and own time
+#         runs (behaviours: version-gated below).
+# 0.21.0: `command_sandbox_host.host_unprotected_volumes` (the drives the Windows command sandbox cannot
+#         protect, named in the command-sandbox state: version-gated below, as command_sandbox.py degrades).
+ABSTRACTRUNTIME_FLOOR = "0.21.0"
 
 
 def _installed_runtime_version() -> str:
@@ -1074,6 +1081,23 @@ def require_runtime_features(runtime: Any) -> None:
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
     if installed != "unknown" and _version_tuple(installed) < _version_tuple(ABSTRACTRUNTIME_FLOOR):
+        missing.append(
+            "the drives the Windows command sandbox cannot protect, named in the command-sandbox state "
+            "(AbstractRuntime 0.21.0; with an older release the console never names a drive without "
+            "permissions or a network share)"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.20.0"):
+        missing.append(
+            "own-time loops that freeze while the gateway is paused, and a read-only workspace default that holds "
+            "on Windows (AbstractRuntime 0.20.0; with an older release a paused gateway's entities keep working, "
+            "and on Windows file tools write under a read-only default)"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.19.7"):
+        missing.append(
+            "Windows file saves while the file is read elsewhere and Windows local media generation (AbstractRuntime "
+            "0.19.7; older releases can fail a run with \"[WinError 5] Access is denied\")"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.19.6"):
         missing.append(
             "the cancellation publication and diary-resolution projection rules (AbstractRuntime 0.19.6; "
             "older releases can lose a resolution verdict or overwrite cancellation with stale state)"

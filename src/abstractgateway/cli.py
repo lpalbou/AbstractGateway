@@ -298,16 +298,19 @@ def _maybe_bootstrap_user_auth_admin(*, host: str, port: int | None = None, prin
             # loopback peer, which that bind cannot serve.
             _stderr(f"Console: {base}/console  (sign in with the admin token file above)")
             return
+        from .first_run import onboarding_unclaimed
+
+        if onboarding_unclaimed(data_dir) is not None:
+            # A new gateway: its admin password is chosen first, and no sign-in link is minted
+            # (one would close onboarding without a password). The setup code stays out of this
+            # output, which often lands in a service log.
+            _stderr(f"First run: this gateway is new. Run `abstractgateway claim --open` to choose the admin password in the console ({base}/console).")
+            _stderr("           From another machine, the console asks for the setup code too: `abstractgateway claim --code`.")
+            return
         minted = mint_claim(data_dir=data_dir, tenant_id=tenant_id, user_id=user_id, created_by="serve")
         _stderr(f"First run: open {claim_url(base, minted['code'])}")
         _stderr("           (one-time link, valid 10 minutes, works from this machine only; "
                 "a fresh one: `abstractgateway claim --open`)")
-        from .first_run import onboarding_unclaimed
-
-        if onboarding_unclaimed(data_dir) is not None:
-            # The code itself stays out of this output (it often lands in a service log).
-            _stderr("           From another machine, the console asks to set the admin password with the "
-                    "setup code: `abstractgateway claim --code`.")
     except Exception as exc:  # noqa: BLE001 - the link is a convenience; never block boot
         _stderr(f"[WARN] could not mint a first-run link ({exc}); run `abstractgateway claim`.")
 
@@ -973,7 +976,7 @@ def main(argv: list[str] | None = None) -> None:
         argv[0] = argv[0][2:]
     _argv0 = argv[:1]
     if _argv0 not in (
-        ["claim"], ["service"], ["models"], ["engines"], ["apps"], ["network"], ["config"],
+        ["claim"], ["service"], ["shortcut"], ["models"], ["engines"], ["apps"], ["network"], ["config"],
         ["update"], ["console"], ["--version"], ["-h"], ["--help"],
     ):
         # The first-run verbs, the models/engines verbs, `config` and the
@@ -1068,9 +1071,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         dest="unsandboxed_commands",
         help="Allow commands (execute_command, the shell, local helpers) to run WITHOUT an operating-system sandbox "
-        "on a host that has none (no macOS sandbox-exec, no Linux bubblewrap/Landlock). Off by default: there, "
-        "commands are refused. Where a sandbox exists, every command is confined to its run's workspaces whatever "
-        "this flag says. Audited at boot and shown on the console (Security). There is no environment variable.",
+        "where the host cannot sandbox them: a host that has none (no macOS sandbox-exec, no Linux "
+        "bubblewrap/Landlock), or a run whose workspace policy the host's sandbox cannot express (Linux Landlock "
+        "expresses one posture). Off by default: there, commands are refused. Where the sandbox "
+        "applies, every command is confined to its run's workspaces whatever this flag says. Audited at boot and "
+        "shown on the console (Security). There is no environment variable.",
     )
     serve.add_argument(
         "--push-relay",
@@ -1327,6 +1332,9 @@ def main(argv: list[str] | None = None) -> None:
     claim = sub.add_parser("claim", help="Print a one-time console sign-in link for this machine (first run)")
     add_claim_arguments(claim)
     add_service_subparser(sub)
+    from .desktop_shortcut import add_shortcut_subparser
+
+    add_shortcut_subparser(sub)
 
     # Browser apps (Node.js for the user, npm installs, supervised app
     # servers): the console's Apps page from a shell, through the running
@@ -1369,6 +1377,11 @@ def main(argv: list[str] | None = None) -> None:
         from .firstrun_cli import run_service
 
         raise SystemExit(run_service(args))
+
+    if args.cmd == "shortcut":
+        from .desktop_shortcut import run_shortcut
+
+        raise SystemExit(run_shortcut(args))
 
     if args.cmd in ("serve", "network", "runner") and getattr(args, "data_dir", None):
         from .host_paths import DATA_DIR_SOURCE_ENV

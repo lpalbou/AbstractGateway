@@ -23,7 +23,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.19.6 or later): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.21.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -287,8 +287,10 @@ browser on this computer from one elsewhere on the network
   and the runner closes any streamed-speech wait an older process left
   behind.
 - **Session and model-file housekeeping** (`src/abstractgateway/session_archive.py`,
-  `model_download_delete.py`): archive and unarchive a conversation (history
-  kept), and delete a downloaded model's files with the engine's own
+  `session_titles.py`, `model_download_delete.py`): archive and unarchive a
+  conversation (history kept), rename it (a stored title served on `GET /runs`
+  rows as `session_title`); these per-plane JSON files and `session_kinds.json`
+  are written through `json_store.py` (one temp file, bounded retries, a cross-process lock), and delete a downloaded model's files with the engine's own
   mechanism, refused while the model is loaded, locked or downloading.
 - **Engines and model downloads** (`src/abstractgateway/engines_install.py`,
   `src/abstractgateway/model_downloads.py`, `routes/engines.py`): engine
@@ -752,7 +754,7 @@ flowchart TB
   Level --> Apply["Effective workspaces: min(gateway cap, the level's rule) per path; posture (Deny everything, allow listed workspaces / Allow everything, refuse listed workspaces), workspaces ro or rw, refused workspaces; recorded as _gateway_workspace.level"]
   Apply --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
   Deny --> Tools["AbstractRuntime file tools enforce the rules; the agent's context lists its working directory and the allowed workspaces with their modes, never the built-in rules"]
-  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock); the most specific workspace wins on every platform"]
+  Tools --> Sandbox["Commands run inside the OS sandbox built from the same set (macOS sandbox-exec, Linux bubblewrap or Landlock, a Windows restricted token); the most specific workspace wins on every platform"]
 ```
 
 The rules are whole-folder prefixes, never a listing of a folder's contents,

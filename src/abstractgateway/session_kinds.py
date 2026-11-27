@@ -37,13 +37,13 @@ sessions": that would put every docs chat back in the conversation lists.
 from __future__ import annotations
 
 import datetime
-import json
-import os
-import tempfile
+import logging
 import threading
-import time
-from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
+
+from .json_store import JsonStore, StoreBusy, StoreUnreadable, StoreUnwritable
+
+_log = logging.getLogger("abstractgateway.session_kinds")
 
 SCHEMA = "gateway_session_kinds_v1"
 FILENAME = "session_kinds.json"
@@ -114,39 +114,65 @@ def _migration_matchers():
 #: The one-time migrations, in order: (name, matcher(row) -> kind | None).
 MIGRATIONS = _migration_matchers()
 
-_LOCK = threading.RLock()
-
 
 class SessionKindsUnreadable(RuntimeError):
     """The file exists but cannot be read as the schema."""
 
 
-def _path(data_dir: Any) -> Path:
-    return Path(data_dir) / FILENAME
+class SessionKindsUnwritable(RuntimeError):
+    """The file could not be saved (json_store.py); it was left as it was."""
+
+
+class SessionKindsBusy(SessionKindsUnwritable):
+    """Another writer held the file past json_store.LOCK_WAIT_S; try again."""
+
+
+def _valid(doc: Any) -> bool:
+    return isinstance(doc, dict) and doc.get("schema") == SCHEMA and isinstance(doc.get("sessions"), dict)
 
 
 def _load(data_dir: Any) -> Dict[str, Any]:
-    path = _path(data_dir)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"schema": SCHEMA, "sessions": {}}
-    except Exception as exc:  # noqa: BLE001 - re-raised typed, with the path
-        raise SessionKindsUnreadable(f"{path} is not readable: {exc}") from exc
-    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA or not isinstance(raw.get("sessions"), dict):
-        raise SessionKindsUnreadable(f"{path} is not a {SCHEMA} file")
-    return raw
+        return _STORE.load(data_dir)
+    except StoreUnreadable as exc:
+        raise SessionKindsUnreadable(str(exc)) from None
+
+
+# Reads (cached: `GET /runs` reads this on every call; another process's write is seen within
+# REVALIDATE_S, a write through this module at once), locking and the atomic write are
+# json_store.py's: a folder that refuses new files is an immediate error, never a retry loop.
+REVALIDATE_S = 1.0
+_STORE = JsonStore(FILENAME, empty=lambda: {"schema": SCHEMA, "sessions": {}}, valid=_valid,
+                   reader=lambda d: _load(d), revalidate_s=lambda: REVALIDATE_S)
+
+
+def _load_cached(data_dir: Any) -> Dict[str, Any]:
+    """The cached document, for READERS (never mutate the result)."""
+    try:
+        return _STORE.read(data_dir)
+    except StoreUnreadable as exc:
+        raise SessionKindsUnreadable(str(exc)) from None
+
+
+def _update(data_dir: Any, change: Any) -> Any:
+    try:
+        return _STORE.update(data_dir, change)[0]
+    except StoreUnreadable as exc:
+        raise SessionKindsUnreadable(str(exc)) from None
+    except StoreBusy as exc:
+        raise SessionKindsBusy(str(exc)) from None
+    except StoreUnwritable as exc:
+        raise SessionKindsUnwritable(str(exc)) from None
 
 
 def session_kinds(data_dir: Any) -> Dict[str, str]:
     """`{session_id: kind}` for every session that is not a conversation."""
-    with _LOCK:
-        out: Dict[str, str] = {}
-        for sid, rec in _load_cached(data_dir)["sessions"].items():
-            kind = rec.get("kind") if isinstance(rec, dict) else None
-            if kind in KINDS and kind != DEFAULT_KIND:
-                out[str(sid)] = str(kind)
-        return out
+    out: Dict[str, str] = {}
+    for sid, rec in _load_cached(data_dir)["sessions"].items():
+        kind = rec.get("kind") if isinstance(rec, dict) else None
+        if kind in KINDS and kind != DEFAULT_KIND:
+            out[str(sid)] = str(kind)
+    return out
 
 
 def workflow_bundle_id(workflow_id: Any) -> Optional[str]:
@@ -197,57 +223,10 @@ def kind_of(kinds_map: Dict[str, str], session_id: Any, workflow_id: Any = None,
     return workflow_kind(workflow_id, session_kind) or DEFAULT_KIND
 
 
-# Read cache (gateway load 2026-10-26): `GET /runs` read this file on every call, on the event
-# loop. Readers get the last parsed content; the file is stat-ed again at most every
-# REVALIDATE_S (another process's write is seen within that) and a write through this module
-# drops the entry at once. An unreadable file is never cached (it raises on every read).
-REVALIDATE_S = 1.0
-_READ_CACHE: Dict[str, Tuple[float, Any, Dict[str, Any]]] = {}
-
-
-def _load_cached(data_dir: Any) -> Dict[str, Any]:
-    """`_load` for READERS (never mutate the result)."""
-    path = _path(data_dir)
-    key = str(path)
-    now = time.monotonic()
-    hit = _READ_CACHE.get(key)
-    if hit is not None and (now - hit[0]) < REVALIDATE_S:
-        return hit[2]
-    try:
-        st = os.stat(path)
-        sig: Any = (st.st_mtime_ns, st.st_size, st.st_ino)
-    except FileNotFoundError:
-        sig = None
-    except OSError:
-        sig = object()  # never equal: read (and raise) below
-    if hit is not None and hit[1] == sig:
-        _READ_CACHE[key] = (now, sig, hit[2])
-        return hit[2]
-    data = _load(data_dir)
-    _READ_CACHE[key] = (now, sig, data)
-    return data
-
-
-def _forget(data_dir: Any) -> None:
-    _READ_CACHE.pop(str(_path(data_dir)), None)
-
-
-def _write(data_dir: Any, data: Dict[str, Any]) -> None:
-    _forget(data_dir)
-    path = _path(data_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(json.dumps(data, ensure_ascii=False, indent=2))
-    os.replace(tmp, str(path))
-    _forget(data_dir)
-
-
 def pending_migrations(data_dir: Any) -> Tuple[str, ...]:
     """The one-time migrations (MIGRATIONS) this plane has not run yet."""
-    with _LOCK:
-        done = _load_cached(data_dir).get("migrations") or {}
-        return tuple(name for name, _matcher in MIGRATIONS if name not in done)
+    done = _load_cached(data_dir).get("migrations") or {}
+    return tuple(name for name, _matcher in MIGRATIONS if name not in done)
 
 
 def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: Optional[Iterable[str]] = None) -> Dict[str, int]:
@@ -258,8 +237,8 @@ def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: 
     `{migration: sessions marked}` for the migrations that ran now; a second call changes
     nothing. One read, one write."""
     rows = list(root_rows)
-    with _LOCK:
-        data = _load(data_dir)
+
+    def change(data: Dict[str, Any]) -> Any:
         migrations = data.setdefault("migrations", {})
         wanted = set(names) if names is not None else {name for name, _m in MIGRATIONS}
         now = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -278,25 +257,45 @@ def migrate_sessions(data_dir: Any, root_rows: Iterable[Dict[str, Any]], names: 
                     marked += 1
             migrations[name] = {"at": now, "marked": marked}
             out[name] = marked
-        if out:
-            _write(data_dir, data)
-        return out
+        return out, bool(out)
+
+    return _update(data_dir, change)
 
 
 _MIGRATION_SCAN_LOCK = threading.Lock()
+# A plane whose folder refused the migrations' save is not tried again for MIGRATION_RETRY_S
+# (every listing would pay the whole-index scan and the failed save): plane -> when it failed.
+MIGRATION_RETRY_S = 60.0
+_MIGRATION_FAILED: Dict[str, float] = {}
 
 
 def run_pending_migrations(data_dir: Any, list_root_rows: Any) -> Dict[str, int]:
     """Run the pending migrations once: `list_root_rows()` (a whole-index scan) is called only
     when one is pending, and concurrent callers (every listing after an upgrade) wait for the
-    first scan instead of repeating it. Blocking: call it off the event loop."""
+    first scan instead of repeating it. Blocking: call it off the event loop. A plane whose
+    folder refuses the save keeps its marks as they are (the listing goes on); the migration is
+    tried again after MIGRATION_RETRY_S, and the failure is logged once until it succeeds."""
+    import time
+
+    key = str(_STORE.path(data_dir))
+    failed_at = _MIGRATION_FAILED.get(key)
+    if failed_at is not None and time.monotonic() - failed_at < MIGRATION_RETRY_S:
+        return {}
     if not pending_migrations(data_dir):
         return {}
     with _MIGRATION_SCAN_LOCK:
         pending = pending_migrations(data_dir)
         if not pending:
             return {}
-        return migrate_sessions(data_dir, list_root_rows(), pending)
+        try:
+            out = migrate_sessions(data_dir, list_root_rows(), pending)
+        except SessionKindsUnwritable as exc:
+            if key not in _MIGRATION_FAILED:
+                _log.warning("session kinds: the one-time migrations could not be saved (%s); tried again every %.0f s", exc, MIGRATION_RETRY_S)
+            _MIGRATION_FAILED[key] = time.monotonic()
+            return {}
+        _MIGRATION_FAILED.pop(key, None)
+        return out
 
 
 def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:
@@ -307,10 +306,11 @@ def mark_session_kind(data_dir: Any, session_id: str, kind: str) -> bool:
     if kind == DEFAULT_KIND:
         return False
     sid = str(session_id)
-    with _LOCK:
-        data = _load(data_dir)
+
+    def change(data: Dict[str, Any]) -> Any:
         if (data["sessions"].get(sid) or {}).get("kind") == kind:
-            return False
+            return False, False
         data["sessions"][sid] = {"kind": kind, "marked_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")}
-        _write(data_dir, data)
-        return True
+        return True, True
+
+    return bool(_update(data_dir, change))

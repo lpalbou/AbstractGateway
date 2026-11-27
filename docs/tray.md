@@ -490,18 +490,36 @@ applies to both.
 row on Windows and Linux (unticked = paused) — is process-wide and **persists
 across restarts**: a laptop paused to get its GPU back does not silently
 resume after a reboot or an update. One conversation is paused from its own row
-instead (see *Conversations*). While the gateway is paused:
+instead (see *Conversations*).
 
-- no new workflow step starts — runs, schedules and bridge-started work are
-  accepted and wait;
-- a step already inside an LLM or tool call finishes first (the menu says
-  "Finishing N runs at the next step");
-- the console, the API and connected apps keep answering; cancelling a run
-  still works;
-- summoned entities' own-time loops are **not** affected (they are separate
-  processes with their own lifecycle controls);
+Pause is a **kill switch**: while the gateway is paused nothing moves forward,
+and everything continues from where it was when you resume.
+
+- **Automations and runs.** No new workflow step starts — runs and schedules
+  are accepted and wait. A model or tool call already in flight finishes first
+  (the menu says "Finishing N runs at the next step"); if that step asks for
+  another model call, the call waits for Resume instead of failing.
+- **Entities.** No visit, chat turn, summon, meet or speech is started (the
+  request answers `409` `gateway_paused`). The background sweeps start no
+  sleep, write no title, summary or brief, and wake nobody. An entity's
+  own-time loop (a separate process) freezes at its next boundary — after the
+  turn it is in — and continues the same day at Resume.
+- **Models.** No generation, embedding, speech, image or model load leaves the
+  gateway: not from the gateway API, not from `/v1/...` (`503`
+  `gateway_paused`), not from a background task. A model you unload stays
+  unloaded. **Keep loaded** and a new default model are recorded and applied
+  at Resume. Reading what is loaded and unloading it stay available.
+- **Bridges and mail.** Telegram, the Agora bridge, the mailbox and feed
+  watchers and push notifications do not poll or deliver; what arrived
+  meanwhile is handled at Resume.
+- The console, the API and connected apps keep answering (reading, settings,
+  Resume); cancelling a run and stopping an entity still work.
 - `GET /api/health` carries `"paused": true` while `status` stays
   `"healthy"` — a supervisor must never recycle a paused gateway.
+
+What a pause does not do: it does not cut a model call that is already
+running (stop the run, or unload the model, for that), and it does not unload
+anything by itself.
 
 Pause reaches inside a tick: AbstractRuntime's `Runtime.tick(step_gate=…)`
 consults the gateway's gate at every step boundary. Where the runtime does
@@ -511,7 +529,10 @@ not offer that gate, the pause takes effect at tick boundaries (up to
 
 In the split layout (`serve --no-runner` + `abstractgateway runner`) the
 pause is written to `<data_dir>/gateway_paused.json` and the runner process
-picks it up within about two seconds.
+picks it up within about two seconds. The same file is how an entity's
+own-time loop learns of the pause: the gateway names it to every process it
+starts (`ABSTRACTRUNTIME_HOST_PAUSE_FILE`), and the loop reads it at each
+boundary (about every five seconds while it waits).
 
 ## Restart and update
 

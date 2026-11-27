@@ -128,6 +128,10 @@ def sweep_entity_repairs(registry: Any) -> List[Dict[str, Any]]:
     )
 
     actions: List[Dict[str, Any]] = []
+    from . import host_control
+
+    if host_control.is_paused():
+        return actions  # the gateway is paused (its kill switch): no repair, no wake, no sleep, no authoring
     try:
         rows = registry.list_entities()
     except Exception as e:  # noqa: BLE001
@@ -146,6 +150,8 @@ def sweep_entity_repairs(registry: Any) -> List[Dict[str, Any]]:
         entity_id = str(row.get("entity_id") or "")
         if not slug or not entity_id or row.get("error"):
             continue
+        if host_control.is_paused():
+            return actions  # paused during the sweep: the homes not looked at yet wait for Resume
         idle_slugs.append(slug)
         home_dir = Path(registry.entities_dir) / slug
         try:
@@ -469,10 +475,16 @@ def start_repair_sweeper(registry: Any, *, interval_s: Optional[float] = None) -
             interval_s = SWEEP_INTERVAL_S
 
     def _run() -> None:
+        from . import host_control
+
         while True:
             time.sleep(max(30.0, float(interval_s)))
+            # The gateway pause stops the sweep itself; what a sweep already started (a sleep
+            # pass, an authoring drain) waits at its next model call and continues at Resume.
+            host_control.wait_while_paused()
             try:
-                sweep_entity_repairs(registry)
+                with host_control.parks_while_paused():
+                    sweep_entity_repairs(registry)
             except Exception:  # noqa: BLE001 - the sweeper must survive anything
                 logger.exception("entity self-repair sweep failed; retrying next interval")
 

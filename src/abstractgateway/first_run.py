@@ -700,6 +700,19 @@ def setup_code_for_display(data_dir: Path) -> Optional[str]:
     return code
 
 
+def setup_url(base_url: str, data_dir: Path) -> Optional[str]:
+    """The console link of an UNCLAIMED gateway (`/console#setup=<the six words>`), else None.
+
+    It opens "Set up your gateway" with the setup code already given, so the person only
+    chooses the admin password. Whatever opens the console from this machine (`claim`, which
+    the installers run; `service install`; the tray; the desktop shortcut) opens this while
+    the gateway is unclaimed, never a claim link: a claim link signs in as admin and closes
+    onboarding with no password ever chosen. Like the setup code it carries, the link works
+    until the password is set."""
+    code = setup_code_for_display(data_dir)
+    return f"{str(base_url).rstrip('/')}/console#setup={code.replace(' ', '-')}" if code else None
+
+
 def setup_code_matches(data_dir: Path, presented: Any) -> bool:
     rec = read_onboarding(data_dir)
     expected = normalize_setup_code((rec or {}).get("setup_code"))

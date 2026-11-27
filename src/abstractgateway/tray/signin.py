@@ -61,6 +61,13 @@ def _mint_default(data_dir: Path) -> Dict[str, Any]:
     )
 
 
+def _setup_default(base_url: str, data_dir: Path) -> Optional[str]:
+    from ..first_run import setup_url
+
+    os.environ.setdefault("ABSTRACTGATEWAY_DATA_DIR", str(data_dir))  # as in _mint_default
+    return setup_url(base_url, data_dir)
+
+
 def console_link(
     base_url: str,
     console_path: str,
@@ -68,6 +75,7 @@ def console_link(
     *,
     tab: Optional[str] = None,
     mint: Optional[Callable[[Path], Dict[str, Any]]] = None,
+    setup: Optional[Callable[[str, Path], Optional[str]]] = None,
     user_auth: Optional[Callable[[Path], Optional[bool]]] = None,
 ) -> ConsoleLink:
     """The URL "Open Console" should open. Never raises.
@@ -85,6 +93,14 @@ def console_link(
         logger.debug("tray: serve record unreadable: %s", exc)
     if enabled is False:
         return ConsoleLink(plain, False, "this gateway uses a static token (no user accounts), so sign-in links are not available")
+    # A new gateway: "Set up your gateway" (the admin password), never a sign-in link.
+    try:
+        fresh = (setup or _setup_default)(base, Path(data_dir))
+    except Exception as exc:  # noqa: BLE001
+        fresh = None
+        logger.debug("tray: onboarding state unreadable: %s", exc)
+    if fresh:
+        return ConsoleLink(fresh, False, None)
     try:
         minted = (mint or _mint_default)(Path(data_dir))
     except Exception as exc:  # noqa: BLE001

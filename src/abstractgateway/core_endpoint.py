@@ -875,6 +875,13 @@ class CoreEndpoint:
         ctype = (_header(scope, b"content-type") or "").lower()
         base64_embeddings = False
         if method == "POST":
+            # Every POST here is model work (a completion, an embedding, speech, an image). The
+            # gateway pause is a kill switch: refused before anything reaches a model.
+            from . import host_control
+
+            if host_control.is_paused():
+                return await openai_error(503, host_control.paused_refusal(f"POST {path}"), type_="server_error",
+                                          code=host_control.GatewayPaused.code)(scope, receive, send)
             try:
                 raw, gone = await _read_body(receive)
                 if gone:

@@ -10,6 +10,221 @@ Unreleased changes live in [`changelog.d/`](changelog.d/README.md), one file per
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-25
+
+### Fixed
+
+- **Update works on Windows from the tray, the web console, the terminal console and `abstractgateway
+  update`** (`self_update.py`). Check for Updates answered "AbstractFramework X is available, but not from
+  here" and sent the person to a PowerShell line, because Windows keeps a running program's files locked and
+  the installer must stop the gateway first. Update now hands off: the checked `scripts/install.ps1` (from the
+  same commit as the release manifest, its sha256 shown in the confirmation and required to start) and a small
+  runner are written to `<data dir>\update\`, and a short-lived launcher opens the runner in its own
+  PowerShell window and exits, so the installer runs outside the gateway's process tree (the installer ends
+  that tree). The installer stops the gateway, updates everything and starts it again with start at login as
+  it was (`-NoOpen -NoModifyPath -DataDir <data dir>`). `windows-update.json` records the hand-off and the
+  runner writes the installer's exit code next to it, so the gateway that comes back reports the outcome: the
+  job is `completed` (with what moved), `failed` (the exit code and the log folder, or no report within 45
+  minutes while the installer no longer holds its lock), or `running` while the installer finishes; the tray
+  follows it and says once how it went. A failure is reported by the gateway that started the update too (the
+  installer can fail before it stops the gateway), and the next check offers the update again. The runner
+  checks the confirmed sha256 of `install.ps1` again right before it runs it, ignores Ctrl+C, always records
+  the result, and starts the gateway again (`serve`) if a failed installer had stopped it; the update folder is
+  restricted to the account. A second update is refused while one runs, and a window that could not be opened
+  leaves no record. The update window stays open when the installer fails, with the path of its log. While
+  the installer runs the job is `running` with `job.handoff` set (every client already follows a running job);
+  the new job state is `completed`.
+
+## [0.24.0] - 2026-11-25
+
+### Added
+
+- **The command-sandbox state names the drives Windows cannot protect** (`command_sandbox.py`). On a
+  Windows host, the `sentence` of `command_sandbox` (shown as the console's tooltip and by every client) ends
+  with "Not protected: drive D: has no permissions (exFAT): commands can read and change it" for each drive
+  without permissions or network share AbstractCore reports (through the runtime facade's
+  `host_unprotected_volumes`, AbstractRuntime with it and AbstractCore 2.39.0; nothing with older ones).
+- **Rename a conversation**: `PUT /api/gateway/sessions/{session_id}/title` with `{"title": "..."}` (the
+  session's owner or an admin; one line, cut at 120 characters; an empty title or `null` clears it and the
+  opening message names the conversation again; audited as `session.titled`). Every `GET /api/gateway/runs`
+  row of a renamed session carries `session_title`, the archived listing and the keyword search included (the
+  search also finds a conversation by its title), and the title survives a restart.
+  `GET /api/gateway/discovery/capabilities` says `capabilities.session_titles: true` so a client offers
+  "Rename" only on a gateway that can store it. Format characters that hide text or imitate another title
+  (bidirectional controls, zero-width and other invisible characters) are removed, a title with no visible
+  character clears, and only the first 4,096 characters of a title are read. A titles file that cannot be read
+  never takes the conversation list down: `GET /runs` and the search answer without titles and carry
+  `session_titles_error`; a damaged file is kept aside as `session_titles.damaged-<UTC>.json` by the next
+  rename, which starts a new one and says so (`store_reset`); a file in another encoding or schema is never
+  touched. A rename that cannot be saved answers 500 `session_titles_unwritable`, one that waits too long for
+  another writer 503 `session_titles_busy`.
+
+### Changed
+
+- **What you see on Windows.** The command-sandbox line (console, under Accounts; the terminal console's
+  Workspaces page; `GET /api/gateway/workspace/policy` and `/discovery/tools`) reads `Commands sandboxed: Windows
+  restricted token`, state `sandboxed` instead of `partial`, and the tool cards of `execute_command` and the other
+  process tools read "Sandboxed to this run's workspaces" with no "otherwise commands refused". Runs set to
+  "Deny everything, allow listed workspaces" or to read-only by default now run their commands, confined, instead
+  of refusing them. A drive without permissions (FAT, exFAT) or a network share is named in the line's tooltip and
+  in each command's result.
+- **Pins:** AbstractCore 2.39.0 (the Windows command sandbox for every workspace setting, and the drives it cannot
+  protect), AbstractRuntime 0.21.0 (`command_sandbox_host.host_unprotected_volumes`), in the base install and every
+  extra. `ABSTRACTRUNTIME_FLOOR` is 0.21.0: on an older runtime the gateway refuses to start and says the
+  command-sandbox state would not name unprotected drives.
+- **On Windows, commands are sandboxed under every workspace shape** (`docs/security.md`, `docs/console.md`,
+  `docs/api.md`, `docs/troubleshooting.md`, `docs/configuration.md`, `serve --help`). With AbstractCore 2.39.0
+  the console's state line reads `Commands sandboxed: Windows restricted token` (state `sandboxed`, no longer
+  `partial`) and the commands of runs set to "Deny everything, allow listed workspaces" or to read-only by default
+  run confined instead of being refused. "On Windows" in `docs/security.md` says what each setting lets a command
+  read and write, its limits (drives without permissions and network shares, what stays readable under "Deny
+  everything", names on the way to a workspace, the two-runs-one-folder guarantee and its two narrow exceptions,
+  content with permissions of its own, Git Bash, Windows' own `ssh-keygen`, Windows' TLS, the places Windows
+  marks Low), what the
+  sandbox leaves on your folders, and each message of a command that does not run with what to do; `partial` is
+  now only Linux Landlock without bubblewrap.
+- **The command-sandbox tests know a Windows host that sandboxes both postures**
+  (`tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_e2e_command_sandbox.py`). The state test reads
+  `Commands sandboxed: Windows restricted token` (state `sandboxed`, tool card "Sandboxed to this run's
+  workspaces") when AbstractCore reports a Windows sandbox for both postures. The end-to-end test has a scenario
+  of its own for "Deny everything, allow listed workspaces" and for "Allow everything" with read-only by default
+  on Windows (one run through `POST /runs/start` and the real tool path: refused rows, `.ssh` and an unlisted
+  folder unwritable, the reopened child, a read-only row and the run's own folder with its `TEMP` as positive
+  controls, unlisted user data hidden under the allow-list and readable otherwise). It runs when AbstractCore's
+  Windows sandbox enforces those shapes (`host_sandbox_kind("allowed_only")`, abstractcore 2.39.0) and skips,
+  naming that version, before. AbstractCore's views of the real machine (user data roots, Low places, its state
+  folder, the drive probe) are replaced by test folders and the launcher's policy is checked before each launch.
+
+### Fixed
+
+- **Archiving a conversation, or the first conversation list of an account, no longer hangs the whole gateway
+  when the account's data folder refuses new files** (a read-only folder, Windows Controlled Folder Access, an
+  access-list deny). Archiving answers 500 `session_archive_unwritable` at once; the list is served and its
+  one-time session-kind migrations are tried again a minute later (`POST /runs/start` answers 500
+  `session_kinds_unwritable` when a session's kind cannot be saved); every other request keeps being served. The
+  archive and session-kind files are read and written off the event loop, and a write that waits more than 5
+  seconds for another writer answers 503 (`session_archive_busy`, `session_kinds_busy`) instead of holding a
+  worker. A draft-test purge that removes a session's last run also drops its archive mark. A save refused for a moment
+  because another program holds the file open (antivirus, indexer, backup) is retried briefly, two gateway
+  processes on one data folder no longer lose each other's changes, temp files left by a crash are removed by
+  the next save, and error messages no longer show the data folder's absolute path.
+
+## [0.23.0] - 2026-11-24
+
+### Added
+
+- **Agents' commands run on Windows, inside a sandbox** (`command_sandbox.py`; AbstractCore 2.38.0,
+  AbstractRuntime 0.20.0). On Windows `execute_command` and the local helpers were refused ("Refused: no
+  command sandbox on this host"). They run inside AbstractCore's Windows sandbox for runs set to "Allow
+  everything, refuse listed workspaces" with read & write by default, the posture of a fresh gateway: refused
+  workspaces and the built-in refusals (the data folder, credential folders) are closed to the command, a
+  read-only workspace cannot be written, and the run's own folder works. The console, the terminal console and
+  the apps' tool cards show the host's state: `Commands sandboxed: Windows restricted token (Allow everything,
+  refuse listed workspaces); otherwise commands refused`. A run set to "Deny everything, allow listed
+  workspaces", or to a read-only default, has its commands refused with that reason, since the Windows sandbox
+  cannot express either. What it enforces and its limits: `docs/security.md`, "On Windows".
+
+### Changed
+
+- **Pause is a kill switch: while the gateway is paused, nothing moves forward** (`host_control.py`). Pause used
+  to stop the workflow runner only: a paused gateway still ran the entity sweeps (an idle sleep embedded memories
+  and wrote titles, summaries and briefs, which loaded the embedding model and the summaries model again after
+  they were unloaded), served generations on `/v1` and the gateway API, polled its bridges and mailboxes, and left
+  entities' own-time loops running. Now, while paused:
+  - no model work leaves the gateway: the model host proxy refuses every generation, embedding, speech stream,
+    prompt-cache operation and model load (`GatewayPaused`: `409` `gateway_paused`; `503` with the OpenAI error
+    envelope on `POST /v1/...`), and so do the two calls that go straight to an endpoint (the remote embeddings
+    route, the triage LLM assist). Reading what is loaded and unloading it stay available;
+  - the entity sweeps (repair, need-check, idle sleep, authoring), the queue sweeper, the Telegram and Agora
+    bridges, the mail and feed watchers, the push dispatcher and the backlog runner wait for Resume;
+  - a visit, chat turn, summon, meet, speech or re-embed is refused at its door before anything is written, and
+    so is a sleep with its maintenance pass;
+  - an entity's own-time loop freezes at its next boundary and continues the same day at Resume (it reads the
+    pause file the gateway names in `ABSTRACTRUNTIME_HOST_PAUSE_FILE`; needs the AbstractRuntime that has
+    `identity.life.host_pause`, and with an older one the loop is not started while paused);
+  - a client built in the model host loads no model (an embeddings client, whose build loads its model, is not
+    built until Resume), and **Keep loaded** and a new default model are recorded and applied at Resume.
+
+  Work that was in flight is not failed by a pause: a workflow step, or a pass a sweep started, waits at its
+  next model call and continues at Resume. A model call already running when the pause lands finishes.
+- **The command-sandbox state names the posture a host sandboxes, whichever it is** (`command_sandbox.state`,
+  `GET /api/gateway/workspace/policy`, `GET /api/gateway/discovery/tools`). The `partial` state described
+  Linux Landlock only. It reads the same way for any sandbox that expresses one posture: `Commands sandboxed:
+  <kind> (<posture>); otherwise commands refused` (or `otherwise unsandboxed commands allowed (flag)`), and the
+  tool rows say `Sandboxed to this run's workspaces (<posture>); otherwise …`. `--unsandboxed-commands` applies
+  wherever the host cannot sandbox a command.
+- **Dependency pins**: AbstractCore 2.38.0 (the Windows command sandbox; 2.37.0: streamed native tool calls
+  arrive once and complete), AbstractRuntime 0.20.0 (the read-only default on Windows, local helper commands
+  on Windows, host pause).
+
+### Fixed
+
+- **An idle entity with nothing new is no longer put to sleep every 24 hours** (`entity_idle_sleep.sleep_due`).
+  The hours threshold fired on the clock alone, so an entity nobody visited and nobody gave time to slept once a
+  day forever, each night embedding, dreaming and writing a brief over the same memories. The clock now counts
+  only when at least one memory formed since his last completed sleep (as the fragmented-share threshold already
+  required). His first sleep still comes `sleep.after_hours` after his birth, because what his birth formed has
+  never been consolidated.
+- **An own-time status that cannot be read is said, and nothing is started over it** (`entity_phase.py`,
+  `entity_idle_sleep.py`, `entity_loop.py`, `routes/entities.py`). When the read of an entity's `loop_status`
+  raised, the phase bar folded it into "His own time is not running. Retry to start it.", and each Retry met the
+  same error (on Windows every read raised: `module 'os' has no attribute 'WNOHANG'`, fixed in AbstractRuntime).
+  A status nobody can read is unknown, never "not running": the bar now answers `blocked.code
+  own_time_status_unreadable` ("His own-time status can't be read (<kind of error>). Nothing was started or
+  stopped.", no Retry; the detail is in `warnings`), reconcile and Retry start nothing over it, the idle sweep
+  writes no sleep over it, a remembered return to own time is kept, and turning own time off no longer answers
+  500: the grant is revoked and the stop is enqueued for a loop that may be there. Stop works as before.
+- **One liveness probe for an entity's loop** (`entity_phase._pid_liveness`): the gateway's own copy called
+  `os.waitpid(pid, os.WNOHANG)` and `os.kill(pid, 0)`, neither of which works on Windows. It now asks the
+  runtime's probe (`abstractruntime.identity.life._pid_state`; needs the AbstractRuntime release that carries
+  `utils.os_process` to work on Windows).
+- **Quit from the tray stops the gateway at once and removes its icon** (`host_control.py`, `tray/app.py`,
+  `tray/events.py`). Quit (and Restart) from the tray or the console set uvicorn's `should_exit` without
+  beginning the bounded stop of `shutdown_drain.py`, so the tray's own `/me/events/stream` held every
+  requested exit for the whole 10 s drain ("Cancel 1 running task(s), timeout graceful shutdown exceeded").
+  A requested exit now ends live streams the moment it is asked for, as a stop signal does. On Windows the
+  icon then stayed in the notification area as a ghost: the tray's `stop()` stopped its event follower
+  first, whose `resp.close()` waited for the lock the blocked stream read held (Windows does not wake that
+  read on `shutdown()`), so `Icon.stop()` was never reached and the gateway terminated the helper after 3 s
+  with its icon still registered. The tray now removes its icon first and the follower's `stop()` never
+  blocks. Measured on Windows 10 (a `serve`-shaped stub gateway with the real tray): Quit to icon removed
+  went from 13.2 s, with the helper killed and its icon left behind, to 0.3 s with the icon deleted and the
+  helper exiting 0.
+
+## [0.22.0] - 2026-11-18
+
+### Added
+
+- **Windows: an AbstractGateway icon on the desktop and in the Start menu** (`abstractgateway shortcut
+  install|remove`). It starts the gateway when it is not running (log file, tray icon, the Network setting's
+  address) and opens the console.
+
+### Changed
+
+- **A new gateway asks for its admin password first, on every OS.** While the gateway is unclaimed, `claim` /
+  `claim-url` (which the installers run), `service install`, the tray's Open Console and the desktop icon open
+  `/console#setup=<setup code>`: "Set up your gateway" with the setup code already given, so only the password is
+  chosen. Once the password is set they open a one-time sign-in link, as before. `serve` prints the command instead
+  of a sign-in link for a new gateway. `claim --json` gains `kind` (`setup` | `sign_in`).
+- **A terminal app opened from the console starts in your home folder**, like a terminal you open yourself.
+- **AbstractFramework dependencies are exact pins** (`==`, in the base install and in every extra) of the
+  versions this release was validated with: AbstractCore 2.36.0, AbstractRuntime 0.19.7, AbstractAgent 0.6.1,
+  AbstractMemory 0.5.2, AbstractVoice 0.21.1, AbstractSkill 0.3.13 and abstractavatar 0.2.0. Third-party
+  dependencies keep their ranges. Installing another version of one of these packages beside the gateway now
+  conflicts with it; upgrade the gateway instead.
+
+### Fixed
+
+- **Windows: the model host starts reliably** (`parent_pipe.py`). The watcher of the parent's stdin pipe polls it
+  instead of blocking in a read, which on Windows prevented extension modules such as NumPy from loading.
+- **A model host that does not answer no longer blocks the gateway** (`host_status_cache.py`, `model_host.py`):
+  status probes give up after 1 s (memory) or 8 s (residency, session caches) and report that section as degraded,
+  and the memory probe has a 30 s deadline.
+- **The model host answers every request**, including one whose call raised an `OSError`; the gateway no longer
+  waits for an answer that never comes.
+- **Windows: "Open in Terminal" reports success when the terminal opened** (`apps_manager._open_terminal`).
+- The route dialog recognises a stored model that carries its engine prefix and saves it in the listed form.
+
 ## [0.21.1] - 2026-11-14
 
 ### Changed

@@ -143,6 +143,17 @@ def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
         ({"allowed_only": "none", "any_except_denied": "none"}, True, "unsandboxed", "Unsandboxed commands allowed (flag)"),
         ({"allowed_only": "linux-landlock", "any_except_denied": "none"}, False, "partial",
          "Commands sandboxed: Linux Landlock (Deny everything, allow listed workspaces); otherwise commands refused"),
+        ({"allowed_only": "linux-landlock", "any_except_denied": "none"}, True, "partial",
+         "Commands sandboxed: Linux Landlock (Deny everything, allow listed workspaces); otherwise unsandboxed commands allowed (flag)"),
+        ({"allowed_only": "none", "any_except_denied": "windows-restricted-token"}, False, "partial",
+         "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise commands refused"),
+        ({"allowed_only": "none", "any_except_denied": "windows-restricted-token"}, True, "partial",
+         "Commands sandboxed: Windows restricted token (Allow everything, refuse listed workspaces); otherwise unsandboxed commands allowed (flag)"),
+        # A Windows sandbox that enforces both postures (AbstractCore backlog 1341): no "otherwise".
+        ({"allowed_only": "windows-restricted-token", "any_except_denied": "windows-restricted-token"}, False, "sandboxed",
+         "Commands sandboxed: Windows restricted token"),
+        ({"allowed_only": "windows-restricted-token", "any_except_denied": "windows-restricted-token"}, True, "sandboxed",
+         "Commands sandboxed: Windows restricted token"),
     ],
 )
 def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool, state: str, line: str) -> None:
@@ -151,6 +162,7 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     from abstractgateway import command_sandbox
 
     monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": kinds[posture])
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: {}, raising=False)  # this host's own drives aside
     command_sandbox.set_unsandboxed_commands(flag, source="serve")
     command_sandbox.configure_at_boot()
     st = command_sandbox.state()
@@ -160,7 +172,35 @@ def test_the_state_line(monkeypatch: pytest.MonkeyPatch, kinds: dict, flag: bool
     assert fields["sandboxed"] is (state in ("sandboxed", "partial"))
     if state == "sandboxed":
         assert fields["sandbox"] == "Sandboxed to this run's workspaces"
+        assert st["kind"] == kinds["any_except_denied"]
+        assert st["sentence"] == "Every command a run starts is confined by the operating system to that run's workspaces."
+    if state == "partial":  # the tool card names the posture this host sandboxes, and what happens otherwise
+        assert fields["sandbox"] == "Sandboxed to this run's workspaces " + line[line.index("("):]
     assert command_sandbox.tool_sandbox_fields("read_file") is None
+
+
+@pytest.mark.parametrize("both", [True, False], ids=["sandboxed", "partial"])
+def test_the_windows_sentence_names_the_drives_it_cannot_protect(monkeypatch: pytest.MonkeyPatch, both: bool) -> None:
+    """Every client renders `sentence`: on Windows it names, in one plain clause, each drive the
+    sandbox cannot protect (AbstractCore's sentence for it, through the runtime facade)."""
+    import abstractruntime.integrations.abstractcore.command_sandbox_host as sb
+
+    from abstractgateway import command_sandbox
+
+    kinds = {"allowed_only": "windows-restricted-token" if both else "none", "any_except_denied": "windows-restricted-token"}
+    monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": kinds[posture])
+    drives = {"E:\\": "drive E: is a network share: commands can read and change it as you can",
+              "D:\\": "drive D: has no permissions (exFAT): commands can read and change it"}  # fmt: skip
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: drives, raising=False)
+    st = command_sandbox.state()
+    assert st["sentence"].endswith(" Not protected: " + drives["D:\\"] + "; " + drives["E:\\"] + "."), st["sentence"]
+    assert st["line"] == ("Commands sandboxed: Windows restricted token" if both else st["line"])
+    # None, or another kind of sandbox: no clause.
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: {}, raising=False)
+    assert "Not protected" not in command_sandbox.state()["sentence"]
+    monkeypatch.setattr(sb, "host_unprotected_volumes", lambda: drives, raising=False)
+    monkeypatch.setattr(sb, "host_sandbox_kind", lambda posture="allowed_only": "macos-sandbox-exec")
+    assert "Not protected" not in command_sandbox.state()["sentence"]
 
 
 def test_the_process_tools_are_the_runtimes_own_list() -> None:
@@ -236,6 +276,11 @@ def test_a_real_serve_audits_the_flag_at_boot(tmp_path: Path, flag: bool) -> Non
         "NO_COLOR": "1",
         "R12W2_CANARY_TOKEN": "must-not-reach-commands",
     }
+    if os.name == "nt":
+        # What a Windows process cannot start without, and the home folder under its Windows names.
+        env.update({k: os.environ[k] for k in ("SystemRoot", "SystemDrive", "ComSpec", "PATHEXT", "windir") if k in os.environ})
+        env.update({"USERPROFILE": str(home), "APPDATA": str(home / "AppData" / "Roaming"), "LOCALAPPDATA": str(home / "AppData" / "Local"),
+                    "TEMP": str(home / "tmp"), "TMP": str(home / "tmp")})
     argv = [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray"]
     if flag:
         argv.append("--unsandboxed-commands")

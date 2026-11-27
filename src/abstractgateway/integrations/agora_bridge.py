@@ -417,7 +417,13 @@ class AgoraBridge:
     def _resident_loop(self, res: AgoraResidentConfig) -> None:
         with self._state_lock:
             cursors = self._cursors.setdefault(res.alias, {})
+        from .. import host_control
+
         while not self._stop.is_set():
+            # The gateway pause (its kill switch): the inbox is not read and nothing is delivered;
+            # the cursors stand, so what arrived meanwhile is delivered at Resume.
+            if host_control.wait_while_paused(self._stop):
+                continue
             try:
                 envelopes = self._check_inbox(res)
             except Exception as e:

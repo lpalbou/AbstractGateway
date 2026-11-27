@@ -1856,7 +1856,13 @@ class BacklogExecRunner:
         return any(t.is_alive() for t in self._threads)
 
     def _run(self) -> None:
+        from .. import host_control
+
         while not self._stop.is_set():
+            # The gateway pause (its kill switch): no backlog request is started; the queue is
+            # read again at Resume.
+            if host_control.wait_while_paused(self._stop):
+                continue
             repo_root = self.repo_root or _resolved_backlog_root(self.gateway_data_dir)
             if repo_root is None:
                 # No usable backlog folder right now (a vanished stored path):

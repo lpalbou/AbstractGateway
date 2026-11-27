@@ -27,6 +27,29 @@ execution owner's local resources. See [configuration](docs/configuration.md#ope
 Start here: [docs/first-run.md](docs/first-run.md) on your own machine, or
 [docs/getting-started.md](docs/getting-started.md) for an explicit setup.
 
+**What's new in 0.24.1** ([CHANGELOG](CHANGELOG.md#0241---2026-11-25)): on Windows, Update works from the tray, the
+web console, the terminal console and `abstractgateway update`: the AbstractFramework installer runs in its own PowerShell window,
+stops the gateway, updates everything and starts it again, and the gateway that comes back says how it went.
+
+**What's new in 0.24.0** ([CHANGELOG](CHANGELOG.md#0240---2026-11-25)): on Windows, agents' commands run inside
+the sandbox under every workspace setting ("Deny everything, allow listed workspaces" and read-only by default
+too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
+restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
+(`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
+
+**What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
+a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
+pause is a kill switch: while the gateway is paused no model work, sweep, bridge poll or own-time loop moves
+forward; on Windows, Quit from the tray stops the gateway at once. Pins: Runtime 0.20.0 and Core 2.38.0.
+
+**What's new in 0.22.0** ([CHANGELOG](CHANGELOG.md#0220---2026-11-18)): a new gateway asks for its admin
+password first on every OS (`claim`, `service install`, the tray and the desktop icon open "Set up your gateway"
+with the setup code already given); on Windows, `abstractgateway shortcut install` adds an AbstractGateway icon to
+the desktop and the Start menu, the model host starts reliably, and a model host that does not answer no longer
+blocks the gateway's status routes. AbstractFramework dependencies are now exact pins: Runtime 0.19.7, Core 2.36.0,
+Agent 0.6.1, Memory 0.5.2, Voice 0.21.1, Skill 0.3.13 and Avatar 0.2.0.
+
 **What's new in 0.21.1:** bounded Hugging Face summary searches and explicit repository
 details with a shared quota cooldown; compact, verified Windows login registration;
 private-safe close-time question-resolution notices. Requires Runtime 0.19.6, Core 2.35.2

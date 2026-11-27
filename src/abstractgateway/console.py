@@ -10136,6 +10136,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        throw e;
 	      }
 	      if (defaultModalMoved(row)) return;
+	      // A stored model may carry its engine in front (`diffusers/black-forest-labs/...` under
+	      // provider `diffusers`: the routed name an earlier console saved). It is the listed
+	      // model without that prefix: selected as such, and saved back in the listed form.
+	      const enginePrefix = `${String(provider).toLowerCase()}/`;
+	      if (selected && !models.includes(selected) && selected.toLowerCase().startsWith(enginePrefix) && models.includes(selected.slice(enginePrefix.length))) {
+	        selected = selected.slice(enginePrefix.length);
+	      }
 	      setSelectOptions($("modal-default-model"), models, {
 	        emptyLabel: models.length ? "Select model..." : catalog.emptyModels,
 	        disabled: !models.length,
@@ -13020,7 +13027,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!ok) return;
 	      const body = action.installer_sha256 ? { installer_sha256: action.installer_sha256 } : {};
           if (options.autoRestart) { body.auto_restart = true; state.updateReconnectUntil = Date.now() + 2400000; }
-	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) })); _gwMsg(""); _pollGatewayUpdate(); }
+	      try {
+	        const started = await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) });
+	        renderGatewayUpdate(started); _gwMsg("");
+	        // Windows: the installer runs in its own window and restarts the gateway itself; follow it
+	        // back (up to 45 minutes) and reload once the gateway that comes back reports the outcome.
+	        if (started.job?.handoff) { state.updateReconnectUntil = Date.now() + 2700000; _gwMsg(started.job.message ? started.job.message + "." : "The update runs in its own window."); }
+	        _pollGatewayUpdate();
+	      }
 	      catch (e) {
 	        // Refused (the installer changed, one already runs, check again first): the offer
 	        // is stale, so drop it like the tray does; the next step is a new check.
@@ -13038,7 +13052,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        try {
             const upd = await api("/api/gateway/host/update");
             renderGatewayUpdate(upd);
-            if (state.updateReconnectUntil && upd.job?.state === "idle") { state.updateReconnectUntil = 0; window.location.reload(); return; }
+            if (state.updateReconnectUntil && (upd.job?.state === "idle" || upd.job?.state === "completed")) { state.updateReconnectUntil = 0; window.location.reload(); return; }
             if (upd.job?.state === "failed" || upd.job?.state === "succeeded_no_change" || upd.job?.restart_error) state.updateReconnectUntil = 0;
             if (upd.job?.restart_error) _gwMsg("Update installed, but automatic restart failed: " + upd.job.restart_error, "error");
             if (upd.job?.state === "running" || state.updateReconnectUntil > Date.now()) _pollGatewayUpdate();
@@ -16928,9 +16942,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // is not on the gateway's own machine), the six-word setup code. Submitting sets the password,
     // signs this browser in and opens the setup guide (the first-run wizard). Once claimed the
     // same address shows the sign-in form.
+    // A link from the gateway's own machine (`/console#setup=<the six words>`: the installer, the
+    // tray, the desktop shortcut) carries the setup code: it is filled in and its field stays
+    // hidden, so the person only chooses the password. The code stays in the address until the
+    // gateway is claimed (a reload keeps working); it is worth nothing afterwards.
     const onboarding = { state: null, busy: false };
+    function setupCodeFromHash() {
+      const m = /(?:^#|&)setup=([^&]+)/.exec(firstRunHash());
+      if (!m) return "";
+      try { return decodeURIComponent(m[1]).replace(/-/g, " ").trim(); } catch { return ""; }
+    }
     function showOnboarding(st) {
       const unclaimed = Boolean(st && st.unclaimed);
+      const linkedCode = setupCodeFromHash();
+      if (linkedCode && !unclaimed) stripClaimFromUrl("");
       onboarding.state = unclaimed ? st : null;
       $("onboarding-form").hidden = !unclaimed;
       $("login-form").hidden = unclaimed;
@@ -16941,7 +16966,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         $("onboard-account").textContent = String(st.account || "admin");
         if (!$("onboard-name").value) $("onboard-name").value = String(st.account || "admin");
         if (st.password_rule) $("onboard-password-help").textContent = String(st.password_rule);
-        $("onboard-code-field").hidden = !st.setup_code_required;
+        if (linkedCode) $("onboard-code").value = linkedCode;
+        $("onboard-code-field").hidden = !st.setup_code_required || Boolean(linkedCode);
         if (st.setup_code_required && st.setup_code_reason) {
           $("onboard-code-help").textContent = `${st.setup_code_reason} To see the six words, run abstractgateway claim --code on the gateway's machine.`;
         }
@@ -17003,7 +17029,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           signinShow("login-message", String(err.message || err));
         } else if (target) {
           signinFieldError(target[0], target[1], String(err.message || err));
-          if (d.field === "setup_code") $("onboard-code-field").hidden = false;
+          if (d.field === "setup_code") {  // a refused code from a link: ask for it, forget the link's
+            if (setupCodeFromHash()) stripClaimFromUrl("");
+            $("onboard-code-field").hidden = false;
+          }
         } else if (err && !err.status) {
           signinShow("login-message", signinUnreachableText());
         } else {

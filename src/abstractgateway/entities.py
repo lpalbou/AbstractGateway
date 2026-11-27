@@ -2560,6 +2560,14 @@ class EntityRegistry:
         from abstractruntime.identity.life import ENTITY_STATES, read_entity_state, write_entity_state
 
         state2 = str(state or "").strip().lower()
+        if state2 == "asleep" and dream:
+            # A sleep with its maintenance pass is work (embeddings, summaries, his brief). The
+            # gateway pause is a kill switch: refused here, before anything is written, so no
+            # sleep is left standing without its pass. A plain sleep, a wake and a pause are
+            # state words and stay open.
+            from . import host_control
+
+            host_control.refuse_if_paused(f"the sleep of {name} (its maintenance pass)")
         if state2 not in ENTITY_STATES:
             raise ValueError(f"unknown entity state {state!r} (one of {ENTITY_STATES})")
         if dream and state2 != "asleep":

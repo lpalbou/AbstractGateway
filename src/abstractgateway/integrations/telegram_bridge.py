@@ -2066,7 +2066,13 @@ class TelegramBridge:
         return f"https://api.telegram.org/bot{token}/{method}"
 
     def _bot_loop(self) -> None:
+        from .. import host_control
+
         while not self._stop.is_set():
+            # The gateway pause (its kill switch): no update is fetched, so nothing is started;
+            # Telegram keeps the messages and they are handled at Resume.
+            if host_control.wait_while_paused(self._stop):
+                continue
             base = self._bot_api("getUpdates")
             if not base:
                 time.sleep(1.0)

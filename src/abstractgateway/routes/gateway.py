@@ -9571,12 +9571,16 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     if session_kind_req and session_kind_req != "conversation":
         # Marked BEFORE the run starts, so the conversation lists never show it (docs, notes,
         # a process such as a phone or watch probe, an automation session).
-        from ..session_kinds import SessionKindsUnreadable, mark_session_kind
+        from ..session_kinds import SessionKindsBusy, SessionKindsUnreadable, SessionKindsUnwritable, mark_session_kind
 
         try:
-            mark_session_kind(svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
+            await off_loop("light", mark_session_kind, svc.config.data_dir, str(req.session_id).strip(), session_kind_req)
         except SessionKindsUnreadable as exc:
             raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
+        except SessionKindsBusy as exc:
+            raise HTTPException(status_code=503, detail={"reason_code": "session_kinds_busy", "message": str(exc)}) from None
+        except SessionKindsUnwritable as exc:
+            raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unwritable", "message": str(exc)}) from None
 
     try:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
@@ -10140,7 +10144,10 @@ async def purge_draft_runs(req: PurgeDraftRunsRequest) -> Dict[str, Any]:
     """
 
     try:
-        return purge_ephemeral_draft_runs(
+        # Off the event loop: it deletes run trees and saves the per-session stores.
+        return await off_loop(
+            "heavy",
+            purge_ephemeral_draft_runs,
             get_gateway_service(),
             DraftRunPurgeOptions(
                 dry_run=bool(req.dry_run),
@@ -10351,7 +10358,7 @@ async def run_session_kind_migrations(svc: Any) -> None:
     `GET /runs` and `GET /sessions/search` run it first. Raises SessionKindsUnreadable."""
     from ..session_kinds import pending_migrations, run_pending_migrations
 
-    if not pending_migrations(svc.config.data_dir):
+    if not await off_loop("light", pending_migrations, svc.config.data_dir):
         return
     rs = svc.host.run_store
 
@@ -10408,7 +10415,12 @@ async def list_runs(
     kind: Optional[str] = Query(None, description="What the listed sessions are for, on turn listings (root_only / archived_only without session_id or parent_run_id): `conversation` (the default), `docs` (Docs assistant chats), `notes` (AbstractNote's captures and background processing) or `all`. Every row carries `kind`."),
     archived_only: bool = Query(False, description="If true, list only runs of ARCHIVED sessions (POST /sessions/{id}/archive), each marked `archived: true`. Without it, a `root_only` listing leaves archived sessions out; a `session_id` filter always reads its session, archived or not. The response carries `archived_sessions` (how many sessions this caller has archived)."),
 ) -> Dict[str, Any]:
-    """List recent runs (summary only; never returns full run.vars)."""
+    """List recent runs (summary only; never returns full run.vars).
+
+    A row of a session its owner renamed (`PUT /sessions/{session_id}/title`) carries
+    `session_title`; rows of untitled sessions have no such key. When the titles file cannot be
+    read the page is served without titles and carries `session_titles_error`
+    `{reason_code, message}`."""
     # Unknown query params are REFUSED, not ignored (flow c5253 P1-2): a
     # filter typo used to return the whole global store while LOOKING
     # filtered — their adversary got burned live by exactly that. Naming the
@@ -10443,11 +10455,30 @@ async def list_runs(
     # readable through an explicit session_id. An unreadable archive is a 500,
     # never "nothing archived".
     from ..session_archive import SessionArchiveUnreadable, archived_sessions as _archived_sessions
+    # Session titles (session_titles.py, this caller's plane): every row of a titled
+    # session carries `session_title`. An unreadable titles file never fails the list:
+    # it is served without titles and says why (`session_titles_error`).
+    from ..session_titles import titles_for_listing as _titles_for_listing
+
+    def _read_session_marks() -> Any:
+        # Both stores read OFF the event loop (a cold read parses the whole file).
+        return _archived_sessions(svc.config.data_dir), _titles_for_listing(svc.config.data_dir)
 
     try:
-        archived_map = _archived_sessions(svc.config.data_dir)
+        archived_map, (titles_map, titles_error) = await off_loop("light", _read_session_marks)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
+
+    def _attach_title(summary: Dict[str, Any]) -> None:
+        title = titles_map.get(str(summary.get("session_id") or ""))
+        if title is not None:
+            summary["session_title"] = title
+
+    def _page(out: Dict[str, Any]) -> Dict[str, Any]:
+        if titles_error is not None:
+            out["session_titles_error"] = dict(titles_error)
+        return out
+
     archive_filter = (bool(root_only) or bool(archived_only)) and not (isinstance(session_id, str) and session_id.strip()) and not (
         isinstance(parent_run_id, str) and parent_run_id.strip()
     )
@@ -10476,13 +10507,13 @@ async def list_runs(
     want_all = "all" in want_kinds
     want_kind = ",".join(sorted(want_kinds))  # the depth-memory key below
     try:
-        kinds_map = _session_kinds(svc.config.data_dir)
+        kinds_map = await off_loop("light", _session_kinds, svc.config.data_dir)
     except SessionKindsUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_kinds_unreadable", "message": str(exc)}) from None
     if archive_filter and bool(archived_only) and not archived_map:
         # NOTHING ARCHIVED: the answer is known before any scan, after the
         # filters are validated (an unknown `kind` is still a 400).
-        return {"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0}
+        return _page({"items": [], "count": 0, "offset": int(offset), "has_more": False, "archived_sessions": 0})
 
     def _kind_of(summary: Dict[str, Any]) -> str:
         # The mark, else the row's own workflow and attribution (an AbstractNote automation's
@@ -10548,6 +10579,7 @@ async def list_runs(
                 if not _matches_query(summary):
                     continue
                 summary["kind"] = _kind_of(summary)
+                _attach_title(summary)
                 child_items.append(summary)
                 if len(child_items) >= _child_want:
                     break
@@ -10555,7 +10587,7 @@ async def list_runs(
             child_items = child_items[int(offset): int(offset) + int(limit)]
             # Same envelope as the normal listing ("items") so consumers never
             # branch on which filter produced the page.
-            return {"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more}
+            return _page({"items": child_items, "count": len(child_items), "parent_run_id": prid, "offset": int(offset), "has_more": child_more})
 
         return await off_loop("heavy", _children_page)
 
@@ -10846,6 +10878,7 @@ async def list_runs(
 
         for item in items:
             item["kind"] = _kind_of(item)
+            _attach_title(item)
             rec = archived_map.get(str(item.get("session_id") or ""))
             if rec is not None:
                 item["archived"] = True
@@ -10867,6 +10900,7 @@ async def list_runs(
         session_totals = _session_totals_for_page(rs, items, kinds)
         if session_totals is not None:
             out_page["session_totals"] = session_totals
+        _page(out_page)
         if scan_truncated:
             out_page["warnings"] = [
                 "#TRUNCATION the run scan hit its cost cap — deeper matches may exist beyond this page"
@@ -20302,6 +20336,9 @@ def _discovery_capabilities_payload(music_probe: Dict[str, Any]) -> Dict[str, An
     from ..session_tool_policy import capability as _session_tool_policy_capability
 
     caps["session_tool_policy"] = _session_tool_policy_capability()
+    # A person can rename a conversation (PUT /sessions/{id}/title; `session_title` on /runs rows).
+    # Clients offer "Rename" only when this is true; an older gateway has no such key.
+    caps["session_titles"] = True
 
     caps["contracts"] = _build_client_capability_contracts(caps)
 
@@ -27228,7 +27265,7 @@ class _GatewayApplyRecommendedDefaultsRequest(BaseModel):
 
     only: Optional[List[str]] = Field(
         default=None,
-        description="Limit to some recommendations, by AbstractCore's selector words (text, voice, stt, image, video; stt is speech input). Unset means every recommended route.",
+        description="Limit to some recommendations, by AbstractCore's selector words (text, voice, stt, image, video, embeddings; stt is speech input). Unset means every recommended route.",
     )
     force: bool = Field(default=False, description="Also replace routes configured differently.")
     dry_run: bool = Field(default=False, description="Report what would change and write nothing.")
@@ -30506,7 +30543,7 @@ def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Op
     """The memory snapshot runs `ioreg`+`sysctl` on Apple silicon (uncached
     upstream); several pollers (tray 1 Hz, console 5 s, Observer, activity window)
     share one probe per `host_status_cache.MEMORY_TTL_S`, single-flight."""
-    from ..host_status_cache import memory_cache
+    from ..host_status_cache import ProbeBusy, memory_cache
 
     try:
         facade, _err = _gateway_abstractcore_host_facade()
@@ -30515,7 +30552,10 @@ def _gateway_host_memory_snapshot_cached() -> tuple[Optional[Dict[str, Any]], Op
     if facade is None:
         return _gateway_host_memory_snapshot()
     # Only a snapshot is kept (a failure is asked again on the next call).
-    return memory_cache.get(_host_facade_cache_key(facade), _gateway_host_memory_snapshot, cache_if=lambda v: v[0] is not None)
+    try:
+        return memory_cache.get(_host_facade_cache_key(facade), _gateway_host_memory_snapshot, cache_if=lambda v: v[0] is not None)
+    except ProbeBusy as e:
+        return None, str(e)
 
 
 def _host_live_metrics_payload() -> Dict[str, Any]:
@@ -30689,7 +30729,14 @@ def _host_state_payload() -> Dict[str, Any]:
     # The residency walk (a provider call each) and the session-cache enumeration: shared by
     # every /host/state poller for host_status_cache.RESIDENCY_TTL_S, single-flight; a load,
     # eject or pin through the gateway drops them (_gateway_model_residency_client_call).
-    from ..host_status_cache import residency_cache, session_caches_cache
+    from ..host_status_cache import ProbeBusy, residency_cache, session_caches_cache
+
+    def _shared(cache: Any, compute: Any) -> Any:
+        """The probe's answer, or its in-band failure when another poller's probe is stuck."""
+        try:
+            return cache.get(_key, compute, ttl_s=None if _key is not None else 0)
+        except ProbeBusy as e:
+            return {"ok": False, "error": str(e)}
 
     try:
         _facade, _ferr = _gateway_abstractcore_host_facade()
@@ -30698,7 +30745,7 @@ def _host_state_payload() -> Dict[str, Any]:
     _key = _host_facade_cache_key(_facade) if _facade is not None else None
     _list_loaded = lambda: _gateway_model_residency_client_call(method_name="list_model_residency", operation="list_loaded")  # noqa: E731
     residency = _normalize_gateway_model_residency_response(
-        residency_cache.get(_key, _list_loaded, ttl_s=None if _key is not None else 0),
+        _shared(residency_cache, _list_loaded),
         operation="list_loaded",
     )
     if residency.get("ok") is False or residency.get("supported") is False:
@@ -30710,7 +30757,7 @@ def _host_state_payload() -> Dict[str, Any]:
 
     session_caches: Optional[list[Any]] = None
     _list_caches = lambda: _gateway_session_cache_facade_call(method_name="list_session_prompt_caches", operation="list")  # noqa: E731
-    caches = session_caches_cache.get(_key, _list_caches, ttl_s=None if _key is not None else 0)
+    caches = _shared(session_caches_cache, _list_caches)
     # `ok: false` is a facade-level in-band failure (no raise) — degrade like
     # a missing method rather than answering with a silently empty list.
     if caches.get("available") is False or caches.get("ok") is False:

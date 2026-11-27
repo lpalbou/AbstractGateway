@@ -165,7 +165,7 @@ def _fake_uvicorn(monkeypatch: pytest.MonkeyPatch) -> dict:
     return called
 
 
-def test_bare_serve_starts_on_loopback_with_user_auth_and_a_claim_link(
+def test_bare_serve_starts_on_loopback_with_user_auth_and_a_new_gateway_gets_no_sign_in_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from abstractgateway import cli as gateway_cli
@@ -184,9 +184,11 @@ def test_bare_serve_starts_on_loopback_with_user_auth_and_a_claim_link(
     err = capsys.readouterr().err
     assert "user auth enabled automatically" in err
     assert "Gateway data dir:" in err
-    line = next(l for l in err.splitlines() if l.startswith("First run: open "))
-    url = line.split("First run: open ", 1)[1].strip()
-    assert url.startswith("http://127.0.0.1:18999/console#claim=agclaim_")
+    # A new gateway: the admin password comes first, so no sign-in link (it would skip it), and
+    # the setup code stays out of this output.
+    assert "First run: this gateway is new. Run `abstractgateway claim --open`" in err
+    assert "#claim=" not in err and "#setup=" not in err
+    assert first_run.pending_claims(tmp_path / "data")["pending"] == 0
     token = (tmp_path / "data" / "auth" / "bootstrap-admin-token").read_text(encoding="utf-8").strip()
     assert token and f"Gateway admin token: {token}" in err  # printed on a loopback bind
     assert GatewayUserRegistry().authenticate(token) is not None
@@ -194,11 +196,6 @@ def test_bare_serve_starts_on_loopback_with_user_auth_and_a_claim_link(
     assert rec["port"] == 18999 and rec["url"] == "http://127.0.0.1:18999"
     assert rec["auth"]["mode"] == "users" and rec["auth"]["source"] == "loopback_default"
     assert seen.get("stopped") is True
-    # The printed code is redeemable exactly once.
-    code = url.split("#claim=", 1)[1]
-    first_run.redeem_claim(code, data_dir=tmp_path / "data")
-    with pytest.raises(first_run.ClaimError):
-        first_run.redeem_claim(code, data_dir=tmp_path / "data")
 
 
 def test_configured_serve_keeps_the_historical_all_interfaces_default(
@@ -407,7 +404,18 @@ def test_claim_url_uses_the_running_gateways_port(
         config_main(["claim-url", "--json"])
     assert e.value.code == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["url"].startswith("http://127.0.0.1:18123/console#claim=agclaim_")
+    # A new gateway: the link opens "Set up your gateway" with the setup code, and nothing is minted.
+    code = first_run.setup_code_for_display(data)
+    assert out["kind"] == "setup" and out["url"] == "http://127.0.0.1:18123/console#setup=" + code.replace(" ", "-")
+    assert first_run.setup_code_matches(data, out["url"].split("#setup=", 1)[1])
+    assert first_run.pending_claims(data)["pending"] == 0
+    # Once it is claimed: a one-time sign-in link.
+    assert first_run.close_onboarding(data, via="test") is True
+    with pytest.raises(SystemExit) as e:
+        config_main(["claim-url", "--json"])
+    assert e.value.code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["kind"] == "sign_in" and out["url"].startswith("http://127.0.0.1:18123/console#claim=agclaim_")
     assert out["gateway_running"] is True and out["base_url_source"] == "serve_record"
     code = out["url"].split("#claim=", 1)[1]
     assert first_run.redeem_claim(code, data_dir=data)["user_id"] == "admin"
@@ -464,7 +472,7 @@ def test_claim_open_calls_the_browser(tmp_path: Path, monkeypatch: pytest.Monkey
         gateway_cli.main(["claim", "--port", "18555", "--open"])
     assert e.value.code == 0
     printed = capsys.readouterr().out.strip()
-    assert opened == [printed] and printed.startswith("http://127.0.0.1:18555/console#claim=")
+    assert opened == [printed] and printed.startswith("http://127.0.0.1:18555/console#setup=")
 
 
 def test_status_json_carries_the_doctor_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

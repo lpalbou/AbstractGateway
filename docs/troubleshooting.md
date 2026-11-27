@@ -45,7 +45,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.19.6"
+pip install "abstractruntime==0.21.0"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -85,7 +85,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.19.6 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.21.0 or later in the gateway's Python, then start again. See
 [automations.md](./automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -268,6 +268,51 @@ console (Workflows → *Default workflow per app*), or run
 to the built-in default. A 400 means the request itself is wrong: `interface`
 is missing, or `bundle_id`/`bundle_version` were sent with `@default`. See
 [configuration.md](./configuration.md#default-agent-workflow).
+
+### A command is refused, or a program fails inside the command sandbox
+
+Every command an agent runs (`execute_command`, the local helpers) runs inside
+the host's [command sandbox](./security.md#command-sandbox). The tool result
+says what happened, and the console shows the host's state under Accounts.
+
+- **"Commands are not sandboxed on this gateway host, so they are refused:
+  …"**: the host cannot sandbox this run, and the sentence gives the reason.
+  On Linux, install bubblewrap (Landlock alone covers "Deny everything, allow
+  listed workspaces" only). On Windows and macOS every workspace shape is
+  sandboxed. To run commands without a sandbox instead, start the gateway
+  with `--unsandboxed-commands`.
+- **Exit code 126 and "sandbox: … the command did not run"** (Windows): the
+  sandbox could not set up a rule, and the line names the path. Most often a
+  refused or read-only row points at a folder your account can read but whose
+  permissions it cannot change (remove that row, or point it at a folder you
+  own), or at a FAT/exFAT drive or a network share, which cannot carry rules
+  (remove the row, or convert the drive to NTFS). The other cases (a folder
+  with permissions of its own, the sandbox's lock) are in
+  [security.md](./security.md#when-a-command-does-not-run).
+- **Git Bash or another MSYS2 program stops as it starts** (Windows, "Deny
+  everything" or read-only by default; this includes `bash`, `sh`, Git's own
+  `ssh-keygen`, git hooks, `!` aliases and `git clone` of a local folder): a
+  Git Bash window or another MSYS2 program is running in your Windows session,
+  and the sandboxed one cannot share its objects. Close it, use `git`, `cmd`,
+  PowerShell or Python directly, or set the run to read & write by default.
+- **`ssh-keygen` writes the private key, then fails on the public one**
+  (Windows' own `ssh-keygen`, every setting): a known limit of the sandbox.
+  The key it leaves behind is yours to read and delete; make keys outside
+  agents' commands.
+- **The command-sandbox tooltip or a command's result says "not protected:
+  drive D: …"** (Windows): that drive has no permissions (FAT, exFAT) or is a
+  network share; commands read and change it as you can. Convert it to NTFS
+  to protect it.
+- **`curl` or `Invoke-WebRequest` cannot open an HTTPS address** (Windows):
+  Windows' built-in TLS is not available inside the sandbox. Use a program
+  with its own TLS (`python`, `node`, `git`), or the agent's `fetch_url` tool.
+- **"cannot start the command" for `python`, `pwsh` or `winget`** (Windows):
+  the Store app aliases under `WindowsApps` do not start inside the sandbox.
+  Install the program normally, or call it by its full path.
+- **"Access is denied" on a folder the run should reach**: the folder, or one
+  that contains it, is refused for this run, or it is one of the built-in
+  refusals (the gateway's data folder, `.ssh`, cloud credential folders).
+  Workspaces in the console shows the run's effective rows.
 
 ### Replies arrive only at the end (no live text)
 

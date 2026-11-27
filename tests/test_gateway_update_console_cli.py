@@ -123,6 +123,9 @@ def _ns(**kw: Any) -> Any:
 
 
 def _run(args: Any, **kw: Any) -> int:
+    # The POSIX flow unless a test says otherwise: on a Windows host the update hands off to
+    # its own window (test_update_on_windows_hands_the_checked_installer_to_its_own_window).
+    kw.setdefault("platform", "linux")
     return update_cli.run_update(args, **kw)
 
 
@@ -326,7 +329,11 @@ def test_update_asks_once_and_a_no_changes_nothing(tmp_path: Path, capsys: pytes
     assert "Nothing changed." in capsys.readouterr().out and ran == []
 
 
-def test_update_on_windows_starts_the_powershell_installer_in_a_new_window(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_update_on_windows_hands_the_checked_installer_to_its_own_window(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The same hand-off as the tray and the consoles (self_update._start_windows_handoff): the
+    checked install.ps1 and its runner are written to <data dir>/update, the runner is launched
+    outside this process, the hand-off is recorded, and the command exits so nothing it holds
+    is locked."""
     data = tmp_path / "data"
     ps1 = b"# AbstractFramework bootstrap installer for Windows (test double)\r\n"
 
@@ -336,29 +343,27 @@ def test_update_on_windows_starts_the_powershell_installer_in_a_new_window(tmp_p
             return ps1
         return _http_get_ok(url, accept, timeout_s)
 
-    started: List[Any] = []
-
-    def popen(command: List[str], **kw: Any) -> Any:
-        started.append((list(command), kw))
-        return object()
-
+    launched: List[Path] = []
     code = _run(
         _ns(yes=True, data_dir=str(data)),
         detect=lambda **kw: _installer_info(data, "0.11.4"),
         fetch_release=_release,
         http_get=get,
         snapshot=lambda python: _snapshot(),
-        run=popen,
+        run=lambda runner: launched.append(Path(runner)),
         platform="win32",
     )
-    assert code == 0 and len(started) == 1
-    command, kw = started[0]
-    assert command[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
-    script = Path(command[5])
-    assert script.parent == data / "update" and script.read_bytes() == ps1
-    assert command[6:] == ["-NoOpen", "-NoModifyPath", "-DataDir", str(data)]
-    assert "creationflags" in kw
-    assert "new PowerShell window" in capsys.readouterr().out
+    assert code == 0 and len(launched) == 1
+    runner = launched[0]
+    assert runner.parent == data / "update" and runner.suffix == ".ps1"
+    scripts = list((data / "update").glob("install-*.ps1"))
+    assert len(scripts) == 1 and scripts[0].read_bytes() == ps1
+    text = runner.read_text(encoding="utf-8-sig")
+    assert str(scripts[0]) in text and "'-NoOpen', '-NoModifyPath', '-AskWait', '0', '-DataDir'" in text
+    record = json.loads((data / "update" / self_update.WINDOWS_HANDOFF_FILE).read_text(encoding="utf-8"))
+    assert record["framework_before"] == "0.11.4" and record["target"] == "0.11.6"
+    assert record["installer"]["sha256"] == hashlib.sha256(ps1).hexdigest()
+    assert "its own PowerShell window" in capsys.readouterr().out
 
 
 # ------------------------------------------------------------------ pieces

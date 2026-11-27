@@ -29,8 +29,8 @@ from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunSto
 router = APIRouter(prefix="/gateway", tags=["sessions"])
 
 
-def _audit(event: str, *, session_id: str, actor: str, changed: bool) -> Optional[Dict[str, Any]]:
-    """Append one typed session event to the gateway audit log. Never raises."""
+def _audit(event: str, *, session_id: str, actor: str, changed: bool, **fields: Any) -> Optional[Dict[str, Any]]:
+    """Append one typed session event to the gateway audit log (`fields` add to the line). Never raises."""
     try:
         from ..security.gateway_security import _AUDIT_LOCK, _audit_data_dir_from_env, _audit_log_enabled
 
@@ -42,6 +42,7 @@ def _audit(event: str, *, session_id: str, actor: str, changed: bool) -> Optiona
             "session_id": session_id,
             "actor": actor or None,
             "changed": bool(changed),
+            **fields,
         }
         line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
         with _AUDIT_LOCK:
@@ -74,7 +75,7 @@ def session_exists(run_store: Any, session_id: str) -> bool:
 
 
 def _act(svc: Any, session_id: str, actor: str, archive: bool) -> Dict[str, Any]:
-    from ..session_archive import SessionArchiveUnreadable, archive_session, unarchive_session
+    from ..session_archive import SessionArchiveBusy, SessionArchiveUnreadable, SessionArchiveUnwritable, archive_session, unarchive_session
 
     if not session_exists(svc.host.run_store, session_id):
         raise HTTPException(status_code=404, detail={"reason_code": "session_not_found", "message": f"Session {session_id} does not exist."})
@@ -90,6 +91,10 @@ def _act(svc: Any, session_id: str, actor: str, archive: bool) -> Dict[str, Any]
         return unarchive_session(svc.config.data_dir, session_id, by=actor)
     except SessionArchiveUnreadable as exc:
         raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unreadable", "message": str(exc)}) from None
+    except SessionArchiveBusy as exc:
+        raise HTTPException(status_code=503, detail={"reason_code": "session_archive_busy", "message": str(exc)}) from None
+    except SessionArchiveUnwritable as exc:
+        raise HTTPException(status_code=500, detail={"reason_code": "session_archive_unwritable", "message": str(exc)}) from None
 
 
 async def _route(request: Request, session_id: str, archive: bool) -> Dict[str, Any]:

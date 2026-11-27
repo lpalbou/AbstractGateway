@@ -130,7 +130,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.21.1",  # the package version (tests/test_app_version.py; release.yml validates it)
+    version="0.24.1",  # the package version (tests/test_app_version.py; release.yml validates it)
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -235,6 +235,10 @@ app.include_router(model_download_delete_router, prefix="/api")
 from .routes.session_archive import router as session_archive_router  # noqa: E402
 
 app.include_router(session_archive_router, prefix="/api")
+# Rename a session (conversation): routes/session_titles.py, /gateway/sessions/{id}/title.
+from .routes.session_titles import router as session_titles_router  # noqa: E402
+
+app.include_router(session_titles_router, prefix="/api")
 # @entity from any chat window (a visit turn recorded as a turn of the session): routes/session_mentions.py.
 from .routes.session_mentions import router as session_mentions_router  # noqa: E402
 
@@ -444,6 +448,20 @@ async def _core_config_unreadable_503(request, exc):  # noqa: ANN001 - FastAPI h
                  "error": str(cause) if cause is not None else str(exc)},
         headers={"X-Gateway-Error-Code": "core_config_unreadable"},
     )
+
+
+# The gateway is paused (host_control: the kill switch) and a request asked for work: one handler
+# answers 409 `gateway_paused` on every route, whatever depth the refusal came from (a door check,
+# the model host proxy refusing a generation).
+from .host_control import GatewayPaused as _GatewayPaused  # noqa: E402
+
+
+@app.exception_handler(_GatewayPaused)
+async def _gateway_paused_409(request, exc):  # noqa: ANN001 - FastAPI handler signature
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=409, content={"detail": str(exc), "code": _GatewayPaused.code},
+                        headers={"X-Gateway-Error-Code": _GatewayPaused.code})
 
 
 @app.exception_handler(Exception)
