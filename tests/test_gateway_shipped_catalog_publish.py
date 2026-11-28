@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -53,9 +54,9 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "ABSTRACTCORE_AUTH_TOKEN",
         "ABSTRACTCORE_SERVER_API_KEY",
         "ABSTRACTGATEWAY_AUTO_PUBLISH_SHIPPED",
-        "ABSTRACTGATEWAY_FLOWS_DIR",
     ):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(workflow_folder, "chosen", None)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     yield
 
@@ -345,7 +346,7 @@ def test_fresh_install_serves_docs_qa_through_the_catalog_route(
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     from abstractruntime.core.config import RuntimeConfig

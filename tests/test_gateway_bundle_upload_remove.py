@@ -6,6 +6,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _make_min_flow(flow_id: str) -> dict:
@@ -62,7 +63,7 @@ def test_gateway_bundle_upload_and_remove(tmp_path: Path, monkeypatch: pytest.Mo
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
 

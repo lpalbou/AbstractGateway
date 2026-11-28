@@ -9,6 +9,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 
 def _write_simple_end_bundle(*, bundles_dir: Path) -> tuple[str, str]:
@@ -80,7 +81,7 @@ def test_gateway_scheduled_run_repeats_n_times(tmp_path: Path, monkeypatch: pyte
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -129,7 +130,7 @@ def test_gateway_scheduled_run_can_isolate_sessions(tmp_path: Path, monkeypatch:
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -183,7 +184,7 @@ def test_gateway_scheduled_run_survives_restart(tmp_path: Path, monkeypatch: pyt
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -240,7 +241,7 @@ def test_gateway_workflow_flow_endpoint_returns_scheduled_wrapper(tmp_path: Path
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -289,7 +290,7 @@ def test_gateway_scheduled_run_can_reschedule_interval_in_place(tmp_path: Path, 
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

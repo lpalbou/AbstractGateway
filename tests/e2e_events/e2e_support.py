@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
+from abstractgateway import workflow_folder
 
 JUDGE_BUNDLE_ID = "events-examples"
 JUDGE_FLOW_ID = "judge"
@@ -147,7 +148,7 @@ def gateway_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     data_dir = tmp_path / "runtime"
     data_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

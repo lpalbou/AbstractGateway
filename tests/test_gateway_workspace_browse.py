@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from abstractgateway.workspace_browse import WorkspacePathError, confine, list_entries, normalize_rel, open_slice
 from test_gateway_runs_list_endpoint import _write_min_bundle
+from abstractgateway import workflow_folder
 
 MARKER = ".abstractgateway-workspace.json"
 
@@ -125,7 +126,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, peer: str = "127
     bundles = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles, bundle_id="ws-bundle", flow_id="root")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -362,7 +363,7 @@ def test_another_users_run_is_404_on_all_three_routes(tmp_path: Path, monkeypatc
     bundles = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles, bundle_id="ws-bundle", flow_id="root")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

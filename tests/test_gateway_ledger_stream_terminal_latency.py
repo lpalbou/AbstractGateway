@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 import pytest
 
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from abstractgateway import workflow_folder
 
 
 def _sse_events(body: str) -> List[Dict[str, Any]]:
@@ -104,7 +105,7 @@ def _boot_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     token = "t" * 32
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

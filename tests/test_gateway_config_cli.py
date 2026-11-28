@@ -6,6 +6,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -36,7 +37,7 @@ def _empty_core_store(path: Path) -> Path:
 
 def test_gateway_config_status_reports_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "gateway-token")
     monkeypatch.setenv("ABSTRACTCORE_SERVER_BASE_URL", "http://core.test/v1")
     # "core.test" stands for a remote AbstractCore server that is not there.
@@ -67,6 +68,7 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
     from abstractgateway.config_cli import main
 
     env_file = tmp_path / "gateway.env"
+    (tmp_path / "flows").mkdir()
     main(
         [
             "init",
@@ -96,11 +98,25 @@ def test_gateway_config_init_writes_private_env_file(tmp_path: Path, capsys: pyt
     assert "ABSTRACTGATEWAY_MODEL" not in text
     assert "ABSTRACTGATEWAY_ABSTRACTCORE_SERVER_BASE_URL" not in text
     assert "Gateway Console" in text
+    # `--flows-dir` is no environment variable: it is remembered for the data dir, not written here.
+    assert "FLOWS_DIR" not in text and "WORKFLOWS_DIR" not in text and str(tmp_path / "flows") not in text
+    data_dir, flows = (tmp_path / "runtime").resolve(), (tmp_path / "flows").resolve()
+    assert json.loads(workflow_folder.record_path(data_dir).read_text(encoding="utf-8")) == {"folder": str(flows)}
+    assert workflow_folder.remembered(data_dir) == flows
 
     mode = stat.S_IMODE(env_file.stat().st_mode)
     assert mode & stat.S_IRWXG == 0
     assert mode & stat.S_IRWXO == 0
-    assert "Wrote" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Wrote" in out
+    assert f"Workflow folder {flows} remembered for the data dir {data_dir}" in out
+
+
+def test_gateway_config_init_without_flows_dir_remembers_nothing(tmp_path: Path) -> None:
+    from abstractgateway.config_cli import main
+
+    main(["init", "--env-file", str(tmp_path / "gateway.env"), "--data-dir", str(tmp_path / "runtime")])
+    assert not workflow_folder.record_path(tmp_path / "runtime").exists()
 
 
 def test_gateway_config_init_refuses_to_overwrite(tmp_path: Path) -> None:
@@ -111,6 +127,12 @@ def test_gateway_config_init_refuses_to_overwrite(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         main(["init", "--env-file", str(env_file)])
+    # A refused env file records nothing either.
+    (tmp_path / "flows").mkdir()
+    with pytest.raises(SystemExit):
+        main(["init", "--env-file", str(env_file), "--data-dir", str(tmp_path / "runtime"), "--flows-dir", str(tmp_path / "flows")])
+    assert not workflow_folder.record_path(tmp_path / "runtime").exists()
+    assert env_file.read_text(encoding="utf-8") == "EXISTING=1\n"
 
 
 def test_gateway_config_defaults_set_list_and_clear(

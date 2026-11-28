@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _write_min_bundle(*, bundles_dir: Path) -> None:
@@ -50,7 +51,7 @@ def _app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, user_auth: b
     bundles_dir = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")

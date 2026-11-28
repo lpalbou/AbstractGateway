@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str = "bundle-thinking", flow_id: str = "root") -> tuple[str, str]:
@@ -55,7 +56,7 @@ def test_gateway_runs_start_maps_top_level_thinking_to_runtime_namespace(tmp_pat
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -84,7 +85,7 @@ def test_gateway_capability_contract_advertises_thinking_control(tmp_path: Path,
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

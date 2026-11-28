@@ -104,13 +104,26 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   cannot open those secrets. What it protects:
   [security.md](./security.md#sealed-secrets-one-key-file-per-data-folder).
   Evidence: `src/abstractgateway/security/sealing.py`
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
-  packaged shipped bundle directory, which carries `basic-agent`,
-  `coding-agent`, `deep-research`, `co-scientist`, and more
-  ([shipped-workflows.md](./shipped-workflows.md)). If the shipped bundles are
-  unavailable, Gateway fails clearly instead of starting with an empty default
-  registry. Setting this replaces the shipped registry with your own directory.
-  Evidence: `src/abstractgateway/config.py`
+- The workflow folder is a parameter, not an environment variable:
+  `abstractgateway serve --flows-dir <folder>` (and `runner --flows-dir
+  <folder>`), optional. Without it, Gateway uses the workflow folder this data
+  folder remembers, else the packaged shipped bundle directory next to the
+  running code, which carries `basic-agent`, `coding-agent`, `deep-research`,
+  `co-scientist`, and more ([shipped-workflows.md](./shipped-workflows.md)). If
+  the shipped bundles are unavailable, Gateway fails clearly instead of starting
+  with an empty default registry. Naming your own folder replaces the shipped
+  registry with your own directory.
+  The gateway remembers the workflow folder it uses in
+  `<data dir>/config/workflow-folder.json` and keeps using it whatever copy of
+  the code is running: a later start without `--flows-dir` keeps it, a start
+  with `--flows-dir` changes it. `abstractgateway-config init --flows-dir
+  <folder>` remembers one before the first start. If the remembered folder is
+  missing at a start, that start serves the folder next to the running code,
+  says so in one log line, and keeps the record, so the folder is served again
+  as soon as it is back. The environment variables
+  `ABSTRACTGATEWAY_FLOWS_DIR`, `ABSTRACTFRAMEWORK_WORKFLOWS_DIR` and
+  `ABSTRACTFLOW_FLOWS_DIR` are no longer read.
+  Evidence: `src/abstractgateway/cli.py`, `src/abstractgateway/config.py`, `src/abstractgateway/workflow_folder.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (the default and only
   supported source)  
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
@@ -1765,7 +1778,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--flows-dir FOLDER] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -1775,6 +1788,8 @@ Most-used:
   gateway runs* is off; closing the lid or choosing Sleep still sleeps it.
   - `--keep-awake on|off`: that setting for this run only (default: the saved `host.keep_awake`, else on);
     see [Host control](#host-control-pause-desktop-tray-restart-update).
+  - `--flows-dir FOLDER`: the workflow folder to serve, remembered for the data folder
+    ([Paths + workflow source](#paths--workflow-source)); `runner` takes it too.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,

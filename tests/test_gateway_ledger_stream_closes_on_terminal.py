@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _write_min_bundle(*, bundles_dir: Path, bundle_id: str, flow_id: str) -> None:
@@ -66,7 +67,7 @@ def test_gateway_ledger_stream_closes_on_terminal_run(tmp_path, monkeypatch: pyt
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "file")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

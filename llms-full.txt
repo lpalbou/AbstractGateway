@@ -1906,13 +1906,26 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   cannot open those secrets. What it protects:
   [security.md](docs/security.md#sealed-secrets-one-key-file-per-data-folder).
   Evidence: `src/abstractgateway/security/sealing.py`
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
-  packaged shipped bundle directory, which carries `basic-agent`,
-  `coding-agent`, `deep-research`, `co-scientist`, and more
-  ([shipped-workflows.md](docs/shipped-workflows.md)). If the shipped bundles are
-  unavailable, Gateway fails clearly instead of starting with an empty default
-  registry. Setting this replaces the shipped registry with your own directory.
-  Evidence: `src/abstractgateway/config.py`
+- The workflow folder is a parameter, not an environment variable:
+  `abstractgateway serve --flows-dir <folder>` (and `runner --flows-dir
+  <folder>`), optional. Without it, Gateway uses the workflow folder this data
+  folder remembers, else the packaged shipped bundle directory next to the
+  running code, which carries `basic-agent`, `coding-agent`, `deep-research`,
+  `co-scientist`, and more ([shipped-workflows.md](docs/shipped-workflows.md)). If
+  the shipped bundles are unavailable, Gateway fails clearly instead of starting
+  with an empty default registry. Naming your own folder replaces the shipped
+  registry with your own directory.
+  The gateway remembers the workflow folder it uses in
+  `<data dir>/config/workflow-folder.json` and keeps using it whatever copy of
+  the code is running: a later start without `--flows-dir` keeps it, a start
+  with `--flows-dir` changes it. `abstractgateway-config init --flows-dir
+  <folder>` remembers one before the first start. If the remembered folder is
+  missing at a start, that start serves the folder next to the running code,
+  says so in one log line, and keeps the record, so the folder is served again
+  as soon as it is back. The environment variables
+  `ABSTRACTGATEWAY_FLOWS_DIR`, `ABSTRACTFRAMEWORK_WORKFLOWS_DIR` and
+  `ABSTRACTFLOW_FLOWS_DIR` are no longer read.
+  Evidence: `src/abstractgateway/cli.py`, `src/abstractgateway/config.py`, `src/abstractgateway/workflow_folder.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (the default and only
   supported source)
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
@@ -3567,7 +3580,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--flows-dir FOLDER] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -3577,6 +3590,8 @@ Most-used:
   gateway runs* is off; closing the lid or choosing Sleep still sleeps it.
   - `--keep-awake on|off`: that setting for this run only (default: the saved `host.keep_awake`, else on);
     see [Host control](#host-control-pause-desktop-tray-restart-update).
+  - `--flows-dir FOLDER`: the workflow folder to serve, remembered for the data folder
+    ([Paths + workflow source](#paths--workflow-source)); `runner` takes it too.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,
@@ -4079,7 +4094,9 @@ it, the gateway serves the note read API under `/api/gateway/note/` (see
 [api.md](docs/api.md#abstractnote-optional)), binds the note tools to each user's own notebook
 (`abstractnote/` under the user's data plane, auto-approved: they touch nothing but that
 notebook), and
-loads the `abstractnote` workflows as framework bundles. Without the package the app can still
+loads the `abstractnote` workflows as framework bundles: the installed version, and every
+older version packed in this data folder before (`<data dir>/extensions/abstractnote/`), so an
+AbstractNote upgrade does not unload the version a run or an automation points at. Without the package the app can still
 be installed and started, but every `/api/gateway/note/` request answers 404 and the
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 
@@ -7126,7 +7143,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, failed_automations_count, archived_automations_count, archived_automations}`, active automations first, then failed ones (the automation itself stopped), then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`failed`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -12871,9 +12888,10 @@ to users** switch on the console's Workflows page.
 
 ## Customizing the registry
 
-- The shipped registry is used when `ABSTRACTGATEWAY_FLOWS_DIR` is unset;
-  point it at your own bundle directory to serve a custom set
-  ([configuration.md](docs/configuration.md)).
+- The shipped registry is used when no other workflow folder is named
+  (`serve --flows-dir <folder>`) or remembered by the data folder; name your
+  own bundle directory to serve a custom set
+  ([configuration.md](docs/configuration.md#paths--workflow-source)).
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
@@ -13299,7 +13317,7 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, failed_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order); a cursor from before the `failed` section (`auto2:`) is a 422 |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
@@ -13327,13 +13345,15 @@ for a trigger with no clock time (manual, email).
 The gateway serves the list in the order every app draws it, so no app sorts
 it again:
 
-1. **Active first.** Every automation that is neither paused nor archived
-   (status `active`, `completed` or `failed`), most recent activity first.
-2. **Then paused**, most recent activity first.
-3. Archived automations are their own listing (`archived_only=true`), most
+1. **Active first.** Status `active` or `completed`, most recent activity
+   first.
+2. **Then failed**: the automation itself stopped (status `failed`; an active
+   automation whose last run failed stays in Active), most recent activity first.
+3. **Then paused**, most recent activity first.
+4. Archived automations are their own listing (`archived_only=true`), most
    recent activity first.
 
-Each row says where it belongs: `section` is `"active"`, `"paused"` or
+Each row says where it belongs: `section` is `"active"`, `"failed"`, `"paused"` or
 `"archived"`, and `last_activity_at` is the instant the order uses: the
 automation's last change. It moves whenever the automation itself changes (an
 occurrence started, retried or finished, a pause, resume, cancel or revision,
@@ -13367,12 +13387,12 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
  "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "trigger_text": "Every day at 08:00 (Europe/Paris)",
- "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
+ "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null; GET /automations/{id} adds "live"
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "section": "active",                 // active | paused | archived (Listing order)
+ "section": "active",                 // active | failed | paused | archived (Listing order)
  "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
@@ -13413,7 +13433,14 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
   the zone after each time it shows unless that zone is UTC. Clients never
   compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
-  `running` or `backoff` (waiting to retry), or `null` when none is.
+  `running` or `backoff` (waiting to retry), or `null` when none is (also
+  for a failed automation whose stranded run never started). On `GET
+  /automations/{id}` only, a `running` one carries `live`: `{started_at, state:
+  starting | thinking | tool | waiting, tool: {name, arguments} | null, attempt,
+  steps_done}` (see `automation_live.py`; absent when it cannot be computed).
+- `paused_reason` also says why the automation paused itself: a run whose
+  workflow is not installed (or not allowed) fails once and the automation is
+  paused until it is edited and turned back on.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `last_notification` is the newest "Email result" notice of this automation
   (`null` when it never asked for one): `status` `queued`, `sending`, `sent`,
@@ -13427,7 +13454,15 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
 - `capabilities` lists what the automation accepts. An archived automation
-  lists `["unarchive", "discuss"]`; a completed or failed one `["discuss"]`.
+  lists `["unarchive", "discuss"]`; a failed one (its controller stopped)
+  `["revise", "resume", "archive", "discuss"]` (no `resume` when its schedule
+  is over); a completed one `["archive", "discuss"]`.
+- `failed_reason` (a failed automation) is one plain sentence saying what
+  happened and when ("It stopped on 7 Nov while starting run #38.", "It stopped
+  on 7 Nov.", "… because its flow is not installed." when that is known), in the
+  owner's time zone, never error text; `failed_detail` is the stored technical
+  error, verbatim, for a Details view. `flow_missing` is `true` when the
+  workflow it pins is not loaded here.
 
 `definition` is the stored definition (target, trigger, context, policy,
 revision); `active_revision` is the revision in force.
@@ -13510,6 +13545,7 @@ attempt):
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
  "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
+ "task": "Triage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
  "artifacts": [{"artifact_id", "name", "mime_type", "url"}],
@@ -13518,7 +13554,18 @@ attempt):
 ```
 
 - `user_turn` and `answer` are the occurrence as a chat turn; `answer` is
-  empty until the occurrence ends.
+  empty until the occurrence ends. `user_turn` is the framed input the run
+  received (the trigger line, then the task); `task` is the task as the person
+  wrote it for that run (the automation's task at the revision it ran under,
+  even after a later edit), the message to show; `""` when the run has none.
+- `artifacts` lists the person's files only (those the run's input and output
+  reference), never the runtime's storage records.
+- `not_started: true` marks the run a stopped automation died on before it was
+  created: `status` is `failed`, `failure.reason_code` is
+  `occurrence_not_started`, and there is no `ledger_url`: its run routes answer
+  404, so clients never read them. `failure.message` is plain ("This run did not start
+  because the automation stopped."); `failure.detail` carries the technical
+  text when one was recorded.
 - `status` is `waiting` only while the occurrence, or a run below it, waits
   for a person (it then has `waits`). An occurrence whose agent is still
   working reads `running`. `backoff` means a retry is scheduled.
@@ -14662,14 +14709,25 @@ serves the workflows the image ships with — `basic-agent`, `coding-agent`,
 ([shipped-workflows.md](docs/shipped-workflows.md)).
 
 To serve your own bundles instead, point `ABSTRACTGATEWAY_HOST_FLOWS_DIR` at
-your bundle directory (mounted read-only at `/data/flows`) and set
-`ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`:
+your bundle directory (mounted read-only at `/data/flows`) and start the
+gateway with `--flows-dir /data/flows`: the image's command is
+`abstractgateway serve --host … --port …`, so give the service that command
+with the parameter added, in a second compose file (not run in a container):
+
+```yaml
+# my-flows.yml
+services:
+  abstractgateway:
+    command: ["sh", "-c", "abstractgateway serve --host \"$${HOST:-0.0.0.0}\" --port \"$${PORT:-8080}\" --flows-dir /data/flows"]
+```
 
 ```bash
 ABSTRACTGATEWAY_HOST_FLOWS_DIR=/path/to/bundles \
-ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
-  docker compose -f docker/abstractgateway-server/compose.yml up -d
+  docker compose -f docker/abstractgateway-server/compose.yml -f my-flows.yml up -d
 ```
+
+The data volume then remembers `/data/flows` as its workflow folder for later
+starts ([configuration.md](docs/configuration.md#paths--workflow-source)).
 
 Smoke checks:
 
@@ -15161,13 +15219,12 @@ pip install abstractgateway
 
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -15458,8 +15515,8 @@ pack_workflow_bundle(
 )
 ```
 
-Upload it with `POST /api/gateway/bundles/upload`, or place it in
-`ABSTRACTGATEWAY_FLOWS_DIR`.
+Upload it with `POST /api/gateway/bundles/upload`, or place it in the workflow
+folder the gateway serves (`serve --flows-dir <folder>`).
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
@@ -15672,13 +15729,12 @@ File-backed stores are the default and easiest for development.
 ```bash
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -15707,8 +15763,8 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 If the bundle response's `items` list is empty (see also
 [troubleshooting.md](docs/troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
-- point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
-  directory containing `*.flow` files (or a single `.flow` file), or
+- start the gateway with `--flows-dir` naming the shipped bundle directory or
+  another directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
 
 ```bash
@@ -16144,9 +16200,12 @@ and set the mode again. See [security.md](docs/security.md#network-exposure).
 
 ### `GET /api/gateway/bundles` returns no bundles
 
-- `ABSTRACTGATEWAY_FLOWS_DIR` points at an empty directory. Unset it to serve
-  the shipped bundles ([shipped-workflows.md](docs/shipped-workflows.md)), or
-  upload a bundle with `POST /api/gateway/bundles/upload`.
+- The workflow folder in use is empty: the one given with `--flows-dir`, or
+  the one the data folder remembers (`<data dir>/config/workflow-folder.json`).
+  Start once with `--flows-dir` naming a folder that holds bundles (the shipped
+  ones are in the gateway's own `flows/bundles` folder,
+  [shipped-workflows.md](docs/shipped-workflows.md)), or upload a bundle with
+  `POST /api/gateway/bundles/upload`.
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 
@@ -22693,7 +22752,8 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 No. Bundle mode is the only workflow source:
 
 - input: one `.flow` file or a directory of `*.flow` bundles
-  (`ABSTRACTGATEWAY_FLOWS_DIR`; the shipped bundles when unset);
+  (`serve --flows-dir <folder>`; without it the folder the data folder
+  remembers, else the shipped bundles);
 - versioning: bundles are addressed as `bundle_id@bundle_version`.
 
 Store VisualFlows through `/api/gateway/visualflows/*` and publish them as a

@@ -32,7 +32,7 @@ import logging
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, List, Optional
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,8 @@ def note_router() -> Optional[Any]:
 
 
 def note_bundle_paths(root_data_dir: Path) -> List[Path]:
-    """The packed `abstractnote@<version>.flow` for this install ([] without abstractnote).
+    """The packed `abstractnote@<version>.flow` for this install, then every older version
+    packed in this data dir ([] without abstractnote).
 
     Packed once per content: the directory name is a hash of the generated flow documents and
     the package version, so an upgrade brings a fresh bundle and a restart reuses the file.
@@ -143,10 +144,50 @@ def note_bundle_paths(root_data_dir: Path) -> List[Path]:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 packed.replace(target)
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-        return [target]
     except Exception as e:  # noqa: BLE001 - a broken package must not block the boot; said loudly
         logger.error("AbstractNote workflows could not be packed: %s", e)
         return []
+    # Every version packed before stays loadable (backlog 1147): runs and automations pin
+    # `abstractnote@<version>:<flow>`, and an upgrade must not unload the version they pin
+    # (2026-11-07 08:57Z: the 0.3.0 Notes processor died a minute after 0.3.1 was packed).
+    # The installed version comes first, so its file wins a duplicate version. A `<hash>.tmp`
+    # folder is a pack in progress (removed when done); a finished pack's folder is never removed.
+    # A folder's name hashes the version AND the flow documents, so two packs of one version exist
+    # only when its flows were edited without a version bump (a developer's machine): the pack
+    # whose folder name sorts first is served, and one warning says so. An older pack that cannot
+    # be read is skipped by itself; the installed one always loads.
+    out = [target]
+    try:
+        packs = sorted(
+            (p for p in out_dir.parent.glob("*/abstractnote@*.flow") if not p.parent.name.endswith(".tmp")),
+            key=lambda q: (q.parent.name, q.name),
+        )
+    except OSError as e:
+        logger.error("AbstractNote: the older packs in %s could not be listed: %s", out_dir.parent, e)
+        return out
+    by_name: Dict[str, List[Path]] = {}
+    for p in packs:
+        if p.name != target.name:
+            by_name.setdefault(p.name, []).append(p)
+    for name in sorted(by_name):
+        group = by_name[name]
+        if len(group) > 1:
+            readable: List[Tuple[Path, bytes]] = []
+            for q in group:
+                try:
+                    readable.append((q, q.read_bytes()))
+                except OSError as e:
+                    logger.error("AbstractNote: the pack %s cannot be read and is skipped: %s", q, e)
+            if not readable:
+                continue
+            if len({data for _q, data in readable}) > 1:
+                logger.warning(
+                    "AbstractNote: %s was edited without a version bump: %d packs with different bytes (%s); serving %s",
+                    name, len(readable), ", ".join(str(q) for q, _d in readable), readable[0][0],
+                )
+            group = [readable[0][0]]
+        out.append(group[0])
+    return out
 
 
 __all__ = [

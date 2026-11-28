@@ -20,6 +20,7 @@ from typing import Any, Dict, List
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -129,7 +130,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     flows.mkdir()
     data = tmp_path / "runtime"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

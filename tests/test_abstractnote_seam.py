@@ -130,6 +130,44 @@ def test_with_abstractnote_the_workflows_pack_once_into_a_framework_bundle(tmp_p
     assert seam.note_bundle_paths(tmp_path) == [path] and path.stat().st_mtime_ns == stamp
 
 
+def test_with_abstractnote_an_upgrade_keeps_the_older_version_loadable(tmp_path: Path):
+    """2026-11-07 08:57Z: the Notes processor automation, pinned to `abstractnote@0.3.0:note-drain`,
+    died a minute after AbstractNote 0.3.1 was packed: the 0.3.0 pack was still on disk, but only
+    the installed version was handed to the loader (backlog 1147)."""
+    pytest.importorskip("abstractnote.flows.bundle", reason="abstractnote is not installed")
+    import json
+    import zipfile
+
+    from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
+
+    [current] = seam.note_bundle_paths(tmp_path)
+    older = tmp_path / "extensions" / "abstractnote" / "0123456789abcdef" / "abstractnote@0.0.1.flow"
+    older.parent.mkdir(parents=True)
+    with zipfile.ZipFile(current) as src, zipfile.ZipFile(older, "w") as dst:
+        for name in src.namelist():
+            data = src.read(name)
+            if name == "manifest.json":
+                manifest = json.loads(data)
+                manifest["bundle_version"] = "0.0.1"
+                data = json.dumps(manifest).encode("utf-8")
+            dst.writestr(name, data)
+    half_packed = tmp_path / "extensions" / "abstractnote" / "fedcba9876543210.tmp" / "abstractnote@0.0.2.flow"
+    half_packed.parent.mkdir(parents=True)
+    half_packed.write_bytes(b"")
+
+    assert seam.note_bundle_paths(tmp_path) == [current, older]  # the installed one first, never a .tmp
+    empty = tmp_path / "bundles"
+    empty.mkdir()
+    compiled = WorkflowBundleGatewayHost._compile_workflows(
+        base=empty, framework_base=None, catalog_base=None, catalog_root=tmp_path, data_root=tmp_path,
+        catalog_tenant="default", dynamic_dir=tmp_path / "dynamic_flows", email_tools_listed=False,
+    )
+    installed = current.name[len("abstractnote@"):-len(".flow")]
+    assert compiled.workflow_registry.get("abstractnote@0.0.1:note-drain") is not None
+    assert compiled.workflow_registry.get(f"abstractnote@{installed}:note-drain") is not None
+    assert compiled.latest_versions["abstractnote"] == installed  # new runs take the installed version
+
+
 def test_with_abstractnote_only_the_note_tools_are_auto_approved():
     pytest.importorskip("abstractnote.gateway.tools", reason="abstractnote is not installed")
     from abstractnote.gateway.tools import AUTO_APPROVE_TOOL_NAMES

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 
 def _write_bundle(*, bundles_dir: Path, bundle_id: str, flows: dict[str, dict], entrypoint: str) -> tuple[str, str]:
@@ -54,7 +55,7 @@ def test_runner_process_keeps_ticking_while_api_restarts(tmp_path: Path, monkeyp
     token = "t"
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -111,7 +112,7 @@ def test_runner_process_keeps_ticking_while_api_restarts(tmp_path: Path, monkeyp
     runner_env["ABSTRACTGATEWAY_RUNNER"] = "1"
 
     proc = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway.cli", "runner"],
+        [sys.executable, "-m", "abstractgateway.cli", "runner", "--flows-dir", str(bundles_dir)],
         env=runner_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

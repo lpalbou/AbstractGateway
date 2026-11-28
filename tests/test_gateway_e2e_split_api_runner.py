@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 
 def _pick_free_port() -> int:
@@ -73,7 +74,7 @@ def test_gateway_split_api_runner_two_process_restart_smoke(tmp_path: Path, monk
     base_url = f"http://127.0.0.1:{port}"
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -140,7 +141,7 @@ def test_gateway_split_api_runner_two_process_restart_smoke(tmp_path: Path, monk
     runner_env = dict(base_env)
     runner_env["ABSTRACTGATEWAY_RUNNER"] = "1"
     runner = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway.cli", "runner"],
+        [sys.executable, "-m", "abstractgateway.cli", "runner", "--flows-dir", str(bundles_dir)],
         env=runner_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -170,7 +171,8 @@ def test_gateway_split_api_runner_two_process_restart_smoke(tmp_path: Path, monk
             api_env = dict(base_env)
             api_env["ABSTRACTGATEWAY_RUNNER"] = "0"
             return subprocess.Popen(
-                [sys.executable, "-m", "abstractgateway.cli", "serve", "--tailscale-https", "off", "--no-runner", "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
+                [sys.executable, "-m", "abstractgateway.cli", "serve", "--tailscale-https", "off", "--no-runner", "--host", "127.0.0.1", "--port", str(port), "--no-tray",
+                 "--flows-dir", str(bundles_dir)],
                 env=api_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

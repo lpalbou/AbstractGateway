@@ -20,6 +20,12 @@ def _stderr(line: str) -> None:
     print(str(line), file=sys.stderr)
 
 
+_FLOWS_FOLDER_HELP = (
+    "The workflow folder (.flow bundles) to serve, optional. Default: the folder this data dir remembers from its "
+    "last start, else the bundles folder next to the running code. The folder used is remembered for the next start."
+)
+
+
 def _migrate_legacy_core_config_store() -> None:
     """Retire `<data_dir>/config/abstractcore.json` into the AbstractCore store.
 
@@ -1097,6 +1103,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Data dir (default: $ABSTRACTGATEWAY_DATA_DIR, else ./runtime if it exists, else the per-OS user data dir)",
     )
+    serve.add_argument("--flows-dir", default=None, metavar="FOLDER", help=_FLOWS_FOLDER_HELP)
     serve.add_argument(
         "--backlog-root",
         default=None,
@@ -1182,6 +1189,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Data dir: the SAME one `serve --no-runner` uses (default: $ABSTRACTGATEWAY_DATA_DIR, else ./runtime if "
         "it exists, else the per-OS user data dir)",
     )
+    runner.add_argument("--flows-dir", default=None, metavar="FOLDER", help=_FLOWS_FOLDER_HELP + " Same as `serve --flows-dir`.")
     runner.add_argument(
         "--unsandboxed-commands",
         action="store_true",
@@ -1436,6 +1444,19 @@ def main(argv: list[str] | None = None) -> None:
         from .network_exposure import run_network_command
 
         raise SystemExit(run_network_command(args))
+
+    if args.cmd in ("serve", "runner") and getattr(args, "flows_dir", None):
+        # `--flows-dir`: this process's workflow folder (workflow_folder.chosen), remembered at once
+        # for the data dir, so a child that resolves the config itself (the `serve --reload` app
+        # child, which never runs main()) serves the same folder.
+        import pathlib as _pathlib
+
+        from . import workflow_folder
+        from .users import gateway_data_dir_from_env as _flows_data_dir
+
+        workflow_folder.chosen = _pathlib.Path(args.flows_dir).expanduser().resolve()
+        workflow_folder.chosen.mkdir(parents=True, exist_ok=True)  # a child must find a directory
+        workflow_folder.remember(_flows_data_dir(), workflow_folder.chosen)
 
     if args.cmd == "serve" and getattr(args, "tray", False) and getattr(args, "no_tray", False):
         parser.error("--tray and --no-tray contradict each other")

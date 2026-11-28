@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from abstractgateway import host_control
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +30,7 @@ def _reset_host_control():
 
 def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "file")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")

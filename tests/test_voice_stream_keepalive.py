@@ -20,6 +20,7 @@ import pytest
 from abstractgateway import voice_stream
 from abstractgateway.voice_stream import new_stream_stats, open_voice_stream
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -168,7 +169,7 @@ def test_the_audit_entry_carries_the_resolved_voice_and_what_the_stream_sent(tmp
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
     flows = tmp_path / "flows"
     flows.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

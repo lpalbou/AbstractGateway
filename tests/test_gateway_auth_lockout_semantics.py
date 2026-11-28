@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
+from pathlib import Path
 
 pytestmark = pytest.mark.basic
 
@@ -35,7 +37,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path) -> TestClient:
     imported the original objects)."""
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)

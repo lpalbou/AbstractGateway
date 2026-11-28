@@ -246,13 +246,12 @@ pip install abstractgateway
 
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -543,8 +542,8 @@ pack_workflow_bundle(
 )
 ```
 
-Upload it with `POST /api/gateway/bundles/upload`, or place it in
-`ABSTRACTGATEWAY_FLOWS_DIR`.
+Upload it with `POST /api/gateway/bundles/upload`, or place it in the workflow
+folder the gateway serves (`serve --flows-dir <folder>`).
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index

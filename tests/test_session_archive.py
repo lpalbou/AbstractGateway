@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from automations_fixtures import HEADERS, chat_run, gateway_env, save_runs
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture()
@@ -108,7 +109,7 @@ def two_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bundles = tmp_path / "bundles"
     ref = write_echo_bundle(bundles)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_SESSIONS_FILE", str(tmp_path / "sessions.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

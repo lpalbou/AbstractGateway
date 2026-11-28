@@ -35,6 +35,7 @@ import pytest
 from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -696,7 +697,7 @@ const $ = () => ({});
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(core_file))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     from abstractgateway.app import app

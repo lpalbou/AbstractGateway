@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 CODE = "abstractcode.agent.v1"
 ASSIST = "abstractassistant.agent.v1"
@@ -240,7 +241,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
     bundles_dir = tmp_path / "bundles"
     standard_bundles(bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -366,7 +367,7 @@ def test_cli_config_set_get_unset_offline(tmp_path: Path, monkeypatch: pytest.Mo
     bundles_dir = tmp_path / "bundles"
     standard_bundles(bundles_dir)
     data_dir = tmp_path / "data"
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data_dir))
     key = f"agents.default_workflow.{CODE}"
 

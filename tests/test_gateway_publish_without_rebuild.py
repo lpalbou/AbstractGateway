@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -385,7 +386,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine):
     bundles_dir = tmp_path / "bundles"
     _write_bundle(bundles_dir, bundle_id="chat", version="0.0.0", flow=_llm_flow("root", prompt="hi"))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -474,7 +475,7 @@ def test_user_auth_has_one_service_for_the_default_runtime(tmp_path: Path, monke
     bundles = tmp_path / "bundles"
     _write_bundle(bundles, bundle_id="chat", version="0.0.0", flow=_llm_flow("root", prompt="hi"))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setattr(service_mod, "gateway_multi_user_enabled", lambda: True)
     service_mod.stop_gateway_runner()

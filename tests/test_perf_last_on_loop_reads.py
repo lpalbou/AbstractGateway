@@ -29,6 +29,7 @@ import pytest
 
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -42,7 +43,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     flows = tmp_path / "bundles"
     flows.mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

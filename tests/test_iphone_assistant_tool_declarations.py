@@ -13,6 +13,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture
@@ -49,7 +50,6 @@ def assistant_gateway(tmp_path, monkeypatch):
         shutil.copyfile(shipped / name, bundles / name)
     for key, value in {
         "ABSTRACTGATEWAY_DATA_DIR": str(tmp_path / "runtime"),
-        "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles),
         "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle",
         "ABSTRACTGATEWAY_AUTH_TOKEN": "test-phone",
         "ABSTRACTGATEWAY_ALLOWED_ORIGINS": "*",
@@ -57,6 +57,7 @@ def assistant_gateway(tmp_path, monkeypatch):
         "ABSTRACTGATEWAY_TICK_WORKERS": "1",
     }.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     from abstractgateway.app import app
     with TestClient(app, headers={"Authorization": "Bearer test-phone"}) as client:
         yield client, calls, behavior

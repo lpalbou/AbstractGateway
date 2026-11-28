@@ -128,9 +128,10 @@ to users** switch on the console's Workflows page.
 
 ## Customizing the registry
 
-- The shipped registry is used when `ABSTRACTGATEWAY_FLOWS_DIR` is unset;
-  point it at your own bundle directory to serve a custom set
-  ([configuration.md](./configuration.md)).
+- The shipped registry is used when no other workflow folder is named
+  (`serve --flows-dir <folder>`) or remembered by the data folder; name your
+  own bundle directory to serve a custom set
+  ([configuration.md](./configuration.md#paths--workflow-source)).
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
 - The editable sources for the shipped workflows are VisualFlow JSON files in

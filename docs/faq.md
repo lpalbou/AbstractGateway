@@ -45,7 +45,8 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 No. Bundle mode is the only workflow source:
 
 - input: one `.flow` file or a directory of `*.flow` bundles
-  (`ABSTRACTGATEWAY_FLOWS_DIR`; the shipped bundles when unset);
+  (`serve --flows-dir <folder>`; without it the folder the data folder
+  remembers, else the shipped bundles);
 - versioning: bundles are addressed as `bundle_id@bundle_version`.
 
 Store VisualFlows through `/api/gateway/visualflows/*` and publish them as a

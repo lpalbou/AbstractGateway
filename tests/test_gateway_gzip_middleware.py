@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _client(tmp_path: Path, monkeypatch) -> TestClient:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.delenv("ABSTRACTGATEWAY_USER_AUTH", raising=False)

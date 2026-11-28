@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from abstractgateway import first_run, host_paths
 from abstractgateway.security.sessions import gateway_csrf_cookie_name, gateway_session_cookie_name
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -93,7 +94,7 @@ def test_host_config_uses_the_resolver_when_env_unset(tmp_path: Path, monkeypatc
     from abstractgateway.users import gateway_data_dir_from_env
 
     monkeypatch.delenv("ABSTRACTGATEWAY_DATA_DIR", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_FLOWS_DIR", raising=False)
+    monkeypatch.setattr(workflow_folder, "chosen", None)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setattr(host_paths.sys, "platform", "linux")

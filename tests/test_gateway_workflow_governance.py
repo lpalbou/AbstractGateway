@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from automations_fixtures import ECHO_BUNDLE_ID, ECHO_FLOW_ID, wait_until, write_echo_bundle
 from test_gateway_workflow_registry_honesty import _write_bundle
+from abstractgateway import workflow_folder
 
 ADMIN = {"Authorization": "Bearer admin-token"}
 UNAVAILABLE = "This workflow isn't available to users on this gateway. Ask an admin."
@@ -37,7 +38,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (shared / "basic-agent.flow").write_bytes((Path(cfg._default_flows_dir()) / "basic-agent.flow").read_bytes())
     data = tmp_path / "data"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(shared))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(shared).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))

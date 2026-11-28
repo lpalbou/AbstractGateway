@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -38,7 +39,7 @@ def test_read_aloud_through_the_real_facade_never_creates_a_waiting_run(tmp_path
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     flows = tmp_path / "flows"
     flows.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

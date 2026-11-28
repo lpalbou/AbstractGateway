@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 from fastapi.testclient import TestClient
 
 from test_generated_media_gateway_contract import _WAV_BYTES, _wait_until, _write_image_bundle
+from abstractgateway import workflow_folder
 
 
 SFX_MODEL = "stabilityai/stable-audio-3-small-sfx"
@@ -24,7 +25,7 @@ def _client(tmp_path: Path, monkeypatch, outputs: List[Dict[str, Any]]):
     bundles_dir = tmp_path / "bundles"
     _write_image_bundle(bundles_dir=bundles_dir, bundle_id="sfx-seconds", flow_id="root")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

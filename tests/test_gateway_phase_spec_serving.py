@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
+from abstractgateway import workflow_folder
 
 
 def _spark(name: str) -> dict:
@@ -166,7 +167,7 @@ def test_operator_blueprint_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path:
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "spec-secret")
@@ -286,7 +287,7 @@ def test_corrupt_overlay_degrades_loudly_never_silently(
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "spec-secret")
@@ -320,7 +321,7 @@ def test_structural_edge_ops_edit_lane(monkeypatch: pytest.MonkeyPatch, tmp_path
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "spec-secret")
@@ -444,7 +445,7 @@ def test_effective_spec_crash_window_and_vendor_drift_reconcile(
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "spec-secret")

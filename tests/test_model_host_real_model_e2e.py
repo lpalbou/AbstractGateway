@@ -63,14 +63,14 @@ def test_one_weights_instance_across_a_restart_and_concurrent_requests(tmp_path:
         "HF_HUB_OFFLINE": "1", "NO_COLOR": "1",
         "OLLAMA_BASE_URL": "http://127.0.0.1:9/", "LMSTUDIO_BASE_URL": "http://127.0.0.1:9/v1",
         "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-        "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN, "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles),
+        "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
         "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_POLL_S": "0.05",
         "ABSTRACTGATEWAY_STORE_BACKEND": "file", "ABSTRACTGATEWAY_EMBEDDING_PROVIDER": "disabled",
         "MODEL_HOST_E2E_PROVIDER_LOG": str(provider_log),
     }
     log = tmp_path / "gateway.log"
     gw = subprocess.Popen([sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--model-host", "process", "--data-dir", str(data),
-                           "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
+                           "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--flows-dir", str(bundles)],
                           env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     c = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=600.0, trust_env=False)
     h = {"Authorization": f"Bearer {TOKEN}"}

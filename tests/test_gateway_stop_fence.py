@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -600,7 +601,7 @@ def test_an_unreadable_core_settings_file_is_a_503_where_the_runtime_needs_its_t
     flows = tmp_path / "flows"
     flows.mkdir()
     shutil.copy2(Path(__file__).resolve().parents[1] / "flows" / "bundles" / "basic-agent.flow", flows / "basic-agent.flow")
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     cfg = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])  # the scratch HOME's Core store (conftest)
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text("{ not json", encoding="utf-8")

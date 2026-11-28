@@ -122,14 +122,25 @@ serves the workflows the image ships with — `basic-agent`, `coding-agent`,
 ([shipped-workflows.md](./shipped-workflows.md)).
 
 To serve your own bundles instead, point `ABSTRACTGATEWAY_HOST_FLOWS_DIR` at
-your bundle directory (mounted read-only at `/data/flows`) and set
-`ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`:
+your bundle directory (mounted read-only at `/data/flows`) and start the
+gateway with `--flows-dir /data/flows`: the image's command is
+`abstractgateway serve --host … --port …`, so give the service that command
+with the parameter added, in a second compose file (not run in a container):
+
+```yaml
+# my-flows.yml
+services:
+  abstractgateway:
+    command: ["sh", "-c", "abstractgateway serve --host \"$${HOST:-0.0.0.0}\" --port \"$${PORT:-8080}\" --flows-dir /data/flows"]
+```
 
 ```bash
 ABSTRACTGATEWAY_HOST_FLOWS_DIR=/path/to/bundles \
-ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
-  docker compose -f docker/abstractgateway-server/compose.yml up -d
+  docker compose -f docker/abstractgateway-server/compose.yml -f my-flows.yml up -d
 ```
+
+The data volume then remembers `/data/flows` as its workflow folder for later
+starts ([configuration.md](./configuration.md#paths--workflow-source)).
 
 Smoke checks:
 

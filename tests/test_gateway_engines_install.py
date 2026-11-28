@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pytest
 
 from abstractgateway import engines_install as ei
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -596,7 +597,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registry: ei.Engine
     flows = tmp_path / "flows"
     flows.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "tok-engines")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

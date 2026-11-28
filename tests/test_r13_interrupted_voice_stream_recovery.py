@@ -21,6 +21,7 @@ import pytest
 from abstractgateway.runner import INTERRUPTED_VOICE_STREAM_SENTENCE, GatewayRunner, GatewayRunnerConfig
 from abstractruntime import Effect, EffectType, Runtime, RunStatus, StepPlan, WorkflowSpec
 from abstractruntime.storage.json_files import JsonFileRunStore, JsonlLedgerStore
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -126,7 +127,7 @@ def test_a_restarted_gateway_closes_the_stuck_read_aloud_wait_at_boot(tmp_path: 
     flows = tmp_path / "flows"
     flows.mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "r13-boot")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "1")

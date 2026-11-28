@@ -32,6 +32,7 @@ import pytest
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
 
 from abstractgateway import self_update
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -389,7 +390,7 @@ def test_the_http_update_runs_a_real_installer_script_admin_only(tmp_path: Path,
     data = tmp_path / "runtime"
     (tmp_path / "flows").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     _state(data, "0.6.1")

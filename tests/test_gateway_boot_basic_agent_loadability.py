@@ -34,6 +34,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -118,7 +119,7 @@ def test_from_env_runs_the_check_on_env_provided_dirs(tmp_path: Path, monkeypatc
     """The three env overrides used to bypass even the presence check —
     from_env now verifies the EFFECTIVE dir (corrupt bundle -> boot refusal)."""
     (tmp_path / "basic-agent.flow").write_bytes(b"garbage")
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
     with pytest.raises(RuntimeError):
         GatewayHostConfig.from_env()

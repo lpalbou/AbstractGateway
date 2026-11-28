@@ -34,6 +34,7 @@ from typing import Any, Dict, List
 import pytest
 
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from abstractgateway import workflow_folder
 
 fcntl = pytest.importorskip("fcntl", reason="singleton lock uses fcntl.flock (Unix only)")
 
@@ -383,7 +384,7 @@ def test_entity_boot_failure_degrades_instead_of_aborting(tmp_path: Path, monkey
 
     monkeypatch.setattr(entities_mod, "EntityRegistry", _boom)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     svc = create_default_gateway_service(config=GatewayHostConfig.from_env())
@@ -412,7 +413,7 @@ def test_broken_telegram_bridge_degrades_instead_of_aborting(
 
     monkeypatch.setattr(tg_mod, "TelegramBridge", _boom)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACT_TELEGRAM_BRIDGE", "1")
 

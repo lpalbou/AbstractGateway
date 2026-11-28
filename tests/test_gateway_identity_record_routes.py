@@ -29,6 +29,7 @@ import pytest
 
 from email_fixtures import *  # noqa: F401,F403 - fixtures (gateway: alice, bob, the static admin token)
 from email_fixtures import ADMIN
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.integration
 
@@ -271,7 +272,7 @@ def test_an_unreadable_identity_is_an_error_never_an_empty_record(world) -> None
 @pytest.fixture()
 def two_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     (tmp_path / "bundles").mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_SESSIONS_FILE", str(tmp_path / "sessions.json"))

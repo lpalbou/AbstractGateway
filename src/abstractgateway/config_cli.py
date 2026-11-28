@@ -433,7 +433,6 @@ def _cmd_claim_url(args: argparse.Namespace) -> None:
 
 def _cmd_init(args: argparse.Namespace) -> None:
     data_dir = Path(args.data_dir).expanduser()
-    flows_dir = Path(args.flows_dir).expanduser()
     token = str(args.auth_token or "").strip() or secrets.token_urlsafe(32)
     store_backend = str(args.store_backend or "file").strip().lower()
     db_path = str(args.db_path or "").strip() or None
@@ -444,7 +443,6 @@ def _cmd_init(args: argparse.Namespace) -> None:
         "ABSTRACTGATEWAY_AUTH_TOKEN": token,
         "ABSTRACTGATEWAY_ALLOWED_ORIGINS": args.allowed_origins,
         "ABSTRACTGATEWAY_DATA_DIR": str(data_dir),
-        "ABSTRACTGATEWAY_FLOWS_DIR": str(flows_dir),
         "ABSTRACTGATEWAY_WORKFLOW_SOURCE": args.workflow_source,
         "ABSTRACTGATEWAY_STORE_BACKEND": store_backend,
         "ABSTRACTGATEWAY_DB_PATH": db_path,
@@ -459,6 +457,12 @@ def _cmd_init(args: argparse.Namespace) -> None:
     out_path = Path(args.env_file).expanduser()
     _write_env_file(out_path, values, force=bool(args.force))
     print(f"Wrote {out_path}")
+    if args.flows_dir:
+        from .workflow_folder import remember
+
+        flows_dir = Path(args.flows_dir).expanduser().resolve()
+        remember(data_dir.resolve(), flows_dir)
+        print(f"Workflow folder {flows_dir} remembered for the data dir {data_dir.resolve()}")
     print("Gateway auth token generated. Keep this file private.")
     print("Use abstractgateway-config set-default for framework capability routes.")
     print("Use Gateway Console /console for provider connections, API keys, endpoint base URLs, users, and defaults.")
@@ -779,7 +783,13 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--auth-token", default=None, help="Gateway bearer token; generated when omitted")
     init.add_argument("--allowed-origins", default="http://localhost:*,http://127.0.0.1:*")
     init.add_argument("--data-dir", default="./runtime/gateway")
-    init.add_argument("--flows-dir", default="./flows")
+    init.add_argument(
+        "--flows-dir",
+        default=None,
+        metavar="FOLDER",
+        help="Optional: the workflow folder this data dir serves; remembered for it (not written to the env file), "
+        "so the first `serve` uses it",
+    )
     init.add_argument("--workflow-source", choices=["bundle", "visualflow"], default="bundle")
     init.add_argument("--store-backend", choices=["file", "sqlite"], default="file")
     init.add_argument("--db-path", default=None)

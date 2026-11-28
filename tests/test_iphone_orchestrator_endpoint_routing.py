@@ -11,6 +11,7 @@ import shutil
 import pytest
 from fastapi.testclient import TestClient
 from test_iphone_assistant_tool_declarations import wait_for
+from abstractgateway import workflow_folder
 
 
 @pytest.mark.parametrize('scope', ['user', 'gateway'])
@@ -68,7 +69,6 @@ def _exercise_endpoint_route(tmp_path, monkeypatch, scope, *, runtime_graph=Fals
     shutil.copyfile(source, bundles / source.name)
     for key, value in {
         'ABSTRACTGATEWAY_DATA_DIR': str(tmp_path / 'runtime'),
-        'ABSTRACTGATEWAY_FLOWS_DIR': str(bundles),
         'ABSTRACTGATEWAY_WORKFLOW_SOURCE': 'bundle',
         'ABSTRACTGATEWAY_AUTH_TOKEN': 'admin-fixture',
         'ABSTRACTGATEWAY_USER_AUTH': '1',
@@ -79,6 +79,7 @@ def _exercise_endpoint_route(tmp_path, monkeypatch, scope, *, runtime_graph=Fals
         'ABSTRACTGATEWAY_TICK_WORKERS': '1',
     }.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     ProviderEndpointProfileStore(base_dir=tmp_path / 'runtime').upsert_profile(
             profile_id='airelays', provider_family='openai-compatible',
             base_url='https://provider.example/v1', api_key='fixture-secret', scope=scope)

@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from abstractgateway import feed_catalog as fc
+from abstractgateway import workflow_folder
 
 ROUTE = "/api/gateway/triggers/feeds/catalog"
 
@@ -127,7 +128,7 @@ def test_load_catalog_reads_the_custom_file_and_survives_a_broken_one(tmp_path: 
 @pytest.fixture()
 def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

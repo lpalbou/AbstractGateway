@@ -917,10 +917,13 @@ def test_summary_passes_next_fire_at_and_current_occurrence_through(live: TestCl
 
     summary = wait_until(running, timeout_s=15)             # the first tick (start_at = now) is running
     base = automation_summary(get_gateway_service().host.run_store.load(aid))
-    assert summary["current_occurrence"] == base["current_occurrence"] and summary["current_occurrence"]["index"] == 1
+    # The detail read adds the live line (spec C); the rest is the runtime's projection as is.
+    detail_occ = {k: v for k, v in summary["current_occurrence"].items() if k != "live"}
+    assert "live" in summary["current_occurrence"]
+    assert detail_occ == base["current_occurrence"] and detail_occ["index"] == 1
     assert summary["next_fire_at"] and summary["next_fire_at"] == base["next_fire_at"]   # present while running
     listed = {s["automation_id"]: s for s in live.get("/api/gateway/automations", headers=HEADERS).json()["items"]}[aid]
-    assert listed["current_occurrence"] == summary["current_occurrence"] and listed["next_fire_at"] == summary["next_fire_at"]
+    assert listed["current_occurrence"] == detail_occ and listed["next_fire_at"] == summary["next_fire_at"]  # never `live`
 
     _command(live, aid, "automation.pause", "p")
     paused = wait_until(lambda: (lambda s: s if s["status"] == "paused" else None)(

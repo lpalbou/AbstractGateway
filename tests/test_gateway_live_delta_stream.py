@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from fastapi.testclient import TestClient
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -124,7 +125,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bundles_dir = tmp_path / "bundles"
     _write_llm_bundle(bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -548,7 +549,7 @@ def test_another_users_run_is_404_and_leaks_no_delta(tmp_path: Path, monkeypatch
     bundles_dir = tmp_path / "bundles"
     _write_llm_bundle(bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

@@ -34,6 +34,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from test_gateway_workflow_registry_honesty import _min_flow, _write_bundle  # noqa: F401
+from abstractgateway import workflow_folder
 
 ADMIN_TOKEN = "admin-token"
 
@@ -52,7 +53,7 @@ def shared_gateway(tmp_path, monkeypatch):
     (flows / "basic-agent.flow").write_bytes((Path(cfg._default_flows_dir()) / "basic-agent.flow").read_bytes())
     _write_bundle(flows / "shared-wf@1.0.0.flow", bundle_id="shared-wf", bundle_version="1.0.0")
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", ADMIN_TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
@@ -169,7 +170,7 @@ def test_the_first_line_refuses_the_non_admin_at_sign_in(shared_gateway, tmp_pat
 
     monkeypatch.setattr(sessions, "principal_barred_from_shared_runtime", _REAL_FIRST_LINE)
     monkeypatch.setattr(g, "principal_barred_from_shared_runtime", _REAL_FIRST_LINE)
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(shared_gateway))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(shared_gateway).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", ADMIN_TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
@@ -318,7 +319,7 @@ def test_a_per_user_registry_is_writable_by_its_owner(tmp_path, monkeypatch):
     registry under hosted user auth, or 'users add their own workflows' dies."""
     from abstractgateway.routes.gateway import _is_shared_workflow_registry
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "shared"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "shared").resolve())
     (tmp_path / "shared").mkdir(parents=True, exist_ok=True)
     import abstractgateway.config as cfg
 

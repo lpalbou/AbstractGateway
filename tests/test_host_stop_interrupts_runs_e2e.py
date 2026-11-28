@@ -62,7 +62,7 @@ class _Gateway:
             "OPENAI_BASE_URL": fake.base_url, "OPENAI_API_KEY": "fake-key",
             "OLLAMA_BASE_URL": "http://127.0.0.1:9/", "LMSTUDIO_BASE_URL": "http://127.0.0.1:9/v1",
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-            "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN, "ABSTRACTGATEWAY_FLOWS_DIR": str(self.bundles),
+            "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
             "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_POLL_S": "0.05",
             "ABSTRACTGATEWAY_STORE_BACKEND": "file",
         }
@@ -76,7 +76,8 @@ class _Gateway:
         self.boots += 1
         self.log = self.tmp / f"gateway-{self.boots}.log"
         argv = [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--model-host", "process", "--data-dir",
-                str(self.data), "--host", "127.0.0.1", "--port", str(self.port), "--no-tray"]
+                str(self.data), "--host", "127.0.0.1", "--port", str(self.port), "--no-tray",
+                "--flows-dir", str(self.bundles)]
         self.proc = subprocess.Popen(argv, env=self.env, stdout=self.log.open("w"), stderr=subprocess.STDOUT,
                                      cwd=str(self.tmp))
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 
 pytestmark = pytest.mark.integration
@@ -76,7 +77,7 @@ def test_history_bundle_endpoint_includes_snapshot_and_replays_after_restart(tmp
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_DB_PATH", str(db_path))
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "sqlite")
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -199,10 +200,10 @@ def test_the_snapshot_ref_is_written_under_the_runs_mutation_lock(tmp_path: Path
     bundles_dir = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-history", flow_id="root")
     for k, v in {"ABSTRACTGATEWAY_DATA_DIR": str(runtime_dir), "ABSTRACTGATEWAY_DB_PATH": str(runtime_dir / "gateway.sqlite3"),
-                 "ABSTRACTGATEWAY_STORE_BACKEND": "sqlite", "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles_dir),
-                 "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_AUTH_TOKEN": "t",
+                 "ABSTRACTGATEWAY_STORE_BACKEND": "sqlite", "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_AUTH_TOKEN": "t",
                  "ABSTRACTGATEWAY_ALLOWED_ORIGINS": "*", "ABSTRACTGATEWAY_POLL_S": "0.05", "ABSTRACTGATEWAY_TICK_WORKERS": "1"}.items():
         monkeypatch.setenv(k, v)
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     held: list = []
     real = bundle_host.persist_workflow_snapshot
 

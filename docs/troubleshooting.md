@@ -222,9 +222,12 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 
 ### `GET /api/gateway/bundles` returns no bundles
 
-- `ABSTRACTGATEWAY_FLOWS_DIR` points at an empty directory. Unset it to serve
-  the shipped bundles ([shipped-workflows.md](./shipped-workflows.md)), or
-  upload a bundle with `POST /api/gateway/bundles/upload`.
+- The workflow folder in use is empty: the one given with `--flows-dir`, or
+  the one the data folder remembers (`<data dir>/config/workflow-folder.json`).
+  Start once with `--flows-dir` naming a folder that holds bundles (the shipped
+  ones are in the gateway's own `flows/bundles` folder,
+  [shipped-workflows.md](./shipped-workflows.md)), or upload a bundle with
+  `POST /api/gateway/bundles/upload`.
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 

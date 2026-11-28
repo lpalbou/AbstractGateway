@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from automations_fixtures import HEADERS, gateway_env, save_runs
+from abstractgateway import workflow_folder
 
 
 def turn(session_id: str, prompt: str, answer: str, minute: int):
@@ -76,7 +77,7 @@ def test_a_query_is_required(client: TestClient) -> None:
 @pytest.fixture()
 def two_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     (tmp_path / "bundles").mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_SESSIONS_FILE", str(tmp_path / "sessions.json"))

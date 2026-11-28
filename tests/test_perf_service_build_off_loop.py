@@ -21,6 +21,8 @@ from typing import Any, List
 import pytest
 
 from timing import timing_budget  # noqa: E402 - tests/timing.py (wall-clock budgets)
+from abstractgateway import workflow_folder
+from pathlib import Path
 
 pytestmark = pytest.mark.basic
 
@@ -36,7 +38,7 @@ def svc_mod(monkeypatch: pytest.MonkeyPatch, tmp_path):
     import abstractgateway.service as svc_mod
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setattr(svc_mod, "_service", None)

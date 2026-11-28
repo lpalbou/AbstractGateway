@@ -33,7 +33,10 @@ from abstractruntime.automations.attention import (
     pending_waits,
     pending_waits_by_automation,
 )
-from abstractruntime.automations.commands import command_digest
+from abstractruntime.automations.commands import STOPPED_CAUSE_FLOW_NOT_INSTALLED, command_digest, stopped_facts
+from abstractruntime.automations.controller import PAUSE_CAUSE_KEY
+from abstractruntime.core.runtime import START_FAILURE_WORKFLOW_NOT_ALLOWED, START_FAILURE_WORKFLOW_NOT_FOUND
+from abstractruntime.automations.commands import resumable as runtime_resumable
 from abstractruntime.automations.consumers import automation_generation, store_key
 from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key, record_payload
 from abstractruntime.automations.models import (
@@ -349,12 +352,69 @@ def _attention_item(raw: Dict[str, Any]) -> Dict[str, Any]:
     return {k: raw[k] for k in ("kind", "automation_id", "run_id", "index", "at", "title", "body", "cursor") if raw.get(k) is not None}
 
 
-def _capabilities(status: str) -> List[str]:
+# What a stopped automation accepts (`_refuse_at_the_door` lets exactly these through): a failed
+# one can be edited, turned back on (the runtime revives its controller) and archived; a
+# completed one only archived.
+_FAILED_CAPABILITIES = ("revise", "resume", "archive", "discuss")
+_COMPLETED_CAPABILITIES = ("archive", "discuss")
+
+
+def _capabilities(status: str, *, resumable: bool = True) -> List[str]:
+    """What the automation accepts. `resumable` (a failed one only): False when it has nothing
+    left to run (an exhausted one-shot schedule), so `resume` is not listed."""
     if status == "archived":
         return ["unarchive", "discuss"]
-    if status in ("completed", "failed"):
-        return ["discuss"]
+    if status == "failed":
+        return [c for c in AUTOMATION_SUMMARY_CAPABILITIES if c in _FAILED_CAPABILITIES and (resumable or c != "resume")]
+    if status == "completed":
+        return [c for c in AUTOMATION_SUMMARY_CAPABILITIES if c in _COMPLETED_CAPABILITIES]
     return [c for c in AUTOMATION_SUMMARY_CAPABILITIES if c != "unarchive"]
+
+
+def stopped_sentence(facts: Dict[str, Any], zone: str, *, now: Optional[datetime.datetime] = None) -> str:
+    """`failed_reason`: ONE plain sentence, what happened and when, from the runtime's typed facts
+    (`stopped_facts`): "It stopped on 7 Nov while starting run #38." / "It stopped on 7 Nov."
+    (+ " because its flow is not installed" for that typed cause). The day is in the owner's
+    zone, the year only when it is not the current one. No error text (that is
+    `failed_detail`), no instruction (the clients put their Restart control beside it)."""
+    when = ""
+    try:
+        from zoneinfo import ZoneInfo
+
+        at = datetime.datetime.fromisoformat(str(facts.get("at")).replace("Z", "+00:00")).astimezone(ZoneInfo(zone))
+        current = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(ZoneInfo(zone)).year
+        month = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[at.month - 1]
+        when = f" on {at.day} {month}" + (f" {at.year}" if at.year != current else "")
+    except Exception:  # noqa: BLE001 - no readable time: the sentence without it
+        when = ""
+    index = facts.get("run_index")
+    during = ""
+    if index is not None:
+        during = f" during run #{index}" if facts.get("run_started") else f" while starting run #{index}"
+    cause = " because its flow is not installed" if facts.get("cause") == STOPPED_CAUSE_FLOW_NOT_INSTALLED else ""
+    return f"It stopped{when}{during}{cause}."
+
+
+def _controller_pause_reason(controller: Any, *, flow_missing: Optional[bool] = None) -> Optional[str]:
+    """The sentence for the controller's own pause cause (`controller.PAUSE_CAUSE_KEY`), from its
+    typed code; None when the controller recorded none. `flow_missing=False` (the workflow it pins
+    NOW is installed: the person already chose another one in Edit): the sentence says it only
+    needs to be turned back on."""
+    state = ((getattr(controller, "vars", None) or {}).get("_runtime") or {}).get("automation") or {}
+    cause = state.get(PAUSE_CAUSE_KEY)
+    if not isinstance(cause, dict):
+        return None
+    workflow_id = str(cause.get("workflow_id") or "?")
+    if flow_missing is False and cause.get("code") in (START_FAILURE_WORKFLOW_NOT_FOUND, START_FAILURE_WORKFLOW_NOT_ALLOWED):
+        was = "no longer installed" if cause.get("code") == START_FAILURE_WORKFLOW_NOT_FOUND else "not allowed any more"
+        return f"Paused after a run could not start: its workflow ({workflow_id}) was {was}. Another one is chosen now; turn it back on."
+    if cause.get("code") == START_FAILURE_WORKFLOW_NOT_FOUND:
+        return (f"Paused after a run could not start: its workflow ({workflow_id}) is no longer installed. "
+                "Choose an installed one in Edit, then turn it back on.")
+    if cause.get("code") == START_FAILURE_WORKFLOW_NOT_ALLOWED:
+        return (f"Paused after a run could not start: its workflow ({workflow_id}) is not allowed any more. "
+                "Choose another one in Edit, then turn it back on.")
+    return f"Paused after a run could not start ({cause.get('code')}). Edit it, then turn it back on."
 
 
 def principal_time_zone(svc: Any, principal: Any) -> str:
@@ -476,9 +536,26 @@ def automation_summary_row(
         # ADR 0048: the list section the row is drawn in and the instant the listing orders by.
         "section": automation_section(status),
         "last_activity_at": controller.updated_at,
-        "capabilities": _capabilities(status),
+        "capabilities": _capabilities(status, resumable=status != "failed" or runtime_resumable(controller)),
         "session_kind": "automation",
     }
+    registry = getattr(getattr(svc, "host", None), "workflow_registry", None)
+    target_id = str((base.get("target") or {}).get("workflow_id") or "")
+    if registry is not None and target_id:
+        # The pinned flow is not loaded here (its bundle version was uninstalled): the next
+        # run cannot start until the automation is edited to choose another one.
+        out["flow_missing"] = registry.get(target_id) is None
+    if status == "failed":
+        facts = stopped_facts(controller, workflow_registry=registry, run_store=svc.host.run_store)
+        if facts is not None:
+            out["failed_reason"] = stopped_sentence(facts, owner_zone or principal_time_zone(svc, principal))
+            if facts.get("detail"):
+                out["failed_detail"] = facts["detail"]
+        occ_now = out.get("current_occurrence")
+        if isinstance(occ_now, dict) and (not occ_now.get("run_id") or svc.host.run_store.load(str(occ_now["run_id"])) is None):
+            # A dead controller's stranded occurrence never started: nothing is running (clients
+            # re-read every 3 s while `current_occurrence` is set).
+            out["current_occurrence"] = None
     if out["next_fire_at"] is None:
         del out["next_fire_at"]
     # R16.1 A4: the served next run + THE sentence every client shows (never computed client-side).
@@ -487,8 +564,10 @@ def automation_summary_row(
     # "When mail arrives in <address>", "When <feed> has a new item", "When <webhook> is called".
     out["trigger_text"] = _trigger_text(svc, principal, base["trigger"], str(out.get("schedule_rule_text") or ""))
     if status == "paused":
-        # Why the GATEWAY paused it (e.g. its workflow was made unavailable, DESIGN-v3 §13.4).
-        reason = pause_reason(svc.config.data_dir, str(controller.run_id))
+        # Why it was paused: by the CONTROLLER (a run whose workflow could not start: the typed
+        # cause in its state, worded here), else by the GATEWAY (e.g. its workflow was made
+        # unavailable, DESIGN-v3 §13.4).
+        reason = _controller_pause_reason(controller, flow_missing=out.get("flow_missing")) or pause_reason(svc.config.data_dir, str(controller.run_id))
         if reason:
             out["paused_reason"] = reason
     occ = latest_occurrence(runtime, str(controller.run_id), user_turn=False)
@@ -506,6 +585,8 @@ def automation_summary_row(
         }
         if occ.get("finished_at"):
             last["finished_at"] = occ["finished_at"]
+        if occ.get("not_started"):
+            last["not_started"] = True  # no run exists for it: clients never read its run routes
         out["last_occurrence"] = last
         # Observer board (2026-10-15): the context bar's `used` — the history the
         # last occurrence was handed, as its own run recorded it; null when unrecorded.
@@ -1238,7 +1319,7 @@ def _parse_automation_kind(kind: Optional[str]) -> str:
 
 def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int, archived_only: bool = False, kind: str = "user") -> Dict[str, Any]:
     """One page of this principal's automations in the listing order (`automation_order`, ADR
-    0048): active ones first, then paused ones, each by last activity, newest first. Every
+    0048): active, failed, then paused ones, each by last activity, newest first. Every
     controller is loaded once per computation: its status and `updated_at` place it, and only the
     rows of the page are projected into summaries. `kind` (AUTOMATION_KINDS, or `all`) keeps the
     automations of that purpose; the counts count them only."""
@@ -1318,6 +1399,7 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
         # Counts, named `*_count` (a bundle route's `paused_automations` is a list of ids);
         # `archived_automations` is the same count, kept for the clients that read it.
         "paused_automations_count": counts["paused"],
+        "failed_automations_count": counts["failed"],
         "archived_automations_count": counts["archived"],
         "archived_automations": counts["archived"],
     }
@@ -1366,17 +1448,18 @@ async def list_automations_route(
     cursor: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     changed_since: Optional[str] = Query(None, description="Not supported in v1 (422 unsupported_feature): poll full pages."),
-    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `paused_automations_count` and `archived_automations_count` (how many this principal has paused and archived; `archived_automations` is the same count)."),
+    archived_only: bool = Query(False, description="If true, list only archived automations. Without it (and without `status`), archived automations are left out. The response carries `paused_automations_count`, `failed_automations_count` and `archived_automations_count` (how many this principal has paused, failed and archived; `archived_automations` is the same count as the archived one)."),
     kind: Optional[str] = Query(None, description="What the listed automations are for: `user` (the default: the ones a person creates and manages), `notes` (AbstractNote's own processing, whose target is an `abstractnote` workflow) or `all`. The counts count the listed kind."),
 ) -> Dict[str, Any]:
     """Every automation of this principal as full pages, in the listing order
-    (ADR 0048, `automation_order`): active ones first, then paused ones, each by
-    `last_activity_at`, newest first; every row carries its `section`. Legacy
+    (ADR 0048, `automation_order`): active ones first, then failed ones (the
+    automation itself stopped), then paused ones, each by `last_activity_at`,
+    newest first; every row carries its `section`. Legacy
     `scheduled:*` roots are placed by the same rule (`legacy: true`). Archived
     automations are listed only with `archived_only=true` (or an explicit
     `status` naming `archived`). The answer counts this principal's paused
-    (`paused_automations_count`) and archived (`archived_automations_count`) automations on
-    every page. Identical concurrent requests share one
+    (`paused_automations_count`), failed (`failed_automations_count`) and archived
+    (`archived_automations_count`) automations on every page. Identical concurrent requests share one
     computation; its answer is kept a few seconds, dropped by any change this
     gateway records (see `_ListMemo`)."""
     principal = _principal_from_request(request)
@@ -1390,10 +1473,18 @@ async def list_automations_route(
 def _get(svc: Any, principal: Any, automation_id: str) -> Dict[str, Any]:
     controller = load_automation_controller(svc, automation_id)
     detail = get_automation(svc.host.run_store, str(controller.run_id))
+    summary = automation_summary_row(svc, principal, controller)
+    if isinstance(summary.get("current_occurrence"), dict):
+        # Spec C: the live line of the run in progress, on the detail read only (never the list).
+        from ..automation_live import live_for
+
+        live = live_for(svc, summary["current_occurrence"])
+        if live is not None:
+            summary["current_occurrence"] = {**summary["current_occurrence"], "live": live}
     return {
         "definition": detail["definition"],
         "active_revision": detail["active_revision"],
-        "summary": automation_summary_row(svc, principal, controller),
+        "summary": summary,
     }
 
 
@@ -1496,8 +1587,14 @@ def _refuse_at_the_door(controller: Any, type_: str, *, command_id: str) -> None
         if type_ != "automation.archive":
             raise AutomationError(409, "invalid_state", "Automation is archived; only unarchive is possible.", command_id=command_id)
         return
-    if status in ("completed", "failed") and type_ != "automation.archive":
-        raise AutomationError(409, "invalid_state", f"Automation is {status}; only archive is possible.", command_id=command_id)
+    if status in ("completed", "failed"):
+        allowed = _FAILED_CAPABILITIES if status == "failed" else _COMPLETED_CAPABILITIES
+        if type_.split(".", 1)[1] not in allowed:
+            words = "it can be edited, turned back on or archived" if status == "failed" else "only archive is possible"
+            raise AutomationError(409, "invalid_state", f"Automation is {status}; {words}.", command_id=command_id)
+        if type_ == "automation.resume" and not runtime_resumable(controller):
+            raise AutomationError(409, "invalid_state", "Automation has nothing left to run; it cannot be turned back on.", command_id=command_id)
+        return
     if type_ == "automation.run_now":
         if state.get("pending_occurrence") is not None or state.get("manual_pending") is not None:
             raise AutomationError(409, "automation_busy", "An occurrence is already running or waiting to run.", command_id=command_id)
@@ -1580,22 +1677,12 @@ async def automation_command_route(request: Request, automation_id: str, body: A
     return await _off_the_event_loop(_command, svc, principal, automation_id, body.command_id, body.type, body.payload)
 
 
-def _artifacts(svc: Any, run_id: str) -> List[Dict[str, Any]]:
-    store = svc.host.artifact_store
-    if store is None:
-        return []
-    out: List[Dict[str, Any]] = []
-    for meta in store.list_by_run(str(run_id)):
-        tags = meta.tags if isinstance(meta.tags, dict) else {}
-        extra = meta.metadata if isinstance(meta.metadata, dict) else {}
-        name = tags.get("filename") or extra.get("filename") or extra.get("name") or meta.artifact_id
-        out.append({
-            "artifact_id": meta.artifact_id,
-            "name": str(name),
-            "mime_type": str(meta.content_type or "application/octet-stream"),
-            "url": f"/api/gateway/runs/{run_id}/artifacts/{meta.artifact_id}/content",
-        })
-    return out
+def _artifacts(svc: Any, child: Any) -> List[Dict[str, Any]]:
+    """The person's files of one occurrence run (spec F): its input's and output's files at a
+    display path, never storage offloads (`automation_files.person_files`)."""
+    from ..automation_files import person_files
+
+    return person_files(child, svc.host.artifact_store)
 
 
 def _occurrences(svc: Any, principal: Any, automation_id: str, cursor: Optional[str], limit: int) -> Dict[str, Any]:
@@ -1626,20 +1713,36 @@ def _occurrences(svc: Any, principal: Any, automation_id: str, cursor: Optional[
             "status": status,
             "trigger": {"source_id": envelope.get("source_id"), "summary": _trigger_summary(envelope, triggers[int(occ["revision"])])},
             "user_turn": occ.get("user_turn") or "",
+            # The task as the person wrote it for THIS run (no trigger line): the run's message.
+            "task": occ.get("task") or "",
             "answer": answer.get("answer") or "",
             "notify": occ.get("notify"),
-            "artifacts": _artifacts(svc, run_id) if child is not None else [],
+            "artifacts": _artifacts(svc, child) if child is not None else [],
             "waits": waits_by_index.get(occ["index"], []),
-            "ledger_url": f"/api/gateway/runs/{run_id}/ledger",
         }
+        if occ.get("not_started"):
+            # The run a stopped automation died on was never created: no run URL points at it
+            # (its run routes answer 404); `not_started` says so on the row itself.
+            row["not_started"] = True
+            row["failure"] = {"reason_code": "occurrence_not_started", "message": str(occ.get("error") or ""),
+                              "attempts": occ["attempts"]}
+            if occ.get("error_detail"):
+                row["failure"]["detail"] = str(occ["error_detail"])
+        else:
+            row["ledger_url"] = f"/api/gateway/runs/{run_id}/ledger"
         if occ.get("finished_at"):
             row["finished_at"] = occ["finished_at"]
-        if status == "failed":
+        if status == "failed" and "failure" not in row:
             row["failure"] = {
                 "reason_code": "occurrence_failed",
-                "message": str(answer.get("error") or (child.error if child is not None else "") or "failed"),
+                # An attempt that never started has no run: its reason is the one the controller
+                # recorded with the failure ("its workflow ... is no longer installed. Edit ...").
+                "message": str(answer.get("error") or (child.error if child is not None else "")
+                               or occ.get("error") or "failed"),
                 "attempts": occ["attempts"],
             }
+            if occ.get("error_detail"):
+                row["failure"]["detail"] = str(occ["error_detail"])  # the technical text (Details)
         if child is not None and isinstance((child.vars or {}).get("workspace_root"), str):
             row["workspace_url"] = f"/api/gateway/runs/{run_id}/workspace"
         items.append(row)

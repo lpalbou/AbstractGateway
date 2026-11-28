@@ -21,6 +21,7 @@ from abstractruntime.session_history import HISTORY_REPLAY_MAX_TOKENS
 
 from test_backlog_advisor_and_maintain_readonly_scope import _Config, _Host, _make_app, _Runner, _Service
 from test_gateway_http_api import _write_test_bundle
+from abstractgateway import workflow_folder
 
 
 def _conversation(turns: int, *, answer_chars: int = 40) -> List[Dict[str, str]]:
@@ -112,7 +113,7 @@ def _run_chat_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured: 
     bundles_dir = tmp_path / "bundles"
     bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

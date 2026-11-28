@@ -13,6 +13,7 @@ from abstractgateway.session_history_bloc import (
     parse_created_at_cursor,
     select_bloc_turns,
 )
+from abstractgateway import workflow_folder
 
 
 def test_parse_created_at_cursor_accepts_z_suffix() -> None:
@@ -108,7 +109,7 @@ def test_session_history_bloc_endpoint_returns_cursor_bloc(tmp_path: Path, monke
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_DB_PATH", str(db_path))
     monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", "sqlite")
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
