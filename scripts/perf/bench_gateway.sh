@@ -111,9 +111,9 @@ trap cleanup EXIT INT TERM
 echo "starting the benchmark gateway: $GW_SRC + $RT_SRC on 127.0.0.1:$PORT, data dir $CLONE ${SERVE_ARGS[*]:-}"
 env -i HOME="$HOME_DIR" USER="$(id -un)" LOGNAME="$(id -un)" PATH="/usr/bin:/bin:/usr/sbin:/sbin" LANG=en_US.UTF-8 \
   TMPDIR="$HOME_DIR/tmp/" HF_HOME="$HOME_DIR/hf" HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-  ABSTRACTGATEWAY_USER_AUTH=1 ABSTRACTGATEWAY_AUTH_TOKEN="$TOKEN" ABSTRACTGATEWAY_FLOWS_DIR="$FLOWS" \
+  ABSTRACTGATEWAY_USER_AUTH=1 ABSTRACTGATEWAY_AUTH_TOKEN="$TOKEN" \
   PYTHONPATH="$PYPATH" PERF_GUARD_LOG="$GUARD_LOG" PERF_GC_LOG="$GC_LOG" \
-  "$VENV_PY" -P -m abstractgateway serve --host 127.0.0.1 --port "$PORT" --data-dir "$CLONE" \
+  "$VENV_PY" -P -m abstractgateway serve --host 127.0.0.1 --port "$PORT" --data-dir "$CLONE" --flows-dir "$FLOWS" \
   --no-tray --exec-runner off --push-relay off --no-print-token ${SERVE_ARGS[@]+"${SERVE_ARGS[@]}"} \
   >"$GW_LOG" 2>&1 &
 GW_PID=$!

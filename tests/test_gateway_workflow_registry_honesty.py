@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _min_flow(flow_id: str) -> dict:
@@ -95,7 +96,7 @@ def gateway_env(tmp_path, monkeypatch):
     shipped = Path(cfg._default_flows_dir()) / "basic-agent.flow"
     (flows / "basic-agent.flow").write_bytes(shipped.read_bytes())
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", AUTH_TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")

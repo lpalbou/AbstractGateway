@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from test_gateway_http_api import _write_test_bundle
+from abstractgateway import workflow_folder
 
 
 def _activity_line(tmp_path: Path, line: dict) -> dict:
@@ -34,7 +35,7 @@ def test_a_real_run_start_records_its_run_id_and_workflow_on_the_audit_line(tmp_
     bundles_dir = tmp_path / "bundles"
     bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

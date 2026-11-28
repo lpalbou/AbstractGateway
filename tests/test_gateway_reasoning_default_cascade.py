@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture()
@@ -147,7 +148,7 @@ def test_reasoning_default_http_round_trip(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
     monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(core_file))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
 

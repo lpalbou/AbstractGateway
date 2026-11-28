@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from abstractruntime import EffectType, Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot, run_mutation_lock
-from abstractruntime.core.runtime import EffectOutcome
+from abstractruntime.core.runtime import START_FAILURE_WORKFLOW_NOT_ALLOWED, EffectOutcome, start_failure_details
 from abstractruntime.visualflow_compiler import compile_visualflow
 from abstractruntime.workflow_bundle import WorkflowBundle, WorkflowBundleError, open_workflow_bundle
 
@@ -505,7 +505,13 @@ def _install_catalog_subworkflow_guard(
                 expected_runtime_id=catalog_runtime_id,
             )
             if err:
-                return EffectOutcome.failed(f"Catalog subworkflow '{wid}' is not allowed: {err}")
+                # Typed (`start_failure`): an automation's occurrence refused here fails that
+                # occurrence, not the automation's controller.
+                return EffectOutcome.failed(
+                    f"Catalog subworkflow '{wid}' is not allowed: {err}",
+                    retryable=False,  # a policy refusal: the same check refuses it again
+                    error_details=start_failure_details(START_FAILURE_WORKFLOW_NOT_ALLOWED, wid),
+                )
         # B4: a run pinned across an in-place overwrite starts its sub-workflows from
         # the registry it resolved from (`_PinnableWorkflowRegistry`).
         pins = getattr(runtime, "_gateway_registry_pins", None)

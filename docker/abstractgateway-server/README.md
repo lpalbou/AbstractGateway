@@ -156,10 +156,11 @@ Useful compose variables:
 
 - `ABSTRACTGATEWAY_PORT`: host port, default `8080`
 - `ABSTRACTGATEWAY_HOST_FLOWS_DIR`: host directory containing `*.flow` bundles,
-  mounted read-only at `/data/flows`. It is served only when you also set
-  `ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`; leave both unset to serve the
-  workflows the image ships with (`basic-agent`, `coding-agent`,
-  `deep-research`, `co-scientist`, and more)
+  mounted read-only at `/data/flows`. It is served only when the gateway starts
+  with `--flows-dir /data/flows` (a `command:` override, see
+  [docs/deployment.md](../../docs/deployment.md); not run in a container); by
+  default the container serves the workflows the image ships with
+  (`basic-agent`, `coding-agent`, `deep-research`, `co-scientist`, and more)
 - `ABSTRACTGATEWAY_STORE_BACKEND`: `file` or `sqlite`
 - `ABSTRACTGATEWAY_MEMORY_STORE_BACKEND`: `lancedb` or `memory`; `sqlite` works when the installed AbstractMemory build exposes `SQLiteTripleStore`
 - `ABSTRACTGATEWAY_PROVIDER` / `ABSTRACTGATEWAY_MODEL`: transitional text fallback; prefer execution-host `output.text`

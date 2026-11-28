@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from abstractgateway import loop_watchdog
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -105,7 +106,7 @@ def test_host_runner_gives_admins_the_last_hang(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     flows = tmp_path / "flows"
     flows.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "r13-admin")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
@@ -159,7 +160,8 @@ def test_real_serve_writes_the_incident_into_the_data_dir_before_exiting(tmp_pat
     env["ABSTRACTGATEWAY_AUTH_TOKEN"] = "watchdog-test-token"
     env.pop("ABSTRACTGATEWAY_ADMIN_TOKEN", None)
     port = _free_port()
-    args = ["serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2"]
+    args = ["serve", "--tailscale-https", "off", "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--no-runner", "--watchdog-seconds", "2",
+            "--flows-dir", str(workflow_folder.chosen)]
     proc = subprocess.run([sys.executable, "-c", _LIVE, *args], capture_output=True, text=True, timeout=120, env=env, cwd=str(tmp_path))
     assert proc.returncode == loop_watchdog.WATCHDOG_EXIT_CODE, proc.stderr[-4000:]
     files = sorted((tmp_path / "data" / "incidents").glob("watchdog-*.json"))

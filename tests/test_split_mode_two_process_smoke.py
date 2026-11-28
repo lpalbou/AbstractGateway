@@ -187,7 +187,7 @@ def test_split_mode_boots_runs_and_reports_itself(tmp_path: Path) -> None:
         "OLLAMA_BASE_URL": "http://127.0.0.1:9/", "LMSTUDIO_BASE_URL": "http://127.0.0.1:9/v1",
         "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
         # The test harness's own knobs (the operator's two commands need none of these).
-        "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN, "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles),
+        "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
         "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_POLL_S": "0.05",
         "ABSTRACTGATEWAY_STORE_BACKEND": "file",
         "SPLIT_SMOKE_PROVIDER_LOG": str(provider_log),
@@ -195,11 +195,11 @@ def test_split_mode_boots_runs_and_reports_itself(tmp_path: Path) -> None:
     runner_log, api_log = tmp_path / "runner.log", tmp_path / "api.log"
     # The two commands of split mode, exactly as docs/configuration.md gives them.
     runner = subprocess.Popen(
-        [sys.executable, "-m", "abstractgateway", "runner", "--data-dir", str(data), "--model-host", "in-process"],
+        [sys.executable, "-m", "abstractgateway", "runner", "--data-dir", str(data), "--model-host", "in-process", "--flows-dir", str(bundles)],
         env=env, stdout=runner_log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     api = subprocess.Popen(
         [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--no-runner", "--data-dir", str(data),
-         "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
+         "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--flows-dir", str(bundles)],
         env=env, stdout=api_log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
     procs = (("runner", runner, runner_log), ("api", api, api_log))
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10.0, trust_env=False)

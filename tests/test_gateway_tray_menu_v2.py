@@ -553,7 +553,7 @@ def test_the_macos_header_view_builds_with_logo_and_switch() -> None:
     toggles: List[bool] = []
     built = build_header_view(v2.header_view(_snap(models=(_loaded(),))), logo_png=logo_png(), on_toggle=toggles.append)
     assert built is not None
-    view, keep = built
+    view = built
     import AppKit
 
     subviews = list(view.subviews())
@@ -565,3 +565,37 @@ def test_the_macos_header_view_builds_with_logo_and_switch() -> None:
     sw.setState_(AppKit.NSControlStateValueOff)
     sw.target().toggled_(sw)
     assert toggles == [False]
+
+
+def test_the_switch_of_a_menu_still_on_screen_works_after_a_rebuild() -> None:
+    """The tray rebuilds its menu while one is open (a GPU/memory bucket
+    moves); macOS keeps showing the open one. Its switch must still reach
+    `on_toggle` — NSControl holds its target weakly, so the switch has to own
+    it (2026-11-16: the switch silently did nothing, the gateway stayed paused)."""
+    pytest.importorskip("AppKit")
+    import gc
+
+    import AppKit
+    import objc
+
+    from abstractgateway.tray.header_mac import build_header_view
+    from abstractgateway.tray.logo import logo_png
+
+    toggles: List[bool] = []
+    view = v2.header_view(_snap(gateway_state="paused", paused=True))
+    # What breaks the open menu's switch is that nothing outside its view holds
+    # its target once the tray stops referencing that build; the second build
+    # stands for the rebuild that drops that reference. Pools so nothing
+    # autoreleased keeps the first target alive by accident (reading
+    # `.target()` outside a pool would make this pass without the fix).
+    with objc.autorelease_pool():
+        on_screen = build_header_view(view, logo_png=logo_png(), on_toggle=toggles.append)
+    with objc.autorelease_pool():
+        rebuilt = build_header_view(view, logo_png=logo_png(), on_toggle=toggles.append)
+    assert on_screen is not None and rebuilt is not None
+    gc.collect()
+    with objc.autorelease_pool():
+        sw = next(sv for sv in on_screen.subviews() if isinstance(sv, AppKit.NSSwitch))
+        assert sw.state() == AppKit.NSControlStateValueOff and sw.isEnabled()
+        sw.performClick_(None)
+    assert toggles == [True]

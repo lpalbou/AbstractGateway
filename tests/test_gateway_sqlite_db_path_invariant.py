@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from abstractgateway import workflow_folder
 
 
 @pytest.mark.basic
@@ -28,9 +29,7 @@ def test_gateway_host_config_defaults_to_shipped_basic_agent_bundles(monkeypatch
     from abstractgateway.config import GatewayHostConfig
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.delenv("ABSTRACTGATEWAY_FLOWS_DIR", raising=False)
-    monkeypatch.delenv("ABSTRACTFRAMEWORK_WORKFLOWS_DIR", raising=False)
-    monkeypatch.delenv("ABSTRACTFLOW_FLOWS_DIR", raising=False)
+    monkeypatch.setattr(workflow_folder, "chosen", None)
 
     cfg = GatewayHostConfig.from_env()
 

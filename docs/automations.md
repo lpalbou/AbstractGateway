@@ -52,7 +52,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.21.0. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.22.0. A gateway installed against
   an older runtime does not start ([troubleshooting.md](./troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -413,7 +413,7 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, failed_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order); a cursor from before the `failed` section (`auto2:`) is a 422 |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
@@ -441,13 +441,17 @@ for a trigger with no clock time (manual, email).
 The gateway serves the list in the order every app draws it, so no app sorts
 it again:
 
-1. **Active first.** Every automation that is neither paused nor archived
-   (status `active`, `completed` or `failed`), most recent activity first.
-2. **Then paused**, most recent activity first.
-3. Archived automations are their own listing (`archived_only=true`), most
+1. **Active first.** Status `active` or `completed`, most recent activity
+   first.
+2. **Then failed**: the automation itself stopped (status `failed`; an active
+   automation whose last run failed stays in Active), most recent activity first.
+   A failure never turns an automation off: the gateway brings one that stopped
+   back by itself, so a row stays here only until then.
+3. **Then paused**, most recent activity first.
+4. Archived automations are their own listing (`archived_only=true`), most
    recent activity first.
 
-Each row says where it belongs: `section` is `"active"`, `"paused"` or
+Each row says where it belongs: `section` is `"active"`, `"failed"`, `"paused"` or
 `"archived"`, and `last_activity_at` is the instant the order uses: the
 automation's last change. It moves whenever the automation itself changes (an
 occurrence started, retried or finished, a pause, resume, cancel or revision,
@@ -481,12 +485,12 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
  "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "trigger_text": "Every day at 08:00 (Europe/Paris)",
- "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
+ "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null; GET /automations/{id} adds "live"
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "section": "active",                 // active | paused | archived (Listing order)
+ "section": "active",                 // active | failed | paused | archived (Listing order)
  "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
@@ -527,7 +531,15 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
   the zone after each time it shows unless that zone is UTC. Clients never
   compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
-  `running` or `backoff` (waiting to retry), or `null` when none is.
+  `running` or `backoff` (waiting to retry), or `null` when none is (also
+  for a failed automation whose stranded run never started). On `GET
+  /automations/{id}` only, a `running` one carries `live`: `{started_at, state:
+  starting | thinking | tool | waiting, tool: {name, arguments} | null, attempt,
+  steps_done}` (see `automation_live.py`; absent when it cannot be computed).
+- A run whose workflow is not installed (or not allowed) fails once, with its
+  reason; the automation stays active and tries again at its next scheduled
+  time. A failure never pauses an automation: `paused_reason` only says why the
+  gateway paused it (an administrator made its workflow unavailable).
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `last_notification` is the newest "Email result" notice of this automation
   (`null` when it never asked for one): `status` `queued`, `sending`, `sent`,
@@ -541,7 +553,15 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
 - `capabilities` lists what the automation accepts. An archived automation
-  lists `["unarchive", "discuss"]`; a completed or failed one `["discuss"]`.
+  lists `["unarchive", "discuss"]`; a failed one (its controller stopped)
+  `["revise", "resume", "archive", "discuss"]` (no `resume` when its schedule
+  is over); a completed one `["archive", "discuss"]`.
+- `failed_reason` (a failed automation) is one plain sentence saying what
+  happened and when ("It stopped on 7 Nov while starting run #38.", "It stopped
+  on 7 Nov.", "… because its flow is not installed." when that is known), in the
+  owner's time zone, never error text; `failed_detail` is the stored technical
+  error, verbatim, for a Details view. `flow_missing` is `true` when the
+  workflow it pins is not loaded here.
 
 `definition` is the stored definition (target, trigger, context, policy,
 revision); `active_revision` is the revision in force.
@@ -624,6 +644,7 @@ attempt):
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
  "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
+ "task": "Triage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
  "artifacts": [{"artifact_id", "name", "mime_type", "url"}],
@@ -632,7 +653,18 @@ attempt):
 ```
 
 - `user_turn` and `answer` are the occurrence as a chat turn; `answer` is
-  empty until the occurrence ends.
+  empty until the occurrence ends. `user_turn` is the framed input the run
+  received (the trigger line, then the task); `task` is the task as the person
+  wrote it for that run (the automation's task at the revision it ran under,
+  even after a later edit), the message to show; `""` when the run has none.
+- `artifacts` lists the person's files only (those the run's input and output
+  reference), never the runtime's storage records.
+- `not_started: true` marks a run that was never created (a problem on this
+  computer kept it from starting): `status` is `failed`, `failure.reason_code`
+  is `occurrence_not_started`, and there is no `ledger_url`: its run routes
+  answer 404, so clients never read them. `failure.message` is plain ("This run
+  could not start because of a problem on this computer."); `failure.detail`
+  carries the technical text when one was recorded.
 - `status` is `waiting` only while the occurrence, or a run below it, waits
   for a person (it then has `waits`). An occurrence whose agent is still
   working reads `running`. `backoff` means a retry is scheduled.
@@ -857,7 +889,15 @@ data folder: `GET /api/health` reports the runner (`runner.runners[].status`).
 **Restart recovery.** Automations are durable runs, so they survive a
 restart:
 
-- After a restart the runner picks up every controller where it stopped.
+- After a restart the runner picks up every controller where it stopped. An
+  automation that stopped on an error (a crash, a fault of this computer) is
+  brought back by itself, when the gateway starts and as soon as it stops: the
+  run it was on is shown with its real outcome (or as failed when it could not
+  start), a run still going is followed to its end, a time missed while it was
+  down runs once as soon as it is back (several missed times run once, not one
+  run each; mail that arrived meanwhile is picked up), then its normal times. An
+  automation that stops at every attempt tries once per scheduled time, each
+  attempt shown as a failed run. One a person stopped, paused or archived stays so.
 - Occurrence ids are deterministic and a child run is created only when its id
   is free, so a restart in the middle of an occurrence continues that
   occurrence and never starts it twice.

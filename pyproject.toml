@@ -74,7 +74,9 @@ dependencies = [
   # their paths.
   # 0.21.0: the command-sandbox facade names the drives the Windows sandbox cannot protect
   # (`command_sandbox_host.host_unprotected_volumes`, read by command_sandbox.py).
-  "AbstractRuntime==0.21.0",
+  # 0.22.0: a failure never turns an automation off (`revive_dead_controller`,
+  # `recover_stopped_automations`, typed start failures: read by runner.py and routes/automations.py).
+  "AbstractRuntime==0.22.0",
   # Pinned, no extras (Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -217,7 +219,7 @@ push-relay = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]==0.21.0",
+  "AbstractRuntime[apple]==0.22.0",
   "abstractagent[apple]==0.6.1",
   "AbstractMemory[all-apple]==0.5.2",
 ]
@@ -225,7 +227,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]==0.21.0",
+  "AbstractRuntime[gpu]==0.22.0",
   "abstractagent[gpu]==0.6.1",
   "AbstractMemory[all-gpu]==0.5.2",
 ]

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 CANARY = "BOB-MAIL-CANARY-7c2"
 
@@ -35,7 +36,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     (ws / "notes.txt").write_text("a workspace file\n", encoding="utf-8")
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

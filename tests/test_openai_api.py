@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from abstractgateway import core_endpoint as ce
 from abstractgateway import network_exposure as ne
 from abstractruntime.integrations.abstractcore import server_facade
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -69,7 +70,7 @@ class CoreStub:
 def gw(tmp_path, monkeypatch):
     data = tmp_path / "runtime"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token-long-enough")

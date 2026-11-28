@@ -45,7 +45,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install "abstractruntime==0.21.0"   # the version this gateway pins
+pip install "abstractruntime==0.22.0"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -85,7 +85,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.21.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.22.0 or later in the gateway's Python, then start again. See
 [automations.md](./automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -222,9 +222,12 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 
 ### `GET /api/gateway/bundles` returns no bundles
 
-- `ABSTRACTGATEWAY_FLOWS_DIR` points at an empty directory. Unset it to serve
-  the shipped bundles ([shipped-workflows.md](./shipped-workflows.md)), or
-  upload a bundle with `POST /api/gateway/bundles/upload`.
+- The workflow folder in use is empty: the one given with `--flows-dir`, or
+  the one the data folder remembers (`<data dir>/config/workflow-folder.json`).
+  Start once with `--flows-dir` naming a folder that holds bundles (the shipped
+  ones are in the gateway's own `flows/bundles` folder,
+  [shipped-workflows.md](./shipped-workflows.md)), or upload a bundle with
+  `POST /api/gateway/bundles/upload`.
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 

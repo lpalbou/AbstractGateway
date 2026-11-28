@@ -58,7 +58,7 @@ def short_startup_path():
         yield Path(directory)
 
 # Operator-exported path knobs that would steer a test at real data
-# (ABSTRACTGATEWAY_FLOWS_DIR, HF_HUB_CACHE, ABSTRACTCORE_JOBS_DIR, ...).
+# (ABSTRACTGATEWAY_DATA_DIR, HF_HUB_CACHE, ABSTRACTCORE_JOBS_DIR, ...).
 _PATH_KNOB = _re.compile(
     r"^(ABSTRACT[A-Z0-9_]*|HF_[A-Z0-9_]*|HUGGINGFACE_[A-Z0-9_]*)_(DIR|DIRS|PATH|FILE|ROOT|ROOTS|HOME|CACHE|REGISTRY)$"
 )
@@ -838,7 +838,15 @@ def _isolate_gateway_runtime_env(
     (base / "runtime").mkdir(parents=True, exist_ok=True)
     (base / "flows").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(base / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(base / "flows"))
+    # The workflow folder is no environment variable (a `--flows-dir` flag; in-process, the module
+    # attribute the flag sets): every test serves its own empty tmp folder unless it names another.
+    # A spawned `serve`/`runner` inherits NOTHING from this: it must be given `--flows-dir`.
+    from abstractgateway import workflow_folder as _workflow_folder
+
+    monkeypatch.setattr(_workflow_folder, "chosen", (base / "flows").resolve())
+    # A process keeps the folder it serves per data dir (workflow_folder.serving): each test starts
+    # with none kept, so one test's service build never decides another test's folder.
+    monkeypatch.setattr(_workflow_folder, "serving", {})
     # The gateway's DEFAULT workspace root (runtime_config._workspace_root_fallback)
     # is the monorepo root when the runtime sits in one, else the process cwd:
     # machine state, not test state. A test asserting "this folder is OUTSIDE

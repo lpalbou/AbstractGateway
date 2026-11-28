@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from email_fixtures import memory_keyring  # noqa: F401 - autouse: the OS keychain stays untouched
 from mcp_fakes import FakeHttpMcp, write_stdio_fake
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 ADMIN = {"Authorization": "Bearer admin-token"}
@@ -26,7 +27,7 @@ SECRET = "sk-test-VERY-SECRET-1234"
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data = tmp_path / "runtime"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")

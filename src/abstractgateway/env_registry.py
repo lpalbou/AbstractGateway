@@ -136,7 +136,6 @@ _FAMILY_RULES: Tuple[Tuple[str, EnvVarSpec], ...] = (
 _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     # --- BOOTSTRAP (deployment): locate/trust the stores + serve topology ---
     _spec("ABSTRACTGATEWAY_DATA_DIR", DEPLOYMENT, note="bootstrap: locates every store"),
-    _spec("ABSTRACTGATEWAY_FLOWS_DIR", DEPLOYMENT, note="bootstrap: bundle dir"),
     _spec("ABSTRACTGATEWAY_VISUALFLOWS_DIR", DEPLOYMENT),
     _spec("ABSTRACTGATEWAY_WORKFLOW_CATALOG_BUNDLES_DIR", DEPLOYMENT),
     _spec("ABSTRACTGATEWAY_WORKFLOW_CATALOG_FILE", DEPLOYMENT),
@@ -369,8 +368,6 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("OPENAI_IMAGE_MODEL", FOREIGN, owner="core"),
     _spec("OPENAI_IMAGE_MODEL_ID", FOREIGN, owner="core"),
     _spec("ABSTRACTFLOW_RUNTIME_DIR", LEGACY_ALIAS, alias_of="ABSTRACTGATEWAY_DATA_DIR"),
-    _spec("ABSTRACTFLOW_FLOWS_DIR", LEGACY_ALIAS, alias_of="ABSTRACTGATEWAY_FLOWS_DIR"),
-    _spec("ABSTRACTFRAMEWORK_WORKFLOWS_DIR", DEPLOYMENT, note="framework-level bundle dir"),
     _spec("ABSTRACTFRAMEWORK_DATA_REGISTRY", DEPLOYMENT, note="machine-level data-home registry path"),
     # Test/UAT seams read by maintenance code.
     _spec("ABSTRACTCODE_WEB_UAT_PORT", DEPLOYMENT, scope="process", note="UAT seam"),

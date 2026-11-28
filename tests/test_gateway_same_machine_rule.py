@@ -12,6 +12,8 @@ from typing import Dict, Optional
 import pytest
 
 from abstractgateway.security import same_machine as sm
+from abstractgateway import workflow_folder
+from pathlib import Path
 
 OWN = ["127.0.0.1", "::1", "192.168.1.175"]
 SESSION = "x-abstractgateway-session"
@@ -106,7 +108,7 @@ def test_serve_pins_forwarded_allow_ips_to_loopback(tmp_path, monkeypatch: pytes
     monkeypatch.setattr(cli, "_serve_with_host_controls", fake_serve)
     monkeypatch.setenv("FORWARDED_ALLOW_IPS", "*")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     try:
         cli.main(["serve", "--no-tray", "--port", "18899", "--data-dir", str(tmp_path / "data")])
     except SystemExit:

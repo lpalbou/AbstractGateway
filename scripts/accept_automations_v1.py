@@ -244,7 +244,6 @@ class Gateway:
         env.update({
             "HOME": str(home),
             "ABSTRACTGATEWAY_DATA_DIR": str(self.data_dir / "runtime"),
-            "ABSTRACTGATEWAY_FLOWS_DIR": str(self.data_dir / "bundles"),
             "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle",
             "ABSTRACTGATEWAY_AUTH_TOKEN": self.token,
             "ABSTRACTGATEWAY_USER_AUTH": "0",
@@ -265,7 +264,8 @@ class Gateway:
         return env
 
     def start(self) -> None:
-        cmd = [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(self.port), "--no-tray", "--no-print-token"]
+        cmd = [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(self.port), "--no-tray", "--no-print-token",
+               "--flows-dir", str(self.data_dir / "bundles")]
         self.proc = subprocess.Popen(cmd, env=self.env(), stdout=self.log, stderr=self.log, start_new_session=True)
         deadline = time.time() + 120
         while time.time() < deadline:

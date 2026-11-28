@@ -193,7 +193,7 @@ def _default_flows_dir() -> str:
             continue
     raise RuntimeError(
         "AbstractGateway default bundle registry is missing the shipped basic-agent bundle. "
-        "Reinstall or rebuild abstractgateway, or set ABSTRACTGATEWAY_FLOWS_DIR to a bundle directory containing basic-agent."
+        "Reinstall or rebuild abstractgateway, or start it with --flows-dir naming a bundle directory containing basic-agent."
     )
 
 
@@ -238,7 +238,7 @@ def verify_basic_agent_loadable(flows_dir: Path) -> None:
             "flows dir %s carries no basic-agent.flow — the default framework agent "
             "is unavailable (entity summons and default runs that rely on it will "
             "refuse); this is allowed for custom-bundle deployments, but if it is "
-            "not deliberate, unset ABSTRACTGATEWAY_FLOWS_DIR or point it at a "
+            "not deliberate, start with --flows-dir naming a "
             "directory containing the shipped basic-agent",
             flows_dir,
         )
@@ -251,7 +251,7 @@ def verify_basic_agent_loadable(flows_dir: Path) -> None:
             f"basic-agent bundle at {bundle_path} is present but NOT USABLE as the default "
             f"framework agent: {reason}. A broken default agent would fail every entity "
             "summon at run-time; refusing at boot. Reinstall/rebuild abstractgateway, or "
-            "repair/replace the bundle (set ABSTRACTGATEWAY_FLOWS_DIR to a directory with "
+            "repair/replace the bundle (start with --flows-dir naming a directory with "
             "a valid basic-agent)."
         ) from cause
 
@@ -336,12 +336,16 @@ class GatewayHostConfig:
         # Unset = host_paths resolution: ./runtime when it exists in the CWD
         # (developer checkout), else the per-OS user data directory.
         from .host_paths import default_data_dir
+        from . import workflow_folder
 
         data_dir_raw = _env("ABSTRACTGATEWAY_DATA_DIR", "ABSTRACTFLOW_RUNTIME_DIR") or str(default_data_dir())
+        # The workflow folder: this process's `--flows-dir`, else the folder this process already
+        # serves for the data folder, else the folder the data folder remembers (workflow_folder.py:
+        # a workflow that exists is used whichever code runs), else the folder next to the running code.
         flows_dir_raw = (
-            _env("ABSTRACTGATEWAY_FLOWS_DIR")
-            or _env("ABSTRACTFRAMEWORK_WORKFLOWS_DIR")
-            or _env("ABSTRACTFLOW_FLOWS_DIR")
+            workflow_folder.chosen
+            or workflow_folder.serving.get(Path(data_dir_raw).expanduser().resolve())
+            or workflow_folder.remembered(Path(data_dir_raw).expanduser().resolve())
             or _default_flows_dir()
         )
         # Boot LOADABILITY check on the EFFECTIVE flows dir (flow c756 →

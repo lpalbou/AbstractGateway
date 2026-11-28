@@ -26,6 +26,7 @@ import pytest
 
 from abstractruntime.core.models import EffectType
 from abstractruntime.integrations.abstractmemory import ENTITY_HOME_EFFECT_TYPES
+from abstractgateway import workflow_folder
 
 # ONE SOURCE (flow c5237): the pin covers the FULL entity-home set the
 # runtime binds in-process — originally seven (seam + diary), grown to
@@ -57,7 +58,7 @@ def test_reload_bundles_keeps_entity_routing_armed(tmp_path: Path, monkeypatch: 
     from abstractgateway.service import create_default_gateway_service
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     svc = create_default_gateway_service(config=GatewayHostConfig.from_env())
@@ -97,7 +98,7 @@ def test_reload_survives_repeated_reloads(tmp_path: Path, monkeypatch: pytest.Mo
     from abstractgateway.service import create_default_gateway_service
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     svc = create_default_gateway_service(config=GatewayHostConfig.from_env())
@@ -117,7 +118,7 @@ def test_rebuild_hook_failure_is_loud_not_fatal(tmp_path: Path, monkeypatch: pyt
     from abstractgateway.service import create_default_gateway_service
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
 
     svc = create_default_gateway_service(config=GatewayHostConfig.from_env())

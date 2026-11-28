@@ -13,6 +13,8 @@ import os
 from typing import Dict
 
 import pytest
+from abstractgateway import workflow_folder
+from pathlib import Path
 
 _NAMES = (
     "AF_TEST_EMAIL_ADDRESS",
@@ -52,7 +54,7 @@ def test_live_connect_test_notify_and_disconnect(tmp_path, monkeypatch) -> None:
         if name.startswith("ABSTRACT_EMAIL_"):
             monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "gw"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "live-admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

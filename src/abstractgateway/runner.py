@@ -1535,6 +1535,15 @@ class GatewayRunner:
                 # a fresh request out from under the handshake.
                 self._clear_takeover_request(only_pid=None)
                 logger.info("GatewayRunner started (base_dir=%s)", self._base_dir)
+                # A failure never ends an automation: one whose controller ENDED failed (a crash,
+                # a host fault) is brought back, armed for its next scheduled time (each one that
+                # cannot be is logged by its id inside; nothing here stops the runner).
+                try:
+                    from abstractruntime.automations.commands import recover_stopped_automations
+
+                    recover_stopped_automations(self._host.runtime, now=utc_now_iso())
+                except Exception:
+                    logger.exception("GatewayRunner: bringing back stopped automations failed (base_dir=%s)", self._base_dir)
                 yielded = self._loop()
                 if not yielded:
                     return
@@ -3082,6 +3091,19 @@ class GatewayRunner:
                     run_id,
                 )
                 return
+
+        # An automation stays an automation: a controller this tick left `failed` (its tick raised,
+        # or an effect failed without raising) is armed again for its next scheduled time.
+        from abstractruntime.automations.models import CONTROLLER_WORKFLOW_ID
+
+        if getattr(state, "status", None) == RunStatus.FAILED and str(getattr(state, "workflow_id", "") or "") == CONTROLLER_WORKFLOW_ID:
+            try:
+                from abstractruntime.automations.commands import revive_dead_controller
+
+                if revive_dead_controller(runtime, state, now=utc_now_iso()):
+                    state = runtime.run_store.load(run_id) or state
+            except Exception:
+                logger.exception("GatewayRunner: automation %s could not be brought back after its failure", run_id)
 
         # Per-user stream pointers (backlog 1046): AFTER the tick's save.
         self._stream_run(state)

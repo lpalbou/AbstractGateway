@@ -23,7 +23,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.21.0 (an exact pin), installed with the gateway; the gateway
+- AbstractRuntime 0.22.0 (an exact pin), installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your
@@ -73,13 +73,12 @@ File-backed stores are the default and easiest for development.
 ```bash
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -108,8 +107,8 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 If the bundle response's `items` list is empty (see also
 [troubleshooting.md](./troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
-- point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
-  directory containing `*.flow` files (or a single `.flow` file), or
+- start the gateway with `--flows-dir` naming the shipped bundle directory or
+  another directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
 
 ```bash

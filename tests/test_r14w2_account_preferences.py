@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from automations_fixtures import shell_agent_flow
+from abstractgateway import workflow_folder
 
 ADMIN = {"Authorization": "Bearer admin-token"}
 CODE = "abstractcode.agent.v1"
@@ -62,7 +63,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _bundle(shared / "helper@1.0.0.flow", bundle_id="helper", name="Helper", interfaces=[ASSIST])
     data = tmp_path / "data"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(shared))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(shared).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))

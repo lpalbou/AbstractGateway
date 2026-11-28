@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -152,12 +153,12 @@ def test_bundle_host_runtimes_carry_the_steer_sidecar(tmp_path: Path, monkeypatc
 
     from abstractgateway.config import _default_flows_dir
 
-    # conftest points ABSTRACTGATEWAY_FLOWS_DIR at an EMPTY tmp dir; plant
+    # conftest points the workflow folder (workflow_folder.chosen) at an EMPTY tmp dir; plant
     # the shipped basic-agent so the host has a bundle to build a runtime for.
     flows = tmp_path / "flows"
     flows.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(_default_flows_dir()) / "basic-agent.flow", flows / "basic-agent.flow")
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
 
     with _client() as client:
         from abstractgateway.service import get_gateway_service

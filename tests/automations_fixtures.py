@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -27,7 +28,7 @@ def gateway_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, runner: bool
     data_dir.mkdir(parents=True, exist_ok=True)
     flows_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", origins)

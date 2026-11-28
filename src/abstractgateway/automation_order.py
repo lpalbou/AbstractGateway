@@ -2,12 +2,13 @@
 
 ONE rule, served to every client so none re-sorts by a rule of its own:
 
-- `section` says where a row is drawn: `"active"` (every automation that is neither paused nor
-  archived: status `active`, `completed` or `failed`), `"paused"` or `"archived"`.
+- `section` says where a row is drawn: `"active"` (status `active` or `completed`), `"failed"`
+  (the automation itself stopped: status `failed`, not "its last run failed"), `"paused"` or
+  `"archived"`. A client that does not know `failed` places such a row by its status.
 - `last_activity_at` is the automation's last change as its controller run recorded it
   (`updated_at`): it moves on every controller tick (an occurrence admitted or finished, a retry,
   a pause, resume, cancel or revision, an archive), never on a read or a "seen" mark.
-- A listing is ordered by section (active, then paused, then archived), then by
+- A listing is ordered by section (active, then failed, then paused, then archived), then by
   `last_activity_at`, newest first, then by `automation_id` (descending) so ties are stable.
 
 The keyset cursor names the last row of a page by that same key, so every page continues where
@@ -22,9 +23,11 @@ import base64
 import json
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypeVar
 
-SECTIONS: Tuple[str, ...] = ("active", "paused", "archived")
+SECTIONS: Tuple[str, ...] = ("active", "failed", "paused", "archived")
 _RANK = {name: i for i, name in enumerate(SECTIONS)}
-_CURSOR_PREFIX = "auto2:"
+# `auto3:` since the `failed` section (2026-11-27) moved the ranks: an `auto2:` cursor is refused,
+# never misread.
+_CURSOR_PREFIX = "auto3:"
 
 OrderKey = Tuple[int, str, str]
 T = TypeVar("T")
@@ -35,11 +38,9 @@ class InvalidOrderCursor(ValueError):
 
 
 def automation_section(status: str) -> str:
-    """`archived` and `paused` keep their own sections; every other status reads `active`."""
-    if status == "archived":
-        return "archived"
-    if status == "paused":
-        return "paused"
+    """`archived`, `failed` and `paused` keep their own sections; every other status reads `active`."""
+    if status in ("archived", "failed", "paused"):
+        return status
     return "active"
 
 

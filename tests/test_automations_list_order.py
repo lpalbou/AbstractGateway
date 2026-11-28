@@ -29,7 +29,7 @@ from automations_fixtures import ECHO_FLOW_ID, HEADERS, gateway_env, wait_until,
 
 @pytest.mark.parametrize(
     "status,section",
-    [("active", "active"), ("completed", "active"), ("failed", "active"), ("paused", "paused"), ("archived", "archived")],
+    [("active", "active"), ("completed", "active"), ("failed", "failed"), ("paused", "paused"), ("archived", "archived")],
 )
 def test_every_status_has_one_section(status: str, section: str) -> None:
     assert automation_section(status) == section
@@ -44,6 +44,7 @@ def _entries():
         ("completed", "2026-11-02T11:00:00+00:00", "c-new"),
         ("active", "2026-11-02T08:00:00+00:00", "a-tie-2"),
         ("active", "", "a-never"),
+        ("failed", "2026-11-03T00:00:00+00:00", "f-new"),
     ]
     return [(order_key(status=s, last_activity_at=at, automation_id=aid), aid) for s, at, aid in rows]
 
@@ -51,6 +52,7 @@ def _entries():
 def test_active_first_then_paused_each_newest_first_ties_by_id_desc() -> None:
     assert [aid for _k, aid in ordered(_entries())] == [
         "c-new", "a-tie-2", "a-tie-1", "a-old", "a-never",  # active section (completed included)
+        "f-new",  # failed section (the automation itself stopped), before the paused one
         "p-new", "p-old",  # paused section
     ]
 
@@ -70,13 +72,16 @@ def test_pages_walk_the_same_order_exactly_once(limit: int) -> None:
 def test_cursor_round_trip_and_refusals() -> None:
     key = order_key(status="paused", last_activity_at="2026-11-02T10:00:00+00:00", automation_id="x")
     assert decode_cursor(encode_cursor(key)) == key
-    for bad in ("garbage", "auto1:WyIyMDI2IiwieCJd", "auto2:not-base64!", encode_cursor((9, "", "x"))):
+    # `auto2:` cursors were issued before the failed section moved the ranks: refused, never misread.
+    for bad in ("garbage", "auto1:WyIyMDI2IiwieCJd", "auto2:WzEsIiIsIngiXQ==", "auto3:not-base64!", encode_cursor((9, "", "x"))):
         with pytest.raises(InvalidOrderCursor):
             decode_cursor(bad)
 
 
 def test_section_counts() -> None:
-    assert section_counts(["active", "paused", "failed", "archived", "paused"]) == {"active": 2, "paused": 2, "archived": 1}
+    assert section_counts(["active", "paused", "failed", "archived", "paused", "completed"]) == {
+        "active": 2, "failed": 1, "paused": 2, "archived": 1,
+    }
 
 
 # --------------------------------------------------------------------- the route, live gateway
@@ -131,7 +136,7 @@ def _all_pages(c: TestClient, limit: int) -> list:
             return seen
 
 
-_SECTION_RANK = {"active": 0, "paused": 1, "archived": 2}
+_SECTION_RANK = {"active": 0, "failed": 1, "paused": 2, "archived": 3}
 
 
 def _by_the_rule(items: list) -> list:
@@ -158,6 +163,7 @@ def test_the_listing_is_active_by_last_activity_then_paused_and_pausing_moves_a_
     assert [s["automation_id"] for s in body["items"]] == _by_the_rule(body["items"]) and len(body["items"]) == 3
     assert all(s["section"] == "active" and s["last_activity_at"] for s in body["items"])
     assert body["paused_automations_count"] == 0 and body["archived_automations_count"] == body["archived_automations"] == 0
+    assert body["failed_automations_count"] == 0
     created = {s["automation_id"]: s["last_activity_at"] for s in body["items"]}
 
     # A runs: its activity moves; the list follows the rule over the new stamps.

@@ -175,7 +175,6 @@ def main() -> int:
     os.makedirs(os.path.join(data, "flows"), exist_ok=True)
     os.environ.update({
         "ABSTRACTGATEWAY_DATA_DIR": os.path.join(data, "runtime"),
-        "ABSTRACTGATEWAY_FLOWS_DIR": os.path.join(data, "flows"),
         "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle",
         "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
         "ABSTRACTGATEWAY_ALLOWED_ORIGINS": "*",
@@ -186,6 +185,12 @@ def main() -> int:
     })
 
     import uvicorn
+
+    from pathlib import Path
+
+    from abstractgateway import workflow_folder
+
+    workflow_folder.chosen = Path(data, "flows").resolve()  # this process's `--flows-dir`
 
     from abstractgateway.app import app
     from abstractgateway.replay_view import get_view_hub

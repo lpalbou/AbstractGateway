@@ -26,6 +26,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from abstractcore.testing.mailserver import FakeImapServer, FakeOAuthServer, FakeSmtpServer, TestCA, TokenRegistry, build_message
+from abstractgateway import workflow_folder
 
 ADMIN_TOKEN = "admin-token-email-tests"
 ADMIN = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
@@ -166,7 +167,7 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Dict[str, Any]:
 
     data_dir = tmp_path / "gw"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", ADMIN_TOKEN)

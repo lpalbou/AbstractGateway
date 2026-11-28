@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 from fastapi.testclient import TestClient
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -124,7 +125,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bundles_dir = tmp_path / "bundles"
     _write_llm_bundle(bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", TOKEN)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -548,7 +549,7 @@ def test_another_users_run_is_404_and_leaks_no_delta(tmp_path: Path, monkeypatch
     bundles_dir = tmp_path / "bundles"
     _write_llm_bundle(bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
@@ -700,7 +701,7 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
 
     from abstractgateway import live_deltas as ld
 
-    assert ld.ABSTRACTRUNTIME_FLOOR == "0.21.0"
+    assert ld.ABSTRACTRUNTIME_FLOOR == "0.22.0"
     assert ld._version_tuple("0.15.2") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.15.3") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.16.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
@@ -715,7 +716,8 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
     assert ld._version_tuple("0.19.6") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.19.7") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
     assert ld._version_tuple("0.20.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
-    assert not (ld._version_tuple("0.21.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
+    assert ld._version_tuple("0.21.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR)
+    assert not (ld._version_tuple("0.22.0") < ld._version_tuple(ld.ABSTRACTRUNTIME_FLOOR))
     runtime = types.SimpleNamespace(add_terminal_hook=lambda *a, **k: None, set_email_context_resolver=lambda *a, **k: None, set_event_inbox=lambda *a, **k: None, set_live_delta_sink=lambda *a, **k: None, set_session_tool_policy_store=lambda *a, **k: None)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.15.2")
     with pytest.raises(ld.RuntimeTooOld) as info:
@@ -744,6 +746,10 @@ def test_runtime_0_15_2_is_below_the_floor_by_version(monkeypatch: pytest.Monkey
         ld.require_runtime_features(runtime)
     assert "freeze while the gateway is paused" not in str(info.value)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.21.0")
+    with pytest.raises(ld.RuntimeTooOld, match="a failure never turns off") as info:
+        ld.require_runtime_features(runtime)
+    assert "Windows command sandbox cannot protect" not in str(info.value)
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.22.0")
     ld.require_runtime_features(runtime)
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "unknown")
     ld.require_runtime_features(runtime)
@@ -766,7 +772,7 @@ def test_a_runtime_without_the_0_19_0_api_is_refused_by_name(monkeypatch: pytest
     monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.19.5")
     with pytest.raises(ld.RuntimeTooOld, match="cancellation publication"):
         ld.require_runtime_features(runtime)
-    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.21.0")
+    monkeypatch.setattr(ld, "_installed_runtime_version", lambda: "0.22.0")
     ld.require_runtime_features(runtime)  # the API present and the version at the floor: accepted
     for module, name, words in (
         (abstractruntime, "DEFAULT_MAX_ITERATIONS", "abstractruntime.DEFAULT_MAX_ITERATIONS"),

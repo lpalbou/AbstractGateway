@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from mcp_run_fakes import FakeHttpEcho, stdio_calls, write_stdio_server
 from email_fixtures import memory_keyring  # noqa: F401 - autouse: the OS keychain stays untouched
 from timing import patient  # noqa: E402 - tests/timing.py (a wait bound only a hang reaches)
+from abstractgateway import workflow_folder
 
 TOKEN = "t"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -104,10 +105,10 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runtime_dir, bundles_dir = tmp_path / "runtime", tmp_path / "bundles"
     _write_bundle(bundles_dir)
     _stub_llm(monkeypatch)
-    for k, v in {"ABSTRACTGATEWAY_DATA_DIR": str(runtime_dir), "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles_dir),
-                 "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
+    for k, v in {"ABSTRACTGATEWAY_DATA_DIR": str(runtime_dir), "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
                  "ABSTRACTGATEWAY_ALLOWED_ORIGINS": "*", "ABSTRACTGATEWAY_POLL_S": "0.05", "ABSTRACTGATEWAY_TICK_WORKERS": "1"}.items():
         monkeypatch.setenv(k, v)
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     from abstractgateway.app import app
 
     with TestClient(app) as client:

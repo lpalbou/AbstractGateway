@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from abstractgateway import skills_shelf
+from abstractgateway import workflow_folder
 
 
 def _registry(path: Path, *names: str) -> Path:
@@ -116,7 +117,7 @@ def test_skills_route_and_reseed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     bundles = tmp_path / "bundles"
     _write_min_bundle(bundles_dir=bundles, bundle_id="b", flow_id="root")
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     from abstractgateway.app import app

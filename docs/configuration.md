@@ -39,7 +39,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 AbstractFramework dependencies are exact pins (`==`) of the versions this release was validated with, in the base install and in every extra (see `pyproject.toml`); third-party dependencies keep floors. The notes say what each version brought:
-- `AbstractRuntime==0.21.0` (the command-sandbox facade names the drives the Windows sandbox cannot protect; 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime==0.22.0` (a failure never turns an automation off: an automation that stopped on an error comes back by itself; 0.21.0: the command-sandbox facade names the drives the Windows sandbox cannot protect; 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore==2.39.0` (the Windows command sandbox for every workspace setting, and the drives it cannot protect; 2.38.0: the Windows command sandbox: agents' commands run on Windows; 2.37.0: streamed native tool calls arrive once and complete; 2.36.0: the recommended embeddings route and the NVIDIA text recommendation by total GPU memory; 2.35.2: bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice==0.21.1` (AbstractCore 2.39.0's own floor; 0.20.0: segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent==0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -104,13 +104,26 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   cannot open those secrets. What it protects:
   [security.md](./security.md#sealed-secrets-one-key-file-per-data-folder).
   Evidence: `src/abstractgateway/security/sealing.py`
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
-  packaged shipped bundle directory, which carries `basic-agent`,
-  `coding-agent`, `deep-research`, `co-scientist`, and more
-  ([shipped-workflows.md](./shipped-workflows.md)). If the shipped bundles are
-  unavailable, Gateway fails clearly instead of starting with an empty default
-  registry. Setting this replaces the shipped registry with your own directory.
-  Evidence: `src/abstractgateway/config.py`
+- The workflow folder is a parameter, not an environment variable:
+  `abstractgateway serve --flows-dir <folder>` (and `runner --flows-dir
+  <folder>`), optional. Without it, Gateway uses the workflow folder this data
+  folder remembers, else the packaged shipped bundle directory next to the
+  running code, which carries `basic-agent`, `coding-agent`, `deep-research`,
+  `co-scientist`, and more ([shipped-workflows.md](./shipped-workflows.md)). If
+  the shipped bundles are unavailable, Gateway fails clearly instead of starting
+  with an empty default registry. Naming your own folder replaces the shipped
+  registry with your own directory.
+  The gateway remembers the workflow folder it uses in
+  `<data dir>/config/workflow-folder.json` and keeps using it whatever copy of
+  the code is running: a later start without `--flows-dir` keeps it, a start
+  with `--flows-dir` changes it. `abstractgateway-config init --flows-dir
+  <folder>` remembers one before the first start. If the remembered folder is
+  missing at a start, that start serves the folder next to the running code,
+  says so in one log line, and keeps the record, so the folder is served again
+  as soon as it is back. The environment variables
+  `ABSTRACTGATEWAY_FLOWS_DIR`, `ABSTRACTFRAMEWORK_WORKFLOWS_DIR` and
+  `ABSTRACTFLOW_FLOWS_DIR` are no longer read.
+  Evidence: `src/abstractgateway/cli.py`, `src/abstractgateway/config.py`, `src/abstractgateway/workflow_folder.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (the default and only
   supported source)  
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
@@ -1664,7 +1677,7 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
   loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
   LM Studio, llama.cpp server) keeps its own rule. The underlying idle-unload API needs
-  AbstractRuntime 0.18 or later; this Gateway requires 0.21.0 or later.
+  AbstractRuntime 0.18 or later; this Gateway requires 0.22.0 or later.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -1765,7 +1778,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--flows-dir FOLDER] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -1775,6 +1788,8 @@ Most-used:
   gateway runs* is off; closing the lid or choosing Sleep still sleeps it.
   - `--keep-awake on|off`: that setting for this run only (default: the saved `host.keep_awake`, else on);
     see [Host control](#host-control-pause-desktop-tray-restart-update).
+  - `--flows-dir FOLDER`: the workflow folder to serve, remembered for the data folder
+    ([Paths + workflow source](#paths--workflow-source)); `runner` takes it too.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,

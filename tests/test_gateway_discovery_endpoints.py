@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from abstractruntime.utils.workspace_paths import build_workspace_mounts
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +72,7 @@ def _make_client(*, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Te
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

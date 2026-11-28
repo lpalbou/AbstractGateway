@@ -19,6 +19,7 @@ from typing import Any, Dict
 import pytest
 
 from model_host_fakes import FakeOpenAIServer
+from abstractgateway import workflow_folder
 
 STRICT_MTP = {"mode": "native_mtp", "num_draft_tokens": 2, "require_acceleration": True}
 
@@ -132,7 +133,7 @@ def test_a_saved_flow_with_mtp_on_a_model_without_mtp_runs_without_it_and_the_le
     from abstractruntime import RunStatus
 
     bundle_id, flow_id = _bundle(tmp_path / "bundles", STRICT_MTP)
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     host = _host_with_real_llm_handler(tmp_path, monkeypatch, fake_server)
 
     run_id = host.start_run(flow_id=flow_id, bundle_id=bundle_id, input_data={})
@@ -160,7 +161,7 @@ def test_a_run_level_mtp_request_on_a_model_without_mtp_runs_without_it_and_the_
     from abstractruntime import RunStatus
 
     bundle_id, flow_id = _bundle(tmp_path / "bundles", None)  # the node itself asks no MTP
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     host = _host_with_real_llm_handler(tmp_path, monkeypatch, fake_server)
 
     run_id = host.start_run(flow_id=flow_id, bundle_id=bundle_id, input_data={"_runtime": {"speculation": STRICT_MTP}})
@@ -186,7 +187,7 @@ def test_without_the_guard_the_same_saved_flow_fails_inside_abstractcore(
 
     monkeypatch.setattr(guard, "install_speculation_guard", lambda runtime: False)
     bundle_id, flow_id = _bundle(tmp_path / "bundles", STRICT_MTP)
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     host = _host_with_real_llm_handler(tmp_path, monkeypatch, fake_server)
 
     run_id = host.start_run(flow_id=flow_id, bundle_id=bundle_id, input_data={})

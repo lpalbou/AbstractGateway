@@ -24,7 +24,9 @@ it, the gateway serves the note read API under `/api/gateway/note/` (see
 [api.md](api.md#abstractnote-optional)), binds the note tools to each user's own notebook
 (`abstractnote/` under the user's data plane, auto-approved: they touch nothing but that
 notebook), and
-loads the `abstractnote` workflows as framework bundles. Without the package the app can still
+loads the `abstractnote` workflows as framework bundles: the installed version, and every
+older version packed in this data folder before (`<data dir>/extensions/abstractnote/`), so an
+AbstractNote upgrade does not unload the version a run or an automation points at. Without the package the app can still
 be installed and started, but every `/api/gateway/note/` request answers 404 and the
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 

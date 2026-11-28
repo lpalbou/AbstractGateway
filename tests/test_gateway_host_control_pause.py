@@ -30,6 +30,7 @@ from abstractruntime.core.models import RunStatus
 
 from abstractgateway import host_control
 from abstractgateway.runner import GatewayRunner, GatewayRunnerConfig, _runtime_supports_step_gate
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -218,7 +219,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, client: Optional
     token = "operator-token-for-tests"
     (tmp_path / "flows").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     from abstractgateway.app import app

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -26,7 +27,7 @@ def test_segment_fields_and_segment_end_lines_pass_through_and_the_text_is_not_a
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
     flows = tmp_path / "flows"
     flows.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
@@ -95,7 +96,7 @@ def test_a_blank_text_is_still_refused(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     flows = tmp_path / "flows"
     flows.mkdir()
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(flows))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(flows).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")

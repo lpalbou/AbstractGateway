@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from tests.test_gateway_artifacts_endpoint import _write_test_bundle
 from tests.test_gateway_session_history_seed import _write_min_bundle
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -39,7 +40,7 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bundles_dir = tmp_path / "bundles"
     bundle_id, flow_id = _write_test_bundle(bundles_dir=bundles_dir)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

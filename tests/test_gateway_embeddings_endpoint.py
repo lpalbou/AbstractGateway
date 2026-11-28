@@ -7,6 +7,7 @@ import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
+from abstractgateway import workflow_folder
 
 
 def _write_minimal_bundle(*, bundles_dir: Path) -> None:
@@ -72,7 +73,7 @@ def test_gateway_embeddings_endpoint_returns_vectors(tmp_path: Path, monkeypatch
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -145,7 +146,7 @@ def test_gateway_embeddings_endpoint_rejects_model_override(tmp_path: Path, monk
 
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
@@ -209,10 +210,17 @@ def test_embedding_config_ignores_legacy_capability_defaults_file(tmp_path: Path
 
     from abstractgateway.embeddings_config import resolve_embedding_config
 
-    with pytest.raises(RuntimeError) as exc:
-        resolve_embedding_config(base_dir=runtime_dir)
-
-    assert "No execution-host embedding.text capability default is configured" in str(exc.value)
+    # The legacy file's route is never used. What the gateway answers instead depends on the
+    # host: with no AbstractCore store, AbstractCore fills in its fresh-install defaults, and
+    # those carry an embedding route only when an embedding engine is installed (a full
+    # install, e.g. a developer's machine); without one (the CI install) nothing is configured.
+    try:
+        resolved = resolve_embedding_config(base_dir=runtime_dir)
+    except RuntimeError as exc:
+        assert "No execution-host embedding.text capability default is configured" in str(exc)
+    else:
+        assert resolved.source == "abstractcore.capability_defaults"
+        assert (resolved.provider, resolved.model) != ("legacy-provider", "legacy-embedding")
 
 
 def test_remote_core_embeddings_client_posts_to_core_route(monkeypatch: pytest.MonkeyPatch) -> None:

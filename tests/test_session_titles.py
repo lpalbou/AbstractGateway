@@ -31,6 +31,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from automations_fixtures import HEADERS, chat_run, gateway_env, save_runs
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture()
@@ -386,7 +387,7 @@ def test_the_capability_is_advertised(client: TestClient) -> None:
 @pytest.fixture()
 def accounts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "bundles"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "bundles").resolve())
     (tmp_path / "bundles").mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setenv("ABSTRACTGATEWAY_SESSIONS_FILE", str(tmp_path / "sessions.json"))

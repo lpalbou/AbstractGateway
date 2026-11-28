@@ -20,6 +20,7 @@ from test_gateway_console_parity_web_fixes import _console_script, _run, _slice_
 from test_generated_media_gateway_contract import _wait_until, _write_image_bundle
 from test_openai_api import ADMIN, _peer, _set, gw  # noqa: F401 - gw is a fixture
 from test_openai_api_access import ALICE, _open
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -89,7 +90,7 @@ def _hermetic_gateway(tmp_path: Path, monkeypatch, bundle_id: str) -> str:
     _write_image_bundle(bundles_dir=bundles_dir, bundle_id=bundle_id, flow_id="root")
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

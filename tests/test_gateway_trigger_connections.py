@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from automations_fixtures import ECHO_FLOW_ID, write_echo_bundle
+from abstractgateway import workflow_folder
 
 ADMIN = {"Authorization": "Bearer admin-token"}
 BASE = "/api/gateway/triggers/connections"
@@ -43,7 +44,7 @@ def gw(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                 "trigger": {"source_id": "webhook.received", "source_version": 1, "config": {}, "connection_id": AUTHOR_CONNECTION}}
     ref = write_echo_bundle(bundles, automation_defaults=defaults)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

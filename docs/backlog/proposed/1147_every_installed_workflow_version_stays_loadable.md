@@ -132,3 +132,25 @@ Out:
   versions, resume a recorded 0.3.0 session, start a new capture (0.3.1).
 - Operator check after a local redeploy: an old Notes session opens in Code on its own version, no notice; a new
   Notes capture runs the latest.
+
+## 2026-11-28
+
+What happened on 2026-11-07 (UTC):
+- 08:56 AbstractNote was upgraded to 0.3.1; the gateway loaded only the new pack and the Notes processor pinned to
+  `abstractnote@0.3.0` died a minute later.
+- 16:51 the gateway restarted on code from another copy of the repository, whose `flows/bundles` held only the tracked
+  workflows; at 17:27 and 17:42 two Assistant automations pinned to `abstractassistant-orchestrator@0.0.16` and
+  `@0.0.17` died.
+- 18:15 it restarted on a third copy; at 19:53 one pinned to `@0.0.9` died. Nothing had been deleted: the folder the
+  gateway read was the one next to whichever code ran.
+
+Built: one rule. The gateway picks its workflow folder as `serve --flows-dir <folder>` (also `runner`; the operator
+ruled the same day that it is a parameter, and the environment variables are no longer read), else the
+folder the data folder remembers (`<data dir>/config/workflow-folder.json`, written at each start with the folder in
+use), else the folder next to the running code, as before. And the simple fix above: every packed AbstractNote version
+loads, the installed one first.
+
+Rejected by the operator on 2026-11-28: a larger design (a recorded folder that refused mismatched starts, a change
+command, a second source of shipped workflows, a start report, a tracked list of shipped versions). His words: "no no
+no, stop overengineering" and "IF the workflow exists, independently of the running folder, it MUST use it. PERIOD.
+STOP COMPLICATING THINGS."

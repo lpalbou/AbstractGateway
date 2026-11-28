@@ -73,9 +73,10 @@ def test_no_gateway_module_imports_abstractmemory_at_runtime(tmp_path: Path) -> 
     # The child resolves the same packages as this process (a relative PYTHONPATH must not change meaning).
     env["PYTHONPATH"] = os.pathsep.join(str(Path(p).resolve()) for p in sys.path if p and Path(p).exists())
     env["ABSTRACTGATEWAY_DATA_DIR"] = str(tmp_path / "runtime")
-    env["ABSTRACTGATEWAY_FLOWS_DIR"] = str(tmp_path / "flows")
+    # The workflow folder is this child's own (no environment variable names one any more).
+    prelude = f"import abstractgateway.workflow_folder as _wf, pathlib as _pl\n_wf.chosen = _pl.Path({str((tmp_path / 'flows').resolve())!r})\n"
     proc = subprocess.run(
-        [sys.executable, "-c", _SCRIPT], capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=300
+        [sys.executable, "-c", prelude + _SCRIPT], capture_output=True, text=True, env=env, cwd=str(tmp_path), timeout=300
     )
     assert proc.returncode == 0, proc.stderr[-4000:]
     result = json.loads(proc.stdout.strip().splitlines()[-1])

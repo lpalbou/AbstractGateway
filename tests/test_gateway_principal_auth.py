@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
+from abstractgateway import workflow_folder
 
 
 @pytest.fixture(autouse=True)
@@ -45,7 +46,7 @@ def test_gateway_user_registry_direct_import_is_not_order_sensitive() -> None:
 
 def _client(tmp_path: Path, monkeypatch, *, user_auth: bool = True) -> TestClient:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")
@@ -123,7 +124,7 @@ def test_legacy_gateway_token_resolves_default_admin(tmp_path: Path, monkeypatch
 
 def test_admin_routes_fail_closed_without_security_middleware(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_SECURITY", "1")
 
     from abstractgateway.routes import gateway_router
@@ -651,7 +652,7 @@ def test_gateway_browser_session_origin_expiry_logout_and_revocation_matrix(tmp_
 
 def test_gateway_service_router_uses_distinct_principal_data_planes(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
@@ -686,7 +687,7 @@ def test_gateway_service_router_uses_distinct_principal_data_planes(tmp_path: Pa
 
 def test_gateway_service_router_keeps_admin_on_default_data_plane(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")

@@ -718,6 +718,10 @@ def invalidate_gateway_service_for_runtime(*, tenant_id: str, runtime_id: str) -
 def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None) -> GatewayService:
     cfg = config or GatewayHostConfig.from_env()
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
+    # This process keeps the workflow folder it serves; the data folder remembers it (workflow_folder.py).
+    from .workflow_folder import started
+
+    started(Path(cfg.root_data_dir or cfg.data_dir), Path(cfg.framework_flows_dir or cfg.flows_dir))
     cfg.flows_dir.mkdir(parents=True, exist_ok=True)
     backend = str(getattr(cfg, "store_backend", "file") or "file").strip().lower() or "file"
     if backend == "file":

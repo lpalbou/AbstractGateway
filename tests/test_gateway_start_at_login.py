@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from abstractgateway import autostart
 from test_gateway_autostart import Registry, Runner, _exe
+from abstractgateway import workflow_folder
 
 pytestmark = pytest.mark.basic
 
@@ -138,7 +139,7 @@ def test_a_broken_registration_is_not_enabled_and_turning_on_repairs_it(tmp_path
 
 def test_route_is_admin_only_and_reads_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(tmp_path / "flows").resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_RUNNER", "0")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "admin-token")

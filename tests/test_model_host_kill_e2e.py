@@ -144,14 +144,14 @@ def test_kill_dash_nine_on_the_model_host_costs_the_request_not_the_gateway(tmp_
             "OPENAI_BASE_URL": fake.base_url, "OPENAI_API_KEY": "fake-key",
             "OLLAMA_BASE_URL": "http://127.0.0.1:9/", "LMSTUDIO_BASE_URL": "http://127.0.0.1:9/v1",
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
-            "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN, "ABSTRACTGATEWAY_FLOWS_DIR": str(bundles),
+            "ABSTRACTGATEWAY_AUTH_TOKEN": TOKEN,
             "ABSTRACTGATEWAY_WORKFLOW_SOURCE": "bundle", "ABSTRACTGATEWAY_POLL_S": "0.05",
             "ABSTRACTGATEWAY_STORE_BACKEND": "file", "MODEL_HOST_E2E_PROVIDER_LOG": str(provider_log),
         }
         log = tmp_path / "gateway.log"
         gw = subprocess.Popen(
             [sys.executable, "-m", "abstractgateway", "serve", "--tailscale-https", "off", "--model-host", "process", "--data-dir", str(data),
-             "--host", "127.0.0.1", "--port", str(port), "--no-tray"],
+             "--host", "127.0.0.1", "--port", str(port), "--no-tray", "--flows-dir", str(bundles)],
             env=env, stdout=log.open("w"), stderr=subprocess.STDOUT, cwd=str(tmp_path))
         client = httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10.0, trust_env=False)
         headers = {"Authorization": f"Bearer {TOKEN}"}

@@ -15,6 +15,7 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 from test_iphone_assistant_tool_declarations import wait_for
+from abstractgateway import workflow_folder
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=')
 
@@ -66,10 +67,10 @@ def media_gateway(request, tmp_path, monkeypatch):
         return original(llm=Provider(), tools=tools, artifact_store=artifact_store, run_store=run_store)
     monkeypatch.setattr(factory, 'build_effect_handlers', handlers)
     bundles = tmp_path / 'bundles'; bundles.mkdir(); shutil.copyfile(source, bundles / source.name)
-    for key, value in {'ABSTRACTGATEWAY_DATA_DIR': str(tmp_path / 'runtime'), 'ABSTRACTGATEWAY_FLOWS_DIR': str(bundles),
-        'ABSTRACTGATEWAY_WORKFLOW_SOURCE': 'bundle', 'ABSTRACTGATEWAY_AUTH_TOKEN': 'test-media',
+    for key, value in {'ABSTRACTGATEWAY_DATA_DIR': str(tmp_path / 'runtime'), 'ABSTRACTGATEWAY_WORKFLOW_SOURCE': 'bundle', 'ABSTRACTGATEWAY_AUTH_TOKEN': 'test-media',
         'ABSTRACTGATEWAY_ALLOWED_ORIGINS': '*', 'ABSTRACTGATEWAY_POLL_S': '0.02', 'ABSTRACTGATEWAY_TICK_WORKERS': '1'}.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles).resolve())
     from abstractgateway.app import app
     with TestClient(app, headers={'Authorization': 'Bearer test-media'}) as client:
         yield client, calls, behavior, version, flow

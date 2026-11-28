@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_gateway_runs_list_endpoint import _write_min_bundle
+from abstractgateway import workflow_folder
 
 
 def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -21,7 +22,7 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-coalesce", flow_id="root")
     token = "t"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
-    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setattr(workflow_folder, "chosen", Path(bundles_dir).resolve())
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
     monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")

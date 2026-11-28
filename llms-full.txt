@@ -1841,7 +1841,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 AbstractFramework dependencies are exact pins (`==`) of the versions this release was validated with, in the base install and in every extra (see `pyproject.toml`); third-party dependencies keep floors. The notes say what each version brought:
-- `AbstractRuntime==0.21.0` (the command-sandbox facade names the drives the Windows sandbox cannot protect; 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
+- `AbstractRuntime==0.22.0` (a failure never turns an automation off: an automation that stopped on an error comes back by itself; 0.21.0: the command-sandbox facade names the drives the Windows sandbox cannot protect; 0.20.0: an own-time loop freezes while its host is paused; on Windows a read-only default holds, own time runs and local helper commands keep their paths; 0.19.7: Windows: file saves while the file is read elsewhere and local image and video generation; 0.19.6: cancellation-safe state publication and resolution replay; 0.19.3: own time withdrawn: the turn in flight finishes, then nothing runs; 0.19.2: the visit ledger's activity fields and the membership-only topic read; 0.19.1: the self-knowledge brief served at `/entities/{name}/self-brief`; 0.19.0: the Stop fence every entity state write carries, the five-state life cycle's seams: the home state lock, the lifecycle generation, the job queue; the cognition profile and its sleep thresholds; who spoke on every turn; the one iteration default, 50; registered skill roots; authored titles and summaries and the authoring drain; tool results kept as artifacts of the entity's home; the digital identity record of each entity and the identity reference on the replay view's public updates; the idle unload setting and Keep loaded across restarts, `set_model_idle_unload` / `set_model_residency_locks`; a gateway stop interrupts a run instead of failing it, `update_kind` in replay, the slot-pool listing fields, the discovery facade's model errors; decisions through `run_facade.decide`, the history bundle's voice transport rule, the AbstractMemory facade and ledger rows by address for `/api/gateway/memory/*`, the session tool policy, the voice library and per-account voice stores, publishing to a channel, trigger connections for feeds and webhooks, the CloudEvents trigger envelope, run origin, `schedule_run` wakes, several mailboxes per user, and the run stores' mailbox index; per-user email, live replies and the built-in tool deny rules)
 - `abstractcore==2.39.0` (the Windows command sandbox for every workspace setting, and the drives it cannot protect; 2.38.0: the Windows command sandbox: agents' commands run on Windows; 2.37.0: streamed native tool calls arrive once and complete; 2.36.0: the recommended embeddings route and the NVIDIA text recommendation by total GPU memory; 2.35.2: bounded cached Hugging Face discovery; AbstractRuntime 0.19.0's original floor added: an unreachable model endpoint parks a run, `EndpointUnreachableError`; a settings file that cannot be parsed is never replaced by defaults, `ConfigParseError`; the idle unload of unused models and its log line; the key probe for endpoints whose model list is public, `ModelNotDownloadedError`, the `decision` output modality, mail, media capabilities, request-scoped authentication for the managed OpenAI-compatible endpoint, and the voice library: languages, cloned voices, voice design, the capability catalog)
 - `abstractvoice==0.21.1` (AbstractCore 2.39.0's own floor; 0.20.0: segment offsets on streamed speech for the exact read-aloud resume; the voice listings import `abstractvoice.engine_runtime`; languages, voice design and cloned-voice management for the voice library; personal voices per account need AbstractVoice 0.19.0 or later)
 - `abstractagent==0.6.1` (the default iteration budget read from AbstractRuntime, a delegated child never wider than its parent, and an empty reply taken as the answer when the message is addressed to entities; public updates typed `progress` or `finding`; ReAct honours `_runtime.conversation`: public conversation updates and questions on entity visits and task starts; the `schedule_run` tool for ReAct agents, and Python execution inside the run's command sandbox)
@@ -1906,13 +1906,26 @@ token hash in `auth/users.json`, and can write the raw bootstrap token to
   cannot open those secrets. What it protects:
   [security.md](docs/security.md#sealed-secrets-one-key-file-per-data-folder).
   Evidence: `src/abstractgateway/security/sealing.py`
-- `ABSTRACTGATEWAY_FLOWS_DIR`: workflows directory. When unset, Gateway uses the
-  packaged shipped bundle directory, which carries `basic-agent`,
-  `coding-agent`, `deep-research`, `co-scientist`, and more
-  ([shipped-workflows.md](docs/shipped-workflows.md)). If the shipped bundles are
-  unavailable, Gateway fails clearly instead of starting with an empty default
-  registry. Setting this replaces the shipped registry with your own directory.
-  Evidence: `src/abstractgateway/config.py`
+- The workflow folder is a parameter, not an environment variable:
+  `abstractgateway serve --flows-dir <folder>` (and `runner --flows-dir
+  <folder>`), optional. Without it, Gateway uses the workflow folder this data
+  folder remembers, else the packaged shipped bundle directory next to the
+  running code, which carries `basic-agent`, `coding-agent`, `deep-research`,
+  `co-scientist`, and more ([shipped-workflows.md](docs/shipped-workflows.md)). If
+  the shipped bundles are unavailable, Gateway fails clearly instead of starting
+  with an empty default registry. Naming your own folder replaces the shipped
+  registry with your own directory.
+  The gateway remembers the workflow folder it uses in
+  `<data dir>/config/workflow-folder.json` and keeps using it whatever copy of
+  the code is running: a later start without `--flows-dir` keeps it, a start
+  with `--flows-dir` changes it. `abstractgateway-config init --flows-dir
+  <folder>` remembers one before the first start. If the remembered folder is
+  missing at a start, that start serves the folder next to the running code,
+  says so in one log line, and keeps the record, so the folder is served again
+  as soon as it is back. The environment variables
+  `ABSTRACTGATEWAY_FLOWS_DIR`, `ABSTRACTFRAMEWORK_WORKFLOWS_DIR` and
+  `ABSTRACTFLOW_FLOWS_DIR` are no longer read.
+  Evidence: `src/abstractgateway/cli.py`, `src/abstractgateway/config.py`, `src/abstractgateway/workflow_folder.py`
 - `ABSTRACTGATEWAY_WORKFLOW_SOURCE`: `bundle` (the default and only
   supported source)
   Evidence: `src/abstractgateway/service.py` (`create_default_gateway_service`)
@@ -3466,7 +3479,7 @@ abstractgateway serve --model-host in-process # everything in one process (devel
   never unloads", "In use now" or "Stays loaded: unloading unused models is off". Applies to the models
   loaded in the gateway's own process (MLX, HuggingFace, embeddings); an external engine (Ollama,
   LM Studio, llama.cpp server) keeps its own rule. The underlying idle-unload API needs
-  AbstractRuntime 0.18 or later; this Gateway requires 0.21.0 or later.
+  AbstractRuntime 0.18 or later; this Gateway requires 0.22.0 or later.
 - **Supervision**: the child reports ready within 60 s; the gateway pings it every 5 s and kills it
   after three unanswered pings; it restarts it after 0.5, 1, 2, 4, 8, 16 then 30 s, at most 5 times in
   10 minutes, then stops restarting (`model_host.state: failed`, `status: degraded`) until the gateway
@@ -3567,7 +3580,7 @@ Evidence: `src/abstractgateway/split_mode.py`, `src/abstractgateway/cli.py` (`ru
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--flows-dir FOLDER] [--no-runner] [--model-host process|in-process] [--model-host-memory-gb GB] [--model-host-nice N] [--model-idle-unload MINUTES] [--keep-awake on|off] [--reload] [--no-tray] [--tailscale-https on|off] [--watchdog-seconds N] [--unsandboxed-commands] [--push-relay URL|off] [--pool-light N] [--pool-heavy N] [--pool-watchers N] [--run-index trusted|verify] [--gc-tuning on|off]`.
   Host and port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is configured, else
   `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.
@@ -3577,6 +3590,8 @@ Most-used:
   gateway runs* is off; closing the lid or choosing Sleep still sleeps it.
   - `--keep-awake on|off`: that setting for this run only (default: the saved `host.keep_awake`, else on);
     see [Host control](#host-control-pause-desktop-tray-restart-update).
+  - `--flows-dir FOLDER`: the workflow folder to serve, remembered for the data folder
+    ([Paths + workflow source](#paths--workflow-source)); `runner` takes it too.
   - `--no-runner`: serve the HTTP API only, next to `abstractgateway runner`
     ([split mode](#split-mode-api-and-runner-in-two-processes-opt-in)).
   - `--model-host process|in-process`: where the models run (default `process` on every OS,
@@ -4079,7 +4094,9 @@ it, the gateway serves the note read API under `/api/gateway/note/` (see
 [api.md](docs/api.md#abstractnote-optional)), binds the note tools to each user's own notebook
 (`abstractnote/` under the user's data plane, auto-approved: they touch nothing but that
 notebook), and
-loads the `abstractnote` workflows as framework bundles. Without the package the app can still
+loads the `abstractnote` workflows as framework bundles: the installed version, and every
+older version packed in this data folder before (`<data dir>/extensions/abstractnote/`), so an
+AbstractNote upgrade does not unload the version a run or an automation points at. Without the package the app can still
 be installed and started, but every `/api/gateway/note/` request answers 404 and the
 `abstractnote` workflows are absent: install the package, then restart the gateway.
 
@@ -7126,7 +7143,7 @@ typed waits, attention and operations, is in [automations.md](docs/automations.m
 | `GET /api/gateway/automations/defaults` | `{growing_max_tokens}`: the gateway's default history budget of a growing automation (50,000 tokens), used when a definition sets no `context.growing.max_tokens`; the one value clients show for "the default" |
 | `POST /api/gateway/automations/schedule-preview` | `{trigger, time_zone, schedule_rule_text, schedule_text, next_run_at, next_run_local, first_run_sentence}` ([automations.md](docs/automations.md#schedule-preview)) |
 | `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}`; `context` = `{mode, growing?: {max_tokens}}` |
-| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, active automations first, then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, failed_automations_count, archived_automations_count, archived_automations}`, active automations first, then failed ones (the automation itself stopped), then paused ones, each by `last_activity_at` (newest first); every row carries `section` (`active`/`failed`/`paused`/`archived`) and `last_activity_at`, and older scheduled runs (`legacy: true`) are placed by the same rule; a row that changes between two page reads may be served twice or not at all in that walk, so refresh from the first page (see [Listing order](docs/automations.md#listing-order)). A summary carries `target` `{workflow_id, bundle_ref, flow_id}` and `flow_name` (the entrypoint's name), see [automations.md](docs/automations.md); `status` takes a comma-separated list (`active,paused`). Archived automations are left out unless `archived_only=true` (only them) or `status` names `archived`. `kind` is what they are for: `user` (the default, the automations a person creates and manages), `notes` (AbstractNote's own processing: the automations whose target is an `abstractnote` workflow, which AbstractNote reads by id) or `all`; every row carries `kind`, and the counts count the listed kind; `paused_automations_count` and `archived_automations_count` count yours (`archived_automations` is the same count). Its cost follows the number of automations, not their history; identical concurrent requests share one computation, and the answer is kept up to 3 s (dropped at once by any change this gateway records: a run step, a command, a seen cursor) |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
 | `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
 | `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|unarchive|revise, payload?}` → the same receipt. `unarchive` brings an archived automation back **paused** with its history (409 `invalid_state` when it is not archived); an archived automation accepts only `unarchive` |
@@ -11813,7 +11830,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, pinned to 0.21.0): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, pinned to 0.22.0): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools, the automation controller and the session history window.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -12871,9 +12888,10 @@ to users** switch on the console's Workflows page.
 
 ## Customizing the registry
 
-- The shipped registry is used when `ABSTRACTGATEWAY_FLOWS_DIR` is unset;
-  point it at your own bundle directory to serve a custom set
-  ([configuration.md](docs/configuration.md)).
+- The shipped registry is used when no other workflow folder is named
+  (`serve --flows-dir <folder>`) or remembered by the data folder; name your
+  own bundle directory to serve a custom set
+  ([configuration.md](docs/configuration.md#paths--workflow-source)).
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
@@ -12938,7 +12956,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.21.0. A gateway installed against
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway pins 0.22.0. A gateway installed against
   an older runtime does not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -13299,7 +13317,7 @@ for a trigger with no clock time (manual, email).
 
 | Route | Answer |
 |---|---|
-| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order) |
+| `GET /api/gateway/automations?status=&archived_only=&kind=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor, paused_automations_count, failed_automations_count, archived_automations_count, archived_automations}`, in the [listing order](#listing-order); a cursor from before the `failed` section (`auto2:`) is a 422 |
 | `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary: AutomationSummary}` |
 
 - `status` is a comma-separated subset of `active`, `paused`, `completed`,
@@ -13327,13 +13345,17 @@ for a trigger with no clock time (manual, email).
 The gateway serves the list in the order every app draws it, so no app sorts
 it again:
 
-1. **Active first.** Every automation that is neither paused nor archived
-   (status `active`, `completed` or `failed`), most recent activity first.
-2. **Then paused**, most recent activity first.
-3. Archived automations are their own listing (`archived_only=true`), most
+1. **Active first.** Status `active` or `completed`, most recent activity
+   first.
+2. **Then failed**: the automation itself stopped (status `failed`; an active
+   automation whose last run failed stays in Active), most recent activity first.
+   A failure never turns an automation off: the gateway brings one that stopped
+   back by itself, so a row stays here only until then.
+3. **Then paused**, most recent activity first.
+4. Archived automations are their own listing (`archived_only=true`), most
    recent activity first.
 
-Each row says where it belongs: `section` is `"active"`, `"paused"` or
+Each row says where it belongs: `section` is `"active"`, `"failed"`, `"paused"` or
 `"archived"`, and `last_activity_at` is the instant the order uses: the
 automation's last change. It moves whenever the automation itself changes (an
 occurrence started, retried or finished, a pause, resume, cancel or revision,
@@ -13367,12 +13389,12 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
  "schedule_rule_text": "Every day at 08:00 (Europe/Paris)",
  "schedule_text": "Every day at 08:00 (Europe/Paris) · next Fri 9 Oct 08:00",
  "trigger_text": "Every day at 08:00 (Europe/Paris)",
- "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
+ "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null; GET /automations/{id} adds "live"
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "last_notification": {"channel": "email", "status": "failed", "at", "sent_at", "code", "sentence", "text": "Email result failed — …"},  // or null
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
- "section": "active",                 // active | paused | archived (Listing order)
+ "section": "active",                 // active | failed | paused | archived (Listing order)
  "last_activity_at": "…",             // the instant the listing orders by
  "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],  // archived: ["unarchive", "discuss"]
  "session_kind": "automation"}
@@ -13413,7 +13435,15 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
   the zone after each time it shows unless that zone is UTC. Clients never
   compute a next run themselves.
 - `current_occurrence` is the occurrence in progress, `status` `admitted`,
-  `running` or `backoff` (waiting to retry), or `null` when none is.
+  `running` or `backoff` (waiting to retry), or `null` when none is (also
+  for a failed automation whose stranded run never started). On `GET
+  /automations/{id}` only, a `running` one carries `live`: `{started_at, state:
+  starting | thinking | tool | waiting, tool: {name, arguments} | null, attempt,
+  steps_done}` (see `automation_live.py`; absent when it cannot be computed).
+- A run whose workflow is not installed (or not allowed) fails once, with its
+  reason; the automation stays active and tries again at its next scheduled
+  time. A failure never pauses an automation: `paused_reason` only says why the
+  gateway paused it (an administrator made its workflow unavailable).
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `last_notification` is the newest "Email result" notice of this automation
   (`null` when it never asked for one): `status` `queued`, `sending`, `sent`,
@@ -13427,7 +13457,15 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
 - `capabilities` lists what the automation accepts. An archived automation
-  lists `["unarchive", "discuss"]`; a completed or failed one `["discuss"]`.
+  lists `["unarchive", "discuss"]`; a failed one (its controller stopped)
+  `["revise", "resume", "archive", "discuss"]` (no `resume` when its schedule
+  is over); a completed one `["archive", "discuss"]`.
+- `failed_reason` (a failed automation) is one plain sentence saying what
+  happened and when ("It stopped on 7 Nov while starting run #38.", "It stopped
+  on 7 Nov.", "… because its flow is not installed." when that is known), in the
+  owner's time zone, never error text; `failed_detail` is the stored technical
+  error, verbatim, for a Details view. `flow_missing` is `true` when the
+  workflow it pins is not loaded here.
 
 `definition` is the stored definition (target, trigger, context, policy,
 revision); `active_revision` is the revision in force.
@@ -13510,6 +13548,7 @@ attempt):
  "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
  "trigger": {"source_id": "schedule", "summary": "schedule: Every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
+ "task": "Triage my inbox…",
  "answer": "…", "notify": null,
  "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
  "artifacts": [{"artifact_id", "name", "mime_type", "url"}],
@@ -13518,7 +13557,18 @@ attempt):
 ```
 
 - `user_turn` and `answer` are the occurrence as a chat turn; `answer` is
-  empty until the occurrence ends.
+  empty until the occurrence ends. `user_turn` is the framed input the run
+  received (the trigger line, then the task); `task` is the task as the person
+  wrote it for that run (the automation's task at the revision it ran under,
+  even after a later edit), the message to show; `""` when the run has none.
+- `artifacts` lists the person's files only (those the run's input and output
+  reference), never the runtime's storage records.
+- `not_started: true` marks a run that was never created (a problem on this
+  computer kept it from starting): `status` is `failed`, `failure.reason_code`
+  is `occurrence_not_started`, and there is no `ledger_url`: its run routes
+  answer 404, so clients never read them. `failure.message` is plain ("This run
+  could not start because of a problem on this computer."); `failure.detail`
+  carries the technical text when one was recorded.
 - `status` is `waiting` only while the occurrence, or a run below it, waits
   for a person (it then has `waits`). An occurrence whose agent is still
   working reads `running`. `backoff` means a retry is scheduled.
@@ -13743,7 +13793,15 @@ data folder: `GET /api/health` reports the runner (`runner.runners[].status`).
 **Restart recovery.** Automations are durable runs, so they survive a
 restart:
 
-- After a restart the runner picks up every controller where it stopped.
+- After a restart the runner picks up every controller where it stopped. An
+  automation that stopped on an error (a crash, a fault of this computer) is
+  brought back by itself, when the gateway starts and as soon as it stops: the
+  run it was on is shown with its real outcome (or as failed when it could not
+  start), a run still going is followed to its end, a time missed while it was
+  down runs once as soon as it is back (several missed times run once, not one
+  run each; mail that arrived meanwhile is picked up), then its normal times. An
+  automation that stops at every attempt tries once per scheduled time, each
+  attempt shown as a failed run. One a person stopped, paused or archived stays so.
 - Occurrence ids are deterministic and a child run is created only when its id
   is free, so a restart in the middle of an occurrence continues that
   occurrence and never starts it twice.
@@ -14662,14 +14720,25 @@ serves the workflows the image ships with — `basic-agent`, `coding-agent`,
 ([shipped-workflows.md](docs/shipped-workflows.md)).
 
 To serve your own bundles instead, point `ABSTRACTGATEWAY_HOST_FLOWS_DIR` at
-your bundle directory (mounted read-only at `/data/flows`) and set
-`ABSTRACTGATEWAY_FLOWS_DIR=/data/flows`:
+your bundle directory (mounted read-only at `/data/flows`) and start the
+gateway with `--flows-dir /data/flows`: the image's command is
+`abstractgateway serve --host … --port …`, so give the service that command
+with the parameter added, in a second compose file (not run in a container):
+
+```yaml
+# my-flows.yml
+services:
+  abstractgateway:
+    command: ["sh", "-c", "abstractgateway serve --host \"$${HOST:-0.0.0.0}\" --port \"$${PORT:-8080}\" --flows-dir /data/flows"]
+```
 
 ```bash
 ABSTRACTGATEWAY_HOST_FLOWS_DIR=/path/to/bundles \
-ABSTRACTGATEWAY_FLOWS_DIR=/data/flows \
-  docker compose -f docker/abstractgateway-server/compose.yml up -d
+  docker compose -f docker/abstractgateway-server/compose.yml -f my-flows.yml up -d
 ```
+
+The data volume then remembers `/data/flows` as its workflow folder for later
+starts ([configuration.md](docs/configuration.md#paths--workflow-source)).
 
 Smoke checks:
 
@@ -14951,7 +15020,7 @@ the sandbox under every workspace setting ("Deny everything, allow listed worksp
 too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
 restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
 (`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
-[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.22.0 and Core 2.39.0.
 
 **What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
 a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
@@ -15161,13 +15230,12 @@ pip install abstractgateway
 
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -15458,8 +15526,8 @@ pack_workflow_bundle(
 )
 ```
 
-Upload it with `POST /api/gateway/bundles/upload`, or place it in
-`ABSTRACTGATEWAY_FLOWS_DIR`.
+Upload it with `POST /api/gateway/bundles/upload`, or place it in the workflow
+folder the gateway serves (`serve --flows-dir <folder>`).
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 Split mode, the worker pools (`serve --pool-light/--pool-heavy/--pool-watchers`), the run index
@@ -15622,7 +15690,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.21.0 (an exact pin), installed with the gateway; the gateway
+- AbstractRuntime 0.22.0 (an exact pin), installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -15672,13 +15740,12 @@ File-backed stores are the default and easiest for development.
 ```bash
 export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
 
-# Optional: set only for a custom bundle registry. When unset, Gateway uses
-# the packaged shipped bundle directory containing basic-agent.
-# export ABSTRACTGATEWAY_FLOWS_DIR="/path/to/bundles"
-
 # User accounts: the sign-in path for the console and the browser apps.
 export ABSTRACTGATEWAY_USER_AUTH=1
 
+# Optional: `--flows-dir /path/to/bundles` serves your own workflow folder.
+# Without it, Gateway uses the folder this data folder remembers, else the
+# packaged shipped bundle directory containing basic-agent.
 abstractgateway serve --host 127.0.0.1 --port 8080
 ```
 
@@ -15707,8 +15774,8 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 If the bundle response's `items` list is empty (see also
 [troubleshooting.md](docs/troubleshooting.md#get-apigatewaybundles-returns-no-bundles)), either:
-- point `ABSTRACTGATEWAY_FLOWS_DIR` at the shipped bundle directory or another
-  directory containing `*.flow` files (or a single `.flow` file), or
+- start the gateway with `--flows-dir` naming the shipped bundle directory or
+  another directory containing `*.flow` files (or a single `.flow` file), or
 - upload a bundle via the API:
 
 ```bash
@@ -15967,7 +16034,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install "abstractruntime==0.21.0"   # the version this gateway pins
+pip install "abstractruntime==0.22.0"   # the version this gateway pins
 ```
 
 ### The one-time sign-in link does not work
@@ -16007,7 +16074,7 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.21.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.22.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
@@ -16144,9 +16211,12 @@ and set the mode again. See [security.md](docs/security.md#network-exposure).
 
 ### `GET /api/gateway/bundles` returns no bundles
 
-- `ABSTRACTGATEWAY_FLOWS_DIR` points at an empty directory. Unset it to serve
-  the shipped bundles ([shipped-workflows.md](docs/shipped-workflows.md)), or
-  upload a bundle with `POST /api/gateway/bundles/upload`.
+- The workflow folder in use is empty: the one given with `--flows-dir`, or
+  the one the data folder remembers (`<data dir>/config/workflow-folder.json`).
+  Start once with `--flows-dir` naming a folder that holds bundles (the shipped
+  ones are in the gateway's own `flows/bundles` folder,
+  [shipped-workflows.md](docs/shipped-workflows.md)), or upload a bundle with
+  `POST /api/gateway/bundles/upload`.
 - A bundle can be present but not served: the `skipped` array names it with
   the reason (for example a `min_runtime` floor or a compile error).
 
@@ -22693,7 +22763,8 @@ Evidence: `src/abstractgateway/hosts/bundle_host.py` (bundle compilation).
 No. Bundle mode is the only workflow source:
 
 - input: one `.flow` file or a directory of `*.flow` bundles
-  (`ABSTRACTGATEWAY_FLOWS_DIR`; the shipped bundles when unset);
+  (`serve --flows-dir <folder>`; without it the folder the data folder
+  remembers, else the shipped bundles);
 - versioning: bundles are addressed as `bundle_id@bundle_version`.
 
 Store VisualFlows through `/api/gateway/visualflows/*` and publish them as a
