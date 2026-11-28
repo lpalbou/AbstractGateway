@@ -11,11 +11,10 @@
   on 7 Nov while starting run #38."), never error text or an instruction, and `failed_detail`, the stored
   technical error for a Details view; every summary
   `flow_missing` (true when the workflow it pins is not loaded on this gateway). A failed automation whose
-  stranded run never started serves `current_occurrence: null`. `paused_reason` also words the controller's own
-  pause cause (a run whose workflow is not installed or not allowed fails once, then the automation pauses).
+  stranded run never started serves `current_occurrence: null`.
 - **Release: needs the next AbstractRuntime.** `routes/automations.py` and `hosts/bundle_host.py` import names
-  that AbstractRuntime 0.21.0 does not have (`resumable`, `stopped_facts`, `PAUSE_CAUSE_KEY`,
-  `start_failure_details`, the `START_FAILURE_*` codes); the three AbstractRuntime pins in `pyproject.toml`
+  that AbstractRuntime 0.21.0 does not have (`resumable`, `stopped_facts`,
+  `recover_stopped_automations`, `revive_dead_controller`, `start_failure_details`, the `START_FAILURE_*` codes); the three AbstractRuntime pins in `pyproject.toml`
   must be raised to that release with this one.
 - **The live line of a run in progress** (`automation_live.py`). `GET /automations/{id}` serves
   `summary.current_occurrence.live = {started_at, state, tool, attempt, steps_done}`, folded from the replay

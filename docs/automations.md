@@ -445,6 +445,8 @@ it again:
    first.
 2. **Then failed**: the automation itself stopped (status `failed`; an active
    automation whose last run failed stays in Active), most recent activity first.
+   A failure never turns an automation off: the gateway brings one that stopped
+   back by itself, so a row stays here only until then.
 3. **Then paused**, most recent activity first.
 4. Archived automations are their own listing (`archived_only=true`), most
    recent activity first.
@@ -534,9 +536,10 @@ earlier gateway (created-order `auto1:` cursors) is refused with 422
   /automations/{id}` only, a `running` one carries `live`: `{started_at, state:
   starting | thinking | tool | waiting, tool: {name, arguments} | null, attempt,
   steps_done}` (see `automation_live.py`; absent when it cannot be computed).
-- `paused_reason` also says why the automation paused itself: a run whose
-  workflow is not installed (or not allowed) fails once and the automation is
-  paused until it is edited and turned back on.
+- A run whose workflow is not installed (or not allowed) fails once, with its
+  reason; the automation stays active and tries again at its next scheduled
+  time. A failure never pauses an automation: `paused_reason` only says why the
+  gateway paused it (an administrator made its workflow unavailable).
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `last_notification` is the newest "Email result" notice of this automation
   (`null` when it never asked for one): `status` `queued`, `sending`, `sent`,
@@ -656,12 +659,12 @@ attempt):
   even after a later edit), the message to show; `""` when the run has none.
 - `artifacts` lists the person's files only (those the run's input and output
   reference), never the runtime's storage records.
-- `not_started: true` marks the run a stopped automation died on before it was
-  created: `status` is `failed`, `failure.reason_code` is
-  `occurrence_not_started`, and there is no `ledger_url`: its run routes answer
-  404, so clients never read them. `failure.message` is plain ("This run did not start
-  because the automation stopped."); `failure.detail` carries the technical
-  text when one was recorded.
+- `not_started: true` marks a run that was never created (a problem on this
+  computer kept it from starting): `status` is `failed`, `failure.reason_code`
+  is `occurrence_not_started`, and there is no `ledger_url`: its run routes
+  answer 404, so clients never read them. `failure.message` is plain ("This run
+  could not start because of a problem on this computer."); `failure.detail`
+  carries the technical text when one was recorded.
 - `status` is `waiting` only while the occurrence, or a run below it, waits
   for a person (it then has `waits`). An occurrence whose agent is still
   working reads `running`. `backoff` means a retry is scheduled.
@@ -886,7 +889,15 @@ data folder: `GET /api/health` reports the runner (`runner.runners[].status`).
 **Restart recovery.** Automations are durable runs, so they survive a
 restart:
 
-- After a restart the runner picks up every controller where it stopped.
+- After a restart the runner picks up every controller where it stopped. An
+  automation that stopped on an error (a crash, a fault of this computer) is
+  brought back by itself, when the gateway starts and as soon as it stops: the
+  run it was on is shown with its real outcome (or as failed when it could not
+  start), a run still going is followed to its end, a time missed while it was
+  down runs once as soon as it is back (several missed times run once, not one
+  run each; mail that arrived meanwhile is picked up), then its normal times. An
+  automation that stops at every attempt tries once per scheduled time, each
+  attempt shown as a failed run. One a person stopped, paused or archived stays so.
 - Occurrence ids are deterministic and a child run is created only when its id
   is free, so a restart in the middle of an occurrence continues that
   occurrence and never starts it twice.

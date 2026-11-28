@@ -64,6 +64,11 @@ def test_a_failed_automation_is_grouped_edited_and_resumed(live: TestClient, mon
     monkeypatch.setattr(WorkflowRegistry, "get", lambda self, wid: None if wid == hidden else original_get(self, wid))
     with monkeypatch.context() as m:
         m.setattr(controller_mod, "dispatch", dispatch_before_the_fix)
+        # A record that died before 2026-11-28 (no after-tick revival then), restarted by a person
+        # before the host brings it back (that path: test_automation_runner_brings_back.py).
+        from abstractruntime.automations import commands as commands_mod
+
+        monkeypatch.setattr(commands_mod, "revive_dead_controller", lambda *a, **k: False)
         body = {
             "request_id": "dies",
             "title": "Dies at dispatch",
@@ -130,47 +135,44 @@ def test_a_failed_automation_is_grouped_edited_and_resumed(live: TestClient, mon
         live.get(f"/api/gateway/automations/{aid}/occurrences", headers=HEADERS).json()["items"]), timeout_s=20)
 
 
-def test_a_missing_workflow_fails_one_run_then_pauses_with_the_reason(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_missing_workflow_fails_that_run_and_the_automation_stays_active(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operator ruling 2026-11-28: a failure never deactivates an automation. The run fails once
+    (no retry) with its reason; the automation stays active with every control; once the
+    workflow is there again, the next run succeeds."""
     from abstractruntime.scheduler.registry import WorkflowRegistry
 
-    hidden = f"{live.bundle_ref}:slow"  # type: ignore[attr-defined]
+    hidden = f"{live.bundle_ref}:{ECHO_FLOW_ID}"  # type: ignore[attr-defined]
     original_get = WorkflowRegistry.get
-    monkeypatch.setattr(WorkflowRegistry, "get", lambda self, wid: None if wid == hidden else original_get(self, wid))
     r = live.post("/api/gateway/automations", headers=HEADERS, json={
         "request_id": "survives",
         "title": "Survives",
-        "target": {"bundle_ref": live.bundle_ref, "flow_id": "slow", "input_data": {"prompt": "hello"}},  # type: ignore[attr-defined]
+        "target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {"prompt": "hello"}},  # type: ignore[attr-defined]
         "trigger": {"source_id": "manual", "source_version": 1, "config": {}},
         "context": {"mode": "independent"},
         "policy": {"retry": {"max_attempts": 3, "backoff": {"initial": "1s", "factor": 2, "max": "1s"}}},
     })
     assert r.status_code == 200, r.text
     aid = r.json()["automation_id"]
-    alive = _summary(live, aid)  # alive but broken: the flow it pins is not loaded
-    assert alive["status"] == "active" and alive["flow_missing"] is True and "failed_reason" not in alive
-    assert _post(live, aid, "automation.run_now", "go").status_code == 200
-    done = wait_until(lambda: (lambda s: s if s["status"] == "paused" else None)(_summary(live, aid)), timeout_s=20)
-    assert done["section"] == "paused" and done["current_occurrence"] is None
-    assert done["last_occurrence"]["status"] == "failed" and done["last_occurrence"]["attempts"] == 1  # no retry
-    assert done["paused_reason"] == (f"Paused after a run could not start: its workflow ({hidden}) is no longer installed. "
-                                     "Choose an installed one in Edit, then turn it back on.")
-    assert done["attention"]["unseen_count"] == 1  # one failure item, not one per tick
+    with monkeypatch.context() as m:
+        m.setattr(WorkflowRegistry, "get", lambda self, wid: None if wid == hidden else original_get(self, wid))
+        alive = _summary(live, aid)  # alive but broken: the flow it pins is not loaded
+        assert alive["status"] == "active" and alive["flow_missing"] is True and "failed_reason" not in alive
+        assert _post(live, aid, "automation.run_now", "go").status_code == 200
+        done = wait_until(lambda: (lambda s: s if (s.get("last_occurrence") or {}).get("status") == "failed" else None)(_summary(live, aid)), timeout_s=20)
+    assert done["status"] == "active" and done["section"] == "active" and done["current_occurrence"] is None
+    assert {"run_now", "pause", "revise", "archive"} <= set(done["capabilities"]) and "paused_reason" not in done
+    assert done["last_occurrence"]["attempts"] == 1  # no retry inside the run
+    assert done["attention"]["unseen_count"] == 1
     occ = live.get(f"/api/gateway/automations/{aid}/occurrences", headers=HEADERS).json()["items"]
     assert [(o["index"], o["status"]) for o in occ] == [(1, "failed")]
     assert occ[0]["failure"]["message"] == (f"This run could not start: its workflow ({hidden}) is no longer installed. "
                                             "Edit the automation to choose a workflow that is installed.")
-    # Edited (an installed workflow chosen), not yet turned back on: the sentence is true NOW.
-    r = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={
-        "command_id": "fix", "changes": {"target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {"prompt": "hello"}}}})  # type: ignore[attr-defined]
-    assert r.status_code == 200, r.text
-    edited = wait_until(lambda: (lambda s: s if s.get("flow_missing") is False else None)(_summary(live, aid)), timeout_s=20)
-    assert edited["status"] == "paused" and edited["paused_reason"] == (
-        f"Paused after a run could not start: its workflow ({hidden}) was no longer installed. "
-        "Another one is chosen now; turn it back on.")
-    # Turned back on: the reason goes with the cause.
-    assert _post(live, aid, "automation.resume", "on").status_code == 200
-    back = wait_until(lambda: (lambda s: s if s["status"] == "active" else None)(_summary(live, aid)), timeout_s=20)
-    assert "paused_reason" not in back and back["flow_missing"] is False
+    # The workflow is there again (a live fact per row): the next run succeeds.
+    assert _summary(live, aid)["flow_missing"] is False
+    assert _post(live, aid, "automation.run_now", "go-2").status_code == 200
+    wait_until(lambda: (lambda o: o if o and o[0]["index"] == 2 and o[0]["status"] == "completed" else None)(
+        live.get(f"/api/gateway/automations/{aid}/occurrences", headers=HEADERS).json()["items"]), timeout_s=20)
+    assert _summary(live, aid)["status"] == "active"
 
 
 def test_row_and_door_of_a_completed_and_of_an_exhausted_failed_automation(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,6 +215,11 @@ def test_row_and_door_of_a_completed_and_of_an_exhausted_failed_automation(live:
     with monkeypatch.context() as m:
         m.setattr(WorkflowRegistry, "get", lambda self, wid: None if wid == hidden else original_get(self, wid))
         m.setattr(controller_mod, "dispatch", dispatch_before_the_fix)
+        # A record that died before 2026-11-28 (no after-tick revival then), restarted by a person
+        # before the host brings it back (that path: test_automation_runner_brings_back.py).
+        from abstractruntime.automations import commands as commands_mod
+
+        monkeypatch.setattr(commands_mod, "revive_dead_controller", lambda *a, **k: False)
         dead = create("once-dead", "slow")
         row = wait_until(lambda: (lambda s: s if s["status"] == "failed" else None)(_summary(live, dead)), timeout_s=20)
     assert row["capabilities"] == ["revise", "archive", "discuss"]  # no resume: nothing left to run
@@ -328,3 +335,36 @@ def test_the_stopped_sentence_is_plain_and_dated() -> None:
     late = {**base, "at": "2025-12-31T23:30:00+00:00", "run_index": None}
     assert stopped_sentence(late, "Europe/Paris", now=now) == "It stopped on 1 Jan."  # the owner's day, this year
     assert stopped_sentence(late, "UTC", now=now) == "It stopped on 31 Dec 2025."
+
+
+def test_an_archived_automation_whose_controller_died_shows_nothing_running(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A controller that ended (failed or cancelled), archived or not, supervises nothing: no run
+    reads "running" for it (the copy of the operator's archived `bbc08b4b` showed #314 running)."""
+    from abstractruntime.automations import commands as commands_mod
+    from abstractruntime.automations import controller as controller_mod
+    from abstractruntime.scheduler.registry import WorkflowRegistry
+
+    hidden = f"{live.bundle_ref}:slow"  # type: ignore[attr-defined]
+    original_get = WorkflowRegistry.get
+    dispatch = controller_mod.dispatch
+
+    def dispatch_before_the_fix(turn):
+        effect = dispatch(turn)
+        effect.payload.pop("_absorb_failure")
+        return effect
+
+    monkeypatch.setattr(WorkflowRegistry, "get", lambda self, wid: None if wid == hidden else original_get(self, wid))
+    monkeypatch.setattr(controller_mod, "dispatch", dispatch_before_the_fix)
+    monkeypatch.setattr(commands_mod, "revive_dead_controller", lambda *a, **k: False)  # a record from before the rule
+    r = live.post("/api/gateway/automations", headers=HEADERS, json={
+        "request_id": "archived-dead", "title": "Archived dead", "context": {"mode": "independent"},
+        "target": {"bundle_ref": live.bundle_ref, "flow_id": "slow", "input_data": {"prompt": "hello"}},  # type: ignore[attr-defined]
+        "trigger": {"source_id": "schedule", "source_version": 1, "config": {"every": "1h"}},
+    })
+    assert r.status_code == 200, r.text
+    aid = r.json()["automation_id"]
+    wait_until(lambda: _summary(live, aid)["status"] == "failed", timeout_s=20)
+    assert _post(live, aid, "automation.archive", "arch").status_code == 200
+    s = wait_until(lambda: (lambda x: x if x["status"] == "archived" else None)(_summary(live, aid)), timeout_s=20)
+    assert s["current_occurrence"] is None
+    assert s["last_occurrence"]["status"] == "failed" and s["last_occurrence"]["not_started"] is True

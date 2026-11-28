@@ -34,8 +34,6 @@ from abstractruntime.automations.attention import (
     pending_waits_by_automation,
 )
 from abstractruntime.automations.commands import STOPPED_CAUSE_FLOW_NOT_INSTALLED, command_digest, stopped_facts
-from abstractruntime.automations.controller import PAUSE_CAUSE_KEY
-from abstractruntime.core.runtime import START_FAILURE_WORKFLOW_NOT_ALLOWED, START_FAILURE_WORKFLOW_NOT_FOUND
 from abstractruntime.automations.commands import resumable as runtime_resumable
 from abstractruntime.automations.consumers import automation_generation, store_key
 from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key, record_payload
@@ -395,28 +393,6 @@ def stopped_sentence(facts: Dict[str, Any], zone: str, *, now: Optional[datetime
     return f"It stopped{when}{during}{cause}."
 
 
-def _controller_pause_reason(controller: Any, *, flow_missing: Optional[bool] = None) -> Optional[str]:
-    """The sentence for the controller's own pause cause (`controller.PAUSE_CAUSE_KEY`), from its
-    typed code; None when the controller recorded none. `flow_missing=False` (the workflow it pins
-    NOW is installed: the person already chose another one in Edit): the sentence says it only
-    needs to be turned back on."""
-    state = ((getattr(controller, "vars", None) or {}).get("_runtime") or {}).get("automation") or {}
-    cause = state.get(PAUSE_CAUSE_KEY)
-    if not isinstance(cause, dict):
-        return None
-    workflow_id = str(cause.get("workflow_id") or "?")
-    if flow_missing is False and cause.get("code") in (START_FAILURE_WORKFLOW_NOT_FOUND, START_FAILURE_WORKFLOW_NOT_ALLOWED):
-        was = "no longer installed" if cause.get("code") == START_FAILURE_WORKFLOW_NOT_FOUND else "not allowed any more"
-        return f"Paused after a run could not start: its workflow ({workflow_id}) was {was}. Another one is chosen now; turn it back on."
-    if cause.get("code") == START_FAILURE_WORKFLOW_NOT_FOUND:
-        return (f"Paused after a run could not start: its workflow ({workflow_id}) is no longer installed. "
-                "Choose an installed one in Edit, then turn it back on.")
-    if cause.get("code") == START_FAILURE_WORKFLOW_NOT_ALLOWED:
-        return (f"Paused after a run could not start: its workflow ({workflow_id}) is not allowed any more. "
-                "Choose another one in Edit, then turn it back on.")
-    return f"Paused after a run could not start ({cause.get('code')}). Edit it, then turn it back on."
-
-
 def principal_time_zone(svc: Any, principal: Any) -> str:
     """The automation owner's (= this principal's) time zone: the account preference, else this
     host's zone (R16.1)."""
@@ -551,11 +527,10 @@ def automation_summary_row(
             out["failed_reason"] = stopped_sentence(facts, owner_zone or principal_time_zone(svc, principal))
             if facts.get("detail"):
                 out["failed_detail"] = facts["detail"]
-        occ_now = out.get("current_occurrence")
-        if isinstance(occ_now, dict) and (not occ_now.get("run_id") or svc.host.run_store.load(str(occ_now["run_id"])) is None):
-            # A dead controller's stranded occurrence never started: nothing is running (clients
-            # re-read every 3 s while `current_occurrence` is set).
-            out["current_occurrence"] = None
+    if controller.status in (RunStatus.FAILED, RunStatus.CANCELLED):
+        # A controller that ended (failed, cancelled; archived or not) supervises nothing: no run is
+        # "running" for it (clients re-read every 3 s while `current_occurrence` is set).
+        out["current_occurrence"] = None
     if out["next_fire_at"] is None:
         del out["next_fire_at"]
     # R16.1 A4: the served next run + THE sentence every client shows (never computed client-side).
@@ -564,10 +539,9 @@ def automation_summary_row(
     # "When mail arrives in <address>", "When <feed> has a new item", "When <webhook> is called".
     out["trigger_text"] = _trigger_text(svc, principal, base["trigger"], str(out.get("schedule_rule_text") or ""))
     if status == "paused":
-        # Why it was paused: by the CONTROLLER (a run whose workflow could not start: the typed
-        # cause in its state, worded here), else by the GATEWAY (e.g. its workflow was made
-        # unavailable, DESIGN-v3 §13.4).
-        reason = _controller_pause_reason(controller, flow_missing=out.get("flow_missing")) or pause_reason(svc.config.data_dir, str(controller.run_id))
+        # Why the GATEWAY paused it (e.g. its workflow was made unavailable, DESIGN-v3 §13.4). A
+        # failure never pauses an automation (only a person or an administrator does).
+        reason = pause_reason(svc.config.data_dir, str(controller.run_id))
         if reason:
             out["paused_reason"] = reason
     occ = latest_occurrence(runtime, str(controller.run_id), user_turn=False)

@@ -2131,9 +2131,16 @@ async def gateway_admin_promote_workflow_catalog_bundle(request: Request, payloa
         acl = payload.acl.model_dump() if payload.acl is not None else None
 
         def _install() -> Any:
-            installed = WorkflowBundleRegistry(getattr(host, "bundles_dir", None)).resolve_bundle(ref)
+            # From the registry this plane runs (every source), never a scan of its own folder.
+            bid, ver = _split_bundle_ref(ref)
+            versions = _loaded_private_versions(host, bid) if bid else {}
+            if not versions:
+                raise WorkflowBundleRegistryError(f"Bundle '{bid}' is not loaded by this gateway")
+            pick = ver or _latest_version([{"bundle_version": v} for v in versions])
+            if not pick or pick not in versions:
+                raise WorkflowBundleRegistryError(f"Bundle '{bid}@{ver}' not found (available: {', '.join(sorted(versions))})")
             return _workflow_catalog_store_for_service(svc).install_bundle_bytes(
-                installed.path.read_bytes(),
+                Path(str(versions[pick]["path"])).read_bytes(),
                 scope=scope0,
                 tenant_id=tenant0,
                 acl=acl,
@@ -7874,14 +7881,21 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
         raise HTTPException(status_code=400, detail="bundle_id is required")
 
     reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
-    existing: list[Dict[str, str]] = []
+    # Existing versions: every version the registry runs (any source), plus the files in the folder
+    # this publish writes into (one the registry skipped still holds its name there).
+    existing: list[Dict[str, str]] = [
+        {"bundle_version": ver, "created_at": str(meta.get("created_at") or "")}
+        for ver, meta in _loaded_private_versions(host, bundle_id).items()
+    ]
     try:
-        for b in reg.scan():
-            if getattr(b, "bundle_id", None) == bundle_id:
-                created = str(getattr(getattr(b, "manifest", None), "created_at", "") or "")
-                existing.append({"bundle_version": str(getattr(b, "bundle_version", "") or ""), "created_at": created})
-    except Exception:
-        existing = []
+        scanned = reg.scan()
+    except OSError as e:  # the folder cannot be listed: never publish blind over what it may hold
+        raise HTTPException(status_code=500, detail=f"Cannot list the workflow folder {reg.bundles_dir}: {e}") from e
+    for b in scanned:
+        ver = str(getattr(b, "bundle_version", "") or "")
+        if getattr(b, "bundle_id", None) == bundle_id and all(e["bundle_version"] != ver for e in existing):
+            created = str(getattr(getattr(b, "manifest", None), "created_at", "") or "")
+            existing.append({"bundle_version": ver, "created_at": created})
 
     requested_ver = str(req.bundle_version or "").strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else ""
     durable_existing = [v for v in existing if not _is_draft_bundle_version(v.get("bundle_version"))]
@@ -8014,6 +8028,21 @@ def _is_shared_workflow_registry(host: Any) -> bool:
 # workflow_governance.py holds the stores and THE ONE visibility predicate; these
 # helpers bind them to a host + principal. Every listing, read and run start calls
 # `_workflow_gate` or `_bundle_governance` — no route re-derives the rule.
+
+
+def _loaded_private_versions(host: Any, bundle_id: str) -> Dict[str, Dict[str, Any]]:
+    """`version -> {path, created_at}` of every PRIVATE version of `bundle_id` this host's registry
+    runs, whichever source loaded it (the plane's folder, the shared folder, an AbstractNote pack):
+    what a client is told exists is what the gateway can run."""
+    sources = (getattr(host, "bundle_sources", {}) or {}).get(str(bundle_id)) or {}
+    versions = (getattr(host, "bundles", {}) or {}).get(str(bundle_id)) or {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for ver, meta in (sources.items() if isinstance(sources, dict) else []):
+        if not isinstance(meta, dict) or str(meta.get("registry_scope") or "private") != "private" or ver not in versions:
+            continue
+        created = str(getattr(getattr(versions.get(ver), "manifest", None), "created_at", "") or "")
+        out[str(ver)] = {"path": meta.get("path"), "created_at": created}
+    return out
 
 
 def _bundle_source_meta(host: Any, bundle_id: str, bundle_version: Optional[str]) -> Dict[str, Any]:
@@ -8547,13 +8576,8 @@ async def download_bundle(
         want = str(bundle_version or "").strip() or bid_ver
         _workflow_gate(svc, host, principal, bid_base, want or None, start=False)
 
-        try:
-            from abstractruntime.workflow_bundle import WorkflowBundleRegistry
-
-            reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
-            versions = reg.bundles_by_id().get(bid_base) or {}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed reading bundle registry: {e}")
+        # From the registry this plane runs (every source), never a scan of its own folder.
+        versions = _loaded_private_versions(host, bid_base)
 
         if not versions:
             raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}' not found")
@@ -8564,16 +8588,14 @@ async def download_bundle(
             available = ", ".join(sorted(str(v) for v in versions.keys()))
             raise HTTPException(status_code=404, detail=f"Bundle '{bid_base}@{want}' not found (have: {available})")
 
-        path = Path(getattr(installed, "path", "") or "")
+        path = Path(str(installed.get("path") or ""))
         if not path.is_file():
             raise HTTPException(status_code=404, detail=f"Bundle file for '{bid_base}@{want}' is missing from disk")
 
         data = path.read_bytes()
         filename = f"{bid_base}@{want}.flow"
-        # The registry does not always carry a sha on a scanned entry, and an empty
-        # integrity header is worse than none — it looks like a checksum. Fall back
-        # to hashing the bytes actually being sent, which is the stronger claim.
-        sha = str(getattr(installed, "sha256", "") or "").strip() or hashlib.sha256(data).hexdigest()
+        # The hash of the bytes actually sent (an empty integrity header would look like a checksum).
+        sha = hashlib.sha256(data).hexdigest()
         return StreamingResponse(
             io.BytesIO(data),
             media_type="application/octet-stream",

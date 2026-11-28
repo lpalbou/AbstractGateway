@@ -60,7 +60,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import abstractgateway.routes.gateway as gw
     from abstractgateway.app import app
 
-    return SimpleNamespace(app=app, gw=gw, data=data, repo=repo, mp=monkeypatch)
+    return SimpleNamespace(app=app, gw=gw, data=data, repo=repo, mp=monkeypatch, flows=flows)
 
 
 def _record(mp: pytest.MonkeyPatch, owner: Any, name: str, seen: List[bool], *, then: Any = None) -> None:
@@ -213,13 +213,22 @@ def test_file_routes_touch_files_off_the_loop(env) -> None:
     rec("_request_workspace_scope", then=refuse)  # import, attachments ingest
     rec("_gateway_bug_reports_dir")
     rec("_gateway_feature_requests_dir")
-    from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
+    # Catalog promote and bundle download: the registry lookup and the read of the version's source
+    # file (routes/gateway.py `_loaded_private_versions`, then `Path.read_bytes` of that file).
+    from test_gateway_workflow_registry_honesty import _write_bundle
 
-    def no_bundle(self: Any, ref: str) -> Any:
-        raise WorkflowBundleRegistryError(f"no bundle {ref}")
+    bundle_file = env.flows / "dl-wf@1.0.0.flow"
+    _write_bundle(bundle_file, bundle_id="dl-wf", bundle_version="1.0.0")
+    rec("_loaded_private_versions")
+    bundle_reads: List[bool] = []
+    real_read_bytes = Path.read_bytes
 
-    rec("resolve_bundle", owner=WorkflowBundleRegistry, then=no_bundle)  # catalog promote
-    rec("bundles_by_id", owner=WorkflowBundleRegistry)  # bundle download
+    def read_bytes(self: Path) -> bytes:
+        if self.name == bundle_file.name:
+            bundle_reads.append(_on_loop())
+        return real_read_bytes(self)
+
+    env.mp.setattr(Path, "read_bytes", read_bytes)
     flow_file = env.data / "dyn.json"
     dyn: List[bool] = []
 
@@ -242,8 +251,12 @@ def test_file_routes_touch_files_off_the_loop(env) -> None:
         fname = listed.json()["items"][0]["filename"]
         assert client.get(f"/api/gateway/reports/bugs/{fname}/content", headers=H).status_code == 200
         assert client.get("/api/gateway/reports/features", headers=H).status_code == 200
-        assert client.post("/api/gateway/admin/workflow-catalog/promote", headers=H, json={"bundle_id": "nope"}).status_code == 404
-        assert client.get("/api/gateway/bundles/nope/download", headers=H).status_code == 404
+        assert client.post("/api/gateway/admin/workflow-catalog/promote", headers=H, json={"bundle_id": "dl-wf"}).status_code == 200
+        promote_reads = len(bundle_reads)
+        assert promote_reads >= 1, "promote never read the version's file"
+        r = client.get("/api/gateway/bundles/dl-wf/download", headers=H)
+        assert r.status_code == 200 and r.content == real_read_bytes(bundle_file), r.text
+        assert len(bundle_reads) > promote_reads, "download never read the version's file"
         host = gw._require_bundle_host(gw.get_gateway_service())
         env.mp.setattr(host, "_dynamic_flow_path", dynamic_path, raising=False)
         r = client.get("/api/gateway/workflows/dyn-flow/flow", headers=H)
@@ -253,6 +266,7 @@ def test_file_routes_touch_files_off_the_loop(env) -> None:
         assert flags, f"{name} was never reached"
         assert not any(flags), f"{name} ran on the event loop"
     assert dyn and not any(dyn)
+    assert bundle_reads and not any(bundle_reads), "a bundle file was read on the event loop"
 
 
 def test_runs_reads_archive_and_kinds_once_and_sees_its_own_writes(env) -> None:
