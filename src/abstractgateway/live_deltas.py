@@ -139,7 +139,9 @@ _role_lock = threading.Lock()
 #         runs (behaviours: version-gated below).
 # 0.21.0: `command_sandbox_host.host_unprotected_volumes` (the drives the Windows command sandbox cannot
 #         protect, named in the command-sandbox state: version-gated below, as command_sandbox.py degrades).
-ABSTRACTRUNTIME_FLOOR = "0.21.0"
+# 0.22.0: a failure never turns an automation off (`automations.commands.revive_dead_controller`,
+#         `recover_stopped_automations`, typed start failures): imported by runner.py and routes/automations.py.
+ABSTRACTRUNTIME_FLOOR = "0.22.0"
 
 
 def _installed_runtime_version() -> str:
@@ -1077,10 +1079,22 @@ def require_runtime_features(runtime: Any) -> None:
             raise ImportError("community_keys_of is not callable")
     except ImportError:
         missing.append("the membership-only topic read (abstractruntime.integrations.abstractmemory.memory_facade.community_keys_of, AbstractRuntime 0.19.2)")
+    try:
+        from abstractruntime.automations.commands import recover_stopped_automations, revive_dead_controller
+
+        if not (callable(recover_stopped_automations) and callable(revive_dead_controller)):
+            raise ImportError("the automation recovery is not callable")
+    except ImportError:
+        missing.append("automations that come back by themselves (abstractruntime.automations.commands.revive_dead_controller / recover_stopped_automations, AbstractRuntime 0.22.0)")
     installed = _installed_runtime_version()
     # The API probes above cannot tell 0.15.2 from 0.15.3 (same surface): the fix is behavioural, so this one
     # is a version gate. "unknown" metadata is not refused (a source checkout without dist-info).
     if installed != "unknown" and _version_tuple(installed) < _version_tuple(ABSTRACTRUNTIME_FLOOR):
+        missing.append(
+            "automations that a failure never turns off (AbstractRuntime 0.22.0; with an older release an "
+            "automation whose run cannot start stops for good instead of trying again at its next scheduled time)"
+        )
+    if installed != "unknown" and _version_tuple(installed) < _version_tuple("0.21.0"):
         missing.append(
             "the drives the Windows command sandbox cannot protect, named in the command-sandbox state "
             "(AbstractRuntime 0.21.0; with an older release the console never names a drive without "

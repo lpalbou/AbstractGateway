@@ -36,7 +36,7 @@ def _floor(requirements: list, name: str) -> Version:
 
 # The AbstractFramework packages this release pins exactly (`==`): the versions it was validated with.
 PINS = {
-    "abstractruntime": "0.21.0",
+    "abstractruntime": "0.22.0",
     "abstractcore": "2.39.0",
     "abstractvoice": "0.21.1",
     "abstractagent": "0.6.1",

@@ -36,7 +36,7 @@ the sandbox under every workspace setting ("Deny everything, allow listed worksp
 too, [security](docs/security.md#on-windows)); the command-sandbox state reads "Commands sandboxed: Windows
 restricted token" and names any drive the sandbox cannot protect; a conversation can be renamed
 (`PUT /api/gateway/sessions/{id}/title`, served as `session_title` on every `GET /runs` row,
-[API](docs/api.md#rename-a-session)). Pins: Runtime 0.21.0 and Core 2.39.0.
+[API](docs/api.md#rename-a-session)). Pins: Runtime 0.22.0 and Core 2.39.0.
 
 **What's new in 0.23.0** ([CHANGELOG](CHANGELOG.md#0230---2026-11-24)): agents' commands run on Windows, inside
 a sandbox, for runs that allow everything and refuse listed workspaces ([security](docs/security.md#on-windows));
